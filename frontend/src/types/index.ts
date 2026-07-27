@@ -5,12 +5,6 @@ export interface LoadImageResponse {
   tile_count: number;
 }
 
-export interface RenderPreviewResponse {
-  base64_png: string;
-  width: number;
-  height: number;
-}
-
 export interface FilterInfo {
   id: string;
   kind: FilterKind;
