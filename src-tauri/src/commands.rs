@@ -16,7 +16,8 @@ use engine_project::{
     commands::{AddLayerArgs, LayerPropsPatch},
     commands as engine_commands,
 };
-use engine_tiles::{PixelTile, TileCache};
+use engine_tiles::{PixelTile, TileCache, Scheduler};
+use engine_tiles::{CacheStage, Priority, RecomputeTask, TileKey};
 
 // ============================================================================
 // Data Structures for Command Arguments
@@ -46,6 +47,29 @@ pub struct ReorderLayerRequest {
     pub new_index: usize,
 }
 
+/// Patch DTO for layer property updates (design spec).
+/// All fields are optional; only set values are applied.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayerPropsPatchDto {
+    pub name: Option<String>,
+    pub opacity: Option<f32>,
+    pub blend_mode: Option<String>,
+    pub visible: Option<bool>,
+}
+
+/// Flat layer node DTO for frontend layer panel consumption.
+/// Groups have `children: Some(vec![...])`, leaves have `children: None`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayerNodeDto {
+    pub id: u32,
+    pub name: String,
+    pub kind: String,         // "raster" | "adjustment" | "group"
+    pub blend_mode: String,
+    pub opacity: f32,
+    pub visible: bool,
+    pub children: Option<Vec<LayerNodeDto>>,
+}
+
 // ============================================================================
 // Command Responses
 // ============================================================================
@@ -64,26 +88,20 @@ pub struct DocumentResponse {
 // App State Structure
 // ============================================================================
 
-/// Loaded image raw data (before filter processing).
-/// Stores the decoded RGBA f32 pixel data as a grid of PixelTiles.
-pub struct ImageData {
-    /// Document ID this image data belongs to.
-    pub doc_id: u32,
-    /// Image width in pixels.
-    pub width: u32,
-    /// Image height in pixels.
-    pub height: u32,
-    /// Grid of pixel tiles [row][col], covering the full image.
-    pub tiles: Vec<Vec<Arc<PixelTile>>>,
-}
+// ViewportState is defined in the viewport module.
+pub use crate::viewport::ViewportState;
 
 /// Shared application state for Tauri commands.
 pub struct AppState {
     pub document_handle: DocumentHandle,
     pub tile_cache: TileCache,
-    /// Raw pixel data for the currently loaded image.
-    pub image_data: Mutex<Option<ImageData>>,
+    pub scheduler: Scheduler,
+    pub viewport: Mutex<ViewportState>,
 }
+
+// ============================================================================
+// Helpers
+// ============================================================================
 
 // ============================================================================
 // Tauri Commands
@@ -94,7 +112,7 @@ pub struct AppState {
 pub fn new_document(
     width: u32,
     height: u32,
-    state: State<AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<DocumentResponse, String> {
     use engine_project::types::DocumentId;
     
@@ -112,18 +130,69 @@ pub fn new_document(
 /// Get current document snapshot.
 #[tauri::command]
 pub fn get_document_snapshot(
-    state: State<AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<DocumentResponse, String> {
     let snapshot = state.document_handle.snapshot();
     let dto = engine_project::dto::document_to_dto(&snapshot);
     Ok(DocumentResponse { snapshot: dto })
 }
 
+/// Get the layer tree as a flat DTO structure for frontend consumption.
+///
+/// Returns the full layer hierarchy as `Vec<LayerNodeDto>`, where groups
+/// have `children: Some(vec![...])` and leaves have `children: None`.
+#[tauri::command]
+pub fn get_layer_tree(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<LayerNodeDto>, String> {
+    let snapshot = state.document_handle.snapshot();
+    let tree = layer_nodes_to_dto(&snapshot.root);
+    Ok(tree)
+}
+
+/// Convert internal LayerNode tree to flat LayerNodeDto tree.
+fn layer_nodes_to_dto(nodes: &[engine_project::LayerNode]) -> Vec<LayerNodeDto> {
+    nodes.iter().map(layer_node_to_flat_dto).collect()
+}
+
+/// Convert a single LayerNode to a flat LayerNodeDto.
+fn layer_node_to_flat_dto(node: &engine_project::LayerNode) -> LayerNodeDto {
+    match node {
+        engine_project::LayerNode::Leaf(layer) => {
+            let kind = match layer.kind {
+                LayerKind::Raster => "raster",
+                LayerKind::Adjustment => "adjustment",
+            };
+            LayerNodeDto {
+                id: layer.id.0,
+                name: layer.name.clone(),
+                kind: kind.to_string(),
+                blend_mode: layer.blend_mode.to_string(),
+                opacity: layer.opacity,
+                visible: layer.visible,
+                children: None,
+            }
+        }
+        engine_project::LayerNode::Group(group) => {
+            let children = layer_nodes_to_dto(&group.children);
+            LayerNodeDto {
+                id: group.id.0,
+                name: group.name.clone(),
+                kind: "group".to_string(),
+                blend_mode: group.blend_mode.to_string(),
+                opacity: group.opacity,
+                visible: group.visible,
+                children: Some(children),
+            }
+        }
+    }
+}
+
 /// Add a new layer to the document.
 #[tauri::command]
 pub fn add_layer(
     req: AddLayerRequest,
-    state: State<AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<LayerIdResponse, String> {
     let kind = match req.kind.as_str() {
         "raster" => LayerKind::Raster,
@@ -155,7 +224,7 @@ pub fn add_layer(
 #[tauri::command]
 pub fn remove_layer(
     layer_id: u32,
-    state: State<AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     let snapshot = state.document_handle.snapshot();
     let doc_id = snapshot.id;
@@ -176,7 +245,7 @@ pub fn remove_layer(
 #[tauri::command]
 pub fn set_layer_props(
     req: SetLayerPropsRequest,
-    state: State<AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     let blend_mode = req.blend_mode.as_ref().map(|bm| {
         match bm.as_str() {
@@ -195,6 +264,9 @@ pub fn set_layer_props(
             _ => BlendMode::Normal,
         }
     });
+
+    // Determine if this is a visual property change (requires Composite scheduling)
+    let is_visual_change = req.opacity.is_some() || req.blend_mode.is_some() || req.visible.is_some();
 
     let patch = LayerPropsPatch {
         name: req.name,
@@ -215,7 +287,13 @@ pub fn set_layer_props(
         LayerId::new(req.layer_id),
         patch,
     ) {
-        Ok(_) => Ok(()),
+        Ok(_) => {
+            // Schedule viewport-visible dirty tiles for recomputation (requirement 10.2)
+            if is_visual_change {
+                schedule_dirty_viewport_tiles(&state);
+            }
+            Ok(())
+        }
         Err(e) => Err(format!("Failed to set layer props: {:?}", e)),
     }
 }
@@ -224,7 +302,7 @@ pub fn set_layer_props(
 #[tauri::command]
 pub fn reorder_layer(
     req: ReorderLayerRequest,
-    state: State<AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     let snapshot = state.document_handle.snapshot();
     let doc_id = snapshot.id;
@@ -276,7 +354,7 @@ pub struct FilterIdResponse {
 #[tauri::command]
 pub fn add_filter(
     req: AddFilterRequest,
-    state: State<AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<FilterIdResponse, String> {
     use engine_project::{FilterKind, FilterParams, FilterInstance};
     use engine_project::filters::curves::CurveChannel;
@@ -406,7 +484,7 @@ pub fn add_filter(
 #[tauri::command]
 pub fn remove_filter(
     req: RemoveFilterRequest,
-    state: State<AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     use engine_tiles::{invalidate, InvalidationEvent};
 
@@ -466,7 +544,7 @@ pub fn remove_filter(
 #[tauri::command]
 pub fn update_filter(
     req: UpdateFilterRequest,
-    state: State<AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     use engine_project::{FilterKind, FilterParams, FilterInstance};
     use engine_project::filters::curves::CurveChannel;
@@ -624,13 +702,22 @@ pub fn update_filter(
         ));
     }
 
-    // Invalidate tile cache for the affected layer
+    // Increment layer generation (requirement 10.1)
+    {
+        let snapshot = state.document_handle.snapshot();
+        snapshot.generations.increment_layer_gen(layer_id);
+    }
+
+    // Invalidate tile cache for the affected layer (Processed + Composite cascade)
     engine_tiles::invalidation::invalidate(
         &state.tile_cache,
         engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
             layer: req.layer_id,
         },
     );
+
+    // Schedule viewport-visible dirty tiles for immediate recomputation (requirement 4.4)
+    schedule_dirty_viewport_tiles(&state);
 
     Ok(())
 }
@@ -652,16 +739,15 @@ pub struct LoadImageResponse {
 #[tauri::command]
 pub async fn load_image(
     path: String,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<LoadImageResponse, String> {
     use engine_project::types::DocumentId;
-    use engine_tiles::{TILE_SIZE, HALO};
+    use engine_tiles::decompose::decompose_image_to_tiles;
 
     // Do heavy I/O and CPU work in a blocking thread
-    let path_clone = path.clone();
-    let (width, height, tile_count, tiles) = tauri::async_runtime::spawn_blocking(move || {
+    let (width, height, rgba_f32) = tauri::async_runtime::spawn_blocking(move || {
         // Open and decode the image
-        let img = image::open(&path_clone).map_err(|e| {
+        let img = image::open(&path).map_err(|e| {
             format!("IO error: {}", e)
         })?;
 
@@ -680,63 +766,28 @@ pub async fn load_image(
             return Err("Invalid state: image has zero dimensions".to_string());
         }
 
-        // Calculate tile grid
-        let cols = ((width as f64) / (TILE_SIZE as f64)).ceil() as u32;
-        let rows = ((height as f64) / (TILE_SIZE as f64)).ceil() as u32;
-        let tile_count = rows * cols;
-
-        // Convert image to RGBA f32 tiles
-        let mut tiles: Vec<Vec<Arc<PixelTile>>> = Vec::with_capacity(rows as usize);
-
-        for row in 0..rows {
-            let mut row_tiles: Vec<Arc<PixelTile>> = Vec::with_capacity(cols as usize);
-            for col in 0..cols {
-                let mut tile = PixelTile::new();
-                let tile_origin_x = col * TILE_SIZE;
-                let tile_origin_y = row * TILE_SIZE;
-
-                // Fill pixels in this tile from the image
-                for ty in 0..TILE_SIZE {
-                    let img_y = tile_origin_y + ty;
-                    if img_y >= height {
-                        break;
-                    }
-                    for tx in 0..TILE_SIZE {
-                        let img_x = tile_origin_x + tx;
-                        if img_x >= width {
-                            break;
-                        }
-                        let pixel = img_rgba.get_pixel(img_x, img_y);
-                        // Set pixel in tile (offset by HALO for main region)
-                        let tile_x = tx + HALO;
-                        let tile_y = ty + HALO;
-                        tile.set(tile_x, tile_y, 0, pixel[0] as f32 / 255.0); // R
-                        tile.set(tile_x, tile_y, 1, pixel[1] as f32 / 255.0); // G
-                        tile.set(tile_x, tile_y, 2, pixel[2] as f32 / 255.0); // B
-                        tile.set(tile_x, tile_y, 3, pixel[3] as f32 / 255.0); // A
-                    }
-                }
-                row_tiles.push(Arc::new(tile));
-            }
-            tiles.push(row_tiles);
+        // Convert image to RGBA f32 buffer (row-major, 4 floats per pixel)
+        let pixel_count = (width as usize) * (height as usize);
+        let mut rgba_f32: Vec<f32> = Vec::with_capacity(pixel_count * 4);
+        for pixel in img_rgba.pixels() {
+            rgba_f32.push(pixel[0] as f32 / 255.0);
+            rgba_f32.push(pixel[1] as f32 / 255.0);
+            rgba_f32.push(pixel[2] as f32 / 255.0);
+            rgba_f32.push(pixel[3] as f32 / 255.0);
         }
 
-        Ok::<_, String>((width, height, tile_count, tiles))
+        Ok::<_, String>((width, height, rgba_f32))
     }).await.map_err(|e| format!("Load error: {}", e))??;
+
+    // Decompose into Raw-stage tiles in TileCache (DashMap is thread-safe, no blocking needed)
+    let layer_id = 1u32; // Primary raster layer
+    let grid = decompose_image_to_tiles(&rgba_f32, width, height, layer_id, &state.tile_cache)
+        .map_err(|e| format!("Tile decomposition error: {}", e))?;
+
+    let tile_count = grid.cols * grid.rows;
 
     // Assign a new doc_id
     let doc_id: u32 = 1;
-
-    // Store image data
-    {
-        let mut image_data = state.image_data.lock().unwrap();
-        *image_data = Some(ImageData {
-            doc_id,
-            width,
-            height,
-            tiles,
-        });
-    }
 
     // Create a new Document with image dimensions and one raster layer
     let mut new_doc = engine_project::Document::new(DocumentId::new(doc_id), width, height);
@@ -761,158 +812,58 @@ pub async fn load_image(
     })
 }
 
+
+
 // ============================================================================
-// Render Preview Command
+// Tile Scheduling Helpers
 // ============================================================================
 
-/// Response from the render_preview command.
-#[derive(Debug, Clone, Serialize)]
-pub struct RenderPreviewResponse {
-    pub base64_png: String,
-    pub width: u32,
-    pub height: u32,
-}
-
-/// Render a preview of the document with all filters applied.
+/// Schedule viewport-visible dirty tiles for immediate recomputation.
 ///
-/// Returns a base64-encoded PNG string with width and height.
-/// If the image exceeds 2048px on any side, it is downscaled proportionally.
-#[tauri::command]
-pub async fn render_preview(
-    doc_id: u32,
-    state: State<'_, AppState>,
-) -> Result<RenderPreviewResponse, String> {
-    use base64::Engine as _;
-    use engine_project::filters::apply::apply_filter_to_tile;
-    use engine_tiles::{TILE_SIZE, HALO, TileCoord};
+/// Reads the current viewport state, iterates over visible tile coordinates, and
+/// enqueues Immediate-priority recompute tasks for any Composite-stage tile that
+/// is currently marked dirty in the cache. This ensures the user sees updated tiles
+/// promptly after a filter or layer property change.
+///
+/// The `tile-ready` event is emitted by the worker loop upon successful recomputation
+/// (requirements 2.4, 10.4, 10.6).
+fn schedule_dirty_viewport_tiles(state: &AppState) {
+    use std::sync::atomic::Ordering;
 
-    // 1. Get image data (clone tiles), verify doc_id matches, then drop lock
-    let (img_width, img_height, tiles) = {
-        let image_data_guard = state.image_data.lock().unwrap();
-        let image_data = match image_data_guard.as_ref() {
-            Some(data) => {
-                if data.doc_id != doc_id {
-                    return Err("Document not found".to_string());
-                }
-                data
-            }
-            None => {
-                return Err("Document not found".to_string());
-            }
-        };
-        (image_data.width, image_data.height, image_data.tiles.clone())
-    }; // MutexGuard dropped here
-
-    // 2. Get the document snapshot to read layer filters
+    let viewport = state.viewport.lock().unwrap().clone();
     let snapshot = state.document_handle.snapshot();
+    let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
 
-    // 3. Clone the layer (with filters) so we can move it into spawn_blocking
-    let layer_clone = find_first_visible_layer(&snapshot.root).cloned();
-
-    // 4. Do heavy tile processing in a blocking thread to avoid freezing the UI
-    tauri::async_runtime::spawn_blocking(move || {
-        let cols = ((img_width as f64) / (TILE_SIZE as f64)).ceil() as u32;
-        let rows = ((img_height as f64) / (TILE_SIZE as f64)).ceil() as u32;
-
-        // Build full-resolution RGBA u8 buffer
-        let mut rgba_buffer: Vec<u8> = vec![0u8; (img_width * img_height * 4) as usize];
-
-        for row in 0..rows {
-            for col in 0..cols {
-                let tile = &tiles[row as usize][col as usize];
-
-                // Apply filters if we have a visible layer
-                let processed_tile = if let Some(ref layer) = layer_clone {
-                    let coord = TileCoord { level: 0, x: col, y: row };
-                    apply_filter_to_tile(tile, layer, coord)
-                        .map_err(|e| format!("Render error: {:?}", e))?
-                } else {
-                    // No layer: just copy the tile as-is (create an owned copy)
-                    let mut copy = engine_tiles::PixelTile::new();
-                    for y in 0u32..260 {
-                        for x in 0u32..260 {
-                            for c in 0..4 {
-                                copy.set(x, y, c, tile.at(x, y, c));
-                            }
-                        }
-                    }
-                    copy
-                };
-
-                // Copy tile pixels to rgba_buffer (f32 → u8 conversion)
-                let tile_origin_x = col * TILE_SIZE;
-                let tile_origin_y = row * TILE_SIZE;
-
-                for ty in 0..TILE_SIZE {
-                    let img_y = tile_origin_y + ty;
-                    if img_y >= img_height {
-                        break;
-                    }
-                    for tx in 0..TILE_SIZE {
-                        let img_x = tile_origin_x + tx;
-                        if img_x >= img_width {
-                            break;
-                        }
-                        let tile_x = tx + HALO;
-                        let tile_y = ty + HALO;
-                        let buf_idx = ((img_y * img_width + img_x) * 4) as usize;
-
-                        rgba_buffer[buf_idx] = f32_to_u8(processed_tile.at(tile_x, tile_y, 0));
-                        rgba_buffer[buf_idx + 1] = f32_to_u8(processed_tile.at(tile_x, tile_y, 1));
-                        rgba_buffer[buf_idx + 2] = f32_to_u8(processed_tile.at(tile_x, tile_y, 2));
-                        rgba_buffer[buf_idx + 3] = f32_to_u8(processed_tile.at(tile_x, tile_y, 3));
-                    }
-                }
-            }
-        }
-
-        // 5. Compute preview size (≤ 2048 on longest side, preserving aspect ratio)
-        let (out_w, out_h) = compute_preview_size(img_width, img_height, 2048);
-
-        // 6. Resize if needed
-        let final_buffer = if out_w != img_width || out_h != img_height {
-            let img = image::RgbaImage::from_raw(img_width, img_height, rgba_buffer)
-                .ok_or_else(|| "Failed to create image from buffer".to_string())?;
-            let resized = image::imageops::resize(
-                &img,
-                out_w,
-                out_h,
-                image::imageops::FilterType::Lanczos3,
-            );
-            resized.into_raw()
-        } else {
-            rgba_buffer
+    for coord in &viewport.visible_tiles {
+        // Schedule Composite-stage tile recomputation.
+        // The worker's compute_composite_tile already ensures Processed tiles
+        // are fresh before compositing, so we only need to schedule Composite tasks.
+        let key = TileKey {
+            layer: 0,
+            coord: *coord,
+            stage: CacheStage::Composite,
         };
 
-        // 7. Encode to PNG
-        let png_bytes = encode_rgba_to_png(&final_buffer, out_w, out_h)?;
+        let is_dirty = match state.tile_cache.entries.get(&key) {
+            Some(entry) => entry.dirty.load(Ordering::Acquire),
+            None => true, // Missing tile also needs computation
+        };
 
-        // 8. Base64 encode
-        let base64_png = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
-
-        Ok(RenderPreviewResponse {
-            base64_png,
-            width: out_w,
-            height: out_h,
-        })
-    }).await.map_err(|e| format!("Render error: {}", e))?
+        if is_dirty {
+            let task = RecomputeTask {
+                key,
+                generation: doc_gen,
+                layer_generation: 0,
+                priority: Priority::Immediate,
+            };
+            state.scheduler.enqueue(task);
+        }
+    }
 }
 
 /// Convert an f32 pixel value (0.0-1.0) to u8 (0-255), clamped.
 fn f32_to_u8(val: f32) -> u8 {
     (val * 255.0).clamp(0.0, 255.0) as u8
-}
-
-/// Compute preview dimensions, capping the longest side at max_side while preserving aspect ratio.
-fn compute_preview_size(width: u32, height: u32, max_side: u32) -> (u32, u32) {
-    let max_dim = width.max(height);
-    if max_dim <= max_side {
-        return (width, height);
-    }
-    let scale = max_side as f64 / max_dim as f64;
-    let out_w = ((width as f64) * scale).round().max(1.0) as u32;
-    let out_h = ((height as f64) * scale).round().max(1.0) as u32;
-    (out_w, out_h)
 }
 
 /// Encode an RGBA u8 buffer as PNG bytes.
@@ -969,10 +920,10 @@ pub struct ExportImageRequest {
 #[tauri::command]
 pub async fn export_image(
     req: ExportImageRequest,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     use engine_project::filters::apply::apply_filter_to_tile;
-    use engine_tiles::{TILE_SIZE, HALO, TileCoord};
+    use engine_tiles::{TILE_SIZE, HALO, TileCoord, CacheStage, TileKey};
     use std::fs;
     use std::io::Cursor;
 
@@ -981,36 +932,46 @@ pub async fn export_image(
         return Err("Invalid parameters: format must be PNG or JPEG".to_string());
     }
 
-    // 2. Get image data (clone tiles), verify doc_id matches, then drop lock
-    let (img_width, img_height, tiles) = {
-        let image_data_guard = state.image_data.lock().unwrap();
-        let image_data = match image_data_guard.as_ref() {
-            Some(data) => {
-                if data.doc_id != req.doc_id {
-                    return Err("Document not found".to_string());
-                }
-                data
-            }
-            None => {
-                return Err("Document not found".to_string());
-            }
-        };
-        (image_data.width, image_data.height, image_data.tiles.clone())
-    }; // MutexGuard dropped here
-
-    // 3. Get the document snapshot and clone the layer
+    // 2. Get document snapshot and validate doc_id
     let snapshot = state.document_handle.snapshot();
-    let layer_clone = find_first_visible_layer(&snapshot.root).cloned();
+    if snapshot.id.0 != req.doc_id {
+        return Err("Document not found".to_string());
+    }
+    let img_width = snapshot.width;
+    let img_height = snapshot.height;
 
-    // 4. Do heavy rendering and I/O in a blocking thread
+    // 3. Compute tile grid and read tiles from cache
+    let cols = (img_width + TILE_SIZE - 1) / TILE_SIZE;
+    let rows = (img_height + TILE_SIZE - 1) / TILE_SIZE;
+    let layer_id = 1u32;
+
+    let mut tiles: Vec<Vec<Arc<PixelTile>>> = Vec::with_capacity(rows as usize);
+    for row in 0..rows {
+        let mut row_tiles: Vec<Arc<PixelTile>> = Vec::with_capacity(cols as usize);
+        for col in 0..cols {
+            let key = TileKey {
+                layer: layer_id,
+                coord: TileCoord { level: 0, x: col, y: row },
+                stage: CacheStage::Raw,
+            };
+            match state.tile_cache.get_entry(key) {
+                Some(tile) => row_tiles.push(tile),
+                None => return Err("Document not found".to_string()),
+            }
+        }
+        tiles.push(row_tiles);
+    }
+
+    // 4. Get the document snapshot and clone the layer
+    let layer_clone = find_first_visible_layer(&snapshot.root).cloned();
+    drop(snapshot);
+
+    // 5. Do heavy rendering and I/O in a blocking thread
     let req_format = req.format.clone();
     let req_path = req.path.clone();
     let req_quality = req.quality;
 
     tauri::async_runtime::spawn_blocking(move || {
-        let cols = ((img_width as f64) / (TILE_SIZE as f64)).ceil() as u32;
-        let rows = ((img_height as f64) / (TILE_SIZE as f64)).ceil() as u32;
-
         let mut rgba_buffer: Vec<u8> = vec![0u8; (img_width * img_height * 4) as usize];
 
         for row in 0..rows {
@@ -1061,7 +1022,7 @@ pub async fn export_image(
             }
         }
 
-        // 5. Encode and write based on format
+        // 6. Encode and write based on format
         match req_format.as_str() {
             "PNG" => {
                 let png_bytes = encode_rgba_to_png(&rgba_buffer, img_width, img_height)?;
@@ -1111,30 +1072,6 @@ mod tests {
             }
         };
         assert!(bm.is_some());
-    }
-
-    #[test]
-    fn test_compute_preview_size_no_downscale() {
-        assert_eq!(compute_preview_size(1024, 768, 2048), (1024, 768));
-        assert_eq!(compute_preview_size(2048, 2048, 2048), (2048, 2048));
-    }
-
-    #[test]
-    fn test_compute_preview_size_downscale_landscape() {
-        let (w, h) = compute_preview_size(4096, 2048, 2048);
-        assert!(w <= 2048);
-        assert!(h <= 2048);
-        assert_eq!(w, 2048);
-        assert_eq!(h, 1024);
-    }
-
-    #[test]
-    fn test_compute_preview_size_downscale_portrait() {
-        let (w, h) = compute_preview_size(2048, 4096, 2048);
-        assert!(w <= 2048);
-        assert!(h <= 2048);
-        assert_eq!(w, 1024);
-        assert_eq!(h, 2048);
     }
 
     #[test]

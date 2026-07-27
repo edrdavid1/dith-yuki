@@ -187,17 +187,15 @@ fn mark_all_processed_for_layer(cache: &TileCache, layer: LayerId) {
 /// - `cache`: The TileCache
 /// - `layer`: The base layer; tiles at this layer and above will be cascaded
 /// - `coord`: The tile coordinate to cascade
-fn cascade_composite_invalidation(cache: &TileCache, layer: LayerId, coord: TileCoord) {
+fn cascade_composite_invalidation(cache: &TileCache, _layer: LayerId, coord: TileCoord) {
     let mut keys_to_mark = Vec::new();
 
-    // Iterate cache entries and find Composite tiles at this coordinate
-    // for the given layer and all layers above
+    // Iterate cache entries and find ALL Composite tiles at this coordinate.
+    // The global composite (layer 0) depends on all layers, so any layer change
+    // invalidates all composite tiles at the affected coordinate.
     for entry in cache.entries.iter() {
         let key = *entry.key();
-        if key.stage == CacheStage::Composite
-            && key.coord == coord
-            && key.layer >= layer
-        {
+        if key.stage == CacheStage::Composite && key.coord == coord {
             keys_to_mark.push(key);
         }
     }
@@ -220,10 +218,12 @@ fn cascade_composite_invalidation(cache: &TileCache, layer: LayerId, coord: Tile
 fn cascade_composite_invalidation_all_coords(cache: &TileCache, layer: LayerId) {
     let mut keys_to_mark = Vec::new();
 
-    // Iterate cache entries and find Composite tiles for this layer and above
+    // Iterate cache entries and find ALL Composite tiles.
+    // We mark all Composite tiles dirty because the global composite (layer 0)
+    // depends on every layer. Any layer change invalidates the composite.
     for entry in cache.entries.iter() {
         let key = *entry.key();
-        if key.stage == CacheStage::Composite && key.layer >= layer {
+        if key.stage == CacheStage::Composite {
             keys_to_mark.push(key);
         }
     }
@@ -368,7 +368,7 @@ mod tests {
     }
 
     #[test]
-    fn cascade_respects_layer_boundaries() {
+    fn cascade_marks_all_composite_tiles_dirty() {
         let cache = TileCache::new(10_000_000);
         let key_composite_0 = make_key(0, 0, 0, CacheStage::Composite);
         let key_composite_1 = make_key(1, 0, 0, CacheStage::Composite);
@@ -379,15 +379,16 @@ mod tests {
         cache.get_or_insert(key_composite_1, tile.clone());
         cache.get_or_insert(key_composite_2, tile);
 
-        // Invalidate layer 1; should cascade to layer 2 but not layer 0
+        // Invalidate layer 1; should cascade to ALL composite tiles
+        // because the global composite depends on all layers
         let event = InvalidationEvent::LayerRawChanged {
             layer: 1,
             coords: vec![make_coord(0, 0)],
         };
         invalidate(&cache, event);
 
-        // Layer 1 and above should be dirty
-        assert!(!cache.entries.get(&key_composite_0).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
+        // All Composite tiles should be dirty since composite depends on all layers
+        assert!(cache.entries.get(&key_composite_0).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
         assert!(cache.entries.get(&key_composite_1).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
         assert!(cache.entries.get(&key_composite_2).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
     }

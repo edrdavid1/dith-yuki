@@ -25,6 +25,9 @@ pub use scheduler::*;
 pub mod invalidation;
 pub use invalidation::*;
 
+pub mod decompose;
+pub use decompose::*;
+
 #[cfg(test)]
 mod tests {
     #[test]
