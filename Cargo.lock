@@ -903,6 +903,7 @@ dependencies = [
  "engine-core",
  "engine-project",
  "engine-tiles",
+ "http",
  "image",
  "proptest",
  "serde",
