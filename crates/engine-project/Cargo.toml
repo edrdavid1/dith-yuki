@@ -2,7 +2,17 @@
 name = "engine-project"
 version = "0.1.0"
 edition = "2021"
-description = "SQLite storage, project format, undo/redo history"
+description = "Document model, layers, filters, masks"
 
 [dependencies]
 engine-core = { path = "../engine-core" }
+engine-tiles = { path = "../engine-tiles" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+arc-swap = "1.6"
+dashmap = "5.5"
+thiserror = "1.0"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full"] }

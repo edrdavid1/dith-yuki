@@ -10,6 +10,7 @@ serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 engine-core = { path = "../engine-core" }
 engine-tiles = { path = "../engine-tiles" }
+engine-project = { path = "../engine-project" }
 
 [build-dependencies]
 tauri-build = "2"

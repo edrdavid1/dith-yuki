@@ -1,20 +1,41 @@
-//! Project format, file storage, and undo/redo history management.
+//! Document model, layer hierarchy, filter pipeline, and mask system.
 //!
-//! This module handles SQLite-based project storage, document serialization,
-//! and history tracking for undo/redo operations.
+//! This module implements the application-level data structures that bridge
+//! the UI with the Phase 1 tile engine. It provides:
 //!
-//! Phase 0: Placeholder. Detailed design and implementation in Phase 6.
-//! See corresponding section in agent-kickoff-plan.md for future scope.
+//! - Document: Main project structure
+//! - Layer & LayerGroup: Recursive layer hierarchy
+//! - FilterInstance: Filter stack with parameters
+//! - MaskRef: Alpha masks (via external layers)
+//! - DocumentHandle: Thread-safe access via arc-swap
+//! - Invalidation: Cache coordination
+//! - Commands: Document mutation operations
 
-/// Placeholder module for project management
-pub mod todo {
-    // Placeholder — remove in Phase 6 when implementing
-}
+pub mod commands;
+pub mod document;
+pub mod dto;
+pub mod error;
+pub mod filter;
+pub mod invalidation;
+pub mod layer;
+pub mod mask;
+pub mod types;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn stub_compiles() {
-        assert!(true);
-    }
-}
+// Public API re-exports
+pub use commands::{add_layer, remove_layer, set_layer_props, reorder_layer, LayerPropsPatch};
+pub use document::{Document, DocumentHandle};
+pub use error::EngineError;
+pub use filter::{apply_filter_to_tile, FilterInstance, FilterKind, FilterParams};
+pub use invalidation::{
+    invalidate_layer_filter_changed, invalidate_layer_props_changed,
+    invalidate_layer_structure_changed, validate_document_consistency,
+};
+pub use layer::{flatten_bottom_to_top, walk_bottom_to_top, Layer, LayerGroup, LayerNode, LayerRef};
+pub use mask::{apply_mask, MaskRef, MaskStorage};
+pub use types::{
+    BlendMode, ColorProfileRef, DocumentId, FilterInstanceId, LayerId, LayerKind, PaletteId,
+    TileBounds,
+};
+
+/// Library version
+pub const VERSION: &str = "0.1.0";
