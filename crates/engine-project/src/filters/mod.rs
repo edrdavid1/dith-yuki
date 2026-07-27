@@ -15,7 +15,7 @@ pub mod apply;
 
 // Re-export main API
 pub use apply::apply_filter_to_tile;
-pub use curves::CurvesFilter;
+pub use curves::{CurveChannel, CurvesFilter};
 pub use dither::{DitherAlgorithm, DitherFilter};
-pub use glitch::GlitchFilter;
+pub use glitch::{GlitchFilter, GlitchType};
 pub use levels::LevelsFilter;

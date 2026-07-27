@@ -4,20 +4,27 @@
   "description": "Tile-based image processing engine with desktop UI",
   "type": "module",
   "scripts": {
-    "dev": "npm run dev --workspace=frontend",
-    "build": "npm run build --workspace=frontend",
-    "preview": "npm run preview --workspace=frontend",
+    "setup": "npm install && npm install --prefix frontend",
+
+    "dev": "npm run dev --prefix frontend",
+    "build": "npm run build --prefix frontend",
+    "preview": "npm run preview --prefix frontend",
+
     "tauri": "tauri",
-    "tauri:dev": "npm run build --workspace=frontend && tauri dev",
-    "tauri:build": "npm run build --workspace=frontend && tauri build"
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+
+    "clean": "rm -rf frontend/dist frontend/node_modules/.vite && cargo clean -p dither",
+    "clean:rust": "cargo clean",
+    "clean:all": "rm -rf node_modules frontend/node_modules frontend/dist && cargo clean",
+
+    "fresh": "npm run clean && tauri dev",
+    "reset": "npm run clean:all && npm run setup"
   },
   "dependencies": {
-    "@tauri-apps/api": "^1.5.0"
+    "@tauri-apps/api": "^2.11.1"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^1.5.0"
-  },
-  "workspaces": [
-    "frontend"
-  ]
+    "@tauri-apps/cli": "^2.11.4"
+  }
 }

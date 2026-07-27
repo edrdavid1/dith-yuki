@@ -329,7 +329,7 @@ git push origin feature/your-feature-name
 ```
 frontend/
 └── Tauri Commands
-    └── crates/app
+    └── src-tauri
         ├── engine-core (Layer, Document)
         ├── engine-tiles (TileCache)
         ├── engine-color (Color processing)

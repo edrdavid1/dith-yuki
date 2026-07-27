@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "crates/app",
+    "src-tauri",
     "crates/engine-core",
     "crates/engine-tiles",
     "crates/engine-color",

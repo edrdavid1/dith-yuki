@@ -8,6 +8,7 @@ use engine_project::{
     Document, DocumentHandle, FilterInstance, FilterKind, FilterParams,
     Layer, LayerKind, LayerId,
 };
+use engine_project::filters::curves::CurveChannel;
 use engine_tiles::PixelTile;
 use std::time::Instant;
 
@@ -26,6 +27,7 @@ fn filter_instance_curves_with_document() {
             FilterKind::Curves,
             FilterParams::Curves {
                 curve: vec![(0.0, 0.0), (0.5, 0.7), (1.0, 1.0)],
+                channel: CurveChannel::All,
             },
         );
         layer.filters.push(filter);
@@ -41,7 +43,7 @@ fn filter_instance_curves_with_document() {
         assert_eq!(layer.filters.len(), 1);
         assert!(layer.filters[0].enabled);
         match &layer.filters[0].params {
-            FilterParams::Curves { curve } => assert_eq!(curve.len(), 3),
+            FilterParams::Curves { curve, .. } => assert_eq!(curve.len(), 3),
             _ => panic!("Expected Curves filter"),
         }
     } else {
@@ -64,6 +66,7 @@ fn filter_instance_levels_with_document() {
             FilterParams::Levels {
                 input_black: 0.1,
                 input_white: 0.9,
+                gamma: 1.0,
                 output_black: 0.0,
                 output_white: 1.0,
             },
@@ -106,6 +109,7 @@ fn multiple_filters_in_layer_stack() {
             FilterKind::Curves,
             FilterParams::Curves {
                 curve: vec![(0.0, 0.0), (1.0, 1.0)],
+                channel: CurveChannel::All,
             },
         );
         layer.filters.push(curves_filter);
@@ -116,6 +120,7 @@ fn multiple_filters_in_layer_stack() {
             FilterParams::Levels {
                 input_black: 0.0,
                 input_white: 1.0,
+                gamma: 1.0,
                 output_black: 0.0,
                 output_white: 1.0,
             },
@@ -157,6 +162,7 @@ fn disable_and_reenable_filter() {
             FilterKind::Curves,
             FilterParams::Curves {
                 curve: vec![(0.0, 0.0), (1.0, 1.0)],
+                channel: CurveChannel::All,
             },
         );
         filter_id = filter.id;
@@ -238,6 +244,7 @@ fn filter_stack_traversal() {
                     FilterKind::Curves,
                     FilterParams::Curves {
                         curve: vec![(0.0, 0.0), (1.0, 1.0)],
+                        channel: CurveChannel::All,
                     },
                 )
             } else if i == 1 {
@@ -246,6 +253,7 @@ fn filter_stack_traversal() {
                     FilterParams::Levels {
                         input_black: 0.0,
                         input_white: 1.0,
+                        gamma: 1.0,
                         output_black: 0.0,
                         output_white: 1.0,
                     },
@@ -255,6 +263,7 @@ fn filter_stack_traversal() {
                     FilterKind::Curves,
                     FilterParams::Curves {
                         curve: vec![(0.0, 0.0), (1.0, 1.0)],
+                        channel: CurveChannel::All,
                     },
                 )
             };
@@ -287,6 +296,7 @@ fn filter_validation() {
         FilterKind::Curves,
         FilterParams::Curves {
             curve: vec![(0.0, 0.0), (0.5, 0.5), (1.0, 1.0)],
+            channel: CurveChannel::All,
         },
     );
     assert!(valid_filter.validate().is_ok());
@@ -296,6 +306,7 @@ fn filter_validation() {
         FilterKind::Curves,
         FilterParams::Curves {
             curve: vec![(1.5, 0.5)], // x > 1.0
+            channel: CurveChannel::All,
         },
     );
     assert!(invalid_filter.validate().is_err());
@@ -306,6 +317,7 @@ fn filter_validation() {
         FilterParams::Levels {
             input_black: 0.2,
             input_white: 0.8,
+            gamma: 1.0,
             output_black: 0.0,
             output_white: 1.0,
         },
@@ -318,6 +330,7 @@ fn filter_validation() {
         FilterParams::Levels {
             input_black: 0.8,
             input_white: 0.2, // black > white
+            gamma: 1.0,
             output_black: 0.0,
             output_white: 1.0,
         },
