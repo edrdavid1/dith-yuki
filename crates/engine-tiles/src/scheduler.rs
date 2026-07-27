@@ -229,6 +229,27 @@ impl Scheduler {
             .or_else(|| self.viewport_edge_queue.pop())
             .or_else(|| self.prefetch_queue.pop())
     }
+
+    /// Drain all queues, discarding all pending tasks.
+    ///
+    /// This is used when the viewport changes to cancel stale tasks before
+    /// re-scheduling with updated priorities. Since SegQueue doesn't support
+    /// selective removal, we clear everything and re-enqueue what's needed.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// scheduler.enqueue(task1);
+    /// scheduler.enqueue(task2);
+    /// scheduler.clear_all();
+    /// assert_eq!(scheduler.dequeue(), None);
+    /// ```
+    pub fn clear_all(&self) {
+        while self.immediate_queue.pop().is_some() {}
+        while self.viewport_center_queue.pop().is_some() {}
+        while self.viewport_edge_queue.pop().is_some() {}
+        while self.prefetch_queue.pop().is_some() {}
+    }
 }
 
 impl Default for Scheduler {
@@ -389,6 +410,27 @@ mod tests {
     fn empty_scheduler_returns_none() {
         let scheduler = Scheduler::new();
         assert_eq!(scheduler.dequeue(), None);
+        assert_eq!(scheduler.dequeue(), None);
+    }
+
+    #[test]
+    fn clear_all_drains_all_queues() {
+        let scheduler = Scheduler::new();
+
+        scheduler.enqueue(make_task(Priority::Immediate, 0, 0, 0));
+        scheduler.enqueue(make_task(Priority::ViewportCenter, 0, 1, 0));
+        scheduler.enqueue(make_task(Priority::ViewportEdge, 0, 2, 0));
+        scheduler.enqueue(make_task(Priority::Prefetch, 0, 3, 0));
+
+        scheduler.clear_all();
+
+        assert_eq!(scheduler.dequeue(), None);
+    }
+
+    #[test]
+    fn clear_all_on_empty_scheduler_is_noop() {
+        let scheduler = Scheduler::new();
+        scheduler.clear_all();
         assert_eq!(scheduler.dequeue(), None);
     }
 }

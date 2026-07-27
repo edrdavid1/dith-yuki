@@ -12,6 +12,7 @@
 //! - Commands: Document mutation operations
 
 pub mod commands;
+pub mod compositor;
 pub mod document;
 pub mod dto;
 pub mod error;
@@ -24,6 +25,7 @@ pub mod types;
 
 // Public API re-exports
 pub use commands::{add_layer, remove_layer, set_layer_props, reorder_layer, LayerPropsPatch};
+pub use compositor::{blend_tile, composite_tile};
 pub use document::{Document, DocumentHandle};
 pub use error::EngineError;
 pub use filter::{apply_filter_to_tile, FilterInstance, FilterKind, FilterParams};
