@@ -1,0 +1,8 @@
+[package]
+name = "engine-core"
+version = "0.1.0"
+edition = "2021"
+description = "Core data model: Layer, Document, Filter structures"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }

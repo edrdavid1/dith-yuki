@@ -1,0 +1,24 @@
+[package]
+name = "engine-tiles"
+version = "0.1.0"
+edition = "2021"
+description = "Tile cache, pyramid, scheduler — see tile-engine-architecture.md"
+
+[dependencies]
+engine-core = { path = "../engine-core" }
+serde = { version = "1.0", features = ["derive"] }
+rayon = "1.7"
+dashmap = "5.5"
+crossbeam = "0.8"
+crossbeam-channel = "0.5"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "pyramid_bench"
+harness = false
+
+[[bench]]
+name = "cache_bench"
+harness = false
