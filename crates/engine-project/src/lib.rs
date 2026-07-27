@@ -16,6 +16,7 @@ pub mod document;
 pub mod dto;
 pub mod error;
 pub mod filter;
+pub mod filters;
 pub mod invalidation;
 pub mod layer;
 pub mod mask;

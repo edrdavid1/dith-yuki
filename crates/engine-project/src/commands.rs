@@ -16,25 +16,13 @@ use engine_tiles::TileCache;
 /// Mutation patch for layer properties.
 ///
 /// All fields are optional; only set values are applied.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct LayerPropsPatch {
     pub name: Option<String>,
     pub opacity: Option<f32>,
     pub blend_mode: Option<BlendMode>,
     pub visible: Option<bool>,
     pub offset: Option<(i32, i32)>,
-}
-
-impl Default for LayerPropsPatch {
-    fn default() -> Self {
-        LayerPropsPatch {
-            name: None,
-            opacity: None,
-            blend_mode: None,
-            visible: None,
-            offset: None,
-        }
-    }
 }
 
 /// Add a new layer to the document.
@@ -161,12 +149,10 @@ pub fn reorder_layer(
             // Insert at new position
             if let Some(parent_id) = new_parent {
                 insert_layer_into_parent(&mut doc.root, parent_id, removed_node, new_index);
+            } else if new_index <= doc.root.len() {
+                doc.root.insert(new_index, removed_node);
             } else {
-                if new_index <= doc.root.len() {
-                    doc.root.insert(new_index, removed_node);
-                } else {
-                    doc.root.push(removed_node);
-                }
+                doc.root.push(removed_node);
             }
         }
 
@@ -252,6 +238,7 @@ fn remove_layer_from_tree_vec(nodes: &mut Vec<LayerNode>, layer_id: LayerId) -> 
 }
 
 // Helper: Insert layer into parent group
+#[allow(clippy::ptr_arg)]
 fn insert_layer_into_parent(
     nodes: &mut Vec<LayerNode>,
     parent_id: LayerId,
