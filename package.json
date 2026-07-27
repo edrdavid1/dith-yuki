@@ -1,0 +1,23 @@
+{
+  "name": "dither",
+  "version": "0.1.0",
+  "description": "Tile-based image processing engine with desktop UI",
+  "type": "module",
+  "scripts": {
+    "dev": "npm run dev --workspace=frontend",
+    "build": "npm run build --workspace=frontend",
+    "preview": "npm run preview --workspace=frontend",
+    "tauri": "tauri",
+    "tauri:dev": "npm run build --workspace=frontend && tauri dev",
+    "tauri:build": "npm run build --workspace=frontend && tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^1.5.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^1.5.0"
+  },
+  "workspaces": [
+    "frontend"
+  ]
+}

@@ -1,0 +1,8 @@
+[package]
+name = "engine-color"
+version = "0.1.0"
+edition = "2021"
+description = "ICC profiles, LUT, linear color space conversions"
+
+[dependencies]
+engine-core = { path = "../engine-core" }

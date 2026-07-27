@@ -1,0 +1,8 @@
+[package]
+name = "engine-io"
+version = "0.1.0"
+edition = "2021"
+description = "Image codecs (PNG, JPEG, WebP), video decoding (ffmpeg)"
+
+[dependencies]
+engine-core = { path = "../engine-core" }
