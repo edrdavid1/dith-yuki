@@ -174,7 +174,7 @@ mod tests {
     fn filter_to_dto_serializes() {
         let filter = crate::filter::FilterInstance::new(
             crate::filter::FilterKind::Curves,
-            crate::filter::FilterParams::Curves { curve: vec![] },
+            crate::filter::FilterParams::Curves { curve: vec![], channel: crate::filters::curves::CurveChannel::All },
         );
         let dto = filter_to_dto(&filter);
 

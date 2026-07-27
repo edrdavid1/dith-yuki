@@ -266,7 +266,7 @@ mod tests {
         let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, 256, 256);
         let filter = crate::filter::FilterInstance::new(
             crate::filter::FilterKind::Curves,
-            crate::filter::FilterParams::Curves { curve: vec![] },
+            crate::filter::FilterParams::Curves { curve: vec![], channel: crate::filters::curves::CurveChannel::All },
         );
         let filter_id = filter.id;
         layer.filters.push(filter);
