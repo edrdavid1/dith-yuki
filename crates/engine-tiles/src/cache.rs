@@ -19,7 +19,8 @@
 //! When the cache exceeds its memory budget, the least-recently-used tile is evicted.
 //! Dirty tiles remain in the cache (marked but not deleted) for instant feedback.
 
-use crate::{TileKey, PixelTile};
+use crate::{TileCoord, TileKey, PixelTile};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Instant;
@@ -221,6 +222,79 @@ impl TileCache {
         }
     }
 
+    /// Evict least-recently-used tiles while preserving viewport tiles.
+    ///
+    /// Like `evict_if_over_budget`, but skips any tile whose `TileCoord` is in the
+    /// provided viewport set. Tiles at different stages (Raw, Processed, Composite)
+    /// sharing a coord that overlaps the viewport are all preserved.
+    ///
+    /// If the budget is exceeded but all remaining tiles are viewport tiles,
+    /// eviction stops and the cache is allowed to remain over-budget.
+    ///
+    /// # Arguments
+    ///
+    /// - `viewport_tiles`: The set of TileCoords that must be preserved (visible in the viewport
+    ///   at the active pyramid level)
+    ///
+    /// # Notes
+    ///
+    /// - Viewport tiles that are popped from the LRU queue are re-enqueued to maintain
+    ///   their presence in future eviction runs.
+    /// - If a key popped from the LRU queue is no longer in the cache (already removed),
+    ///   it is simply discarded without affecting `used_bytes`.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use std::collections::HashSet;
+    /// let mut viewport = HashSet::new();
+    /// viewport.insert(TileCoord { level: 0, x: 0, y: 0 });
+    /// cache.evict_preserving_viewport(&viewport);
+    /// ```
+    pub fn evict_preserving_viewport(&self, viewport_tiles: &HashSet<TileCoord>) {
+        let used = self.used_bytes.load(Ordering::Relaxed);
+        let budget = self.budget_bytes.load(Ordering::Relaxed);
+
+        if used <= budget {
+            return;
+        }
+
+        // Track viewport tiles we skip so we can re-enqueue them.
+        let mut skipped: Vec<TileKey> = Vec::new();
+        // Limit iterations to prevent infinite looping if all tiles are viewport tiles.
+        let max_iterations = self.entries.len();
+        let mut iterations = 0;
+
+        while self.used_bytes.load(Ordering::Relaxed) > budget {
+            iterations += 1;
+            if iterations > max_iterations {
+                // All remaining tiles are viewport tiles; allow over-budget.
+                break;
+            }
+
+            match self.lru_queue.pop() {
+                Some(key) => {
+                    if viewport_tiles.contains(&key.coord) {
+                        // This tile overlaps the viewport — skip eviction, re-enqueue later.
+                        skipped.push(key);
+                    } else if self.entries.remove(&key).is_some() {
+                        self.used_bytes.fetch_sub(TILE_BYTES, Ordering::Relaxed);
+                    }
+                    // If the key wasn't in the cache (already removed), just skip it.
+                }
+                None => {
+                    // LRU queue is empty; nothing left to evict.
+                    break;
+                }
+            }
+        }
+
+        // Re-enqueue skipped viewport tiles so they remain in the LRU queue.
+        for key in skipped {
+            self.lru_queue.push(key);
+        }
+    }
+
     /// Get the current memory usage in bytes.
     ///
     /// # Returns
@@ -248,6 +322,48 @@ impl TileCache {
         self.entries.len()
     }
 
+    /// Insert or replace a tile entry, marking it as not dirty.
+    ///
+    /// Unlike `get_or_insert`, this always overwrites any existing entry with the new tile.
+    /// Used by the worker loop after computing a fresh tile to replace a stale/dirty entry.
+    ///
+    /// # Arguments
+    ///
+    /// - `key`: The TileKey identifying this tile
+    /// - `tile`: The freshly computed pixel data to cache
+    ///
+    /// # Notes
+    ///
+    /// If the key already exists, the existing entry is replaced in-place (no net memory change).
+    /// If the key is new, `used_bytes` is incremented and the key is added to the LRU queue.
+    pub fn insert_fresh(&self, key: TileKey, tile: Arc<PixelTile>) {
+        if self.entries.contains_key(&key) {
+            // Replace existing entry in-place
+            self.entries.insert(
+                key,
+                CacheEntry {
+                    tile,
+                    generation: 0,
+                    last_touched: Instant::now(),
+                    dirty: AtomicBool::new(false),
+                },
+            );
+        } else {
+            // New entry
+            self.entries.insert(
+                key,
+                CacheEntry {
+                    tile,
+                    generation: 0,
+                    last_touched: Instant::now(),
+                    dirty: AtomicBool::new(false),
+                },
+            );
+            self.used_bytes.fetch_add(TILE_BYTES, Ordering::Relaxed);
+            self.lru_queue.push(key);
+        }
+    }
+
     /// Retrieve a tile entry without modifying it.
     ///
     /// Useful for testing and inspection. Returns a reference to the entry if it exists.
@@ -260,7 +376,7 @@ impl TileCache {
     ///
     /// An Option containing a reference to the entry if found.
     #[allow(dead_code)]
-    pub(crate) fn get_entry(&self, key: TileKey) -> Option<Arc<PixelTile>> {
+    pub fn get_entry(&self, key: TileKey) -> Option<Arc<PixelTile>> {
         self.entries.get(&key).map(|e| e.tile.clone())
     }
 }
@@ -419,5 +535,120 @@ mod tests {
         // (256 + 2*2)^2 * 4 * 4 = 260^2 * 16 = 67,600 * 16 = 1,081,600
         assert_eq!(TILE_BYTES, 260 * 260 * 16);
         assert_eq!(TILE_BYTES, 1_081_600);
+    }
+
+    // --- evict_preserving_viewport tests ---
+
+    #[test]
+    fn evict_preserving_viewport_skips_viewport_tiles() {
+        // Budget for 1 tile, insert 2. The viewport tile should be preserved.
+        let cache = TileCache::new(TILE_BYTES);
+        let key1 = make_key(0, 0, 0); // Will be in viewport
+        let key2 = make_key(0, 1, 0); // Not in viewport
+        let tile1 = Arc::new(PixelTile::new());
+        let tile2 = Arc::new(PixelTile::new());
+
+        cache.get_or_insert(key1, tile1);
+        cache.get_or_insert(key2, tile2);
+        assert_eq!(cache.entry_count(), 2);
+
+        let mut viewport = std::collections::HashSet::new();
+        viewport.insert(TileCoord { level: 0, x: 0, y: 0 });
+
+        cache.evict_preserving_viewport(&viewport);
+
+        // key1 (viewport tile) should be preserved, key2 evicted
+        assert!(cache.entries.contains_key(&key1));
+        assert!(!cache.entries.contains_key(&key2));
+        assert_eq!(cache.entry_count(), 1);
+        assert_eq!(cache.used_bytes_count(), TILE_BYTES);
+    }
+
+    #[test]
+    fn evict_preserving_viewport_allows_over_budget_when_all_viewport() {
+        // Budget for 1 tile, insert 2 tiles both in viewport.
+        // Should allow over-budget since all are viewport tiles.
+        let cache = TileCache::new(TILE_BYTES);
+        let key1 = make_key(0, 0, 0);
+        let key2 = make_key(0, 1, 0);
+        let tile1 = Arc::new(PixelTile::new());
+        let tile2 = Arc::new(PixelTile::new());
+
+        cache.get_or_insert(key1, tile1);
+        cache.get_or_insert(key2, tile2);
+
+        let mut viewport = std::collections::HashSet::new();
+        viewport.insert(TileCoord { level: 0, x: 0, y: 0 });
+        viewport.insert(TileCoord { level: 0, x: 1, y: 0 });
+
+        cache.evict_preserving_viewport(&viewport);
+
+        // Both tiles should be preserved (over-budget allowed)
+        assert_eq!(cache.entry_count(), 2);
+        assert_eq!(cache.used_bytes_count(), 2 * TILE_BYTES);
+        assert!(cache.entries.contains_key(&key1));
+        assert!(cache.entries.contains_key(&key2));
+    }
+
+    #[test]
+    fn evict_preserving_viewport_preserves_all_stages_of_viewport_coord() {
+        // Budget for 2 tiles, insert 3: two are different stages of the same viewport coord.
+        let cache = TileCache::new(2 * TILE_BYTES);
+        let coord = TileCoord { level: 0, x: 0, y: 0 };
+
+        let key_raw = TileKey { layer: 0, coord, stage: CacheStage::Raw };
+        let key_processed = TileKey { layer: 0, coord, stage: CacheStage::Processed };
+        let key_other = TileKey {
+            layer: 0,
+            coord: TileCoord { level: 0, x: 5, y: 5 },
+            stage: CacheStage::Raw,
+        };
+
+        cache.get_or_insert(key_raw, Arc::new(PixelTile::new()));
+        cache.get_or_insert(key_processed, Arc::new(PixelTile::new()));
+        cache.get_or_insert(key_other, Arc::new(PixelTile::new()));
+        assert_eq!(cache.entry_count(), 3);
+
+        let mut viewport = std::collections::HashSet::new();
+        viewport.insert(coord);
+
+        cache.evict_preserving_viewport(&viewport);
+
+        // Both stages of the viewport coord should be preserved
+        assert!(cache.entries.contains_key(&key_raw));
+        assert!(cache.entries.contains_key(&key_processed));
+        // The other tile should be evicted
+        assert!(!cache.entries.contains_key(&key_other));
+        assert_eq!(cache.entry_count(), 2);
+    }
+
+    #[test]
+    fn evict_preserving_viewport_no_eviction_when_under_budget() {
+        let cache = TileCache::new(10_000_000);
+        let key = make_key(0, 0, 0);
+        cache.get_or_insert(key, Arc::new(PixelTile::new()));
+
+        let viewport = std::collections::HashSet::new();
+        cache.evict_preserving_viewport(&viewport);
+
+        assert_eq!(cache.entry_count(), 1);
+    }
+
+    #[test]
+    fn evict_preserving_viewport_empty_viewport_evicts_normally() {
+        // No viewport tiles means everything is evictable.
+        let cache = TileCache::new(TILE_BYTES);
+        let key1 = make_key(0, 0, 0);
+        let key2 = make_key(0, 1, 0);
+
+        cache.get_or_insert(key1, Arc::new(PixelTile::new()));
+        cache.get_or_insert(key2, Arc::new(PixelTile::new()));
+
+        let viewport = std::collections::HashSet::new();
+        cache.evict_preserving_viewport(&viewport);
+
+        // Should evict until under budget (1 tile remains)
+        assert_eq!(cache.entry_count(), 1);
+        assert_eq!(cache.used_bytes_count(), TILE_BYTES);
     }
 }
