@@ -59,6 +59,24 @@ pub struct GenerationTracker {
     pub layer_gen: DashMap<LayerId, u64>,
 }
 
+impl Clone for GenerationTracker {
+    fn clone(&self) -> Self {
+        GenerationTracker {
+            document_gen: AtomicU64::new(self.document_gen.load(Ordering::SeqCst)),
+            layer_gen: self.layer_gen.clone(),
+        }
+    }
+}
+
+impl std::fmt::Debug for GenerationTracker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GenerationTracker")
+            .field("document_gen", &self.document_gen.load(Ordering::SeqCst))
+            .field("layer_gen_count", &self.layer_gen.len())
+            .finish()
+    }
+}
+
 impl GenerationTracker {
     /// Creates a new generation tracker with all counters initialized to 0.
     ///
