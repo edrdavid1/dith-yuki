@@ -173,34 +173,26 @@ fn apply_layer_mask(
 
 /// Per-pixel blending of src tile onto dst tile using blend mode and opacity.
 /// Operates in linear f32 RGBA color space with Porter-Duff "over" compositing.
+/// Uses row-based SIMD processing for the main tile region.
 pub fn blend_tile(dst: &mut PixelTile, src: &PixelTile, mode: BlendMode, opacity: f32) {
+    use crate::simd::blend_row_simd;
+
+    let size = (TILE_SIZE + 2 * HALO) as usize; // 260
     for y in HALO..(HALO + TILE_SIZE) {
-        for x in HALO..(HALO + TILE_SIZE) {
-            let src_a = src.at(x, y, 3) * opacity;
-            if src_a < 1e-6 {
-                continue; // fully transparent source pixel, skip
-            }
-
-            let dst_a = dst.at(x, y, 3);
-
-            for c in 0..3 {
-                // RGB channels
-                let s = src.at(x, y, c);
-                let d = dst.at(x, y, c);
-                let blended = apply_blend_mode(mode, s, d);
-                // Porter-Duff "over" compositing
-                let out = blended * src_a + d * dst_a * (1.0 - src_a);
-                dst.set(x, y, c, out);
-            }
-            // Alpha channel: standard "over"
-            let out_a = src_a + dst_a * (1.0 - src_a);
-            dst.set(x, y, 3, out_a);
-        }
+        let row_start = (y as usize * size + HALO as usize) * 4;
+        let row_end = row_start + (TILE_SIZE as usize) * 4;
+        blend_row_simd(
+            &mut dst.data[row_start..row_end],
+            &src.data[row_start..row_end],
+            mode,
+            opacity,
+        );
     }
 }
 
 /// Apply a single blend mode formula per channel.
 /// All formulas operate on linear f32 values in [0, 1].
+#[cfg(test)]
 fn apply_blend_mode(mode: BlendMode, src: f32, dst: f32) -> f32 {
     match mode {
         BlendMode::Normal => src,
@@ -252,6 +244,36 @@ fn apply_blend_mode(mode: BlendMode, src: f32, dst: f32) -> f32 {
         BlendMode::Exclusion => src + dst - 2.0 * src * dst,
         // Reserved modes default to Normal behavior
         _ => src,
+    }
+}
+
+/// Reference implementation of `blend_tile` preserved for property-based testing.
+/// This is an exact copy of the current `blend_tile` implementation at the time of snapshotting.
+/// Used to verify that optimized versions produce identical output.
+#[cfg(test)]
+pub fn reference_blend_tile(dst: &mut PixelTile, src: &PixelTile, mode: BlendMode, opacity: f32) {
+    for y in HALO..(HALO + TILE_SIZE) {
+        for x in HALO..(HALO + TILE_SIZE) {
+            let src_a = src.at(x, y, 3) * opacity;
+            if src_a < 1e-6 {
+                continue; // fully transparent source pixel, skip
+            }
+
+            let dst_a = dst.at(x, y, 3);
+
+            for c in 0..3 {
+                // RGB channels
+                let s = src.at(x, y, c);
+                let d = dst.at(x, y, c);
+                let blended = apply_blend_mode(mode, s, d);
+                // Porter-Duff "over" compositing
+                let out = blended * src_a + d * dst_a * (1.0 - src_a);
+                dst.set(x, y, c, out);
+            }
+            // Alpha channel: standard "over"
+            let out_a = src_a + dst_a * (1.0 - src_a);
+            dst.set(x, y, 3, out_a);
+        }
     }
 }
 

@@ -1,0 +1,13 @@
+# Add directories or file patterns to ignore during indexing (e.g. foo/ or *.csv)
+
+# Игнорируем сборку Rust бэкенда
+target/
+src-tauri/target/
+
+# Игнорируем зависимости веб-фронтенда
+node_modules/
+
+# Игнорируем файлы финальной сборки и кэш
+dist/
+.git/
+.cargo/

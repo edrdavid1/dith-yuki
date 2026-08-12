@@ -1,0 +1,59 @@
+/* ─── Design tokens (shared across main window and floating panels) ─────────── */
+
+:root {
+  /* ─── Core palette ─── */
+  --color-gray: #CDCDCD;
+  --color-dark-gray: #999;
+  --color-black: #000;
+  --color-white: #FFF;
+  --color-primary: #8181FF;
+
+  /* ─── Semantic tokens ─── */
+  --bg-window: var(--color-gray);
+  --bg-titlebar: var(--color-gray);
+  --bg-input: var(--color-white);
+  --bg-slider-track: var(--color-dark-gray);
+  --border-color: var(--color-black);
+  --text-color: var(--color-black);
+  --text-label: var(--color-black);
+
+  /* ─── Hover ─── */
+  --bg-hover: var(--color-gray);
+  --bg-hover-accent: var(--color-primary);
+  --bg-hover-inverted: var(--color-black);
+  --bg-hover-muted: #d0d0d0;
+  --bg-hover-subtle: rgba(0, 0, 0, 0.08);
+  --bg-hover-danger: #fdd;
+  --bg-hover-control-close: #e81123;
+  --bg-hover-picker: #bbb;
+  --bg-hover-picker-confirm: #7a3b9a;
+  --bg-hover-surface: var(--bg-input);
+  --bg-hover-track: var(--color-dark-gray);
+  --bg-hover-none: transparent;
+
+  --color-hover: var(--color-black);
+  --color-hover-inverted: var(--color-white);
+  --color-hover-accent: var(--color-primary);
+  --color-hover-danger: #c00;
+  --color-hover-control-close: var(--color-white);
+  --color-hover-reset: var(--text-color);
+
+  /* ─── Border system (retro Mac OS: uniform 1.5px) ─── */
+  --border-width: 1.5px;
+  --border: var(--border-width) solid var(--border-color);
+  --border-dashed: var(--border-width) dashed var(--border-color);
+
+  /* 3D bevel depth matches border width */
+  --bevel-size: var(--border-width);
+  --shadow-inset-dark: inset calc(-1 * var(--bevel-size)) calc(-1 * var(--bevel-size)) 0 0 var(--color-black);
+  --shadow-inset-light: inset var(--bevel-size) var(--bevel-size) 0 0 var(--color-white);
+  --shadow-outset-dark: inset var(--bevel-size) var(--bevel-size) 0 0 var(--color-black);
+  --shadow-outset-light: inset calc(-1 * var(--bevel-size)) calc(-1 * var(--bevel-size)) 0 0 var(--color-white);
+
+  /* Sunken input field bevel (inverted) */
+  --shadow-field: inset calc(-1 * var(--bevel-size)) calc(-1 * var(--bevel-size)) 0 0 var(--color-white),
+                  inset var(--bevel-size) var(--bevel-size) 0 0 var(--color-black);
+
+  --font-family: 'ChicagoFLF', 'Geneva', 'Chicago', monospace;
+  --radius: 0px;
+}

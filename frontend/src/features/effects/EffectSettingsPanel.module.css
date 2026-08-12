@@ -1,0 +1,112 @@
+/* ─── Effect Chooser Inline (in sidebar, when no layer selected) ───────────── */
+
+.effect-chooser-panel {
+  background: var(--bg-window);
+  border: var(--border);
+}
+
+/* When in floating window, use no border */
+:global([data-floating-panel-content]) .effect-chooser-panel {
+  border: none;
+}
+
+.effect-chooser-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 0;
+  align-items: center;
+}
+
+.effect-chooser-row {
+  display: flex;
+  align-items: center;
+  height: 35px;
+  width: calc(100% - 20px);
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.effect-chooser-row:hover .effect-chooser-row-icon,
+.effect-chooser-row:hover .effect-chooser-row-label {
+  background: var(--bg-hover);
+}
+
+.effect-chooser-row:active .effect-chooser-row-label {
+
+}
+
+.effect-chooser-row-icon {
+  width: 35px;
+  height: 35px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-window);
+  position: relative;
+  box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+}
+
+.effect-chooser-row-label {
+  flex: 1;
+  height: 35px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  background: var(--bg-window);
+  position: relative;
+  box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+  font-family: var(--font-family);
+  font-size: 16px;
+  color: var(--text-color);
+}
+
+.effect-chooser-row:active .effect-chooser-row-label {
+  box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light);
+}
+
+/* ─── Effect Settings Panel ────────────────────────────────────────────────── */
+
+.effect-settings-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-window);
+  border: var(--border);
+}
+
+/* When in floating window, use no border */
+:global([data-floating-panel-content]) .effect-settings-panel {
+  border: none;
+}
+
+.effect-settings-scroll {
+  flex: 1;
+  min-height: 0;
+}
+
+.effect-settings-scroll :global(.simplebar-scrollable-y .simplebar-content-wrapper) {
+  padding-right: 13px !important;
+}
+
+.effect-settings-body {
+  padding: 10px;
+}
+
+.effect-settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.effect-palette-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--color-dark-gray);
+}

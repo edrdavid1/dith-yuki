@@ -1,0 +1,117 @@
+/* Native/OS window chrome — kept GLOBAL (not CSS modules):
+   -webkit-app-region hit-testing, #overlay-portal, titlebar height token.
+   AppTitlebar / WindowControls / WindowShell use these class names directly.
+*/
+
+/* src/styles/titlebar.css */
+
+:root {
+  --titlebar-height: 32px; /* logical CSS pixels — NOT device pixels */
+}
+
+/* ─── WindowShell ─────────────────────────────────────────────────────────── */
+
+.window-shell {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.content-area {
+  flex: 1;
+  position: relative;
+  overflow-y: hidden;
+  overflow-x: hidden;
+  min-height: 0;
+  /* Isolate stacking context so GPU-composited canvas layers inside
+     cannot interfere with the titlebar's hit-testing on macOS (WKWebView). */
+  isolation: isolate;
+  z-index: 1;
+}
+
+/* ─── AppTitlebar ─────────────────────────────────────────────────────────── */
+
+.app-titlebar {
+  height: var(--titlebar-height);
+  min-height: var(--titlebar-height);
+  max-height: var(--titlebar-height);
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  background: #999999;
+  border-bottom: var(--border-width) solid var(--color-dark-gray);
+  user-select: none;
+  position: relative;
+  z-index: 9999;
+  pointer-events: auto;
+}
+
+/* macOS: native drag hint (applied inline via style prop for platform specificity) */
+/* -webkit-app-region: drag is set inline on macOS only */
+
+/* No-drag zones inside the titlebar */
+.app-titlebar button,
+.app-titlebar input,
+.app-titlebar select,
+.app-titlebar [data-tauri-drag-region="false"] {
+  -webkit-app-region: no-drag;
+}
+
+.app-titlebar-title {
+  font-size: 12px;
+  font-family: var(--font-family, 'ChicagoFLF', monospace);
+  flex: 1;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* ─── WindowControls (Windows/Linux) ──────────────────────────────────────── */
+
+.window-controls {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-left: auto;
+  height: 100%;
+}
+
+.window-control-btn {
+  width: 46px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #333;
+  transition: background 0.1s;
+}
+
+.window-control-btn:hover {
+  background: var(--bg-hover-subtle);
+}
+
+.window-control-close:hover {
+  background: var(--bg-hover-control-close);
+  color: var(--color-hover-control-close);
+}
+
+/* ─── Overlay Portal ──────────────────────────────────────────────────────── */
+
+#overlay-portal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  z-index: 99999;
+  pointer-events: none;
+}
+
+#overlay-portal > * {
+  pointer-events: auto;
+}

@@ -14,6 +14,7 @@ crossbeam-channel = "0.5"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1"
 
 [[bench]]
 name = "pyramid_bench"
@@ -21,4 +22,8 @@ harness = false
 
 [[bench]]
 name = "cache_bench"
+harness = false
+
+[[bench]]
+name = "pipeline_bench"
 harness = false

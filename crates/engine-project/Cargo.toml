@@ -6,13 +6,27 @@ description = "Document model, layers, filters, masks"
 
 [dependencies]
 engine-core = { path = "../engine-core" }
+engine-color = { path = "../engine-color" }
 engine-tiles = { path = "../engine-tiles" }
+engine-gpu = { path = "../engine-gpu" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 arc-swap = "1.6"
 dashmap = "5.5"
 thiserror = "1.0"
 uuid = { version = "1.0", features = ["v4", "serde"] }
+wide = "0.7"
+rayon = "1.7"
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
+proptest = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "compositor_bench"
+harness = false
+
+[[bench]]
+name = "filter_bench"
+harness = false

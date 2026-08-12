@@ -1,0 +1,35 @@
+/* ─── SimpleBar Custom Scrollbar (Retro Mac OS style) ──────────────────────── */
+
+.simplebar-scrollbar::before {
+  background: var(--color-gray) !important;
+  border-radius: 0 !important;
+  opacity: 1 !important;
+  left: 0 !important;
+  right: 0 !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  border-top: var(--border-width) solid var(--color-white) !important;
+  border-left: var(--border-width) solid var(--color-white) !important;
+  border-bottom: var(--border-width) solid var(--color-black) !important;
+  border-right: var(--border-width) solid var(--color-black) !important;
+}
+
+.simplebar-scrollbar.simplebar-visible::before {
+  opacity: 1 !important;
+}
+
+.simplebar-track {
+  background: var(--color-dark-gray) !important;
+  border-radius: 0 !important;
+  border-left: var(--border);
+}
+
+.simplebar-track.simplebar-vertical {
+  width: 13px !important;
+  right: 0;
+}
+
+.simplebar-track.simplebar-horizontal {
+  height: 13px !important;
+  bottom: 0;
+}

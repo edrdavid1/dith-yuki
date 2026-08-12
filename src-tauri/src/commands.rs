@@ -7,7 +7,7 @@
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use engine_project::{
     document::DocumentHandle,
@@ -18,6 +18,9 @@ use engine_project::{
 };
 use engine_tiles::{PixelTile, TileCache, Scheduler};
 use engine_tiles::{CacheStage, Priority, RecomputeTask, TileKey};
+
+use crate::panel_manager::PanelManager;
+use crate::worker::WorkerWake;
 
 // ============================================================================
 // Data Structures for Command Arguments
@@ -91,17 +94,161 @@ pub struct DocumentResponse {
 // ViewportState is defined in the viewport module.
 pub use crate::viewport::ViewportState;
 
+/// Cross-window selection state. Updated via selection-changed events.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SelectionState {
+    pub selected_layer_id: Option<u32>,
+    pub selected_filter_id: Option<String>,
+}
+
+/// Payload emitted with the `selection-changed` Tauri event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SelectionChangedPayload {
+    pub selected_layer_id: Option<u32>,
+    pub selected_filter_id: Option<String>,
+}
+
 /// Shared application state for Tauri commands.
 pub struct AppState {
     pub document_handle: DocumentHandle,
     pub tile_cache: TileCache,
     pub scheduler: Scheduler,
     pub viewport: Mutex<ViewportState>,
+    pub worker_wake: WorkerWake,
+    pub palette_cache: engine_color::palette_cache::PaletteKdCache,
+    pub palette_lut_cache: engine_color::palette_lut::PaletteLutCache,
+    pub threshold_cache: engine_color::threshold_map::ThresholdMapCache,
+    pub error_residuals: engine_project::filters::ErrorResidualsStore,
+    pub block_representatives: engine_tiles::BlockRepresentativeCache,
+    /// Track A: silent-skip diagnosis counter (left/top raw missing).
+    pub diffusion_skip_counter: crate::diffusion_waiters::DiffusionSkipCounter,
+    /// Track A: pending waiters contract (helpers + tests; prod wake optional).
+    pub pending_diffusion_waiters: crate::diffusion_waiters::PendingDiffusionWaiters,
+    /// Track D: optional GPU compute context (None = CPU-only / no adapter).
+    pub gpu: Option<std::sync::Arc<engine_gpu::GpuContext>>,
+    pub panel_manager: Mutex<PanelManager>,
+    pub selection: Mutex<SelectionState>,
+    pub dock_affinity: Mutex<crate::dock_affinity::DockAffinityController>,
+    /// Cancels the active global mouseup watcher (set on end/cancel).
+    pub float_drag_mouseup_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Keeps macOS NSEvent monitors alive for the active float-drag session.
+    pub float_drag_mouseup_hook: Mutex<Option<crate::global_mouseup::MouseUpHook>>,
 }
 
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/// Payload for the document-changed event.
+#[derive(Debug, Clone, Serialize)]
+pub struct DocumentChangedPayload {
+    pub kind: String,
+    pub layer_id: Option<u32>,
+}
+
+/// Helper to emit document-changed to all windows.
+fn emit_document_changed(app_handle: &AppHandle, kind: &str, layer_id: Option<u32>) {
+    let _ = app_handle.emit("document-changed", DocumentChangedPayload {
+        kind: kind.to_string(),
+        layer_id,
+    });
+}
+
+/// Parse a 6-character hex string to LinearColor.
+/// Case-insensitive. Returns Err for invalid format.
+fn hex_to_linear(hex: &str) -> Result<engine_color::palette::LinearColor, String> {
+    use engine_color::palette::{srgb_to_linear, LinearColor};
+
+    if hex.len() != 6 {
+        return Err("Hex color must be exactly 6 characters".to_string());
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16)
+        .map_err(|_| "Invalid hex character in red channel".to_string())?;
+    let g = u8::from_str_radix(&hex[2..4], 16)
+        .map_err(|_| "Invalid hex character in green channel".to_string())?;
+    let b = u8::from_str_radix(&hex[4..6], 16)
+        .map_err(|_| "Invalid hex character in blue channel".to_string())?;
+    Ok(LinearColor {
+        r: srgb_to_linear(r),
+        g: srgb_to_linear(g),
+        b: srgb_to_linear(b),
+    })
+}
+
+/// Convert LinearColor to 6-character uppercase hex string.
+fn linear_to_hex(color: &engine_color::palette::LinearColor) -> String {
+    use engine_color::palette::linear_to_srgb;
+
+    let r = linear_to_srgb(color.r);
+    let g = linear_to_srgb(color.g);
+    let b = linear_to_srgb(color.b);
+    format!("{:02X}{:02X}{:02X}", r, g, b)
+}
+
+/// Recursively find all layer IDs whose filters reference the given palette.
+///
+/// Walks the layer tree (including nested groups) and checks each layer's filter
+/// stack for DitherV2 filters with a matching `palette_id` or PaletteQuantize
+/// filters referencing the given palette.
+fn find_layers_referencing_palette(
+    nodes: &[engine_project::layer::LayerNode],
+    palette_id: engine_project::types::PaletteId,
+) -> Vec<engine_project::types::LayerId> {
+    use engine_project::filter::FilterParams;
+    use engine_project::layer::LayerNode;
+
+    let mut result = Vec::new();
+    for node in nodes {
+        match node {
+            LayerNode::Leaf(layer) => {
+                let references_palette = layer.filters.iter().any(|filter| {
+                    match &filter.params {
+                        FilterParams::DitherV2(params) => params.palette_id == Some(palette_id),
+                        FilterParams::PaletteQuantize { palette_id: pid, .. } => *pid == palette_id,
+                        _ => false,
+                    }
+                });
+                if references_palette {
+                    result.push(layer.id);
+                }
+            }
+            LayerNode::Group(group) => {
+                // Recurse into group children
+                let mut child_results = find_layers_referencing_palette(&group.children, palette_id);
+                result.append(&mut child_results);
+            }
+        }
+    }
+    result
+}
+
+/// Invalidate all layers whose filters reference the given palette_id.
+///
+/// Steps:
+/// 1. Snapshot document
+/// 2. Walk layer tree, find filters with matching palette_id
+/// 3. For each affected layer, fire InvalidationEvent::LayerFilterChanged
+/// 4. Schedule dirty viewport tiles
+///
+/// If no FilterInstance references the modified PaletteId, this is a no-op.
+/// Does not block on tile recomputation; invalidation and scheduling complete synchronously.
+fn invalidate_palette_changed(palette_id: engine_project::types::PaletteId, state: &AppState) {
+    let snapshot = state.document_handle.snapshot();
+    let affected_layers = find_layers_referencing_palette(&snapshot.root, palette_id);
+
+    for layer_id in &affected_layers {
+        engine_tiles::invalidation::invalidate(
+            &state.tile_cache,
+            engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
+                layer: layer_id.0,
+            },
+        );
+    }
+
+    if !affected_layers.is_empty() {
+        schedule_dirty_viewport_tiles(state);
+    }
+}
 
 // ============================================================================
 // Tauri Commands
@@ -192,6 +339,7 @@ fn layer_node_to_flat_dto(node: &engine_project::LayerNode) -> LayerNodeDto {
 #[tauri::command]
 pub fn add_layer(
     req: AddLayerRequest,
+    app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<LayerIdResponse, String> {
     let kind = match req.kind.as_str() {
@@ -215,7 +363,10 @@ pub fn add_layer(
     };
 
     match engine_commands::add_layer(&state.document_handle, &state.tile_cache, doc_id, args) {
-        Ok(layer_id) => Ok(LayerIdResponse { layer_id: layer_id.0 }),
+        Ok(layer_id) => {
+            emit_document_changed(&app_handle, "layer_added", Some(layer_id.0));
+            Ok(LayerIdResponse { layer_id: layer_id.0 })
+        }
         Err(e) => Err(format!("Failed to add layer: {:?}", e)),
     }
 }
@@ -224,6 +375,7 @@ pub fn add_layer(
 #[tauri::command]
 pub fn remove_layer(
     layer_id: u32,
+    app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     let snapshot = state.document_handle.snapshot();
@@ -236,7 +388,10 @@ pub fn remove_layer(
         doc_id,
         LayerId::new(layer_id),
     ) {
-        Ok(_) => Ok(()),
+        Ok(_) => {
+            emit_document_changed(&app_handle, "layer_removed", Some(layer_id));
+            Ok(())
+        }
         Err(e) => Err(format!("Failed to remove layer: {:?}", e)),
     }
 }
@@ -245,6 +400,7 @@ pub fn remove_layer(
 #[tauri::command]
 pub fn set_layer_props(
     req: SetLayerPropsRequest,
+    app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     let blend_mode = req.blend_mode.as_ref().map(|bm| {
@@ -268,6 +424,8 @@ pub fn set_layer_props(
     // Determine if this is a visual property change (requires Composite scheduling)
     let is_visual_change = req.opacity.is_some() || req.blend_mode.is_some() || req.visible.is_some();
 
+    let layer_id = req.layer_id;
+
     let patch = LayerPropsPatch {
         name: req.name,
         opacity: req.opacity,
@@ -284,7 +442,7 @@ pub fn set_layer_props(
         &state.document_handle,
         &state.tile_cache,
         doc_id,
-        LayerId::new(req.layer_id),
+        LayerId::new(layer_id),
         patch,
     ) {
         Ok(_) => {
@@ -292,6 +450,7 @@ pub fn set_layer_props(
             if is_visual_change {
                 schedule_dirty_viewport_tiles(&state);
             }
+            emit_document_changed(&app_handle, "layer_changed", Some(layer_id));
             Ok(())
         }
         Err(e) => Err(format!("Failed to set layer props: {:?}", e)),
@@ -302,6 +461,7 @@ pub fn set_layer_props(
 #[tauri::command]
 pub fn reorder_layer(
     req: ReorderLayerRequest,
+    app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     let snapshot = state.document_handle.snapshot();
@@ -316,7 +476,10 @@ pub fn reorder_layer(
         req.new_parent.map(LayerId::new),
         req.new_index,
     ) {
-        Ok(_) => Ok(()),
+        Ok(_) => {
+            emit_document_changed(&app_handle, "layer_reordered", None);
+            Ok(())
+        }
         Err(e) => Err(format!("Failed to reorder layer: {:?}", e)),
     }
 }
@@ -354,23 +517,37 @@ pub struct FilterIdResponse {
 #[tauri::command]
 pub fn add_filter(
     req: AddFilterRequest,
+    app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<FilterIdResponse, String> {
     use engine_project::{FilterKind, FilterParams, FilterInstance};
     use engine_project::filters::curves::CurveChannel;
-    use engine_project::filters::dither::DitherAlgorithm;
+    use engine_project::filter::{DitherMode, DiffusionKernel};
     use engine_project::filters::glitch::GlitchType;
     
     let kind = match req.kind.as_str() {
         "Curves" => FilterKind::Curves,
         "Levels" => FilterKind::Levels,
         "Dither" => FilterKind::Dither,
+        "DitherV2" => FilterKind::Dither, // DitherV2 uses Dither kind with DitherV2 params
+        "PaletteQuantize" => FilterKind::PaletteQuantize,
         "Glitch" => FilterKind::Glitch,
+        "Glow" => FilterKind::Glow,
+        "Crt" => FilterKind::Crt,
         _ => return Err("Invalid filter kind".to_string()),
     };
 
     // Parse params based on kind
-    let params = match kind {
+    let params = match req.kind.as_str() {
+        "DitherV2" => {
+            // Parse DitherV2 params from JSON
+            let dither_params: engine_project::filter::DitherParamsV2 =
+                serde_json::from_value(req.params.clone())
+                    .map_err(|e| format!("Invalid DitherV2 params: {}", e))?;
+            dither_params.validate().map_err(|e| format!("{}", e))?;
+            FilterParams::DitherV2(dither_params)
+        }
+        _ => match kind {
         FilterKind::Curves => {
             let channel = match req.params.get("channel").and_then(|v| v.as_str()).unwrap_or("All") {
                 "Red" => CurveChannel::Red,
@@ -413,16 +590,47 @@ pub fn add_filter(
             }
         }
         FilterKind::Dither => {
-            let algorithm = match req.params.get("algorithm").and_then(|v| v.as_str()).unwrap_or("FloydSteinberg") {
-                "Ordered" => DitherAlgorithm::Ordered,
-                "Threshold" => DitherAlgorithm::Threshold,
-                _ => DitherAlgorithm::FloydSteinberg,
+            let mode = match req.params.get("mode").and_then(|v| v.as_str()).unwrap_or("ErrorDiffusion") {
+                "Bayer" => {
+                    let matrix_size = req.params.get("matrix_size").and_then(|v| v.as_u64()).unwrap_or(4) as u8;
+                    DitherMode::Bayer { matrix_size }
+                }
+                "ThresholdMap" => {
+                    let path = req.params.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    DitherMode::ThresholdMap { path }
+                }
+                _ => {
+                    let kernel = match req.params.get("kernel").and_then(|v| v.as_str()).unwrap_or("FloydSteinberg") {
+                        "Atkinson" => DiffusionKernel::Atkinson,
+                        "JarvisJudiceNinke" => DiffusionKernel::JarvisJudiceNinke,
+                        "Stucki" => DiffusionKernel::Stucki,
+                        _ => DiffusionKernel::FloydSteinberg,
+                    };
+                    DitherMode::ErrorDiffusion { kernel }
+                }
             };
             let color_depth = req.params.get("color_depth").and_then(|v| v.as_u64()).unwrap_or(4) as u8;
             if !(1..=8).contains(&color_depth) {
                 return Err("Color depth must be 1-8 bits".to_string());
             }
-            FilterParams::Dither { algorithm, color_depth }
+            FilterParams::Dither { mode, color_depth }
+        }
+        FilterKind::PaletteQuantize => {
+            let palette_id = req.params.get("palette_id").and_then(|v| v.as_u64())
+                .ok_or_else(|| "palette_id is required for PaletteQuantize".to_string())? as u32;
+            let diffusion = req.params.get("diffusion").and_then(|v| v.as_str()).map(|s| {
+                match s {
+                    "Atkinson" => DiffusionKernel::Atkinson,
+                    "JarvisJudiceNinke" => DiffusionKernel::JarvisJudiceNinke,
+                    "Stucki" => DiffusionKernel::Stucki,
+                    "FloydSteinberg" => DiffusionKernel::FloydSteinberg,
+                    _ => DiffusionKernel::FloydSteinberg,
+                }
+            });
+            FilterParams::PaletteQuantize {
+                palette_id: engine_project::PaletteId::new(palette_id),
+                diffusion,
+            }
         }
         FilterKind::Glitch => {
             let glitch_type = match req.params.get("glitch_type").and_then(|v| v.as_str()).unwrap_or("RGBShift") {
@@ -433,8 +641,20 @@ pub fn add_filter(
             let seed = req.params.get("seed").and_then(|v| v.as_u64()).unwrap_or(42);
             FilterParams::Glitch { glitch_type, intensity, seed }
         }
+        FilterKind::Glow => {
+            let radius = req.params.get("radius").and_then(|v| v.as_f64()).unwrap_or(2.0) as f32;
+            let intensity = req.params.get("intensity").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+            let threshold = req.params.get("threshold").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+            FilterParams::Glow { radius, intensity, threshold }
+        }
+        FilterKind::Crt => {
+            let period = req.params.get("period").and_then(|v| v.as_u64()).unwrap_or(2) as u8;
+            let strength = req.params.get("strength").and_then(|v| v.as_f64()).unwrap_or(0.5) as f32;
+            let mask_strength = req.params.get("mask_strength").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+            FilterParams::Crt { period, strength, mask_strength }
+        }
         FilterKind::Placeholder => FilterParams::Placeholder("unknown".to_string()),
-    };
+    } }; // closes inner `match kind` and outer `match req.kind.as_str()`
 
     let filter = FilterInstance::new(kind, params);
     
@@ -446,6 +666,14 @@ pub fn add_filter(
     // Add filter to layer in document
     let layer_id = req.layer_id;
     let mut found = false;
+
+    // Clear error residuals for the affected layer when adding a DitherV2 filter
+    // (Req 10.4: clear on filter parameter change)
+    if matches!(&filter.params, FilterParams::DitherV2(_)) {
+        state.error_residuals.clear();
+        state.block_representatives.clear_dithered();
+    }
+
     state.document_handle.mutate(|doc| {
         // Find layer (recursing into groups) and add filter
         fn find_and_add_filter(nodes: &mut Vec<engine_project::LayerNode>, layer_id: u32, filter: FilterInstance) -> bool {
@@ -477,6 +705,25 @@ pub fn add_filter(
         return Err(format!("Layer {} not found", layer_id));
     }
 
+    // Increment layer generation (requirement 10.1)
+    {
+        let snapshot = state.document_handle.snapshot();
+        snapshot.generations.increment_layer_gen(layer_id);
+    }
+
+    // Invalidate tile cache for the affected layer (Processed + Composite cascade)
+    engine_tiles::invalidation::invalidate(
+        &state.tile_cache,
+        engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
+            layer: layer_id,
+        },
+    );
+
+    // Schedule viewport-visible dirty tiles for immediate recomputation
+    schedule_dirty_viewport_tiles(&state);
+
+    emit_document_changed(&app_handle, "filter_added", Some(layer_id));
+
     Ok(FilterIdResponse { filter_id })
 }
 
@@ -484,6 +731,7 @@ pub fn add_filter(
 #[tauri::command]
 pub fn remove_filter(
     req: RemoveFilterRequest,
+    app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     use engine_tiles::{invalidate, InvalidationEvent};
@@ -533,6 +781,86 @@ pub fn remove_filter(
         InvalidationEvent::LayerFilterChanged { layer: req.layer_id },
     );
 
+    // Schedule viewport-visible dirty tiles for immediate recomputation
+    schedule_dirty_viewport_tiles(&state);
+
+    emit_document_changed(&app_handle, "filter_removed", Some(req.layer_id));
+
+    Ok(())
+}
+
+// ============================================================================
+// Reorder Filter Command
+// ============================================================================
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReorderFilterRequest {
+    pub layer_id: u32,
+    pub filter_id: String,
+    pub new_index: usize,
+}
+
+/// Reorder a filter within a layer's filter stack.
+#[tauri::command]
+pub fn reorder_filter(
+    req: ReorderFilterRequest,
+    app_handle: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    use engine_tiles::{invalidate, InvalidationEvent};
+
+    let mut success = false;
+
+    state.document_handle.mutate(|doc| {
+        fn find_and_reorder(nodes: &mut Vec<engine_project::LayerNode>, layer_id: u32, filter_id: &str, new_index: usize) -> bool {
+            for node in nodes.iter_mut() {
+                match node {
+                    engine_project::LayerNode::Leaf(layer) => {
+                        if layer.id.0 == layer_id {
+                            let current_idx = layer.filters.iter().position(|f| f.id.to_string() == filter_id);
+                            if let Some(idx) = current_idx {
+                                let clamped_new = new_index.min(layer.filters.len() - 1);
+                                if idx != clamped_new {
+                                    let filter = layer.filters.remove(idx);
+                                    layer.filters.insert(clamped_new, filter);
+                                }
+                                return true;
+                            }
+                            return false;
+                        }
+                    }
+                    engine_project::LayerNode::Group(group) => {
+                        if find_and_reorder(&mut group.children, layer_id, filter_id, new_index) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        }
+
+        success = find_and_reorder(&mut doc.root, req.layer_id, &req.filter_id, req.new_index);
+        if success {
+            doc.increment_generation();
+        }
+    });
+
+    if !success {
+        return Err(format!(
+            "Filter '{}' not found on layer {}",
+            req.filter_id, req.layer_id
+        ));
+    }
+
+    // Invalidate and schedule recomputation since filter order affects output
+    invalidate(
+        &state.tile_cache,
+        InvalidationEvent::LayerFilterChanged { layer: req.layer_id },
+    );
+    schedule_dirty_viewport_tiles(&state);
+
+    emit_document_changed(&app_handle, "filter_reordered", Some(req.layer_id));
+
     Ok(())
 }
 
@@ -544,11 +872,12 @@ pub fn remove_filter(
 #[tauri::command]
 pub fn update_filter(
     req: UpdateFilterRequest,
+    app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     use engine_project::{FilterKind, FilterParams, FilterInstance};
     use engine_project::filters::curves::CurveChannel;
-    use engine_project::filters::dither::DitherAlgorithm;
+    use engine_project::filter::{DitherMode, DiffusionKernel};
     use engine_project::filters::glitch::GlitchType;
     use engine_project::types::FilterInstanceId;
 
@@ -559,40 +888,50 @@ pub fn update_filter(
 
     // First, get the filter's kind so we know how to parse params
     let snapshot = state.document_handle.snapshot();
-    let filter_kind = {
+    let (filter_kind, is_dither_v2) = {
         fn find_filter_kind(
             nodes: &[engine_project::LayerNode],
             layer_id: u32,
             filter_id: FilterInstanceId,
-        ) -> Option<FilterKind> {
+        ) -> Option<(FilterKind, bool)> {
             for node in nodes.iter() {
                 match node {
                     engine_project::LayerNode::Leaf(layer) => {
                         if layer.id.0 == layer_id {
                             if let Some(filter) = layer.find_filter(filter_id) {
-                                return Some(filter.kind);
+                                let is_dither_v2 = matches!(&filter.params, FilterParams::DitherV2(_));
+                                return Some((filter.kind, is_dither_v2));
                             }
                         }
                     }
                     engine_project::LayerNode::Group(group) => {
-                        if let Some(kind) = find_filter_kind(&group.children, layer_id, filter_id) {
-                            return Some(kind);
+                        if let Some(result) = find_filter_kind(&group.children, layer_id, filter_id) {
+                            return Some(result);
                         }
                     }
                 }
             }
             None
         }
-        find_filter_kind(&snapshot.root, req.layer_id, filter_id)
+        let (kind, is_dither_v2) = find_filter_kind(&snapshot.root, req.layer_id, filter_id)
             .ok_or_else(|| format!(
                 "Filter {} not found on layer {}",
                 req.filter_id, req.layer_id
-            ))?
+            ))?;
+        (kind, is_dither_v2)
     };
     drop(snapshot);
 
     // Parse new params based on the filter's kind
-    let new_params = match filter_kind {
+    let new_params = if is_dither_v2 || (filter_kind == FilterKind::Dither && req.params.get("levels").is_some()) {
+        // DitherV2 params: parse from JSON directly
+        let dither_params: engine_project::filter::DitherParamsV2 =
+            serde_json::from_value(req.params.clone())
+                .map_err(|e| format!("Invalid DitherV2 params: {}", e))?;
+        dither_params.validate().map_err(|e| format!("{}", e))?;
+        FilterParams::DitherV2(dither_params)
+    } else {
+        match filter_kind {
         FilterKind::Curves => {
             let channel = match req.params.get("channel").and_then(|v| v.as_str()).unwrap_or("All") {
                 "Red" => CurveChannel::Red,
@@ -635,13 +974,43 @@ pub fn update_filter(
             }
         }
         FilterKind::Dither => {
-            let algorithm = match req.params.get("algorithm").and_then(|v| v.as_str()).unwrap_or("FloydSteinberg") {
-                "Ordered" => DitherAlgorithm::Ordered,
-                "Threshold" => DitherAlgorithm::Threshold,
-                _ => DitherAlgorithm::FloydSteinberg,
+            let mode = match req.params.get("mode").and_then(|v| v.as_str()).unwrap_or("ErrorDiffusion") {
+                "Bayer" => {
+                    let matrix_size = req.params.get("matrix_size").and_then(|v| v.as_u64()).unwrap_or(4) as u8;
+                    DitherMode::Bayer { matrix_size }
+                }
+                "ThresholdMap" => {
+                    let path = req.params.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    DitherMode::ThresholdMap { path }
+                }
+                _ => {
+                    let kernel = match req.params.get("kernel").and_then(|v| v.as_str()).unwrap_or("FloydSteinberg") {
+                        "Atkinson" => DiffusionKernel::Atkinson,
+                        "JarvisJudiceNinke" => DiffusionKernel::JarvisJudiceNinke,
+                        "Stucki" => DiffusionKernel::Stucki,
+                        _ => DiffusionKernel::FloydSteinberg,
+                    };
+                    DitherMode::ErrorDiffusion { kernel }
+                }
             };
             let color_depth = req.params.get("color_depth").and_then(|v| v.as_u64()).unwrap_or(4) as u8;
-            FilterParams::Dither { algorithm, color_depth }
+            FilterParams::Dither { mode, color_depth }
+        }
+        FilterKind::PaletteQuantize => {
+            let palette_id = req.params.get("palette_id").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let diffusion = req.params.get("diffusion").and_then(|v| v.as_str()).map(|s| {
+                match s {
+                    "Atkinson" => DiffusionKernel::Atkinson,
+                    "JarvisJudiceNinke" => DiffusionKernel::JarvisJudiceNinke,
+                    "Stucki" => DiffusionKernel::Stucki,
+                    "FloydSteinberg" => DiffusionKernel::FloydSteinberg,
+                    _ => DiffusionKernel::FloydSteinberg,
+                }
+            });
+            FilterParams::PaletteQuantize {
+                palette_id: engine_project::PaletteId::new(palette_id),
+                diffusion,
+            }
         }
         FilterKind::Glitch => {
             let glitch_type = match req.params.get("glitch_type").and_then(|v| v.as_str()).unwrap_or("RGBShift") {
@@ -652,12 +1021,30 @@ pub fn update_filter(
             let seed = req.params.get("seed").and_then(|v| v.as_u64()).unwrap_or(42);
             FilterParams::Glitch { glitch_type, intensity, seed }
         }
+        FilterKind::Glow => {
+            let radius = req.params.get("radius").and_then(|v| v.as_f64()).unwrap_or(2.0) as f32;
+            let intensity = req.params.get("intensity").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+            let threshold = req.params.get("threshold").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+            FilterParams::Glow { radius, intensity, threshold }
+        }
+        FilterKind::Crt => {
+            let period = req.params.get("period").and_then(|v| v.as_u64()).unwrap_or(2) as u8;
+            let strength = req.params.get("strength").and_then(|v| v.as_f64()).unwrap_or(0.5) as f32;
+            let mask_strength = req.params.get("mask_strength").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+            FilterParams::Crt { period, strength, mask_strength }
+        }
         FilterKind::Placeholder => FilterParams::Placeholder("unknown".to_string()),
-    };
+    } }; // closes inner `match filter_kind` and outer `if is_dither_v2 ... else`
 
     // Validate new params before applying
     let temp_filter = FilterInstance::new(filter_kind, new_params.clone());
     temp_filter.validate().map_err(|e| format!("Invalid parameters: {}", e))?;
+
+    // Clear error residuals on DitherV2 parameter change (Req 10.4)
+    if matches!(&new_params, FilterParams::DitherV2(_)) {
+        state.error_residuals.clear();
+        state.block_representatives.clear_dithered();
+    }
 
     // Apply the update within a document mutation
     let layer_id = req.layer_id;
@@ -674,6 +1061,19 @@ pub fn update_filter(
                     engine_project::LayerNode::Leaf(layer) => {
                         if layer.id.0 == layer_id {
                             if let Some(filter) = layer.find_filter_mut(filter_id) {
+                                // Update requires_full_row based on new params
+                                filter.requires_full_row = match &new_params {
+                                    FilterParams::DitherV2(p) => matches!(
+                                        p.mode,
+                                        engine_project::filter::DitherModeV2::FloydSteinberg
+                                        | engine_project::filter::DitherModeV2::Atkinson
+                                    ),
+                                    FilterParams::Dither { mode, .. } => matches!(
+                                        mode,
+                                        engine_project::filter::DitherMode::ErrorDiffusion { .. }
+                                    ),
+                                    _ => false,
+                                };
                                 filter.params = new_params;
                                 return true;
                             }
@@ -719,6 +1119,8 @@ pub fn update_filter(
     // Schedule viewport-visible dirty tiles for immediate recomputation (requirement 4.4)
     schedule_dirty_viewport_tiles(&state);
 
+    emit_document_changed(&app_handle, "filter_updated", Some(layer_id));
+
     Ok(())
 }
 
@@ -739,6 +1141,7 @@ pub struct LoadImageResponse {
 #[tauri::command]
 pub async fn load_image(
     path: String,
+    app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<LoadImageResponse, String> {
     use engine_project::types::DocumentId;
@@ -784,6 +1187,10 @@ pub async fn load_image(
     let grid = decompose_image_to_tiles(&rgba_f32, width, height, layer_id, &state.tile_cache)
         .map_err(|e| format!("Tile decomposition error: {}", e))?;
 
+    // Raw image replaced — drop any stale block representatives.
+    state.block_representatives.invalidate_all();
+    state.error_residuals.clear();
+
     let tile_count = grid.cols * grid.rows;
 
     // Assign a new doc_id
@@ -803,6 +1210,8 @@ pub async fn load_image(
     state.document_handle.mutate(|doc| {
         *doc = new_doc;
     });
+
+    emit_document_changed(&app_handle, "image_loaded", None);
 
     Ok(LoadImageResponse {
         doc_id,
@@ -857,6 +1266,7 @@ fn schedule_dirty_viewport_tiles(state: &AppState) {
                 priority: Priority::Immediate,
             };
             state.scheduler.enqueue(task);
+            state.worker_wake.notify_one();
         }
     }
 }
@@ -928,8 +1338,8 @@ pub async fn export_image(
     use std::io::Cursor;
 
     // 1. Validate format
-    if req.format != "PNG" && req.format != "JPEG" {
-        return Err("Invalid parameters: format must be PNG or JPEG".to_string());
+    if req.format != "PNG" && req.format != "JPEG" && req.format != "SVG" {
+        return Err("Invalid parameters: format must be PNG, JPEG, or SVG".to_string());
     }
 
     // 2. Get document snapshot and validate doc_id
@@ -964,12 +1374,14 @@ pub async fn export_image(
 
     // 4. Get the document snapshot and clone the layer
     let layer_clone = find_first_visible_layer(&snapshot.root).cloned();
+    let doc_snapshot = (*snapshot).clone();
     drop(snapshot);
 
     // 5. Do heavy rendering and I/O in a blocking thread
     let req_format = req.format.clone();
     let req_path = req.path.clone();
     let req_quality = req.quality;
+    let state_clone = state.inner().clone();
 
     tauri::async_runtime::spawn_blocking(move || {
         let mut rgba_buffer: Vec<u8> = vec![0u8; (img_width * img_height * 4) as usize];
@@ -981,7 +1393,15 @@ pub async fn export_image(
                 // Apply filters if we have a visible layer
                 let processed_tile = if let Some(ref layer) = layer_clone {
                     let coord = TileCoord { level: 0, x: col, y: row };
-                    apply_filter_to_tile(tile, layer, coord)
+                    apply_filter_to_tile(
+                        tile,
+                        layer,
+                        coord,
+                        &state_clone.palette_cache,
+                        &state_clone.palette_lut_cache,
+                        &state_clone.threshold_cache,
+                        &doc_snapshot,
+                    )
                         .map_err(|e| format!("Render error: {:?}", e))?
                 } else {
                     let mut copy = engine_tiles::PixelTile::new();
@@ -1052,11 +1472,1044 @@ pub async fn export_image(
                 fs::write(&req_path, &jpeg_data)
                     .map_err(|e| format!("IO error: {}", e))?;
             }
+            "SVG" => {
+                use engine_io::{write_svg_file, SvgAlgorithm, SvgExportOptions};
+                let opts = SvgExportOptions {
+                    algorithm: SvgAlgorithm::GreedyMeshing,
+                    tolerance: 0,
+                };
+                write_svg_file(&req_path, img_width, img_height, &rgba_buffer, &opts)
+                    .map_err(|e| format!("SVG export error: {}", e))?;
+            }
             _ => unreachable!(), // Already validated above
         }
 
         Ok::<(), String>(())
     }).await.map_err(|e| format!("Export error: {}", e))?
+}
+
+// ============================================================================
+// Palette Commands
+// ============================================================================
+
+/// DTO for palette data sent to the frontend.
+#[derive(Debug, Clone, Serialize)]
+pub struct PaletteDto {
+    pub id: u32,
+    pub name: String,
+    pub colors: Vec<[u8; 3]>,    // sRGB u8 for backward compatibility
+    pub hex_colors: Vec<String>, // Hex strings for new UI
+    pub color_count: usize,
+}
+
+/// Request body for adding a palette manually.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AddPaletteRequest {
+    pub name: String,
+    pub colors: Vec<[u8; 3]>, // sRGB
+}
+
+/// Request body for generating a palette from a layer.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GeneratePaletteRequest {
+    pub layer_id: u32,
+    pub target_count: u16,
+    pub method: String, // "MedianCut" or "KMeans"
+}
+
+/// Convert a document palette to a PaletteDto (linear→sRGB for display).
+fn palette_to_dto(palette: &engine_color::palette::Palette) -> PaletteDto {
+    use engine_color::palette::linear_to_srgb;
+    let colors: Vec<[u8; 3]> = palette
+        .colors
+        .iter()
+        .map(|c| [linear_to_srgb(c.r), linear_to_srgb(c.g), linear_to_srgb(c.b)])
+        .collect();
+    let hex_colors: Vec<String> = palette
+        .colors
+        .iter()
+        .map(|c| linear_to_hex(c))
+        .collect();
+    let color_count = colors.len();
+    PaletteDto {
+        id: palette.id,
+        name: palette.name.clone(),
+        colors,
+        hex_colors,
+        color_count,
+    }
+}
+
+/// List all palettes in the document.
+#[tauri::command]
+pub fn list_palettes(state: State<'_, Arc<AppState>>) -> Result<Vec<PaletteDto>, String> {
+    let snapshot = state.document_handle.snapshot();
+    let dtos: Vec<PaletteDto> = snapshot.palettes.iter().map(palette_to_dto).collect();
+    Ok(dtos)
+}
+
+/// Preview DTO for a built-in retro palette (no Document write).
+#[derive(Debug, Clone, Serialize)]
+pub struct BuiltinPaletteDto {
+    pub id: String,
+    pub name: String,
+    pub colors: Vec<[u8; 3]>,
+    pub color_count: usize,
+}
+
+/// List built-in retro palette presets from `engine-color` (UI must not hardcode RGB).
+#[tauri::command]
+pub fn list_builtin_palettes() -> Result<Vec<BuiltinPaletteDto>, String> {
+    use engine_color::palette::BUILTIN_PRESETS;
+
+    Ok(BUILTIN_PRESETS
+        .iter()
+        .map(|p| BuiltinPaletteDto {
+            id: p.id.to_string(),
+            name: p.name.to_string(),
+            colors: p
+                .colors_srgb
+                .iter()
+                .map(|&(r, g, b)| [r, g, b])
+                .collect(),
+            color_count: p.colors_srgb.len(),
+        })
+        .collect())
+}
+
+/// Import a built-in preset into the Document as a new palette (same path as `add_palette`).
+#[tauri::command]
+pub fn import_builtin_palette(
+    id: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<PaletteDto, String> {
+    use engine_color::palette::{find_preset, srgb_to_linear, LinearColor};
+
+    let preset = find_preset(&id).ok_or_else(|| {
+        format!(
+            "Unknown builtin palette id '{}'. Use list_builtin_palettes for valid ids.",
+            id
+        )
+    })?;
+
+    let linear_colors: Vec<LinearColor> = preset
+        .colors_srgb
+        .iter()
+        .map(|&(r, g, b)| LinearColor {
+            r: srgb_to_linear(r),
+            g: srgb_to_linear(g),
+            b: srgb_to_linear(b),
+        })
+        .collect();
+
+    let mut palette_id_raw = 0u32;
+    state.document_handle.mutate(|doc| {
+        let pid = doc.add_palette(preset.name.to_string(), linear_colors);
+        palette_id_raw = pid.0;
+        doc.increment_generation();
+    });
+
+    let snapshot = state.document_handle.snapshot();
+    let palette = snapshot
+        .palettes
+        .iter()
+        .find(|p| p.id == palette_id_raw)
+        .ok_or_else(|| "Failed to find newly imported builtin palette".to_string())?;
+    Ok(palette_to_dto(palette))
+}
+
+/// Lightweight color returned by generators (draft only — no Document write).
+#[derive(Debug, Clone, Serialize)]
+pub struct GeneratedColorDto {
+    pub hex: String,
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+fn normalize_hex_arg(hex: &str) -> Result<String, String> {
+    let trimmed = hex.trim().trim_start_matches('#').to_uppercase();
+    if trimmed.len() != 6 {
+        return Err("Hex color must be exactly 6 characters (optionally prefixed with #)".to_string());
+    }
+    // Validate hex digits early
+    if !trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("Hex color contains invalid characters".to_string());
+    }
+    Ok(trimmed)
+}
+
+fn lin_rgb_to_generated(c: engine_color::LinRgb) -> GeneratedColorDto {
+    use engine_color::palette::{linear_to_srgb, LinearColor};
+    let lc = LinearColor {
+        r: c.r,
+        g: c.g,
+        b: c.b,
+    };
+    let hex = linear_to_hex(&lc);
+    GeneratedColorDto {
+        hex: format!("#{}", hex),
+        r: linear_to_srgb(c.r),
+        g: linear_to_srgb(c.g),
+        b: linear_to_srgb(c.b),
+    }
+}
+
+fn hex_arg_to_lin_rgb(hex: &str) -> Result<engine_color::LinRgb, String> {
+    let normalized = normalize_hex_arg(hex)?;
+    let lc = hex_to_linear(&normalized)?;
+    Ok(engine_color::LinRgb {
+        r: lc.r,
+        g: lc.g,
+        b: lc.b,
+    })
+}
+
+/// Generate an Oklab ramp between two hex colors. Draft-only — does **not** call `add_palette`.
+#[tauri::command]
+pub fn generate_ramp_palette(
+    from_hex: String,
+    to_hex: String,
+    steps: u32,
+) -> Result<Vec<GeneratedColorDto>, String> {
+    if !(1..=64).contains(&steps) {
+        return Err("steps must be between 1 and 64".to_string());
+    }
+    let from = hex_arg_to_lin_rgb(&from_hex)?;
+    let to = hex_arg_to_lin_rgb(&to_hex)?;
+    let ramp = engine_color::generate_ramp(from, to, steps as usize);
+    Ok(ramp.into_iter().map(lin_rgb_to_generated).collect())
+}
+
+/// Generate a harmony palette from a base hex + rule. Draft-only — no Document write.
+#[tauri::command]
+pub fn generate_harmony_palette(
+    base_hex: String,
+    rule: String,
+    count: u32,
+    analogous_spread: Option<f32>,
+) -> Result<Vec<GeneratedColorDto>, String> {
+    use engine_color::HarmonyRule;
+
+    if !(1..=32).contains(&count) {
+        return Err("count must be between 1 and 32".to_string());
+    }
+    let harmony_rule = match rule.as_str() {
+        "Monochromatic" => HarmonyRule::Monochromatic,
+        "Analogous" => HarmonyRule::Analogous,
+        "Complementary" => HarmonyRule::Complementary,
+        "Triadic" => HarmonyRule::Triadic,
+        "SplitComplementary" => HarmonyRule::SplitComplementary,
+        other => {
+            return Err(format!(
+                "Unknown harmony rule '{}'. Expected Monochromatic|Analogous|Complementary|Triadic|SplitComplementary",
+                other
+            ))
+        }
+    };
+    let base = hex_arg_to_lin_rgb(&base_hex)?;
+    let colors = if let Some(spread) = analogous_spread {
+        if !spread.is_finite() || spread < 0.0 || spread > std::f32::consts::PI {
+            return Err("analogous_spread must be a finite value in [0, π] radians".to_string());
+        }
+        engine_color::generate_harmony_with_spread(base, harmony_rule, count as usize, spread)
+    } else {
+        engine_color::generate_harmony(base, harmony_rule, count as usize)
+    };
+    Ok(colors.into_iter().map(lin_rgb_to_generated).collect())
+}
+
+/// Import a palette from a file path (format auto-detected by extension).
+#[tauri::command]
+pub fn import_palette(path: String, state: State<'_, Arc<AppState>>) -> Result<PaletteDto, String> {
+    use engine_color::palette::{import_palette as do_import, PaletteFormat};
+    use std::path::Path;
+
+    let file_path = Path::new(&path);
+    let ext = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let format = match ext.as_str() {
+        "ase" => PaletteFormat::Ase,
+        "aco" => PaletteFormat::Aco,
+        "gpl" => PaletteFormat::Gpl,
+        "pal" => PaletteFormat::Pal,
+        "csv" => PaletteFormat::Csv,
+        "json" => PaletteFormat::Json,
+        _ => return Err(format!("Unsupported palette format: .{}", ext)),
+    };
+
+    // Parse the palette file (returns linear colors)
+    let linear_colors = do_import(file_path, format).map_err(|e| format!("{}", e))?;
+
+    // Derive name from filename without extension
+    let name = file_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Imported")
+        .to_string();
+
+    // Add to document
+    let mut palette_id_raw = 0u32;
+    state.document_handle.mutate(|doc| {
+        let pid = doc.add_palette(name.clone(), linear_colors.clone());
+        palette_id_raw = pid.0;
+        doc.increment_generation();
+    });
+
+    // Return the palette DTO
+    let snapshot = state.document_handle.snapshot();
+    let palette = snapshot
+        .palettes
+        .iter()
+        .find(|p| p.id == palette_id_raw)
+        .ok_or_else(|| "Failed to find newly added palette".to_string())?;
+    Ok(palette_to_dto(palette))
+}
+
+/// Add a palette manually (from JSON color data).
+#[tauri::command]
+pub fn add_palette(req: AddPaletteRequest, state: State<'_, Arc<AppState>>) -> Result<PaletteDto, String> {
+    use engine_color::palette::{srgb_to_linear, LinearColor};
+
+    // Convert sRGB u8 to linear f32
+    let linear_colors: Vec<LinearColor> = req
+        .colors
+        .iter()
+        .map(|[r, g, b]| LinearColor {
+            r: srgb_to_linear(*r),
+            g: srgb_to_linear(*g),
+            b: srgb_to_linear(*b),
+        })
+        .collect();
+
+    let mut palette_id_raw = 0u32;
+    state.document_handle.mutate(|doc| {
+        let pid = doc.add_palette(req.name.clone(), linear_colors);
+        palette_id_raw = pid.0;
+        doc.increment_generation();
+    });
+
+    let snapshot = state.document_handle.snapshot();
+    let palette = snapshot
+        .palettes
+        .iter()
+        .find(|p| p.id == palette_id_raw)
+        .ok_or_else(|| "Failed to find newly added palette".to_string())?;
+    Ok(palette_to_dto(palette))
+}
+
+/// Generate a palette from a layer's pixels.
+///
+/// Heavy work runs on a blocking pool so the UI stays responsive. Large images
+/// are stride-sampled before MedianCut / K-Means.
+#[tauri::command]
+pub async fn generate_palette(
+    req: GeneratePaletteRequest,
+    state: State<'_, Arc<AppState>>,
+) -> Result<PaletteDto, String> {
+    let state = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || generate_palette_blocking(req, &state))
+        .await
+        .map_err(|e| format!("Palette generation task failed: {}", e))?
+}
+
+fn generate_palette_blocking(
+    req: GeneratePaletteRequest,
+    state: &AppState,
+) -> Result<PaletteDto, String> {
+    use engine_color::palette::generate::{PaletteGenMethod, MAX_GENERATION_SAMPLES};
+    use engine_color::palette::LinearColor;
+    use engine_tiles::{CacheStage, TileCoord, TileKey, HALO, TILE_SIZE};
+
+    let method = match req.method.as_str() {
+        "KMeans" => PaletteGenMethod::KMeans,
+        _ => PaletteGenMethod::MedianCut,
+    };
+
+    if req.target_count < 2 || req.target_count > 256 {
+        return Err("target_count must be between 2 and 256".to_string());
+    }
+
+    let snapshot = state.document_handle.snapshot();
+    let doc_width = snapshot.width;
+    let doc_height = snapshot.height;
+    drop(snapshot);
+
+    let total_pixels = (doc_width as u64).saturating_mul(doc_height as u64).max(1);
+    // Stride so we never push much more than MAX_GENERATION_SAMPLES opaque samples.
+    let stride =
+        ((total_pixels as usize + MAX_GENERATION_SAMPLES - 1) / MAX_GENERATION_SAMPLES).max(1);
+
+    let cols = (doc_width + TILE_SIZE - 1) / TILE_SIZE;
+    let rows = (doc_height + TILE_SIZE - 1) / TILE_SIZE;
+
+    let mut pixels: Vec<(LinearColor, f32)> =
+        Vec::with_capacity((total_pixels as usize / stride).min(MAX_GENERATION_SAMPLES + 1024));
+    let mut sample_index: u64 = 0;
+
+    for row in 0..rows {
+        for col in 0..cols {
+            let key = TileKey {
+                layer: req.layer_id,
+                coord: TileCoord {
+                    level: 0,
+                    x: col,
+                    y: row,
+                },
+                stage: CacheStage::Raw,
+            };
+            if let Some(tile) = state.tile_cache.get_entry(key) {
+                let tile_max_x =
+                    std::cmp::min(TILE_SIZE, doc_width.saturating_sub(col * TILE_SIZE));
+                let tile_max_y =
+                    std::cmp::min(TILE_SIZE, doc_height.saturating_sub(row * TILE_SIZE));
+                for ty in 0..tile_max_y {
+                    for tx in 0..tile_max_x {
+                        let take = sample_index % stride as u64 == 0;
+                        sample_index += 1;
+                        if !take {
+                            continue;
+                        }
+                        let px = tx + HALO;
+                        let py = ty + HALO;
+                        let a = tile.at(px, py, 3);
+                        if a <= 0.0 {
+                            continue;
+                        }
+                        pixels.push((
+                            LinearColor {
+                                r: tile.at(px, py, 0),
+                                g: tile.at(px, py, 1),
+                                b: tile.at(px, py, 2),
+                            },
+                            a,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    if pixels.is_empty() {
+        return Err("No tile data available for this layer. Load an image first.".to_string());
+    }
+
+    let mut palette_id_raw = 0u32;
+    state.document_handle.mutate(|doc| {
+        match engine_project::palette_gen::generate_palette_from_layer(
+            doc,
+            engine_project::types::LayerId::new(req.layer_id),
+            pixels.into_iter(),
+            req.target_count,
+            method,
+        ) {
+            Ok(pid) => {
+                palette_id_raw = pid.0;
+                doc.increment_generation();
+            }
+            Err(_) => {}
+        }
+    });
+
+    if palette_id_raw == 0 {
+        return Err(
+            "Palette generation failed. Ensure the layer has non-transparent pixels.".to_string(),
+        );
+    }
+
+    let snapshot = state.document_handle.snapshot();
+    let palette = snapshot
+        .palettes
+        .iter()
+        .find(|p| p.id == palette_id_raw)
+        .ok_or_else(|| "Failed to find generated palette".to_string())?;
+    Ok(palette_to_dto(palette))
+}
+
+/// Remove a palette from the document.
+#[tauri::command]
+pub fn remove_palette(palette_id: u32, state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    use engine_project::types::PaletteId;
+
+    let mut result: Result<(), String> = Ok(());
+    state.document_handle.mutate(|doc| {
+        match doc.remove_palette(PaletteId::new(palette_id)) {
+            Ok(_) => {
+                doc.increment_generation();
+            }
+            Err(e) => {
+                result = Err(format!("{}", e));
+            }
+        }
+    });
+    result
+}
+
+// ============================================================================
+// Rename Palette Command
+// ============================================================================
+
+/// Request body for renaming a palette.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RenamePaletteRequest {
+    pub palette_id: u32,
+    pub name: String,
+}
+
+/// Rename a palette. Does NOT trigger invalidation since name changes
+/// do not affect rendering.
+#[tauri::command]
+pub fn rename_palette(
+    req: RenamePaletteRequest,
+    state: State<'_, Arc<AppState>>,
+) -> Result<PaletteDto, String> {
+    // 1. Validate name: trim, then check 1–255 chars
+    let trimmed_name = req.name.trim().to_string();
+    if trimmed_name.is_empty() || trimmed_name.len() > 255 {
+        return Err("Name must be 1–255 characters".to_string());
+    }
+
+    // 2. Validate palette exists
+    {
+        let snapshot = state.document_handle.snapshot();
+        if !snapshot.palettes.iter().any(|p| p.id == req.palette_id) {
+            return Err(format!("Palette {} not found", req.palette_id));
+        }
+    }
+
+    // 3. Mutate document: update palette name (no invalidation)
+    state.document_handle.mutate(|doc| {
+        if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id) {
+            palette.name = trimmed_name;
+        }
+    });
+
+    // 4. Return updated PaletteDto
+    let snapshot = state.document_handle.snapshot();
+    let palette = snapshot
+        .palettes
+        .iter()
+        .find(|p| p.id == req.palette_id)
+        .ok_or_else(|| format!("Palette {} not found", req.palette_id))?;
+    Ok(palette_to_dto(palette))
+}
+
+/// Request body for creating a new empty palette.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreatePaletteRequest {
+    pub name: String,
+}
+
+/// Create a new empty palette with a given name.
+#[tauri::command]
+pub fn create_palette(
+    req: CreatePaletteRequest,
+    state: State<'_, Arc<AppState>>,
+) -> Result<PaletteDto, String> {
+    // Trim and validate name: 1–255 characters after trimming
+    let trimmed_name = req.name.trim().to_string();
+    if trimmed_name.is_empty() || trimmed_name.len() > 255 {
+        return Err("Name must be 1–255 characters".to_string());
+    }
+
+    // Mutate document: add palette with empty color list
+    let mut palette_id_raw = 0u32;
+    state.document_handle.mutate(|doc| {
+        let pid = doc.add_palette(trimmed_name.clone(), vec![]);
+        palette_id_raw = pid.0;
+        doc.increment_generation();
+    });
+
+    // Return the newly created palette as a DTO
+    let snapshot = state.document_handle.snapshot();
+    let palette = snapshot
+        .palettes
+        .iter()
+        .find(|p| p.id == palette_id_raw)
+        .ok_or_else(|| "Failed to find newly created palette".to_string())?;
+    Ok(palette_to_dto(palette))
+}
+
+/// Request body for exporting a palette to a file.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExportPaletteRequest {
+    pub palette_id: u32,
+    pub path: String,
+    pub format: String, // "ase", "gpl", "json", "aco", "pal", "csv"
+}
+
+/// Export a palette to a file in the specified format.
+#[tauri::command]
+pub fn export_palette(
+    req: ExportPaletteRequest,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    use engine_color::palette::{export_palette as do_export, PaletteFormat};
+
+    // 1. Validate palette exists
+    let snapshot = state.document_handle.snapshot();
+    let palette = snapshot
+        .palettes
+        .iter()
+        .find(|p| p.id == req.palette_id)
+        .ok_or_else(|| format!("Palette {} not found", req.palette_id))?;
+
+    // 2. Check palette is not empty
+    if palette.colors.is_empty() {
+        return Err("Palette is empty and cannot be exported".to_string());
+    }
+
+    // 3. Parse format string (case-insensitive)
+    let format = match req.format.to_lowercase().as_str() {
+        "ase" => PaletteFormat::Ase,
+        "aco" => PaletteFormat::Aco,
+        "gpl" => PaletteFormat::Gpl,
+        "pal" => PaletteFormat::Pal,
+        "csv" => PaletteFormat::Csv,
+        "json" => PaletteFormat::Json,
+        _ => return Err(format!("Unsupported export format: {}", req.format)),
+    };
+
+    // 4. Call engine_color export_palette to get bytes
+    let bytes = do_export(palette, format).map_err(|e| format!("{}", e))?;
+
+    // 5. Write bytes to file
+    std::fs::write(&req.path, &bytes)
+        .map_err(|e| format!("Failed to write file: {}", e))?;
+
+    Ok(())
+}
+
+// ============================================================================
+// Add Color to Palette Command
+// ============================================================================
+
+/// Request body for adding a color to an existing palette.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AddColorRequest {
+    pub palette_id: u32,
+    pub hex: String, // 6-char hex, e.g. "FF0000"
+}
+
+/// Add a color to an existing palette. Parses hex to linear, validates palette
+/// exists and has fewer than 65536 colors, pushes the color, increments revision,
+/// triggers invalidation cascade, and returns the updated PaletteDto.
+#[tauri::command]
+pub fn add_color_to_palette(
+    req: AddColorRequest,
+    state: State<'_, Arc<AppState>>,
+) -> Result<PaletteDto, String> {
+    use engine_project::types::PaletteId;
+
+    // 1. Parse hex to linear color
+    let color = hex_to_linear(&req.hex)?;
+
+    // 2. Validate palette exists and size < 65536
+    {
+        let snapshot = state.document_handle.snapshot();
+        let palette = snapshot
+            .palettes
+            .iter()
+            .find(|p| p.id == req.palette_id)
+            .ok_or_else(|| format!("Palette {} not found", req.palette_id))?;
+        if palette.colors.len() >= 65536 {
+            return Err("Palette has reached maximum size (65536 colors)".to_string());
+        }
+    }
+
+    // 3. Mutate document: push color, increment revision
+    state.document_handle.mutate(|doc| {
+        if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id) {
+            palette.colors.push(color);
+            palette.revision += 1;
+        }
+    });
+
+    // 4. Invalidate palette changed (cascade to affected layers)
+    invalidate_palette_changed(PaletteId::new(req.palette_id), &state);
+
+    // 5. Return updated PaletteDto
+    let snapshot = state.document_handle.snapshot();
+    let palette = snapshot
+        .palettes
+        .iter()
+        .find(|p| p.id == req.palette_id)
+        .ok_or_else(|| format!("Palette {} not found", req.palette_id))?;
+    Ok(palette_to_dto(palette))
+}
+
+// ============================================================================
+// Update Palette Color Command
+// ============================================================================
+
+/// Request body for updating a single color in a palette.
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateColorRequest {
+    pub palette_id: u32,
+    pub index: usize,
+    pub hex: String,
+}
+
+/// Update a color at a given index within a palette.
+/// Parses the hex string, validates the palette exists and index is in bounds,
+/// replaces the color, increments revision, triggers invalidation cascade.
+#[tauri::command]
+pub fn update_palette_color(
+    req: UpdateColorRequest,
+    state: State<'_, Arc<AppState>>,
+) -> Result<PaletteDto, String> {
+    use engine_project::types::PaletteId;
+
+    // 1. Parse hex to linear color
+    let color = hex_to_linear(&req.hex)?;
+
+    // 2. Validate palette exists and index is in bounds
+    {
+        let snapshot = state.document_handle.snapshot();
+        let palette = snapshot
+            .palettes
+            .iter()
+            .find(|p| p.id == req.palette_id)
+            .ok_or_else(|| format!("Palette {} not found", req.palette_id))?;
+
+        let color_count = palette.colors.len();
+        if req.index >= color_count {
+            return Err(format!(
+                "Color index {} out of bounds (palette has {} colors)",
+                req.index, color_count
+            ));
+        }
+    }
+
+    // 3. Mutate document: replace color at index, increment revision
+    state.document_handle.mutate(|doc| {
+        if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id) {
+            palette.colors[req.index] = color;
+            palette.revision += 1;
+        }
+    });
+
+    // 4. Invalidate palette changed (triggers tile recomputation for affected layers)
+    invalidate_palette_changed(PaletteId::new(req.palette_id), &state);
+
+    // 5. Return updated PaletteDto
+    let snapshot = state.document_handle.snapshot();
+    let palette = snapshot
+        .palettes
+        .iter()
+        .find(|p| p.id == req.palette_id)
+        .ok_or_else(|| format!("Palette {} not found", req.palette_id))?;
+    Ok(palette_to_dto(palette))
+}
+
+// ============================================================================
+// Remove Palette Color Command
+// ============================================================================
+
+/// Request body for removing a color from a palette by index.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RemoveColorRequest {
+    pub palette_id: u32,
+    pub index: usize,
+}
+
+/// Remove a color at a given index from a palette.
+/// Validates palette exists, index is in bounds, and that removal would not
+/// empty a palette that is referenced by filters (error in that case).
+/// Otherwise removes the color, increments revision, triggers invalidation cascade.
+#[tauri::command]
+pub fn remove_palette_color(
+    req: RemoveColorRequest,
+    state: State<'_, Arc<AppState>>,
+) -> Result<PaletteDto, String> {
+    use engine_project::types::PaletteId;
+
+    // 1. Validate palette exists and index is in bounds
+    {
+        let snapshot = state.document_handle.snapshot();
+        let palette = snapshot
+            .palettes
+            .iter()
+            .find(|p| p.id == req.palette_id)
+            .ok_or_else(|| format!("Palette {} not found", req.palette_id))?;
+
+        let color_count = palette.colors.len();
+        if req.index >= color_count {
+            return Err(format!(
+                "Color index {} out of bounds (palette has {} colors)",
+                req.index, color_count
+            ));
+        }
+
+        // 2. Check: if removal would leave 0 colors AND palette is referenced → error
+        if color_count == 1 {
+            let referencing_layers =
+                find_layers_referencing_palette(&snapshot.root, PaletteId::new(req.palette_id));
+            if !referencing_layers.is_empty() {
+                return Err(
+                    "Cannot remove last color from a palette referenced by filters".to_string(),
+                );
+            }
+        }
+    }
+
+    // 3. Mutate document: remove color at index, increment revision
+    state.document_handle.mutate(|doc| {
+        if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id) {
+            palette.colors.remove(req.index);
+            palette.revision += 1;
+        }
+    });
+
+    // 4. Invalidate palette changed (triggers tile recomputation for affected layers)
+    invalidate_palette_changed(PaletteId::new(req.palette_id), &state);
+
+    // 5. Return updated PaletteDto
+    let snapshot = state.document_handle.snapshot();
+    let palette = snapshot
+        .palettes
+        .iter()
+        .find(|p| p.id == req.palette_id)
+        .ok_or_else(|| format!("Palette {} not found", req.palette_id))?;
+    Ok(palette_to_dto(palette))
+}
+
+// ============================================================================
+// Reorder Palette Color Command
+// ============================================================================
+
+/// Request body for reordering a color within a palette.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReorderColorRequest {
+    pub palette_id: u32,
+    pub from_index: usize,
+    pub to_index: usize,
+}
+
+/// Reorder a color within a palette by moving from one index to another.
+/// If from_index == to_index, this is a no-op (no revision increment, no invalidation).
+#[tauri::command]
+pub fn reorder_palette_color(
+    req: ReorderColorRequest,
+    state: State<'_, Arc<AppState>>,
+) -> Result<PaletteDto, String> {
+    use engine_project::types::PaletteId;
+
+    // 1. Validate palette exists and both indices are in bounds
+    {
+        let snapshot = state.document_handle.snapshot();
+        let palette = snapshot
+            .palettes
+            .iter()
+            .find(|p| p.id == req.palette_id)
+            .ok_or_else(|| format!("Palette {} not found", req.palette_id))?;
+
+        let color_count = palette.colors.len();
+        if req.from_index >= color_count || req.to_index >= color_count {
+            return Err("Index out of bounds".to_string());
+        }
+    }
+
+    // 2. If from == to, return current PaletteDto unchanged (no-op)
+    if req.from_index == req.to_index {
+        let snapshot = state.document_handle.snapshot();
+        let palette = snapshot
+            .palettes
+            .iter()
+            .find(|p| p.id == req.palette_id)
+            .ok_or_else(|| format!("Palette {} not found", req.palette_id))?;
+        return Ok(palette_to_dto(palette));
+    }
+
+    // 3. Mutate document: remove at from_index, insert at to_index, increment revision
+    state.document_handle.mutate(|doc| {
+        if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id) {
+            let color = palette.colors.remove(req.from_index);
+            palette.colors.insert(req.to_index, color);
+            palette.revision += 1;
+        }
+    });
+
+    // 4. Invalidate palette changed (triggers tile recomputation for affected layers)
+    invalidate_palette_changed(PaletteId::new(req.palette_id), &state);
+
+    // 5. Return updated PaletteDto
+    let snapshot = state.document_handle.snapshot();
+    let palette = snapshot
+        .palettes
+        .iter()
+        .find(|p| p.id == req.palette_id)
+        .ok_or_else(|| format!("Palette {} not found", req.palette_id))?;
+    Ok(palette_to_dto(palette))
+}
+
+// ============================================================================
+// Delete Palette Command (Force-Delete with Reference Clearing)
+// ============================================================================
+
+/// Response for the delete_palette command.
+#[derive(Debug, Clone, Serialize)]
+pub struct DeletePaletteResponse {
+    pub affected_filter_ids: Vec<String>,
+}
+
+/// Force-delete a palette, clearing any filter references first.
+///
+/// Unlike `remove_palette` (which fails if filters reference the palette),
+/// this command:
+/// 1. Finds all filter references to the palette
+/// 2. For DitherV2 filters: sets palette_id = None
+/// 3. For PaletteQuantize filters: removes the entire filter from the layer
+/// 4. Removes the palette from the document
+/// 5. Evicts the palette from PaletteKdCache
+/// 6. Invalidates affected layers
+/// 7. Returns the list of affected filter IDs
+#[tauri::command]
+pub fn delete_palette(
+    palette_id: u32,
+    state: State<'_, Arc<AppState>>,
+) -> Result<DeletePaletteResponse, String> {
+    use engine_project::filter::FilterParams;
+    use engine_project::layer::LayerNode;
+    use engine_project::types::PaletteId;
+
+    let pid = PaletteId::new(palette_id);
+
+    // 1. Verify palette exists
+    {
+        let snapshot = state.document_handle.snapshot();
+        if !snapshot.palettes.iter().any(|p| p.id == palette_id) {
+            return Err(format!("Palette {} not found", palette_id));
+        }
+    }
+
+    // 2. Find all filter references and clear them, collecting affected filter IDs
+    //    Also track affected layer IDs for invalidation.
+    let mut affected_filter_ids: Vec<String> = Vec::new();
+    let mut affected_layer_ids: Vec<u32> = Vec::new();
+
+    state.document_handle.mutate(|doc| {
+        // Recursive helper to walk layers and clear palette references
+        fn clear_palette_refs(
+            nodes: &mut Vec<engine_project::layer::LayerNode>,
+            palette_id: engine_project::types::PaletteId,
+            affected_filter_ids: &mut Vec<String>,
+            affected_layer_ids: &mut Vec<u32>,
+        ) {
+            for node in nodes.iter_mut() {
+                match node {
+                    engine_project::layer::LayerNode::Leaf(layer) => {
+                        let mut layer_affected = false;
+                        let mut filters_to_remove: Vec<usize> = Vec::new();
+
+                        for (idx, filter) in layer.filters.iter_mut().enumerate() {
+                            match &mut filter.params {
+                                engine_project::filter::FilterParams::DitherV2(params) => {
+                                    if params.palette_id == Some(palette_id) {
+                                        // Clear the palette reference
+                                        params.palette_id = None;
+                                        affected_filter_ids.push(filter.id.to_string());
+                                        layer_affected = true;
+                                    }
+                                }
+                                engine_project::filter::FilterParams::PaletteQuantize { palette_id: pid, .. } => {
+                                    if *pid == palette_id {
+                                        // Mark for removal
+                                        affected_filter_ids.push(filter.id.to_string());
+                                        filters_to_remove.push(idx);
+                                        layer_affected = true;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        // Remove PaletteQuantize filters (in reverse to preserve indices)
+                        for idx in filters_to_remove.into_iter().rev() {
+                            layer.filters.remove(idx);
+                        }
+
+                        if layer_affected {
+                            affected_layer_ids.push(layer.id.0);
+                        }
+                    }
+                    engine_project::layer::LayerNode::Group(group) => {
+                        clear_palette_refs(
+                            &mut group.children,
+                            palette_id,
+                            affected_filter_ids,
+                            affected_layer_ids,
+                        );
+                    }
+                }
+            }
+        }
+
+        clear_palette_refs(&mut doc.root, pid, &mut affected_filter_ids, &mut affected_layer_ids);
+
+        // 3. Remove the palette from the document
+        doc.palettes.retain(|p| p.id != palette_id);
+
+        // Increment document revision
+        doc.increment_generation();
+    });
+
+    // 4. Evict from PaletteKdCache and PaletteLutCache
+    state.palette_cache.evict(palette_id);
+    state.palette_lut_cache.evict(palette_id);
+
+    // 5. Invalidate affected layers
+    for layer_id in &affected_layer_ids {
+        engine_tiles::invalidation::invalidate(
+            &state.tile_cache,
+            engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
+                layer: *layer_id,
+            },
+        );
+    }
+
+    if !affected_layer_ids.is_empty() {
+        schedule_dirty_viewport_tiles(&state);
+    }
+
+    // 6. Return affected filter IDs
+    Ok(DeletePaletteResponse { affected_filter_ids })
+}
+
+// ============================================================================
+// Selection Commands
+// ============================================================================
+
+/// Update selection state and broadcast to all windows.
+#[tauri::command]
+pub fn set_selection(
+    layer_id: Option<u32>,
+    filter_id: Option<String>,
+    app_handle: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    let mut sel = state.selection.lock().map_err(|e| e.to_string())?;
+    sel.selected_layer_id = layer_id;
+    sel.selected_filter_id = filter_id.clone();
+    drop(sel);
+
+    let _ = app_handle.emit("selection-changed", SelectionChangedPayload {
+        selected_layer_id: layer_id,
+        selected_filter_id: filter_id,
+    });
+
+    Ok(())
+}
+
+/// Get current selection state (for initial fetch on window mount).
+#[tauri::command]
+pub fn get_selection(state: State<'_, Arc<AppState>>) -> Result<SelectionState, String> {
+    let sel = state.selection.lock().map_err(|e| e.to_string())?;
+    Ok(sel.clone())
 }
 
 #[cfg(test)]
@@ -1092,5 +2545,987 @@ mod tests {
         let png_bytes = result.unwrap();
         // PNG magic bytes
         assert_eq!(&png_bytes[0..4], &[0x89, 0x50, 0x4E, 0x47]);
+    }
+
+    // ========================================================================
+    // hex_to_linear tests
+    // ========================================================================
+
+    #[test]
+    fn hex_to_linear_valid_uppercase() {
+        let result = hex_to_linear("FF0000").unwrap();
+        // FF → 255 → srgb_to_linear(255) ≈ 1.0
+        assert!((result.r - 1.0).abs() < 1e-5);
+        assert!((result.g - 0.0).abs() < 1e-5);
+        assert!((result.b - 0.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn hex_to_linear_valid_lowercase() {
+        let result = hex_to_linear("00ff00").unwrap();
+        assert!((result.r - 0.0).abs() < 1e-5);
+        assert!((result.g - 1.0).abs() < 1e-5);
+        assert!((result.b - 0.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn hex_to_linear_valid_mixed_case() {
+        let result = hex_to_linear("aAbBcC").unwrap();
+        assert!(result.r > 0.0 && result.r < 1.0);
+        assert!(result.g > 0.0 && result.g < 1.0);
+        assert!(result.b > 0.0 && result.b < 1.0);
+    }
+
+    #[test]
+    fn hex_to_linear_black() {
+        let result = hex_to_linear("000000").unwrap();
+        assert_eq!(result.r, 0.0);
+        assert_eq!(result.g, 0.0);
+        assert_eq!(result.b, 0.0);
+    }
+
+    #[test]
+    fn hex_to_linear_white() {
+        let result = hex_to_linear("FFFFFF").unwrap();
+        assert!((result.r - 1.0).abs() < 1e-5);
+        assert!((result.g - 1.0).abs() < 1e-5);
+        assert!((result.b - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn hex_to_linear_err_too_short() {
+        let result = hex_to_linear("FFF");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("exactly 6 characters"));
+    }
+
+    #[test]
+    fn hex_to_linear_err_too_long() {
+        let result = hex_to_linear("FF00FF00");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("exactly 6 characters"));
+    }
+
+    #[test]
+    fn hex_to_linear_err_empty() {
+        let result = hex_to_linear("");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("exactly 6 characters"));
+    }
+
+    #[test]
+    fn hex_to_linear_err_with_hash_prefix() {
+        let result = hex_to_linear("#FF0000");
+        assert!(result.is_err());
+        // 7 chars with '#', so length check fails
+        assert!(result.unwrap_err().contains("exactly 6 characters"));
+    }
+
+    #[test]
+    fn hex_to_linear_err_non_hex_chars() {
+        let result = hex_to_linear("GGHHII");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid hex character"));
+    }
+
+    #[test]
+    fn hex_to_linear_err_special_chars() {
+        let result = hex_to_linear("FF$$00");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid hex character"));
+    }
+
+    // ========================================================================
+    // linear_to_hex tests
+    // ========================================================================
+
+    #[test]
+    fn linear_to_hex_black() {
+        use engine_color::palette::LinearColor;
+        let color = LinearColor { r: 0.0, g: 0.0, b: 0.0 };
+        assert_eq!(linear_to_hex(&color), "000000");
+    }
+
+    #[test]
+    fn linear_to_hex_white() {
+        use engine_color::palette::LinearColor;
+        let color = LinearColor { r: 1.0, g: 1.0, b: 1.0 };
+        assert_eq!(linear_to_hex(&color), "FFFFFF");
+    }
+
+    #[test]
+    fn linear_to_hex_red() {
+        use engine_color::palette::LinearColor;
+        let color = LinearColor { r: 1.0, g: 0.0, b: 0.0 };
+        assert_eq!(linear_to_hex(&color), "FF0000");
+    }
+
+    #[test]
+    fn linear_to_hex_green() {
+        use engine_color::palette::LinearColor;
+        let color = LinearColor { r: 0.0, g: 1.0, b: 0.0 };
+        assert_eq!(linear_to_hex(&color), "00FF00");
+    }
+
+    #[test]
+    fn linear_to_hex_blue() {
+        use engine_color::palette::LinearColor;
+        let color = LinearColor { r: 0.0, g: 0.0, b: 1.0 };
+        assert_eq!(linear_to_hex(&color), "0000FF");
+    }
+
+    #[test]
+    fn linear_to_hex_uppercase_format() {
+        use engine_color::palette::LinearColor;
+        // Verify output is always uppercase
+        let color = LinearColor { r: 0.5, g: 0.5, b: 0.5 };
+        let hex = linear_to_hex(&color);
+        assert_eq!(hex.len(), 6);
+        assert_eq!(hex, hex.to_uppercase());
+    }
+
+    #[test]
+    fn linear_to_hex_clamps_above_one() {
+        use engine_color::palette::LinearColor;
+        let color = LinearColor { r: 1.5, g: 2.0, b: 3.0 };
+        // linear_to_srgb clamps to [0, 1] before conversion
+        assert_eq!(linear_to_hex(&color), "FFFFFF");
+    }
+
+    #[test]
+    fn linear_to_hex_clamps_below_zero() {
+        use engine_color::palette::LinearColor;
+        let color = LinearColor { r: -1.0, g: -0.5, b: -0.1 };
+        assert_eq!(linear_to_hex(&color), "000000");
+    }
+
+    // ========================================================================
+    // Round-trip tests
+    // ========================================================================
+
+    #[test]
+    fn hex_round_trip_known_values() {
+        // For these known hex values, converting to linear and back should be identity
+        let test_cases = [
+            "000000", "FFFFFF", "FF0000", "00FF00", "0000FF",
+            "808080", "C0C0C0", "A0B0C0", "123456", "ABCDEF",
+        ];
+        for hex in &test_cases {
+            let linear = hex_to_linear(hex).unwrap();
+            let back = linear_to_hex(&linear);
+            assert_eq!(
+                &back,
+                &hex.to_uppercase(),
+                "Round-trip failed for input '{}'",
+                hex
+            );
+        }
+    }
+
+    #[test]
+    fn hex_round_trip_case_insensitive() {
+        // Same color expressed in different cases should produce the same uppercase output
+        let lower = hex_to_linear("abcdef").unwrap();
+        let upper = hex_to_linear("ABCDEF").unwrap();
+        let mixed = hex_to_linear("AbCdEf").unwrap();
+
+        let hex_lower = linear_to_hex(&lower);
+        let hex_upper = linear_to_hex(&upper);
+        let hex_mixed = linear_to_hex(&mixed);
+
+        assert_eq!(hex_lower, "ABCDEF");
+        assert_eq!(hex_upper, "ABCDEF");
+        assert_eq!(hex_mixed, "ABCDEF");
+    }
+
+    #[test]
+    fn hex_round_trip_exhaustive_boundaries() {
+        // Test all boundary values (00, 01, FE, FF) per channel
+        let boundary_values = ["00", "01", "7F", "80", "FE", "FF"];
+        for r in &boundary_values {
+            for g in &boundary_values {
+                for b in &boundary_values {
+                    let hex = format!("{}{}{}", r, g, b);
+                    let linear = hex_to_linear(&hex).unwrap();
+                    let back = linear_to_hex(&linear);
+                    assert_eq!(
+                        back, hex,
+                        "Round-trip failed for '{}'",
+                        hex
+                    );
+                }
+            }
+        }
+    }
+
+    // ========================================================================
+    // find_layers_referencing_palette tests
+    // ========================================================================
+
+    #[test]
+    fn find_layers_referencing_palette_empty_tree() {
+        use engine_project::types::PaletteId;
+
+        let nodes: Vec<engine_project::layer::LayerNode> = vec![];
+        let result = find_layers_referencing_palette(&nodes, PaletteId::new(1));
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn find_layers_referencing_palette_no_references() {
+        use engine_project::layer::{Layer, LayerNode};
+        use engine_project::types::{LayerId, LayerKind, PaletteId};
+        use engine_project::filter::{FilterInstance, FilterKind, FilterParams, DitherMode};
+
+        let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, 256, 256);
+        layer.filters.push(FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::Dither {
+                mode: DitherMode::Bayer { matrix_size: 4 },
+                color_depth: 4,
+            },
+        ));
+        let nodes = vec![LayerNode::Leaf(layer)];
+        let result = find_layers_referencing_palette(&nodes, PaletteId::new(1));
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn find_layers_referencing_palette_dither_v2_match() {
+        use engine_project::layer::{Layer, LayerNode};
+        use engine_project::types::{LayerId, LayerKind, PaletteId};
+        use engine_project::filter::{
+            FilterInstance, FilterKind, FilterParams, DitherParamsV2,
+            DitherModeV2, DitherColorMode,
+        };
+
+        let mut layer = Layer::new(LayerId::new(5), LayerKind::Raster, 256, 256);
+        layer.filters.push(FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::Bayer4x4,
+                levels: 4,
+                threshold_scale: 1.0,
+                pixel_size: 1,
+                color_mode: DitherColorMode::Rgb,
+                palette_id: Some(PaletteId::new(42)),
+            ..Default::default()
+            }),
+        ));
+        let nodes = vec![LayerNode::Leaf(layer)];
+
+        let result = find_layers_referencing_palette(&nodes, PaletteId::new(42));
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], LayerId::new(5));
+    }
+
+    #[test]
+    fn find_layers_referencing_palette_dither_v2_no_palette() {
+        use engine_project::layer::{Layer, LayerNode};
+        use engine_project::types::{LayerId, LayerKind, PaletteId};
+        use engine_project::filter::{
+            FilterInstance, FilterKind, FilterParams, DitherParamsV2,
+            DitherModeV2, DitherColorMode,
+        };
+
+        let mut layer = Layer::new(LayerId::new(5), LayerKind::Raster, 256, 256);
+        layer.filters.push(FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::Bayer4x4,
+                levels: 4,
+                threshold_scale: 1.0,
+                pixel_size: 1,
+                color_mode: DitherColorMode::Rgb,
+                palette_id: None, // No palette reference,
+            ..Default::default()
+            }),
+        ));
+        let nodes = vec![LayerNode::Leaf(layer)];
+
+        let result = find_layers_referencing_palette(&nodes, PaletteId::new(42));
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn find_layers_referencing_palette_palette_quantize_match() {
+        use engine_project::layer::{Layer, LayerNode};
+        use engine_project::types::{LayerId, LayerKind, PaletteId};
+        use engine_project::filter::{FilterInstance, FilterKind, FilterParams, DiffusionKernel};
+
+        let mut layer = Layer::new(LayerId::new(10), LayerKind::Raster, 256, 256);
+        layer.filters.push(FilterInstance::new(
+            FilterKind::PaletteQuantize,
+            FilterParams::PaletteQuantize {
+                palette_id: PaletteId::new(7),
+                diffusion: Some(DiffusionKernel::FloydSteinberg),
+            },
+        ));
+        let nodes = vec![LayerNode::Leaf(layer)];
+
+        let result = find_layers_referencing_palette(&nodes, PaletteId::new(7));
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], LayerId::new(10));
+    }
+
+    #[test]
+    fn find_layers_referencing_palette_wrong_palette_id() {
+        use engine_project::layer::{Layer, LayerNode};
+        use engine_project::types::{LayerId, LayerKind, PaletteId};
+        use engine_project::filter::{FilterInstance, FilterKind, FilterParams};
+
+        let mut layer = Layer::new(LayerId::new(10), LayerKind::Raster, 256, 256);
+        layer.filters.push(FilterInstance::new(
+            FilterKind::PaletteQuantize,
+            FilterParams::PaletteQuantize {
+                palette_id: PaletteId::new(7),
+                diffusion: None,
+            },
+        ));
+        let nodes = vec![LayerNode::Leaf(layer)];
+
+        // Search for a different palette ID
+        let result = find_layers_referencing_palette(&nodes, PaletteId::new(99));
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn find_layers_referencing_palette_recursive_group() {
+        use engine_project::layer::{Layer, LayerGroup, LayerNode};
+        use engine_project::types::{LayerId, LayerKind, PaletteId};
+        use engine_project::filter::{
+            FilterInstance, FilterKind, FilterParams, DitherParamsV2,
+            DitherModeV2, DitherColorMode, DiffusionKernel,
+        };
+
+        // Create a nested group structure:
+        // root:
+        //   - Layer 1 (no palette ref)
+        //   - Group 2:
+        //     - Layer 3 (DitherV2 refs palette 5)
+        //     - Group 4:
+        //       - Layer 5 (PaletteQuantize refs palette 5)
+        //   - Layer 6 (PaletteQuantize refs palette 99)
+
+        let layer1 = Layer::new(LayerId::new(1), LayerKind::Raster, 256, 256);
+
+        let mut layer3 = Layer::new(LayerId::new(3), LayerKind::Raster, 256, 256);
+        layer3.filters.push(FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::Bayer8x8,
+                levels: 8,
+                threshold_scale: 1.0,
+                pixel_size: 1,
+                color_mode: DitherColorMode::Rgb,
+                palette_id: Some(PaletteId::new(5)),
+            ..Default::default()
+            }),
+        ));
+
+        let mut layer5 = Layer::new(LayerId::new(5), LayerKind::Raster, 256, 256);
+        layer5.filters.push(FilterInstance::new(
+            FilterKind::PaletteQuantize,
+            FilterParams::PaletteQuantize {
+                palette_id: PaletteId::new(5),
+                diffusion: Some(DiffusionKernel::Atkinson),
+            },
+        ));
+
+        let mut group4 = LayerGroup::new(LayerId::new(4));
+        group4.children.push(LayerNode::Leaf(layer5));
+
+        let mut group2 = LayerGroup::new(LayerId::new(2));
+        group2.children.push(LayerNode::Leaf(layer3));
+        group2.children.push(LayerNode::Group(group4));
+
+        let mut layer6 = Layer::new(LayerId::new(6), LayerKind::Raster, 256, 256);
+        layer6.filters.push(FilterInstance::new(
+            FilterKind::PaletteQuantize,
+            FilterParams::PaletteQuantize {
+                palette_id: PaletteId::new(99),
+                diffusion: None,
+            },
+        ));
+
+        let nodes = vec![
+            LayerNode::Leaf(layer1),
+            LayerNode::Group(group2),
+            LayerNode::Leaf(layer6),
+        ];
+
+        // Search for palette 5 → should find layers 3 and 5
+        let result = find_layers_referencing_palette(&nodes, PaletteId::new(5));
+        assert_eq!(result.len(), 2);
+        assert!(result.contains(&LayerId::new(3)));
+        assert!(result.contains(&LayerId::new(5)));
+
+        // Search for palette 99 → should find only layer 6
+        let result = find_layers_referencing_palette(&nodes, PaletteId::new(99));
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], LayerId::new(6));
+    }
+
+    #[test]
+    fn find_layers_referencing_palette_multiple_filters_on_one_layer() {
+        use engine_project::layer::{Layer, LayerNode};
+        use engine_project::types::{LayerId, LayerKind, PaletteId};
+        use engine_project::filter::{
+            FilterInstance, FilterKind, FilterParams, DitherParamsV2,
+            DitherModeV2, DitherColorMode, DiffusionKernel,
+        };
+
+        // Layer with both DitherV2 and PaletteQuantize referencing same palette
+        let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, 256, 256);
+        layer.filters.push(FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::Bayer4x4,
+                levels: 4,
+                threshold_scale: 1.0,
+                pixel_size: 1,
+                color_mode: DitherColorMode::Rgb,
+                palette_id: Some(PaletteId::new(3)),
+            ..Default::default()
+            }),
+        ));
+        layer.filters.push(FilterInstance::new(
+            FilterKind::PaletteQuantize,
+            FilterParams::PaletteQuantize {
+                palette_id: PaletteId::new(3),
+                diffusion: Some(DiffusionKernel::FloydSteinberg),
+            },
+        ));
+        let nodes = vec![LayerNode::Leaf(layer)];
+
+        // Should only return the layer once even though two filters reference it
+        let result = find_layers_referencing_palette(&nodes, PaletteId::new(3));
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], LayerId::new(1));
+    }
+
+    // ========================================================================
+    // Integration Tests: Palette CRUD Lifecycle, Invalidation Cascade,
+    // Force-Delete with Filter Reference Clearing
+    // ========================================================================
+
+    /// Helper to construct a minimal AppState for integration tests.
+    fn make_test_app_state() -> Arc<AppState> {
+        use engine_project::Document;
+        use engine_project::types::DocumentId;
+
+        let document = Document::new(DocumentId::new(1), 800, 600);
+        let doc_handle = DocumentHandle::new(document);
+        let tile_cache = TileCache::new(256 * 1024 * 1024);
+        let scheduler = Scheduler::new();
+
+        Arc::new(AppState {
+            document_handle: doc_handle,
+            tile_cache,
+            scheduler,
+            viewport: Mutex::new(ViewportState::default()),
+            worker_wake: WorkerWake::new(),
+            palette_cache: engine_color::palette_cache::PaletteKdCache::new(),
+            palette_lut_cache: engine_color::palette_lut::PaletteLutCache::new(),
+            threshold_cache: engine_color::threshold_map::ThresholdMapCache::new(),
+            error_residuals: engine_project::filters::ErrorResidualsStore::new(),
+            block_representatives: engine_tiles::BlockRepresentativeCache::new(),
+            diffusion_skip_counter: crate::diffusion_waiters::DiffusionSkipCounter::new(),
+            pending_diffusion_waiters: crate::diffusion_waiters::PendingDiffusionWaiters::new(),
+            gpu: None,
+            panel_manager: Mutex::new(crate::panel_manager::PanelManager::new()),
+            selection: Mutex::new(SelectionState::default()),
+            dock_affinity: Mutex::new(crate::dock_affinity::DockAffinityController::new(true)),
+            float_drag_mouseup_cancel: std::sync::Arc::new(
+                std::sync::atomic::AtomicBool::new(true),
+            ),
+            float_drag_mouseup_hook: Mutex::new(None),
+        })
+    }
+
+    // ------------------------------------------------------------------
+    // Integration Test: Full Palette CRUD Lifecycle
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn integration_palette_crud_lifecycle() {
+        let state = make_test_app_state();
+
+        // === CREATE ===
+        let name = "Test Palette".to_string();
+        let trimmed_name = name.trim().to_string();
+        let mut palette_id_raw = 0u32;
+        state.document_handle.mutate(|doc| {
+            let pid = doc.add_palette(trimmed_name.clone(), vec![]);
+            palette_id_raw = pid.0;
+            doc.increment_generation();
+        });
+
+        // Verify palette was created
+        let snapshot = state.document_handle.snapshot();
+        let palette = snapshot.palettes.iter().find(|p| p.id == palette_id_raw);
+        assert!(palette.is_some());
+        let palette = palette.unwrap();
+        assert_eq!(palette.name, "Test Palette");
+        assert_eq!(palette.colors.len(), 0);
+        assert_eq!(palette.revision, 1);
+        drop(snapshot);
+
+        // === RENAME ===
+        state.document_handle.mutate(|doc| {
+            if let Some(p) = doc.palettes.iter_mut().find(|p| p.id == palette_id_raw) {
+                p.name = "Renamed Palette".to_string();
+            }
+        });
+        let snapshot = state.document_handle.snapshot();
+        let palette = snapshot.palettes.iter().find(|p| p.id == palette_id_raw).unwrap();
+        assert_eq!(palette.name, "Renamed Palette");
+        drop(snapshot);
+
+        // === ADD COLORS ===
+        let red = hex_to_linear("FF0000").unwrap();
+        let green = hex_to_linear("00FF00").unwrap();
+        let blue = hex_to_linear("0000FF").unwrap();
+
+        state.document_handle.mutate(|doc| {
+            if let Some(p) = doc.palettes.iter_mut().find(|p| p.id == palette_id_raw) {
+                p.colors.push(red);
+                p.revision += 1;
+            }
+        });
+        state.document_handle.mutate(|doc| {
+            if let Some(p) = doc.palettes.iter_mut().find(|p| p.id == palette_id_raw) {
+                p.colors.push(green);
+                p.revision += 1;
+            }
+        });
+        state.document_handle.mutate(|doc| {
+            if let Some(p) = doc.palettes.iter_mut().find(|p| p.id == palette_id_raw) {
+                p.colors.push(blue);
+                p.revision += 1;
+            }
+        });
+
+        let snapshot = state.document_handle.snapshot();
+        let palette = snapshot.palettes.iter().find(|p| p.id == palette_id_raw).unwrap();
+        assert_eq!(palette.colors.len(), 3);
+        assert_eq!(palette.revision, 4); // initial 1 + 3 adds
+        drop(snapshot);
+
+        // === UPDATE COLOR ===
+        // Change green (index 1) to yellow FF FF 00
+        let yellow = hex_to_linear("FFFF00").unwrap();
+        state.document_handle.mutate(|doc| {
+            if let Some(p) = doc.palettes.iter_mut().find(|p| p.id == palette_id_raw) {
+                p.colors[1] = yellow;
+                p.revision += 1;
+            }
+        });
+
+        let snapshot = state.document_handle.snapshot();
+        let palette = snapshot.palettes.iter().find(|p| p.id == palette_id_raw).unwrap();
+        assert_eq!(palette.revision, 5);
+        // Verify the color at index 1 changed (via hex round-trip)
+        let hex_at_1 = linear_to_hex(&palette.colors[1]);
+        assert_eq!(hex_at_1, "FFFF00");
+        drop(snapshot);
+
+        // === REMOVE COLOR ===
+        // Remove index 0 (red)
+        state.document_handle.mutate(|doc| {
+            if let Some(p) = doc.palettes.iter_mut().find(|p| p.id == palette_id_raw) {
+                p.colors.remove(0);
+                p.revision += 1;
+            }
+        });
+
+        let snapshot = state.document_handle.snapshot();
+        let palette = snapshot.palettes.iter().find(|p| p.id == palette_id_raw).unwrap();
+        assert_eq!(palette.colors.len(), 2);
+        assert_eq!(palette.revision, 6);
+        // First color should now be yellow
+        assert_eq!(linear_to_hex(&palette.colors[0]), "FFFF00");
+        // Second color should be blue
+        assert_eq!(linear_to_hex(&palette.colors[1]), "0000FF");
+        drop(snapshot);
+
+        // === REORDER ===
+        // Move index 0 (yellow) to index 1 → [blue, yellow]
+        state.document_handle.mutate(|doc| {
+            if let Some(p) = doc.palettes.iter_mut().find(|p| p.id == palette_id_raw) {
+                let color = p.colors.remove(0);
+                p.colors.insert(1, color);
+                p.revision += 1;
+            }
+        });
+
+        let snapshot = state.document_handle.snapshot();
+        let palette = snapshot.palettes.iter().find(|p| p.id == palette_id_raw).unwrap();
+        assert_eq!(palette.colors.len(), 2);
+        assert_eq!(palette.revision, 7);
+        assert_eq!(linear_to_hex(&palette.colors[0]), "0000FF");
+        assert_eq!(linear_to_hex(&palette.colors[1]), "FFFF00");
+        drop(snapshot);
+
+        // === DELETE ===
+        state.document_handle.mutate(|doc| {
+            doc.palettes.retain(|p| p.id != palette_id_raw);
+            doc.increment_generation();
+        });
+
+        let snapshot = state.document_handle.snapshot();
+        assert!(snapshot.palettes.iter().find(|p| p.id == palette_id_raw).is_none());
+        drop(snapshot);
+    }
+
+    // ------------------------------------------------------------------
+    // Integration Test: Invalidation Cascade Verification
+    // Modify palette → verify tiles marked dirty for referencing layers
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn integration_invalidation_cascade_on_palette_modify() {
+        use std::sync::atomic::Ordering;
+        use engine_project::layer::{Layer, LayerNode};
+        use engine_project::types::{LayerId, LayerKind, PaletteId};
+        use engine_project::filter::{
+            FilterInstance, FilterKind, FilterParams, DitherParamsV2,
+            DitherModeV2, DitherColorMode,
+        };
+        use engine_tiles::{CacheStage, TileCoord, TileKey, PixelTile};
+
+        let state = make_test_app_state();
+
+        // 1. Create a palette with one color
+        let mut palette_id_raw = 0u32;
+        state.document_handle.mutate(|doc| {
+            let color = engine_color::palette::LinearColor {
+                r: 1.0, g: 0.0, b: 0.0,
+            };
+            let pid = doc.add_palette("Test".to_string(), vec![color]);
+            palette_id_raw = pid.0;
+        });
+
+        // 2. Add a layer with a DitherV2 filter referencing this palette
+        let layer_id = 42u32;
+        state.document_handle.mutate(|doc| {
+            let mut layer = Layer::new(
+                LayerId::new(layer_id),
+                LayerKind::Raster,
+                800,
+                600,
+            );
+            layer.filters.push(FilterInstance::new(
+                FilterKind::Dither,
+                FilterParams::DitherV2(DitherParamsV2 {
+                    mode: DitherModeV2::Bayer4x4,
+                    levels: 4,
+                    threshold_scale: 1.0,
+                    pixel_size: 1,
+                    color_mode: DitherColorMode::Rgb,
+                    palette_id: Some(PaletteId::new(palette_id_raw)),
+            ..Default::default()
+                }),
+            ));
+            doc.root.push(LayerNode::Leaf(layer));
+        });
+
+        // 3. Insert clean Processed and Composite tiles for this layer
+        let processed_key = TileKey {
+            layer: layer_id,
+            coord: TileCoord { level: 0, x: 0, y: 0 },
+            stage: CacheStage::Processed,
+        };
+        let composite_key = TileKey {
+            layer: layer_id,
+            coord: TileCoord { level: 0, x: 0, y: 0 },
+            stage: CacheStage::Composite,
+        };
+        let tile = Arc::new(PixelTile::new());
+        state.tile_cache.get_or_insert(processed_key, tile.clone());
+        state.tile_cache.get_or_insert(composite_key, tile.clone());
+
+        // Verify tiles are NOT dirty before modification
+        let entry_p = state.tile_cache.entries.get(&processed_key).unwrap();
+        assert!(!entry_p.dirty.load(Ordering::Relaxed));
+        drop(entry_p);
+        let entry_c = state.tile_cache.entries.get(&composite_key).unwrap();
+        assert!(!entry_c.dirty.load(Ordering::Relaxed));
+        drop(entry_c);
+
+        // 4. Modify the palette (add a color) and trigger invalidation
+        state.document_handle.mutate(|doc| {
+            if let Some(p) = doc.palettes.iter_mut().find(|p| p.id == palette_id_raw) {
+                let green = engine_color::palette::LinearColor {
+                    r: 0.0, g: 1.0, b: 0.0,
+                };
+                p.colors.push(green);
+                p.revision += 1;
+            }
+        });
+        invalidate_palette_changed(PaletteId::new(palette_id_raw), &state);
+
+        // 5. Verify tiles are now dirty
+        let entry_p = state.tile_cache.entries.get(&processed_key).unwrap();
+        assert!(
+            entry_p.dirty.load(Ordering::Relaxed),
+            "Processed tile should be dirty after palette modification"
+        );
+        drop(entry_p);
+        let entry_c = state.tile_cache.entries.get(&composite_key).unwrap();
+        assert!(
+            entry_c.dirty.load(Ordering::Relaxed),
+            "Composite tile should be dirty after palette modification"
+        );
+        drop(entry_c);
+    }
+
+    // ------------------------------------------------------------------
+    // Integration Test: Invalidation does NOT happen for unreferenced palette
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn integration_no_invalidation_for_unreferenced_palette() {
+        use std::sync::atomic::Ordering;
+        use engine_project::layer::{Layer, LayerNode};
+        use engine_project::types::{LayerId, LayerKind, PaletteId};
+        use engine_tiles::{CacheStage, TileCoord, TileKey, PixelTile};
+
+        let state = make_test_app_state();
+
+        // Create a palette (not referenced by any filter)
+        let mut palette_id_raw = 0u32;
+        state.document_handle.mutate(|doc| {
+            let pid = doc.add_palette("Unused".to_string(), vec![]);
+            palette_id_raw = pid.0;
+        });
+
+        // Add a layer with NO filters referencing the palette
+        let layer_id = 10u32;
+        state.document_handle.mutate(|doc| {
+            let layer = Layer::new(LayerId::new(layer_id), LayerKind::Raster, 800, 600);
+            doc.root.push(LayerNode::Leaf(layer));
+        });
+
+        // Insert a clean Processed tile for this layer
+        let key = TileKey {
+            layer: layer_id,
+            coord: TileCoord { level: 0, x: 0, y: 0 },
+            stage: CacheStage::Processed,
+        };
+        let tile = Arc::new(PixelTile::new());
+        state.tile_cache.get_or_insert(key, tile);
+
+        // Trigger invalidation for the unreferenced palette
+        invalidate_palette_changed(PaletteId::new(palette_id_raw), &state);
+
+        // Tile should remain clean
+        let entry = state.tile_cache.entries.get(&key).unwrap();
+        assert!(
+            !entry.dirty.load(Ordering::Relaxed),
+            "Tile should NOT be dirty when palette is unreferenced"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Integration Test: Force-delete palette with filter reference clearing
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn integration_force_delete_palette_clears_references() {
+        use std::sync::atomic::Ordering;
+        use engine_project::layer::{Layer, LayerNode};
+        use engine_project::types::{LayerId, LayerKind, PaletteId};
+        use engine_project::filter::{
+            FilterInstance, FilterKind, FilterParams, DitherParamsV2,
+            DitherModeV2, DitherColorMode, DiffusionKernel,
+        };
+        use engine_tiles::{CacheStage, TileCoord, TileKey, PixelTile};
+
+        let state = make_test_app_state();
+
+        // 1. Create a palette with colors
+        let mut palette_id_raw = 0u32;
+        state.document_handle.mutate(|doc| {
+            let colors = vec![
+                engine_color::palette::LinearColor { r: 1.0, g: 0.0, b: 0.0 },
+                engine_color::palette::LinearColor { r: 0.0, g: 1.0, b: 0.0 },
+            ];
+            let pid = doc.add_palette("ToDelete".to_string(), colors);
+            palette_id_raw = pid.0;
+        });
+
+        // 2. Add two layers:
+        //    - Layer A with DitherV2 referencing this palette
+        //    - Layer B with PaletteQuantize referencing this palette
+        let layer_a_id = 100u32;
+        let layer_b_id = 200u32;
+        state.document_handle.mutate(|doc| {
+            // Layer A: DitherV2 with palette_id
+            let mut layer_a = Layer::new(
+                LayerId::new(layer_a_id), LayerKind::Raster, 800, 600,
+            );
+            layer_a.filters.push(FilterInstance::new(
+                FilterKind::Dither,
+                FilterParams::DitherV2(DitherParamsV2 {
+                    mode: DitherModeV2::Bayer4x4,
+                    levels: 4,
+                    threshold_scale: 1.0,
+                    pixel_size: 1,
+                    color_mode: DitherColorMode::Rgb,
+                    palette_id: Some(PaletteId::new(palette_id_raw)),
+            ..Default::default()
+                }),
+            ));
+            doc.root.push(LayerNode::Leaf(layer_a));
+
+            // Layer B: PaletteQuantize with palette_id
+            let mut layer_b = Layer::new(
+                LayerId::new(layer_b_id), LayerKind::Raster, 800, 600,
+            );
+            layer_b.filters.push(FilterInstance::new(
+                FilterKind::PaletteQuantize,
+                FilterParams::PaletteQuantize {
+                    palette_id: PaletteId::new(palette_id_raw),
+                    diffusion: Some(DiffusionKernel::FloydSteinberg),
+                },
+            ));
+            doc.root.push(LayerNode::Leaf(layer_b));
+        });
+
+        // 3. Insert clean tiles for both layers
+        let key_a = TileKey {
+            layer: layer_a_id,
+            coord: TileCoord { level: 0, x: 0, y: 0 },
+            stage: CacheStage::Processed,
+        };
+        let key_b = TileKey {
+            layer: layer_b_id,
+            coord: TileCoord { level: 0, x: 0, y: 0 },
+            stage: CacheStage::Processed,
+        };
+        let tile = Arc::new(PixelTile::new());
+        state.tile_cache.get_or_insert(key_a, tile.clone());
+        state.tile_cache.get_or_insert(key_b, tile.clone());
+
+        // 4. Perform force-delete logic (replicating delete_palette behavior)
+        let pid = PaletteId::new(palette_id_raw);
+        let mut affected_filter_ids: Vec<String> = Vec::new();
+        let mut affected_layer_ids: Vec<u32> = Vec::new();
+
+        state.document_handle.mutate(|doc| {
+            // Clear palette references
+            for node in doc.root.iter_mut() {
+                if let LayerNode::Leaf(layer) = node {
+                    let mut layer_affected = false;
+                    let mut filters_to_remove: Vec<usize> = Vec::new();
+
+                    for (idx, filter) in layer.filters.iter_mut().enumerate() {
+                        match &mut filter.params {
+                            FilterParams::DitherV2(params) => {
+                                if params.palette_id == Some(pid) {
+                                    params.palette_id = None;
+                                    affected_filter_ids.push(filter.id.to_string());
+                                    layer_affected = true;
+                                }
+                            }
+                            FilterParams::PaletteQuantize {
+                                palette_id: ref p, ..
+                            } => {
+                                if *p == pid {
+                                    affected_filter_ids.push(filter.id.to_string());
+                                    filters_to_remove.push(idx);
+                                    layer_affected = true;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    // Remove PaletteQuantize filters in reverse
+                    for idx in filters_to_remove.into_iter().rev() {
+                        layer.filters.remove(idx);
+                    }
+
+                    if layer_affected {
+                        affected_layer_ids.push(layer.id.0);
+                    }
+                }
+            }
+
+            // Remove the palette
+            doc.palettes.retain(|p| p.id != palette_id_raw);
+            doc.increment_generation();
+        });
+
+        // Evict from palette cache
+        state.palette_cache.evict(palette_id_raw);
+        state.palette_lut_cache.evict(palette_id_raw);
+
+        // Invalidate affected layers
+        for layer_id in &affected_layer_ids {
+            engine_tiles::invalidation::invalidate(
+                &state.tile_cache,
+                engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
+                    layer: *layer_id,
+                },
+            );
+        }
+
+        // 5. Verify: palette removed
+        let snapshot = state.document_handle.snapshot();
+        assert!(
+            snapshot.palettes.iter().find(|p| p.id == palette_id_raw).is_none(),
+            "Palette should be removed from document"
+        );
+
+        // 6. Verify: DitherV2 filter on layer A has palette_id cleared to None
+        let layer_a_node = snapshot.root.iter().find(|n| {
+            matches!(n, LayerNode::Leaf(l) if l.id.0 == layer_a_id)
+        });
+        assert!(layer_a_node.is_some());
+        if let Some(LayerNode::Leaf(layer_a)) = layer_a_node {
+            assert_eq!(layer_a.filters.len(), 1, "DitherV2 filter should remain");
+            match &layer_a.filters[0].params {
+                FilterParams::DitherV2(params) => {
+                    assert_eq!(
+                        params.palette_id, None,
+                        "DitherV2 palette_id should be cleared to None"
+                    );
+                }
+                _ => panic!("Expected DitherV2 filter"),
+            }
+        }
+
+        // 7. Verify: PaletteQuantize filter on layer B is removed
+        let layer_b_node = snapshot.root.iter().find(|n| {
+            matches!(n, LayerNode::Leaf(l) if l.id.0 == layer_b_id)
+        });
+        assert!(layer_b_node.is_some());
+        if let Some(LayerNode::Leaf(layer_b)) = layer_b_node {
+            assert_eq!(
+                layer_b.filters.len(), 0,
+                "PaletteQuantize filter should be removed"
+            );
+        }
+        drop(snapshot);
+
+        // 8. Verify: affected filter IDs were collected
+        assert_eq!(affected_filter_ids.len(), 2);
+        assert_eq!(affected_layer_ids.len(), 2);
+
+        // 9. Verify: tiles for affected layers are dirty
+        let entry_a = state.tile_cache.entries.get(&key_a).unwrap();
+        assert!(
+            entry_a.dirty.load(Ordering::Relaxed),
+            "Layer A tiles should be dirty after force-delete"
+        );
+        drop(entry_a);
+        let entry_b = state.tile_cache.entries.get(&key_b).unwrap();
+        assert!(
+            entry_b.dirty.load(Ordering::Relaxed),
+            "Layer B tiles should be dirty after force-delete"
+        );
+        drop(entry_b);
     }
 }

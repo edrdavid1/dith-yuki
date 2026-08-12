@@ -1,0 +1,98 @@
+/* ─── Swatch Grid (from pre-P4 index.css — visual parity) ───────────────────── */
+
+.swatch-grid-container {
+  padding: 4px 0;
+}
+
+.swatch-grid-error {
+  color: #c00;
+  font-size: 10px;
+  padding: 2px 0 4px;
+}
+
+.swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(24px, 1fr));
+  gap: 2px;
+  width: 100%;
+}
+
+.swatch-item {
+  width: 100%;
+  aspect-ratio: 1;
+  border: var(--border);
+  cursor: pointer;
+  transition: border-color 0.1s;
+}
+
+.swatch-item:hover {
+  border-color: var(--color-black);
+}
+
+.swatch-item.swatch-selected {
+  border-color: #00aaff;
+  box-shadow: 0 0 0 var(--border-width) #00aaff;
+}
+
+.swatch-item.swatch-drag-over {
+  border-color: #ffaa00;
+  box-shadow: 0 0 0 var(--border-width) #ffaa00;
+}
+
+.swatch-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 1;
+  border: var(--border-dashed);
+  background: var(--color-gray);
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: bold;
+  color: var(--color-dark-gray);
+}
+
+.swatch-btn:hover:not(:disabled) {
+  border-color: var(--color-black);
+  background: var(--bg-hover-muted);
+  color: var(--color-hover-reset);
+}
+
+.swatch-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.swatch-grid-actions {
+  margin-top: 4px;
+  display: flex;
+  gap: 4px;
+}
+
+.swatch-grid-actions .swatch-btn-remove {
+  width: 24px;
+  height: 24px;
+  aspect-ratio: 1;
+  border: var(--border);
+  border-radius: 2px;
+  background: #e0e0e0;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: bold;
+  color: #555;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.swatch-grid-actions .swatch-btn-remove:hover:not(:disabled) {
+  border-color: var(--color-hover-danger);
+  color: var(--color-hover-danger);
+  background: var(--bg-hover-danger);
+}
+
+.swatch-grid-actions .swatch-btn-remove:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

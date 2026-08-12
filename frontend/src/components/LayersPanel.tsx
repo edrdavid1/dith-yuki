@@ -1,0 +1,537 @@
+import type { DockSide } from '../types/panels';
+import { useCallback, useState, useEffect, useRef } from 'react';
+import type { KeyboardEvent } from 'react';
+import type { LayerNodeDto } from '../shared/types/layers';
+import type { FilterInfo } from '../types';
+import DropdownMenu from './common/DropdownMenu';
+import SimpleBar from 'simplebar-react';
+import WindowTitlebar from '../shared/ui/WindowTitlebar';
+import Icon from '../icons/iconRegistry';
+import styles from '../features/layers/LayersPanel.module.css';
+import retroSlider from '../shared/ui/RetroSlider.module.css';
+import layerControls from '../features/layers/layerControls.module.css';
+import { bind } from '../shared/ui/cn';
+const cn = bind({ ...styles, ...retroSlider, ...layerControls });
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface LayersPanelProps {
+  layers: LayerNodeDto[];
+  selectedLayerId: number | null;
+  /** Filters on the image source layer — shown as virtual effect layers */
+  filters: FilterInfo[];
+  /** Currently selected filter ID (for highlighting) */
+  selectedFilterId: string | null;
+  onSelect: (id: number) => void;
+  onSelectFilter: (filterId: string | null) => void;
+  onAddLayer: () => void;
+  onRemoveFilter: (filterId: string) => void;
+  onReorderFilter: (filterId: string, newIndex: number) => void;
+  onToggleVisibility: (id: number) => void;
+  onBlendModeChange: (layerId: number, mode: string) => void;
+  onOpacityChange: (layerId: number, opacity: number) => void;
+  /** Mouse down handler for the title bar — used for panel drag-to-reorder/undock */
+  onTitleBarMouseDown?: (e: React.MouseEvent) => void;
+  dockSide?: DockSide;
+  onMoveToSide?: (side: DockSide) => void;
+}
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const BLEND_MODES = [
+  'Normal', 'Multiply', 'Screen', 'Overlay', 'Darken', 'Lighten',
+  'ColorDodge', 'ColorBurn', 'HardLight', 'SoftLight', 'Difference', 'Exclusion',
+] as const;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function filterKindToName(kind: string): string {
+  switch (kind) {
+    case 'DitherV2': case 'Dither': return 'Dithering';
+    case 'Glitch': return 'Glitching';
+    case 'Curves': return 'Curves';
+    case 'Levels': return 'RGB Channels';
+    case 'Glow': return 'Glow';
+    case 'Crt': return 'CRT';
+    default: return kind;
+  }
+}
+
+function filterKindToIconType(kind: string): string {
+  switch (kind) {
+    case 'DitherV2': case 'Dither': return 'dithering';
+    case 'Glitch': return 'glitching';
+    case 'Curves': return 'curves';
+    case 'Levels': return 'rgb';
+    case 'Glow': return 'glitching';
+    case 'Crt': return 'dithering';
+    default: return 'dithering';
+  }
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
+export default function LayersPanel({
+  layers,
+  selectedLayerId,
+  filters,
+  selectedFilterId,
+  onSelect,
+  onSelectFilter,
+  onAddLayer,
+  onRemoveFilter,
+  onReorderFilter,
+  onToggleVisibility,
+  onBlendModeChange,
+  onOpacityChange,
+  onTitleBarMouseDown,
+  dockSide,
+  onMoveToSide,
+}: LayersPanelProps) {
+  const selectedLayer = selectedLayerId !== null
+    ? layers.find(l => l.id === selectedLayerId) ?? null
+    : null;
+
+  const imageSourceLayer = layers.length > 0 ? layers[0] : null;
+  const trashDisabled = selectedFilterId === null;
+  const currentOpacityPercent = selectedLayer ? Math.round(selectedLayer.opacity * 100) : 100;
+  const [opacityText, setOpacityText] = useState(`${currentOpacityPercent}%`);
+  const [opacityEditing, setOpacityEditing] = useState(false);
+  const [isOpacityPopupOpen, setIsOpacityPopupOpen] = useState(false);
+  const opacityPopupRef = useRef<HTMLDivElement | null>(null);
+
+  // Stable numbering: assign a persistent number to each filter by ID
+  const [filterNumbers, setFilterNumbers] = useState<Record<string, number>>({});
+  const nextNumberRef = useRef(1);
+
+  // Custom names for filters (editable via double-click)
+  const [filterNames, setFilterNames] = useState<Record<string, string>>({});
+  const [editingFilterId, setEditingFilterId] = useState<string | null>(null);
+  const [editNameValue, setEditNameValue] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
+
+  // Drag-and-drop state
+  const [dragFilterId, setDragFilterId] = useState<string | null>(null);
+  const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
+  const dragStartY = useRef(0);
+  const isDragging = useRef(false);
+  const layerListRef = useRef<HTMLDivElement | null>(null);
+  const dragFilterIdRef = useRef<string | null>(null);
+  const dropTargetIndexRef = useRef<number | null>(null);
+
+  // Assign stable numbers to new filters as they appear
+  useEffect(() => {
+    let updated = false;
+    const newNumbers = { ...filterNumbers };
+    for (const filter of filters) {
+      if (!(filter.id in newNumbers)) {
+        newNumbers[filter.id] = nextNumberRef.current++;
+        updated = true;
+      }
+    }
+    if (updated) {
+      setFilterNumbers(newNumbers);
+    }
+  }, [filters]);
+
+  // Focus rename input when editing starts
+  useEffect(() => {
+    if (editingFilterId !== null && renameInputRef.current) {
+      renameInputRef.current.focus();
+      renameInputRef.current.select();
+    }
+  }, [editingFilterId]);
+
+  const handleStartRename = useCallback((filterId: string, currentName: string) => {
+    setEditingFilterId(filterId);
+    setEditNameValue(currentName);
+  }, []);
+
+  const handleCommitRename = useCallback(() => {
+    if (editingFilterId === null) return;
+    const trimmed = editNameValue.trim();
+    if (trimmed.length > 0) {
+      setFilterNames((prev) => ({ ...prev, [editingFilterId]: trimmed }));
+    }
+    setEditingFilterId(null);
+    setEditNameValue('');
+  }, [editingFilterId, editNameValue]);
+
+  const handleRenameKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleCommitRename();
+    } else if (e.key === 'Escape') {
+      setEditingFilterId(null);
+      setEditNameValue('');
+    }
+  }, [handleCommitRename]);
+
+  // ─── Drag-and-Drop Handlers ─────────────────────────────────────────────
+
+  const handleDragMouseDown = useCallback((e: React.MouseEvent, filterId: string) => {
+    // Only left mouse button
+    if (e.button !== 0) return;
+    dragStartY.current = e.clientY;
+    isDragging.current = false;
+    dragFilterIdRef.current = filterId;
+    setDragFilterId(filterId);
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const dy = Math.abs(moveEvent.clientY - dragStartY.current);
+      if (dy > 4) {
+        isDragging.current = true;
+      }
+      if (!isDragging.current || !layerListRef.current) return;
+
+      // Determine drop position based on mouse Y relative to rows
+      const rows = layerListRef.current.querySelectorAll<HTMLElement>('[data-filter-idx]');
+      let targetIdx = filters.length; // default: end
+      for (let i = 0; i < rows.length; i++) {
+        const rect = rows[i].getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        if (moveEvent.clientY < midY) {
+          targetIdx = i;
+          break;
+        }
+      }
+      dropTargetIndexRef.current = targetIdx;
+      setDropTargetIndex(targetIdx);
+    };
+
+    const handleMouseUp = () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+
+      const currentDragId = dragFilterIdRef.current;
+      const currentDropIdx = dropTargetIndexRef.current;
+
+      if (isDragging.current && currentDragId !== null && currentDropIdx !== null) {
+        const currentIdx = filters.findIndex(f => f.id === currentDragId);
+        // Adjust target: if dragging down, account for removal shifting indices
+        let finalIdx = currentDropIdx;
+        if (currentIdx < finalIdx) {
+          finalIdx = finalIdx - 1;
+        }
+        if (currentIdx !== finalIdx && finalIdx >= 0) {
+          onReorderFilter(currentDragId, finalIdx);
+        }
+      }
+
+      isDragging.current = false;
+      dragFilterIdRef.current = null;
+      dropTargetIndexRef.current = null;
+      setDragFilterId(null);
+      setDropTargetIndex(null);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  }, [filters, onReorderFilter]);
+
+  useEffect(() => {
+    if (!opacityEditing) {
+      setOpacityText(`${currentOpacityPercent}%`);
+    }
+  }, [currentOpacityPercent, opacityEditing]);
+
+  useEffect(() => {
+    if (!isOpacityPopupOpen) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!opacityPopupRef.current?.contains(event.target as Node)) {
+        setIsOpacityPopupOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', handleClickOutside);
+    return () => window.removeEventListener('mousedown', handleClickOutside);
+  }, [isOpacityPopupOpen]);
+
+  useEffect(() => {
+    if (selectedLayerId === null) {
+      setIsOpacityPopupOpen(false);
+    }
+  }, [selectedLayerId]);
+
+  const handleBlendModeChange = useCallback((mode: string) => {
+    if (selectedLayerId !== null) {
+      onBlendModeChange(selectedLayerId, mode);
+    }
+  }, [selectedLayerId, onBlendModeChange]);
+
+  const toggleOpacityPopup = useCallback(() => {
+    if (selectedLayerId !== null) {
+      setIsOpacityPopupOpen((open) => !open);
+    }
+  }, [selectedLayerId]);
+
+  const commitOpacity = useCallback(() => {
+    const raw = opacityText.replace('%', '').trim();
+    const parsed = Number(raw);
+
+    if (!Number.isFinite(parsed)) {
+      setOpacityText(`${currentOpacityPercent}%`);
+      setOpacityEditing(false);
+      return;
+    }
+
+    const clamped = Math.min(100, Math.max(0, Math.round(parsed)));
+    if (selectedLayerId !== null) {
+      onOpacityChange(selectedLayerId, clamped / 100);
+    }
+    setOpacityText(`${clamped}%`);
+    setOpacityEditing(false);
+  }, [opacityText, currentOpacityPercent, selectedLayerId, onOpacityChange]);
+
+  const handleOpacityInputKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      commitOpacity();
+      (e.target as HTMLInputElement).blur();
+    } else if (e.key === 'Escape') {
+      setOpacityText(`${currentOpacityPercent}%`);
+      setOpacityEditing(false);
+      setIsOpacityPopupOpen(false);
+      (e.target as HTMLInputElement).blur();
+    }
+  }, [commitOpacity, currentOpacityPercent]);
+
+  const handleTrashClick = useCallback(() => {
+    if (selectedFilterId) {
+      onRemoveFilter(selectedFilterId);
+    }
+  }, [selectedFilterId, onRemoveFilter]);
+
+  return (
+    <div className={cn("lp")} aria-label="Layers panel">
+      <WindowTitlebar
+        title="Layers"
+        className={cn("lp-titlebar")}
+        onMouseDown={onTitleBarMouseDown}
+        dockSide={dockSide}
+        onMoveToSide={onMoveToSide}
+      />
+
+      {/* Blend mode + Opacity row */}
+      <div className={cn("lp-controls")}>
+        <DropdownMenu
+          value={selectedLayer?.blend_mode ?? 'Normal'}
+          options={BLEND_MODES.map((mode) => ({ value: mode, label: mode }))}
+          onSelect={handleBlendModeChange}
+          disabled={selectedLayerId === null}
+          className={cn("lp-dropdown-wrap-small")}
+        />
+
+        <div className={cn("lp-opacity")}>
+          <span className={cn("lp-opacity-label")}>Opacity :</span>
+          <div className={cn("lp-opacity-control")} ref={opacityPopupRef}>
+            <input
+              className={cn("lp-opacity-input")}
+              type="text"
+              value={opacityText}
+              disabled={selectedLayerId === null}
+              aria-label="Opacity"
+              onChange={(e) => setOpacityText(e.target.value)}
+              onFocus={() => setOpacityEditing(true)}
+              onBlur={commitOpacity}
+              onKeyDown={handleOpacityInputKeyDown}
+            />
+            <button
+              type="button"
+              className={cn("lp-opacity-btn")}
+              onClick={toggleOpacityPopup}
+              disabled={selectedLayerId === null}
+              aria-label="Open opacity slider"
+            />
+            {isOpacityPopupOpen && (
+              <div className={cn("lp-opacity-popup")}>
+                <div
+                  className={cn("retro-slider-track", "layer-opacity-slider")}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const track = e.currentTarget;
+                    const updateFromMouse = (clientX: number) => {
+                      const rect = track.getBoundingClientRect();
+                      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+                      const val = Math.round(ratio * 100);
+                      if (selectedLayerId !== null) {
+                        onOpacityChange(selectedLayerId, val / 100);
+                      }
+                      setOpacityText(`${val}%`);
+                    };
+                    updateFromMouse(e.clientX);
+                    const onMove = (ev: MouseEvent) => updateFromMouse(ev.clientX);
+                    const onUp = () => {
+                      document.removeEventListener('mousemove', onMove);
+                      document.removeEventListener('mouseup', onUp);
+                    };
+                    document.addEventListener('mousemove', onMove);
+                    document.addEventListener('mouseup', onUp);
+                  }}
+                >
+                  <div
+                    className={cn("retro-slider-thumb")}
+                    style={{ left: `${currentOpacityPercent}%` }}
+                  >
+                    <img src="/icons/slider-carrete-icon.svg" width="16" height="35" alt="" draggable={false} />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Layer list — virtual layers (filters) + Image Source */}
+      <div className={cn("lp-layers-area")}>
+        <SimpleBar style={{ height: '100%' }}>
+        <div className={cn("lp-layers-list")} ref={layerListRef}>
+          {/* Virtual effect layers (filters displayed as rows) */}
+          {filters.map((filter, idx) => {
+            const isSelected = filter.id === selectedFilterId;
+            const stableNumber = filterNumbers[filter.id] ?? '?';
+            const displayName = filterNames[filter.id] ?? filterKindToName(filter.kind);
+            const isEditing = editingFilterId === filter.id;
+            const isBeingDragged = dragFilterId === filter.id && isDragging.current;
+            const showDropBefore = dropTargetIndex === idx && dragFilterId !== null && isDragging.current;
+
+            return (
+              <div key={filter.id}>
+                {showDropBefore && <div className={cn("lp-drop-indicator")} />}
+                <div
+                  className={cn(
+                    'lp-layer-row',
+                    isSelected && 'lp-layer-row-selected',
+                    isBeingDragged && 'lp-layer-row-dragging'
+                  )}
+                  data-filter-idx={idx}
+                  onClick={() => {
+                    if (!isDragging.current) onSelectFilter(filter.id);
+                  }}
+                  onMouseDown={(e) => handleDragMouseDown(e, filter.id)}
+                  role="treeitem"
+                  aria-selected={isSelected}
+                  style={{ cursor: dragFilterId ? 'grabbing' : 'grab' }}
+                >
+                  <button
+                    className={cn("lp-eye-btn")}
+                    onClick={(e) => { e.stopPropagation(); }}
+                    title={filter.enabled ? 'Enabled' : 'Disabled'}
+                  >
+                    <Icon name="open-eye" width={18} height={18} style={{ opacity: filter.enabled ? 1 : 0.3 }} />
+                  </button>
+
+                  <div className={cn("lp-layer-name")}>
+                    {isEditing ? (
+                      <input
+                        ref={renameInputRef}
+                        type="text"
+                        className={cn("lp-layer-name-input")}
+                        value={editNameValue}
+                        onChange={(e) => setEditNameValue(e.target.value)}
+                        onKeyDown={handleRenameKeyDown}
+                        onBlur={handleCommitRename}
+                        onClick={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        aria-label="Rename layer"
+                      />
+                    ) : (
+                      <span
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          handleStartRename(filter.id, displayName);
+                        }}
+                        title="Double-click to rename"
+                      >
+                        #{stableNumber} {displayName}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className={cn("lp-layer-icon")}>
+                    <EffectIconSvg type={filterKindToIconType(filter.kind)} />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {/* Drop indicator at end of list */}
+          {dropTargetIndex === filters.length && dragFilterId !== null && (
+            <div className={cn("lp-drop-indicator")} />
+          )}
+
+          {/* Image Source Layer (always at bottom) */}
+          {imageSourceLayer && (
+            <div
+              className={cn(
+                'lp-layer-row',
+                selectedFilterId === null && selectedLayerId === imageSourceLayer.id && 'lp-layer-row-selected'
+              )}
+              onClick={() => { onSelect(imageSourceLayer.id); }}
+              role="treeitem"
+            >
+              <button
+                className={cn("lp-eye-btn")}
+                onClick={(e) => { e.stopPropagation(); onToggleVisibility(imageSourceLayer.id); }}
+                title={imageSourceLayer.visible ? 'Hide' : 'Show'}
+              >
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" style={{ opacity: imageSourceLayer.visible ? 1 : 0.3 }}>
+                  <path d="M4 12C4 12 7 7 12 7C17 7 20 12 20 12C20 12 17 17 12 17C7 17 4 12 4 12Z" stroke="black" strokeWidth="2"/>
+                  <circle cx="12" cy="12" r="3" fill="black"/>
+                </svg>
+              </button>
+              <div className={cn("lp-layer-name")}>
+                <span>Image Source</span>
+              </div>
+              <div className={cn("lp-layer-icon")}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                  <rect x="2" y="2" width="20" height="2" fill="black"/>
+                  <rect x="2" y="20" width="20" height="2" fill="black"/>
+                  <rect x="2" y="4" width="2" height="16" fill="black"/>
+                  <rect x="20" y="4" width="2" height="16" fill="black"/>
+                  <rect x="8" y="6" width="4" height="4" fill="black"/>
+                  <rect x="14" y="14" width="2" height="2" fill="black"/>
+                  <rect x="16" y="12" width="2" height="2" fill="black"/>
+                  <rect x="12" y="16" width="2" height="2" fill="black"/>
+                </svg>
+              </div>
+            </div>
+          )}
+
+          {/* Empty state */}
+          {filters.length === 0 && !imageSourceLayer && (
+            <div className={cn("lp-add-placeholder")} onClick={onAddLayer}>
+              <span>add layer</span>
+            </div>
+          )}
+        </div>
+      </SimpleBar>
+      </div>
+
+      {/* Footer */}
+      <div className={cn("lp-footer")}>
+        <button className={cn("lp-footer-btn")} onClick={onAddLayer} title="Add effect" aria-label="Add effect">
+          <Icon name="plus" width={14} height={14} />
+        </button>
+        <button className={cn("lp-footer-btn")} onClick={handleTrashClick} disabled={trashDisabled} title="Delete effect" aria-label="Delete effect">
+          <Icon name="trash" width={14} height={14} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Effect Icon SVG ──────────────────────────────────────────────────────────
+
+function EffectIconSvg({ type }: { type: string }) {
+  switch (type) {
+    case 'dithering':
+      return <Icon name="effect.dithering" width={20} height={20} />;
+    case 'glitching':
+      return <Icon name="effect.glitching" width={20} height={20} />;
+    case 'curves':
+      return <Icon name="effect.curves" width={20} height={20} />;
+    case 'rgb':
+      return <Icon name="effect.rgb" width={20} height={20} />;
+    default:
+      return null;
+  }
+}

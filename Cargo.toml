@@ -6,6 +6,7 @@ members = [
     "crates/engine-color",
     "crates/engine-io",
     "crates/engine-project",
+    "crates/engine-gpu",
 ]
 
 resolver = "2"

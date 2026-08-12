@@ -1,0 +1,167 @@
+/* ─── Window Panel (shared for all panels) ─────────────────────────────────── */
+
+.window-panel {
+  background: var(--bg-window);
+  border: var(--border);
+  position: relative;
+}
+
+.window-titlebar {
+  box-sizing: border-box;
+  background: var(--bg-titlebar);
+  border-bottom: var(--border);
+  height: 20px;
+  line-height: 20px;
+  display: flex;
+  align-items: center;
+  padding: 0 2px;
+  position: relative;
+  user-select: none;
+  gap: 2.5px;
+  cursor: grab;
+}
+
+/* Floating PanelWindow already has chrome — hide inner titlebars */
+:global([data-floating-panel-content]) .window-titlebar {
+  display: none;
+}
+
+.window-titlebar-square {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  background: url('/icons/header-window-square-icon.svg') no-repeat center;
+  background-size: 14px 14px;
+  cursor: default;
+}
+
+.window-titlebar-square::after {
+  display: none;
+}
+
+.window-titlebar-lines {
+  flex: 1;
+  min-width: 1px;
+  height: 14px;
+  padding: 0 5px;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--color-black) 0px,
+    var(--color-black) 0px,
+    var(--color-black) var(--border-width),
+    transparent var(--border-width),
+    transparent 4px
+  );
+  background-position: center;
+}
+
+.window-titlebar::before,
+.window-titlebar::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  height: 14px;
+  width: calc(50% - 50px);
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 1px,
+    var(--color-black) 1px,
+    var(--color-black) 2px,
+    transparent 2px,
+    transparent 3px
+  );
+}
+
+.window-titlebar::before {
+  left: 20px;
+}
+
+.window-titlebar::after {
+  right: 20px;
+}
+
+/* Hide pseudoelement lines when explicit square+lines structure is used */
+.window-titlebar:has(.window-titlebar-square)::before,
+.window-titlebar:has(.window-titlebar-square)::after {
+  display: none;
+}
+
+.window-titlebar:has(.window-titlebar-square) {
+  justify-content: initial;
+}
+
+.window-title {
+  font-family: var(--font-family);
+  font-size: 12px;
+  font-weight: normal;
+  color: var(--text-color);
+  padding: 0 8px;
+  z-index: 1;
+  position: relative;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.window-titlebar-menu {
+  position: fixed;
+  z-index: 10000;
+  min-width: 180px;
+  padding: 2px;
+  background: var(--bg-window);
+  border: var(--border);
+  box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light);
+}
+
+.window-titlebar-menu-item {
+  display: block;
+  width: 100%;
+  height: 22px;
+  padding: 0 10px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-family: var(--font-family);
+  font-size: 12px;
+  color: var(--text-color);
+  cursor: pointer;
+}
+
+.window-titlebar-menu-item:hover {
+  background: var(--bg-hover);
+}
+
+/* Legacy: keep absolute-positioned btn for backward compat */
+.window-titlebar-btn {
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  width: 14px;
+  height: 14px;
+  border: none;
+  background: url('/icons/header-window-square-icon.svg') no-repeat center;
+  background-size: 14px 14px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.window-titlebar-btn::after {
+  display: none;
+}
+
+.window-titlebar-btn:active {
+  opacity: 0.7;
+}
+
+.window-titlebar-btn-left {
+  left: 3px;
+}
+
+.window-titlebar-btn-right {
+  right: 3px;
+  left: auto;
+}
+
+.window-body {
+  padding: 10px;
+}
