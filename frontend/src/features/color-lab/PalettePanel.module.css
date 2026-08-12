@@ -1,0 +1,67 @@
+/* ─── Palette Panel ────────────────────────────────────────────────────────── */
+
+.palette-panel-section {
+  padding: 4px 8px;
+}
+
+.palette-panel-section-divider {
+  border-top: var(--border);
+  padding-top: 6px;
+}
+
+.palette-panel-section-divider-padded {
+  border-top: var(--border);
+  padding: 6px 8px;
+}
+
+.palette-panel-name-input {
+  width: 100%;
+  font-size: 11px;
+  padding: 2px 4px;
+  font-family: inherit;
+  border: var(--border);
+  background: var(--bg-input);
+  color: var(--text-color);
+}
+
+.palette-panel-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.palette-panel-item {
+  margin-bottom: 4px;
+  padding: 4px 6px;
+  cursor: pointer;
+  border: var(--border-width) solid transparent;
+}
+
+.palette-panel-item-selected {
+  background: var(--color-black);
+  color: var(--color-white);
+}
+
+.palette-panel-rename-input {
+  font-size: 11px;
+  font-weight: bold;
+  font-family: inherit;
+  border: var(--border-width) solid #00aaff;
+  padding: 0 2px;
+  width: 100%;
+  background: var(--bg-input);
+  color: var(--text-color);
+}
+
+.palette-panel-preview-swatch {
+  width: 16px;
+  height: 16px;
+  border: var(--border);
+}
+
+.palette-panel-preview-swatch-selected {
+  border-color: var(--color-dark-gray);
+}
+.sidebar-section {
+  padding: 0;
+}
+

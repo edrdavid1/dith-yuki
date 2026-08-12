@@ -1,0 +1,25 @@
+/* Opacity slider chrome used by LayersPanel (ex-LayerControls). */
+
+.layer-opacity-slider {
+  flex: 1;
+  height: 5px;
+  background: var(--bg-slider-track);
+  border: var(--border);
+  position: relative;
+  cursor: pointer;
+}
+
+.layer-opacity-slider :global(.retro-slider-thumb) {
+  width: 26px;
+  height: 35px;
+  top: -11.5px;
+  margin-left: -8px;
+}
+
+.layer-opacity-value {
+  font-size: 10px;
+  font-family: var(--font-family);
+  color: var(--text-color);
+  min-width: 32px;
+  text-align: right;
+}

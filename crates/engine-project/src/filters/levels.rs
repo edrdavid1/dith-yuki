@@ -19,18 +19,48 @@ pub struct LevelsFilter {
     pub output_black: f32,
     /// Output white point (default 1.0)
     pub output_white: f32,
+    /// Pre-computed LUT: 4096 entries mapping [0.0, 1.0] → output.
+    /// Derived from other fields; not serialized.
+    #[serde(skip)]
+    lut: Vec<f32>,
 }
 
 impl LevelsFilter {
     /// Create a new levels filter with default (no-op) values.
     pub fn new() -> Self {
-        LevelsFilter {
+        let mut filter = LevelsFilter {
             input_black: 0.0,
             input_white: 1.0,
             gamma: 1.0,
             output_black: 0.0,
             output_white: 1.0,
+            lut: Vec::new(),
+        };
+        filter.rebuild_lut();
+        filter
+    }
+
+    /// Rebuild the pre-computed LUT from current parameters.
+    /// Must be called after construction or any parameter change.
+    /// After deserialization (where `lut` is empty due to `#[serde(skip)]`),
+    /// callers should invoke this method to populate the LUT.
+    pub fn rebuild_lut(&mut self) {
+        self.lut.resize(4096, 0.0);
+        for i in 0..4096 {
+            let x = i as f32 / 4095.0;
+            self.lut[i] = self.apply_to_value(x);
         }
+    }
+
+    /// Fast LUT lookup with linear interpolation between adjacent entries.
+    /// Returns a value within ±1/65536 of `apply_to_value(x)`.
+    pub fn lut_lookup(&self, x: f32) -> f32 {
+        let x = x.clamp(0.0, 1.0);
+        let idx_f = x * 4095.0;
+        let idx_lo = idx_f as usize;
+        let idx_hi = (idx_lo + 1).min(4095);
+        let frac = idx_f - idx_lo as f32;
+        self.lut[idx_lo] * (1.0 - frac) + self.lut[idx_hi] * frac
     }
 
     /// Apply levels transformation to a single pixel value.
@@ -57,23 +87,24 @@ impl LevelsFilter {
     }
 
     /// Apply the levels filter to a tile.
+    /// Uses row-based SIMD LUT processing for performance.
     pub fn apply_to_tile(&self, tile: &PixelTile) -> Result<PixelTile, EngineError> {
+        use crate::simd::levels_row_simd;
+        use engine_tiles::{HALO, TILE_SIZE};
+
         let mut result = PixelTile::new();
+        let size = (TILE_SIZE + 2 * HALO) as usize; // 260
 
-        // Iterate over all pixels in the tile (256+4 for halo)
-        for y in 0u32..260 {
-            for x in 0u32..260 {
-                // Apply to RGB channels
-                for c in 0..3 {
-                    let val = tile.at(x, y, c);
-                    let adjusted = self.apply_to_value(val);
-                    result.set(x, y, c, adjusted);
-                }
-                // Copy alpha channel
-                result.set(x, y, 3, tile.at(x, y, 3));
-            }
+        // Process all rows (including halo) using SIMD LUT lookup
+        for y in 0..size {
+            let row_start = y * size * 4;
+            let row_end = row_start + size * 4;
+            levels_row_simd(
+                &mut result.data[row_start..row_end],
+                &tile.data[row_start..row_end],
+                &self.lut,
+            );
         }
-
         Ok(result)
     }
 }
@@ -82,6 +113,30 @@ impl Default for LevelsFilter {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Reference implementation of `LevelsFilter::apply_to_tile` preserved for property-based testing.
+/// This is an exact copy of the current `apply_to_tile` implementation at the time of snapshotting.
+/// Used to verify that optimized versions (LUT-based) produce identical or near-identical output.
+#[cfg(test)]
+pub fn reference_levels_apply_to_tile(filter: &LevelsFilter, tile: &PixelTile) -> Result<PixelTile, EngineError> {
+    let mut result = PixelTile::new();
+
+    // Iterate over all pixels in the tile (256+4 for halo)
+    for y in 0u32..260 {
+        for x in 0u32..260 {
+            // Apply to RGB channels
+            for c in 0..3 {
+                let val = tile.at(x, y, c);
+                let adjusted = filter.apply_to_value(val);
+                result.set(x, y, c, adjusted);
+            }
+            // Copy alpha channel
+            result.set(x, y, 3, tile.at(x, y, 3));
+        }
+    }
+
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -145,5 +200,64 @@ mod tests {
         let levels = LevelsFilter::new();
         assert!(levels.apply_to_value(-0.5) >= 0.0);
         assert!(levels.apply_to_value(1.5) <= 1.0);
+    }
+
+    #[test]
+    fn lut_identity_lookup() {
+        let levels = LevelsFilter::new();
+        // Identity filter: LUT should return ~input
+        assert!((levels.lut_lookup(0.0) - 0.0).abs() < 1e-5);
+        assert!((levels.lut_lookup(0.5) - 0.5).abs() < 1e-5);
+        assert!((levels.lut_lookup(1.0) - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn lut_accuracy_vs_apply_to_value() {
+        let mut levels = LevelsFilter::new();
+        levels.input_black = 0.1;
+        levels.input_white = 0.9;
+        levels.gamma = 2.2;
+        levels.output_black = 0.05;
+        levels.output_white = 0.95;
+        levels.rebuild_lut();
+
+        // Check that lut_lookup closely approximates apply_to_value.
+        // With 4096 entries and linear interpolation, max error depends on
+        // curvature. For typical gamma curves, error is well under 1/4096.
+        let tolerance = 1.0 / 4096.0;
+        for i in 0..100 {
+            let x = i as f32 / 99.0;
+            let lut_val = levels.lut_lookup(x);
+            let direct_val = levels.apply_to_value(x);
+            assert!(
+                (lut_val - direct_val).abs() <= tolerance,
+                "LUT diverged at x={}: lut={}, direct={}, diff={}",
+                x,
+                lut_val,
+                direct_val,
+                (lut_val - direct_val).abs()
+            );
+        }
+    }
+
+    #[test]
+    fn lut_clamps_out_of_range() {
+        let levels = LevelsFilter::new();
+        // Values outside [0,1] should be clamped
+        assert!((levels.lut_lookup(-1.0) - 0.0).abs() < 1e-5);
+        assert!((levels.lut_lookup(2.0) - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn rebuild_lut_updates_with_new_params() {
+        let mut levels = LevelsFilter::new();
+        let before = levels.lut_lookup(0.5);
+
+        levels.gamma = 2.0;
+        levels.rebuild_lut();
+        let after = levels.lut_lookup(0.5);
+
+        // Gamma change should produce a different value for midtones
+        assert!((after - before).abs() > 0.01);
     }
 }

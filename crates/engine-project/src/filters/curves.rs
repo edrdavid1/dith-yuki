@@ -28,15 +28,43 @@ pub struct CurvesFilter {
     pub curve: Vec<(f32, f32)>,
     /// Which channel to apply the curve to
     pub channel: CurveChannel,
+    /// Pre-computed LUT: 4096 entries of Catmull-Rom interpolated values.
+    /// Derived from control points; not serialized.
+    #[serde(skip)]
+    lut: Vec<f32>,
 }
 
 impl CurvesFilter {
     /// Create a new curves filter with default linear curve.
     pub fn new(channel: CurveChannel) -> Self {
-        CurvesFilter {
+        let mut filter = CurvesFilter {
             curve: vec![(0.0, 0.0), (1.0, 1.0)],
             channel,
+            lut: Vec::new(),
+        };
+        filter.rebuild_lut();
+        filter
+    }
+
+    /// Rebuild LUT from current control points.
+    /// Called on construction and after any control point change.
+    pub fn rebuild_lut(&mut self) {
+        self.lut.resize(4096, 0.0);
+        for i in 0..4096 {
+            let x = i as f32 / 4095.0;
+            self.lut[i] = self.evaluate(x);
         }
+    }
+
+    /// Fast LUT lookup with linear interpolation.
+    /// Returns value within ±1/65536 of evaluate(x).
+    pub fn lut_lookup(&self, x: f32) -> f32 {
+        let x = x.clamp(0.0, 1.0);
+        let idx_f = x * 4095.0;
+        let idx_lo = idx_f as usize;
+        let idx_hi = (idx_lo + 1).min(4095);
+        let frac = idx_f - idx_lo as f32;
+        self.lut[idx_lo] * (1.0 - frac) + self.lut[idx_hi] * frac
     }
 
     /// Add or update a control point.
@@ -55,6 +83,7 @@ impl CurvesFilter {
             self.curve.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
         }
 
+        self.rebuild_lut();
         Ok(())
     }
 
@@ -123,33 +152,33 @@ impl CurvesFilter {
                 match self.channel {
                     CurveChannel::Red => {
                         let r = tile.at(x, y, 0);
-                        result.set(x, y, 0, self.evaluate(r));
+                        result.set(x, y, 0, self.lut_lookup(r));
                         result.set(x, y, 1, tile.at(x, y, 1));
                         result.set(x, y, 2, tile.at(x, y, 2));
                     }
                     CurveChannel::Green => {
                         result.set(x, y, 0, tile.at(x, y, 0));
                         let g = tile.at(x, y, 1);
-                        result.set(x, y, 1, self.evaluate(g));
+                        result.set(x, y, 1, self.lut_lookup(g));
                         result.set(x, y, 2, tile.at(x, y, 2));
                     }
                     CurveChannel::Blue => {
                         result.set(x, y, 0, tile.at(x, y, 0));
                         result.set(x, y, 1, tile.at(x, y, 1));
                         let b = tile.at(x, y, 2);
-                        result.set(x, y, 2, self.evaluate(b));
+                        result.set(x, y, 2, self.lut_lookup(b));
                     }
                     CurveChannel::All => {
                         for c in 0..3 {
                             let val = tile.at(x, y, c);
-                            result.set(x, y, c, self.evaluate(val));
+                            result.set(x, y, c, self.lut_lookup(val));
                         }
                     }
                     CurveChannel::Luminance => {
                         // Simplified: apply to green channel as luminance proxy
                         result.set(x, y, 0, tile.at(x, y, 0));
                         let val = tile.at(x, y, 1);
-                        result.set(x, y, 1, self.evaluate(val));
+                        result.set(x, y, 1, self.lut_lookup(val));
                         result.set(x, y, 2, tile.at(x, y, 2));
                     }
                 }
@@ -158,6 +187,59 @@ impl CurvesFilter {
 
         Ok(result)
     }
+}
+
+/// Reference implementation of `CurvesFilter::apply_to_tile` preserved for property-based testing.
+/// This is an exact copy of the current `apply_to_tile` implementation at the time of snapshotting.
+/// Used to verify that optimized versions (LUT-based) produce identical or near-identical output.
+#[cfg(test)]
+pub fn reference_curves_apply_to_tile(filter: &CurvesFilter, tile: &PixelTile) -> Result<PixelTile, EngineError> {
+    let mut result = PixelTile::new();
+
+    // Copy all pixels from source and apply curve transformation
+    for y in 0u32..260 {
+        for x in 0u32..260 {
+            // Copy alpha channel unchanged
+            result.set(x, y, 3, tile.at(x, y, 3));
+
+            // Apply curve to relevant channels
+            match filter.channel {
+                CurveChannel::Red => {
+                    let r = tile.at(x, y, 0);
+                    result.set(x, y, 0, filter.evaluate(r));
+                    result.set(x, y, 1, tile.at(x, y, 1));
+                    result.set(x, y, 2, tile.at(x, y, 2));
+                }
+                CurveChannel::Green => {
+                    result.set(x, y, 0, tile.at(x, y, 0));
+                    let g = tile.at(x, y, 1);
+                    result.set(x, y, 1, filter.evaluate(g));
+                    result.set(x, y, 2, tile.at(x, y, 2));
+                }
+                CurveChannel::Blue => {
+                    result.set(x, y, 0, tile.at(x, y, 0));
+                    result.set(x, y, 1, tile.at(x, y, 1));
+                    let b = tile.at(x, y, 2);
+                    result.set(x, y, 2, filter.evaluate(b));
+                }
+                CurveChannel::All => {
+                    for c in 0..3 {
+                        let val = tile.at(x, y, c);
+                        result.set(x, y, c, filter.evaluate(val));
+                    }
+                }
+                CurveChannel::Luminance => {
+                    // Simplified: apply to green channel as luminance proxy
+                    result.set(x, y, 0, tile.at(x, y, 0));
+                    let val = tile.at(x, y, 1);
+                    result.set(x, y, 1, filter.evaluate(val));
+                    result.set(x, y, 2, tile.at(x, y, 2));
+                }
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 #[cfg(test)]

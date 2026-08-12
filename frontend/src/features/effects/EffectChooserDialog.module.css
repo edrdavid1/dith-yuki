@@ -1,0 +1,72 @@
+/* ─── Effect Chooser Dialog ────────────────────────────────────────────────── */
+
+.effect-chooser-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 500;
+}
+
+.effect-chooser-dialog {
+  width: 364px;
+  height: 468px;
+  background: var(--bg-window);
+  border: var(--border);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 2px 2px 0px rgba(0, 0, 0, 0.3);
+}
+
+.effect-chooser-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 12px;
+  gap: 4px;
+  overflow-y: auto;
+}
+
+.effect-chooser-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border: var(--border-width) solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-color);
+  cursor: pointer;
+  font-size: 14px;
+  font-family: var(--font-family);
+  text-align: left;
+  width: 100%;
+}
+
+.effect-chooser-item:hover {
+  background: var(--bg-hover);
+}
+
+.effect-chooser-item-focused {
+  background: var(--color-black);
+  color: var(--color-white);
+  border-color: var(--border-color);
+}
+
+.effect-chooser-item-focused:hover {
+  background: var(--bg-hover-inverted);
+}
+
+.effect-chooser-item-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+  width: 28px;
+  text-align: center;
+}
+
+.effect-chooser-item-label {
+  font-size: 14px;
+  color: inherit;
+}

@@ -1,0 +1,67 @@
+/* ─── Slider Control (filter params) ───────────────────────────────────────── */
+
+.slider-control {
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+}
+
+.slider-label {
+  font-size: 10px;
+  font-family: var(--font-family);
+  color: var(--text-color);
+  margin-bottom: 2px;
+  text-transform: lowercase;
+}
+
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.slider-input {
+  flex: 1;
+  height: 5px;
+  appearance: none;
+  background: var(--bg-slider-track);
+  border: var(--border);
+  border-radius: 0;
+  outline: none;
+}
+
+.slider-input::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 29px;
+  background-color: transparent;
+  background-image: url('/icons//slider-carrete-icon.svg');
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  border: none;
+  cursor: grab;
+}
+
+.slider-value-box {
+  width: 36px;
+  height: 18px;
+  background: var(--bg-input);
+  border: var(--border);
+  font-family: var(--font-family);
+  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 1px 1px 0px 0px var(--color-dark-gray);
+  padding: 0 4px;
+  user-select: none;
+  text-align: center;
+  color: var(--text-color);
+  flex: 0 0 36px; /* don't let it grow */
+}
+
+.slider-value-box:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(139,92,246,0.12);
+}

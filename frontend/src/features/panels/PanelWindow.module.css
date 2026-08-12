@@ -1,0 +1,212 @@
+/* Custom chrome for frameless floating panel windows */
+.panel-window {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background: var(--bg-window);
+  border: var(--border);
+}
+
+.panel-window-affinity {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.panel-window-titlebar-affinity {
+  background: color-mix(in srgb, var(--bg-titlebar) 70%, var(--color-primary));
+}
+
+/* Native-decorated variant (preview): no border, fills viewport */
+.panel-window--native {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background: var(--bg-window);
+  border: none;
+}
+
+.panel-window-titlebar {
+  flex-shrink: 0;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  padding: 0 5px;
+  background: var(--bg-titlebar);
+  border-bottom: var(--border);
+  user-select: none;
+  gap: 2.5px;
+  cursor: grab;
+  /* Force own compositing layer so it sits above any GPU-accelerated
+     canvas / content layers (fixes macOS WKWebView hit-test) */
+  position: relative;
+  z-index: 9999;
+  transform: translateZ(0);
+  pointer-events: auto;
+  /* Intentionally NO -webkit-app-region here: on Overlay frameless windows it
+     swallows mousedown without reliably starting a drag. We use startDragging(). */
+}
+
+.panel-window-titlebar-drag {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  height: 100%;
+  min-width: 0;
+  gap: 2.5px;
+  padding: 0 5px;
+}
+
+.panel-window-titlebar-lines {
+  flex: 1;
+  min-width: 1px;
+  height: 14px;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--color-black) 0px,
+    var(--color-black) 0,
+    var(--color-black) var(--border-width),
+    transparent var(--border-width),
+    transparent 4px
+  );
+  /* Hits must fall through to the titlebar (startDragging handler) */
+  pointer-events: none;
+}
+
+.panel-window-title {
+  font-family: var(--font-family);
+  font-size: 12px;
+  color: var(--text-color);
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding: 0 6px;
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.panel-window-titlebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.panel-window-btn {
+  width: 14px;
+  height: 14px;
+  border: none;
+  background: var(--bg-window);
+  box-shadow: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  font-family: var(--font-family);
+  padding: 0;
+  line-height: 1;
+}
+
+.panel-window-btn img {
+  pointer-events: none;
+}
+
+.panel-window-btn:active {
+  box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light);
+}
+
+.panel-window-content {
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* Isolate stacking context so GPU-composited / interactive content cannot
+     interfere with the titlebar's hit-testing on macOS */
+  position: relative;
+  z-index: 1;
+  isolation: isolate;
+}
+
+.panel-window-content-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-family: var(--font-family);
+  font-size: 12px;
+  color: var(--color-dark-gray);
+}
+
+/* Titlebar hide + borderless panel chrome: owned by feature modules via
+   :global([data-floating-panel-content]) … (see Layers / Effects / WindowTitlebar). */
+
+/* ─── Docked Panel Header (undock button) ──────────────────────────────────── */
+
+.docked-panel-header {
+  display: flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  background: var(--bg-titlebar);
+  border-bottom: var(--border);
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.docked-panel-header-title {
+  font-family: var(--font-family);
+  font-size: 10px;
+  color: var(--text-color);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.docked-panel-undock-btn {
+  width: 18px;
+  height: 16px;
+  border: var(--border);
+  border-radius: 0;
+  background: var(--bg-window);
+  color: var(--text-color);
+  cursor: pointer;
+  font-size: 11px;
+  font-family: var(--font-family);
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+  flex-shrink: 0;
+}
+
+.docked-panel-undock-btn:hover {
+  background: var(--bg-hover);
+}
+
+.docked-panel-undock-btn:active {
+  box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light);
+}
+
+/* ─── Panel Drag Feedback ──────────────────────────────────────────────────── */
+
+.docked-panel-header--dragging {
+  cursor: grabbing;
+}
+
+.docked-panel--dragging {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.docked-panel--undock-preview {
+  opacity: 0.3;
+  border: var(--border-width) dashed var(--border-color);
+}

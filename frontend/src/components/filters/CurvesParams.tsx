@@ -1,5 +1,13 @@
 import { useState } from 'react';
+import DropdownMenu from '../common/DropdownMenu';
 import type { CurveChannel } from '../../types';
+import curveStyles from '../../features/effects/editors/CurvesSettings.module.css';
+import paramStyles from '../../shared/ui/ParamControls.module.css';
+import sliderStyles from '../../shared/ui/Slider.module.css';
+import buttonStyles from '../../shared/ui/FilterButtons.module.css';
+import { bind } from '../../shared/ui/cn';
+
+const cn = bind({ ...curveStyles, ...paramStyles, ...sliderStyles, ...buttonStyles });
 
 interface CurvesParamsProps {
   curve: [number, number][];
@@ -41,39 +49,41 @@ function CurvesParams({ curve, channel, onChange }: CurvesParamsProps) {
   };
 
   return (
-    <div className="filter-params">
-      <div className="param-group">
-        <label className="slider-label">Channel</label>
-        <select className="param-select" value={channel} onChange={(e) => handleChannelChange(e.target.value)}>
-          <option value="All">All</option>
-          <option value="Red">Red</option>
-          <option value="Green">Green</option>
-          <option value="Blue">Blue</option>
-          <option value="Luminance">Luminance</option>
-        </select>
-      </div>
+    <div className={cn("filter-params")}>
+      <DropdownMenu
+        label="Channel"
+        value={channel}
+        options={[
+          { value: 'All', label: 'All' },
+          { value: 'Red', label: 'Red' },
+          { value: 'Green', label: 'Green' },
+          { value: 'Blue', label: 'Blue' },
+          { value: 'Luminance', label: 'Luminance' },
+        ]}
+        onSelect={(v) => handleChannelChange(v)}
+      />
 
-      <div className="param-group">
-        <label className="slider-label">Control Points</label>
-        <div className="curve-points">
+      <div className={cn("param-group")}>
+        <label className={cn("slider-label")}>Control Points</label>
+        <div className={cn("curve-points")}>
           {curve.map(([x, y], i) => (
-            <div key={i} className="curve-point-row">
-              <input type="number" className="curve-input" min={0} max={1} step={0.05} value={x.toFixed(2)} onChange={(e) => handlePointChange(i, 0, parseFloat(e.target.value) || 0)} />
-              <span className="curve-arrow">→</span>
-              <input type="number" className="curve-input" min={0} max={1} step={0.05} value={y.toFixed(2)} onChange={(e) => handlePointChange(i, 1, parseFloat(e.target.value) || 0)} />
+            <div key={i} className={cn("curve-point-row")}>
+              <input type="number" className={cn("curve-input")} min={0} max={1} step={0.05} value={x.toFixed(2)} onChange={(e) => handlePointChange(i, 0, parseFloat(e.target.value) || 0)} />
+              <span className={cn("curve-arrow")}>→</span>
+              <input type="number" className={cn("curve-input")} min={0} max={1} step={0.05} value={y.toFixed(2)} onChange={(e) => handlePointChange(i, 1, parseFloat(e.target.value) || 0)} />
               {i > 0 && i < curve.length - 1 && (
-                <button className="curve-remove-btn" onClick={() => handleRemovePoint(i)}>×</button>
+                <button className={cn("curve-remove-btn")} onClick={() => handleRemovePoint(i)}>×</button>
               )}
             </div>
           ))}
         </div>
       </div>
 
-      <div className="curve-add-row">
-        <input type="number" className="curve-input" min={0} max={1} step={0.05} value={newX.toFixed(2)} onChange={(e) => setNewX(parseFloat(e.target.value) || 0)} />
-        <span className="curve-arrow">→</span>
-        <input type="number" className="curve-input" min={0} max={1} step={0.05} value={newY.toFixed(2)} onChange={(e) => setNewY(parseFloat(e.target.value) || 0)} />
-        <button className="filter-add-btn" onClick={handleAddPoint}>+</button>
+      <div className={cn("curve-add-row")}>
+        <input type="number" className={cn("curve-input")} min={0} max={1} step={0.05} value={newX.toFixed(2)} onChange={(e) => setNewX(parseFloat(e.target.value) || 0)} />
+        <span className={cn("curve-arrow")}>→</span>
+        <input type="number" className={cn("curve-input")} min={0} max={1} step={0.05} value={newY.toFixed(2)} onChange={(e) => setNewY(parseFloat(e.target.value) || 0)} />
+        <button className={cn("filter-add-btn")} onClick={handleAddPoint}>+</button>
       </div>
     </div>
   );

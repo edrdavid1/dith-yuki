@@ -233,6 +233,8 @@ pub fn parse_tile_url(uri: &str) -> Result<ParsedTileUrl, TileProtocolError> {
 /// - Multiply by 255.0
 /// - Add 0.5 and truncate to u8 (equivalent to rounding)
 ///
+/// Uses row-based SIMD processing for performance.
+///
 /// # Returns
 ///
 /// A `Vec<u8>` of exactly 262,144 bytes (256 × 256 × 4 channels), in row-major RGBA8 order.
@@ -246,6 +248,31 @@ pub fn parse_tile_url(uri: &str) -> Result<ParsedTileUrl, TileProtocolError> {
 /// assert!(buf.iter().all(|&b| b == 0));
 /// ```
 pub fn f32_tile_to_rgba8(tile: &PixelTile) -> Vec<u8> {
+    use engine_project::f32_to_rgba8_row_simd;
+
+    let pixel_count = (TILE_SIZE * TILE_SIZE) as usize;
+    let mut buf = vec![0u8; pixel_count * 4];
+    let size = (TILE_SIZE + 2 * HALO) as usize; // 260
+
+    for row in 0..TILE_SIZE as usize {
+        let src_start = ((HALO as usize + row) * size + HALO as usize) * 4;
+        let src_end = src_start + (TILE_SIZE as usize) * 4;
+        let dst_start = row * (TILE_SIZE as usize) * 4;
+        let dst_end = dst_start + (TILE_SIZE as usize) * 4;
+        f32_to_rgba8_row_simd(&mut buf[dst_start..dst_end], &tile.data[src_start..src_end]);
+    }
+    buf
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+/// Reference implementation of `f32_tile_to_rgba8` preserved for property-based testing.
+/// This is an exact copy of the current `f32_tile_to_rgba8` implementation at the time of snapshotting.
+/// Used to verify that optimized versions (SIMD) produce byte-identical output.
+#[cfg(test)]
+pub fn reference_f32_tile_to_rgba8(tile: &PixelTile) -> Vec<u8> {
     let mut buf = Vec::with_capacity((TILE_SIZE * TILE_SIZE * 4) as usize);
     for y in HALO..(HALO + TILE_SIZE) {
         for x in HALO..(HALO + TILE_SIZE) {
@@ -256,10 +283,6 @@ pub fn f32_tile_to_rgba8(tile: &PixelTile) -> Vec<u8> {
     }
     buf
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

@@ -1,0 +1,432 @@
+/* ─── Color Lab Window ────────────────────────────────────────────────────────── */
+
+.color-lab-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  font-family: 'IBM Plex Mono', Monaco, monospace;
+  user-select: none;
+}
+
+.color-lab-modal {
+  background: var(--bg-window);
+  border: var(--border);
+  max-width: 600px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.5);
+}
+
+.color-lab-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  color: var(--text-color);
+}
+
+.color-lab-section-title {
+  font-size: 11px;
+  color: var(--color-dark-gray);
+  font-weight: bold;
+}
+
+.color-lab-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.color-lab-column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.color-lab-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.color-lab-buttons-row {
+  flex-direction: row;
+  gap: 8px;
+  padding-top: 0;
+}
+
+.color-lab-buttons-row > * {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px !important;
+  height: 36px !important;
+  white-space: nowrap;
+}
+
+.color-lab-name-input {
+  width: 100%;
+  height: 28px;
+  background: var(--bg-input);
+  border: var(--border);
+  padding: 0 8px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--text-color);
+}
+
+.color-lab-name-input::placeholder {
+  color: var(--color-dark-gray);
+}
+
+.color-lab-sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-window);
+  border: var(--border);
+  font-family: var(--font-family);
+  user-select: none;
+}
+
+.color-lab-scroll {
+  flex: 1;
+  min-height: 0;
+}
+
+.color-lab-scroll :global(.simplebar-scrollable-y .simplebar-content-wrapper) {
+  padding-right: 13px !important;
+}
+
+.color-lab-body-sidebar {
+  padding: 10px;
+  gap: 12px;
+  overflow-x: hidden;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.color-lab-colors-grid-compact {
+  padding: 0;
+  gap: 8px;
+}
+
+.color-lab-color-row-compact {
+  gap: 6px;
+}
+
+.color-lab-color-preview-compact {
+  flex: 1.2;
+  min-width: 0;
+  height: 26px;
+}
+
+.color-lab-color-row-compact .color-lab-color-input {
+  flex: 1;
+  min-width: 0;
+  background: #fff;
+}
+
+.color-lab-add-link {
+  align-self: flex-start;
+  margin-left: 34px; /* number column 28px + row gap 6px */
+  height: auto;
+  padding: 2px 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: bold;
+  color: var(--text-color);
+  cursor: pointer;
+}
+
+.color-lab-add-link:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.color-lab-add-link:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.color-lab-body-sidebar .color-lab-utility-grid {
+  padding-top: 2px;
+}
+
+.color-lab-body-sidebar .color-lab-preview-bar {
+  height: 28px;
+}
+
+.color-lab-body-sidebar .color-lab-button {
+  font-size: 11px;
+  gap: 4px;
+}
+
+.color-lab-hint {
+  font-size: 10px;
+  color: var(--color-dark-gray);
+  padding-top: 4px;
+}
+
+.builtin-presets {
+  gap: 6px;
+}
+
+/* Content inside lp-dropdown-field-text / menu items */
+.builtin-preset-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+}
+
+.builtin-preset-swatches {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 48px;
+  max-width: 140px;
+  height: 12px;
+  border: 1px solid var(--color-black);
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.builtin-preset-swatch {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.builtin-preset-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.generator-section {
+  gap: 6px;
+}
+
+.generator-swatch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.generator-swatch-btn {
+  width: 28px;
+  height: 28px;
+  border: var(--border);
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.generator-swatch-label {
+  font-size: 11px;
+  color: var(--color-dark-gray);
+}
+
+.generator-preview-strip {
+  display: flex;
+  height: 22px;
+  border: var(--border);
+  overflow: hidden;
+  background: var(--bg-input);
+}
+
+.generator-preview-cell {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+.color-lab-manual-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.color-lab-colors-container {
+  background: var(--bg-window);
+  border: var(--border);
+}
+
+.color-lab-colors-container:global(.simplebar-scrollable-y) :global(.simplebar-content-wrapper) {
+  padding-right: 13px !important;
+}
+
+.color-lab-colors-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0;
+}
+
+.color-lab-color-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.color-lab-color-number {
+  flex: 0 0 28px;
+  width: 28px;
+  box-sizing: border-box;
+  font-size: 12px;
+  font-weight: bold;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  overflow: hidden;
+}
+
+.color-lab-color-preview {
+  flex: 1;
+  height: 26px;
+  flex-shrink: 0;
+  border: var(--border);
+}
+
+.color-lab-color-preview.invalid {
+  background: var(--color-gray);
+  border-color: var(--color-primary);
+}
+
+.color-lab-color-input {
+  flex: 1;
+  height: 26px;
+  background: var(--bg-input);
+  border: var(--border);
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: bold;
+  text-transform: uppercase;
+  font-family: inherit;
+  min-width: 0;
+  color: var(--text-color);
+}
+
+.color-lab-color-input.invalid {
+  border-color: var(--color-primary);
+}
+
+.color-lab-delete-btn {
+  width: 26px !important;
+  height: 26px !important;
+  padding: 0;
+  flex-shrink: 0;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+}
+
+.color-lab-delete-btn:active:not(:disabled) {
+  box-shadow: none;
+}
+
+.color-lab-add-btn {
+  height: 26px;
+  width: 220px;
+  border: var(--border-dashed);
+  font-size: 11px;
+  align-self: center;
+}
+
+.color-lab-preview-bar {
+  width: 100%;
+  height: 32px;
+  border: var(--border);
+  display: flex;
+  overflow: hidden;
+}
+
+.color-lab-preview-color {
+  flex: 1;
+  height: 100%;
+}
+
+.color-lab-error {
+  color: var(--color-primary);
+  font-size: 11px;
+  font-weight: bold;
+}
+
+.color-lab-success {
+  color: var(--color-primary);
+  font-size: 11px;
+  font-weight: bold;
+}
+
+.color-lab-utility-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.color-lab-utility-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.color-lab-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: var(--border);
+}
+
+.color-lab-cancel-btn {
+  width: 80px;
+}
+
+.color-lab-apply-btn {
+  width: 90px;
+  background: var(--color-primary);
+  color: var(--color-white);
+}
+
+.color-lab-apply-btn:hover {
+  background: var(--bg-hover);
+  color: var(--color-hover);
+}
+
+/* ─── Floating mode (no modal overlay) ────────────────────────────────────────── */
+
+.color-lab-floating {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  font-family: 'IBM Plex Mono', Monaco, monospace;
+  user-select: none;
+}
+
+.color-lab-floating .color-lab-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}

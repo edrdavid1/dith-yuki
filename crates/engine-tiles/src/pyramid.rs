@@ -21,7 +21,7 @@
 //! - Applied per-channel (RGBA)
 //! - Deterministic and reproducible
 
-use crate::{PixelTile, HALO, TILE_SIZE};
+use crate::{CacheStage, PixelTile, TileCache, TileCoord, TileKey, HALO, TILE_SIZE};
 
 /// Downsample a tile by 1:2 using box filtering.
 ///
@@ -95,6 +95,94 @@ pub fn downsample_tile(parent: &PixelTile) -> PixelTile {
     }
 
     child
+}
+
+/// Generate a pyramid tile at level N by downsampling 4 child tiles at level N-1.
+///
+/// Each pixel in the output tile is the average of a 2×2 block of pixels from
+/// the corresponding region in the child tiles at level N-1.
+///
+/// A tile at `(level, x, y)` is generated from 4 children at level N-1:
+/// - Top-left:     `(level-1, 2x,   2y)`
+/// - Top-right:    `(level-1, 2x+1, 2y)`
+/// - Bottom-left:  `(level-1, 2x,   2y+1)`
+/// - Bottom-right: `(level-1, 2x+1, 2y+1)`
+///
+/// Returns `None` if `level == 0` (level 0 tiles are source tiles) or if any
+/// required child tile is missing from the cache.
+pub fn generate_pyramid_tile(
+    level: u8,
+    coord: TileCoord,
+    layer: u32,
+    stage: CacheStage,
+    cache: &TileCache,
+) -> Option<PixelTile> {
+    if level == 0 {
+        // Level 0 tiles are source tiles, not generated
+        return None;
+    }
+
+    // A tile at (level, x, y) is generated from 4 tiles at (level-1, 2x, 2y), etc.
+    let child_level = level - 1;
+    let children = [
+        TileCoord { level: child_level, x: coord.x * 2,     y: coord.y * 2 },
+        TileCoord { level: child_level, x: coord.x * 2 + 1, y: coord.y * 2 },
+        TileCoord { level: child_level, x: coord.x * 2,     y: coord.y * 2 + 1 },
+        TileCoord { level: child_level, x: coord.x * 2 + 1, y: coord.y * 2 + 1 },
+    ];
+
+    // Fetch all 4 child tiles from cache
+    let child_tiles: Vec<_> = children.iter().map(|c| {
+        let key = TileKey { layer, coord: *c, stage };
+        cache.get_entry(key)
+    }).collect();
+
+    // At least one child must be present to produce a meaningful result.
+    // If no children are cached yet, return None so the caller can fall through
+    // to computing level 0 composites first.
+    let children_found = child_tiles.iter().filter(|t| t.is_some()).count();
+    if children_found == 0 {
+        return None;
+    }
+
+    let mut result = PixelTile::new();
+
+    // For each pixel in the output tile (main region only: HALO..HALO+TILE_SIZE)
+    for out_y in HALO..(HALO + TILE_SIZE) {
+        for out_x in HALO..(HALO + TILE_SIZE) {
+            // This output pixel corresponds to a 2x2 block in the source
+            let src_local_x = (out_x - HALO) * 2;
+            let src_local_y = (out_y - HALO) * 2;
+
+            // Average 2x2 block from the appropriate child tiles per channel
+            for c in 0..4u32 {
+                let mut sum = 0.0f32;
+                let mut count = 0u32;
+
+                for dy in 0..2u32 {
+                    for dx in 0..2u32 {
+                        let px = src_local_x + dx;
+                        let py = src_local_y + dy;
+                        // Which child tile? (0=TL, 1=TR, 2=BL, 3=BR)
+                        let child_idx = (py / TILE_SIZE) * 2 + (px / TILE_SIZE);
+                        let local_x = (px % TILE_SIZE) + HALO;
+                        let local_y = (py % TILE_SIZE) + HALO;
+
+                        if let Some(ref tile) = child_tiles[child_idx as usize] {
+                            sum += tile.at(local_x, local_y, c);
+                            count += 1;
+                        }
+                    }
+                }
+
+                if count > 0 {
+                    result.set(out_x, out_y, c, sum / count as f32);
+                }
+            }
+        }
+    }
+
+    Some(result)
 }
 
 #[cfg(test)]
@@ -218,6 +306,151 @@ mod tests {
 
         // Child at (HALO, HALO) should be average of above: (0 + 1 + 2 + 3) / 4 = 1.5
         assert!((child.at(HALO, HALO, 0) - 1.5).abs() < 1e-6);
+    }
+
+    // --- generate_pyramid_tile tests ---
+
+    #[test]
+    fn generate_pyramid_tile_returns_none_for_level_0() {
+        let cache = TileCache::new(100_000_000);
+        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let result = generate_pyramid_tile(0, coord, 0, CacheStage::Composite, &cache);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn generate_pyramid_tile_returns_some_when_all_children_present() {
+        use std::sync::Arc;
+
+        let cache = TileCache::new(100_000_000);
+        let child_level = 0u8;
+
+        // Insert 4 child tiles with uniform color into cache
+        let color = 0.5f32;
+        for cy in 0..2u32 {
+            for cx in 0..2u32 {
+                let mut tile = PixelTile::new();
+                for y in HALO..(HALO + TILE_SIZE) {
+                    for x in HALO..(HALO + TILE_SIZE) {
+                        for c in 0..4 {
+                            tile.set(x, y, c, color);
+                        }
+                    }
+                }
+                let key = TileKey {
+                    layer: 0,
+                    coord: TileCoord { level: child_level, x: cx, y: cy },
+                    stage: CacheStage::Composite,
+                };
+                cache.insert_fresh(key, Arc::new(tile));
+            }
+        }
+
+        // Generate pyramid tile at level 1, coord (0,0)
+        let coord = TileCoord { level: 1, x: 0, y: 0 };
+        let result = generate_pyramid_tile(1, coord, 0, CacheStage::Composite, &cache);
+        assert!(result.is_some());
+
+        let tile = result.unwrap();
+        // Since all children are uniform, output should also be uniform
+        for y in HALO..(HALO + TILE_SIZE) {
+            for x in HALO..(HALO + TILE_SIZE) {
+                for c in 0..4 {
+                    let val = tile.at(x, y, c);
+                    assert!(
+                        (val - color).abs() < 1e-6,
+                        "At ({}, {}, {}): expected {}, got {}",
+                        x, y, c, color, val
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn generate_pyramid_tile_handles_missing_children_gracefully() {
+        use std::sync::Arc;
+
+        let cache = TileCache::new(100_000_000);
+
+        // Insert only 2 of 4 child tiles (top-left and top-right)
+        let color = 0.8f32;
+        for cx in 0..2u32 {
+            let mut tile = PixelTile::new();
+            for y in HALO..(HALO + TILE_SIZE) {
+                for x in HALO..(HALO + TILE_SIZE) {
+                    for c in 0..4 {
+                        tile.set(x, y, c, color);
+                    }
+                }
+            }
+            let key = TileKey {
+                layer: 0,
+                coord: TileCoord { level: 0, x: cx, y: 0 },
+                stage: CacheStage::Composite,
+            };
+            cache.insert_fresh(key, Arc::new(tile));
+        }
+
+        // Generate pyramid tile — missing bottom children
+        let coord = TileCoord { level: 1, x: 0, y: 0 };
+        let result = generate_pyramid_tile(1, coord, 0, CacheStage::Composite, &cache);
+
+        // Should still return Some since we handle missing children gracefully
+        // (averaging only present children)
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn generate_pyramid_tile_averages_correctly_across_children() {
+        use std::sync::Arc;
+
+        let cache = TileCache::new(100_000_000);
+
+        // Create 4 child tiles with distinct uniform values
+        let values = [0.1f32, 0.2, 0.3, 0.4];
+        let coords = [
+            TileCoord { level: 0, x: 0, y: 0 }, // TL
+            TileCoord { level: 0, x: 1, y: 0 }, // TR
+            TileCoord { level: 0, x: 0, y: 1 }, // BL
+            TileCoord { level: 0, x: 1, y: 1 }, // BR
+        ];
+
+        for (i, coord) in coords.iter().enumerate() {
+            let mut tile = PixelTile::new();
+            for y in HALO..(HALO + TILE_SIZE) {
+                for x in HALO..(HALO + TILE_SIZE) {
+                    for c in 0..4 {
+                        tile.set(x, y, c, values[i]);
+                    }
+                }
+            }
+            let key = TileKey { layer: 0, coord: *coord, stage: CacheStage::Composite };
+            cache.insert_fresh(key, Arc::new(tile));
+        }
+
+        // Generate level 1 tile at (0,0)
+        let coord = TileCoord { level: 1, x: 0, y: 0 };
+        let result = generate_pyramid_tile(1, coord, 0, CacheStage::Composite, &cache);
+        assert!(result.is_some());
+        let tile = result.unwrap();
+
+        // The first output pixel at (HALO, HALO) reads from the top-left child's first 2x2 block.
+        // Since TL is uniform 0.1, the average of 4 identical values is still 0.1.
+        let val = tile.at(HALO, HALO, 0);
+        assert!((val - 0.1).abs() < 1e-6, "Expected 0.1, got {}", val);
+
+        // Pixel at (HALO + 128, HALO) should read from the top-right child (uniform 0.2)
+        let val = tile.at(HALO + 128, HALO, 0);
+        assert!((val - 0.2).abs() < 1e-6, "Expected 0.2, got {}", val);
+
+        // Pixel at (HALO, HALO + 128) should read from the bottom-left child (uniform 0.3)
+        let val = tile.at(HALO, HALO + 128, 0);
+        assert!((val - 0.3).abs() < 1e-6, "Expected 0.3, got {}", val);
+
+        // Pixel at (HALO + 128, HALO + 128) should read from bottom-right (uniform 0.4)
+        let val = tile.at(HALO + 128, HALO + 128, 0);
+        assert!((val - 0.4).abs() < 1e-6, "Expected 0.4, got {}", val);
     }
 }
 

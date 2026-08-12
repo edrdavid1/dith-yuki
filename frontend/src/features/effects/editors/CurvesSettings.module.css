@@ -1,0 +1,26 @@
+/* ─── Curves Editor ────────────────────────────────────────────────────────── */
+
+.curve-points { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.curve-point-row, .curve-add-row { display: flex; align-items: center; gap: 4px; }
+.curve-input {
+  width: 52px;
+  padding: 2px 4px;
+  border: var(--border);
+  border-radius: 0;
+  background: var(--bg-input);
+  color: var(--text-color);
+  font-size: 11px;
+  font-family: var(--font-family);
+  text-align: center;
+}
+.curve-arrow { color: var(--text-color); font-size: 11px; }
+.curve-remove-btn {
+  background: none;
+  border: none;
+  color: var(--text-color);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+}
+.curve-remove-btn:hover { color: var(--color-hover-accent); }
+.curve-add-row { margin-top: 8px; }

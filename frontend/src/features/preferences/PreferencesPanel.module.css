@@ -1,0 +1,118 @@
+.preferences-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 14px 16px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg-window);
+  color: var(--text-color);
+  font-family: var(--font-family);
+  font-size: 12px;
+  box-sizing: border-box;
+  position: relative;
+  z-index: 0;
+}
+
+.preferences-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.preferences-section-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: normal;
+  font-family: var(--font-family);
+  border-bottom: var(--border);
+  padding-bottom: 4px;
+}
+
+.preferences-label {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.preferences-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.preferences-checkbox-row input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--color-black);
+  cursor: pointer;
+}
+
+.preferences-about {
+  margin: 0;
+  color: var(--color-dark-gray);
+  line-height: 1.4;
+}
+
+.preferences-btn-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.preferences-button {
+  height: 28px;
+  background: var(--bg-window);
+  border: var(--border);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-color);
+  cursor: pointer;
+  box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+  padding: 0 10px;
+  text-align: left;
+}
+
+.preferences-button:hover {
+  background: var(--bg-hover);
+}
+
+.preferences-button:active {
+  box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light);
+}
+
+.preferences-preset-row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.preferences-preset-row .preferences-button {
+  flex: 1;
+}
+
+.preferences-button-danger {
+  flex: 0 0 auto;
+  min-width: 64px;
+  text-align: center;
+}
+
+.preferences-save-row {
+  display: flex;
+  gap: 6px;
+}
+
+.preferences-input {
+  flex: 1;
+  height: 28px;
+  padding: 0 8px;
+  border: var(--border);
+  background: var(--bg-window);
+  color: var(--text-color);
+  font-family: inherit;
+  font-size: 12px;
+  box-sizing: border-box;
+}
