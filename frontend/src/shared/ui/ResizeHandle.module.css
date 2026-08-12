@@ -1,0 +1,63 @@
+/* ─── Resize Handles ───────────────────────────────────────────────────────── */
+
+.resize-handle {
+  flex-shrink: 0;
+  background: transparent;
+  z-index: 5;
+}
+
+.resize-handle-h {
+  width: 4px;
+  cursor: col-resize;
+}
+
+.resize-handle-v {
+  height: 0px;
+  cursor: row-resize;
+  position: relative;
+  z-index: 10;
+  margin-top: -3px;
+  margin-bottom: -3px;
+  padding: 3px 0;
+}
+
+.resize-handle:hover {
+  background: var(--bg-hover-none);
+}
+
+.resize-handle:hover::after {
+  background: var(--bg-hover-track);
+}
+
+.sidebar-resize-handle {
+  justify-self: start;
+  width: 6px;
+  margin-left: -3px;
+  background: transparent;
+  position: relative;
+  z-index: 10;
+}
+
+.sidebar-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 4px;
+  height: 32px;
+  background: var(--color-dark-gray);
+  border-radius: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.sidebar-resize-handle:hover::after {
+  opacity: 0;
+}
+
+.sidebar-resize-handle-left {
+  justify-self: end;
+  margin-left: 0;
+  margin-right: -3px;
+}

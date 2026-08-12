@@ -3,13 +3,15 @@
 //! This module provides encoding/decoding for image formats (PNG, JPEG, WebP)
 //! and video decoding via FFmpeg bindings.
 //!
-//! Phase 0: Placeholder. Detailed design and implementation in Phase 4.
-//! See corresponding section in agent-kickoff-plan.md for future scope.
+//! Currently provides sandbox path validation utilities for secure file access
+//! and SVG vectorization export.
 
-/// Placeholder module for I/O operations
-pub mod todo {
-    // Placeholder — remove in Phase 4 when implementing
-}
+pub mod sandbox;
+pub mod svg_export;
+
+pub use svg_export::{
+    raster_to_svg, write_svg_file, SvgAlgorithm, SvgExportError, SvgExportOptions,
+};
 
 #[cfg(test)]
 mod tests {

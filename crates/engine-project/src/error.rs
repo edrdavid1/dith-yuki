@@ -1,6 +1,6 @@
 //! Error types for the engine-project module.
 
-use crate::types::{DocumentId, FilterInstanceId, LayerId};
+use crate::types::{DocumentId, FilterInstanceId, LayerId, PaletteId};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -15,6 +15,15 @@ pub enum EngineError {
 
     #[error("Filter not found: {filter_id}")]
     FilterNotFound { filter_id: FilterInstanceId },
+
+    #[error("Palette not found: {palette_id}")]
+    PaletteNotFound { palette_id: PaletteId },
+
+    #[error("Palette in use: {palette_id}, referenced by filters: {references:?}")]
+    PaletteInUse {
+        palette_id: PaletteId,
+        references: Vec<FilterInstanceId>,
+    },
 
     #[error("Invalid layer kind: {reason}")]
     InvalidLayerKind { reason: String },
@@ -73,6 +82,19 @@ impl EngineError {
     pub fn invalid_state(reason: impl Into<String>) -> Self {
         EngineError::InvalidState {
             reason: reason.into(),
+        }
+    }
+
+    /// Create a PaletteNotFound error
+    pub fn palette_not_found(palette_id: PaletteId) -> Self {
+        EngineError::PaletteNotFound { palette_id }
+    }
+
+    /// Create a PaletteInUse error
+    pub fn palette_in_use(palette_id: PaletteId, references: Vec<FilterInstanceId>) -> Self {
+        EngineError::PaletteInUse {
+            palette_id,
+            references,
         }
     }
 }

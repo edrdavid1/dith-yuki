@@ -1,0 +1,27 @@
+/* ─── Filter Buttons ───────────────────────────────────────────────────────── */
+
+.filter-add-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.filter-add-btn {
+  padding: 2px 8px;
+  border: var(--border);
+  border-radius: 0;
+  background: var(--bg-window);
+  color: var(--text-color);
+  cursor: pointer;
+  font-size: 11px;
+  font-family: var(--font-family);
+  box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+}
+
+.filter-add-btn:hover {
+  background: var(--bg-hover);
+}
+
+.filter-add-btn:active {
+  box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light);
+}

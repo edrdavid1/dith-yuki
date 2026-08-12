@@ -74,7 +74,7 @@ pub fn document_to_dto(doc: &Document) -> DocumentSnapshotDto {
         height: doc.height,
         revision: doc.revision,
         layers,
-        palettes: doc.palettes.clone(),
+        palettes: doc.palettes.iter().map(|p| crate::types::PaletteId::new(p.id)).collect(),
     }
 }
 

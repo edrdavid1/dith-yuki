@@ -1,0 +1,22 @@
+[package]
+name = "engine-gpu"
+version = "0.1.0"
+edition = "2021"
+description = "Optional wgpu compute path for per-tile pattern filters (Bayer / Halftone / CRT)"
+
+[features]
+default = []
+# Adapter-requiring parity/seam tests (skipped in CPU-only CI).
+gpu-tests = []
+
+[dependencies]
+wgpu = { version = "24.0", default-features = true }
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+log = "0.4"
+thiserror = "1"
+
+[dev-dependencies]
+pollster = "0.4"
+bytemuck = { version = "1", features = ["derive"] }
+wgpu = { version = "24.0", default-features = true }

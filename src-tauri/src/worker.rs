@@ -6,7 +6,7 @@
 //! into the TileCache, and emits `tile-ready` events to the frontend.
 
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -15,6 +15,62 @@ use tauri::Emitter;
 use engine_tiles::{CacheStage, PixelTile, TileKey};
 
 use crate::commands::AppState;
+
+/// Condition-variable based worker wake mechanism.
+/// Replaces `park_timeout(1ms)` for immediate wake on task availability.
+pub struct WorkerWake {
+    mutex: Mutex<bool>,
+    condvar: Condvar,
+}
+
+impl WorkerWake {
+    pub fn new() -> Self {
+        Self {
+            mutex: Mutex::new(false),
+            condvar: Condvar::new(),
+        }
+    }
+
+    /// Signal workers that tasks are available.
+    /// Called from Scheduler::enqueue() or wherever tasks are added.
+    pub fn notify_one(&self) {
+        let mut has_tasks = self.mutex.lock().unwrap();
+        *has_tasks = true;
+        self.condvar.notify_one();
+    }
+
+    /// Wait until tasks are available.
+    /// Called from worker loop when dequeue returns None.
+    /// If the mutex is poisoned, falls back to a 1ms sleep (degraded mode).
+    pub fn wait(&self) {
+        let lock_result = self.mutex.lock();
+        match lock_result {
+            Ok(mut guard) => {
+                while !*guard {
+                    match self.condvar.wait(guard) {
+                        Ok(g) => guard = g,
+                        Err(_) => {
+                            // Condvar poisoned — fall back to park_timeout
+                            std::thread::park_timeout(Duration::from_millis(1));
+                            return;
+                        }
+                    }
+                }
+                *guard = false;
+            }
+            Err(_) => {
+                // Mutex poisoned — degraded mode
+                std::thread::park_timeout(Duration::from_millis(1));
+            }
+        }
+    }
+}
+
+impl Default for WorkerWake {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Payload emitted with the `tile-ready` event when a tile has been recomputed.
 ///
@@ -79,6 +135,29 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
             if let Ok(tile) = result {
                 state.tile_cache.insert_fresh(task.key, Arc::new(tile));
 
+                // Track A: wake Processed tiles that computed with zero-seed
+                // because this raw neighbor was missing.
+                if task.key.stage == CacheStage::Raw {
+                    let waiters = state.pending_diffusion_waiters.wake(&task.key);
+                    if !waiters.is_empty() {
+                        let snapshot = state.document_handle.snapshot();
+                        let doc_gen =
+                            snapshot.generations.document_gen.load(Ordering::Acquire);
+                        for processed_key in waiters {
+                            state.tile_cache.mark_dirty(processed_key);
+                            let layer_gen =
+                                snapshot.generations.get_layer_gen(processed_key.layer);
+                            state.scheduler.enqueue(engine_tiles::RecomputeTask {
+                                key: processed_key,
+                                generation: doc_gen,
+                                layer_generation: layer_gen,
+                                priority: engine_tiles::Priority::Immediate,
+                            });
+                            state.worker_wake.notify_one();
+                        }
+                    }
+                }
+
                 // Emit tile-ready event (requirements 2.4, 10.4, 10.6)
                 let stage_str = match task.key.stage {
                     CacheStage::Raw => "raw",
@@ -99,8 +178,9 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
                 let _ = app_handle.emit("tile-ready", payload);
             }
         } else {
-            // No tasks available — park briefly to avoid busy-spinning.
-            std::thread::park_timeout(Duration::from_millis(1));
+            // No tasks available — wait on Condvar for immediate wake when work arrives.
+            // Falls back to park_timeout(1ms) if the mutex is poisoned (degraded mode).
+            state.worker_wake.wait();
         }
     }
 }

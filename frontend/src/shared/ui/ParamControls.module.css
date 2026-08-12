@@ -1,0 +1,74 @@
+/* ─── Param controls ───────────────────────────────────────────────────────── */
+
+.param-group {
+  margin-bottom: 10px;
+}
+
+.palette-swatches-container {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.swatch-row-boxes {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+
+.swatch-box {
+  flex: 1;
+  height: 22px;
+  border: var(--border);
+  box-shadow: var(--shadow-field);
+}
+
+.param-select,
+.layer-blend-select,
+.lp-dropdown,
+.dropdown-select,
+.retro-select {
+  width: 100%;
+  height: 20px;
+  padding: 0 6px;
+  padding-right: 34px; /* space for boxed arrow */
+  border: var(--border);
+  border-radius: 0;
+  background: var(--bg-input);
+  color: var(--text-color);
+  font-size: 12px;
+  font-family: var(--font-family);
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url('/icons/dropdown-arrow-icon.svg'), linear-gradient(var(--bg-input), var(--bg-input)), linear-gradient(to right, transparent calc(100% - 34px), var(--border-color) calc(100% - 34px), var(--border-color) 100%);
+  background-repeat: no-repeat, no-repeat, no-repeat;
+  background-position: right 8px center, right 0 center, right 0 center;
+  background-size: 12px 12px, 34px 100%, 34px 100%;
+  cursor: pointer;
+}
+
+.param-select,
+.dropdown-select,
+.retro-select {
+  margin-top: 2px;
+}
+
+.layer-blend-select,
+.lp-dropdown {
+  margin-top: 0;
+}
+
+.lp-dropdown:disabled,
+.param-select:disabled,
+.layer-blend-select:disabled,
+.dropdown-select:disabled,
+.retro-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.filter-params {
+  padding-top: 4px;
+}

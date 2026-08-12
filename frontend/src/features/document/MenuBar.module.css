@@ -1,0 +1,144 @@
+/* ─── Menu Bar (Toolbar) ───────────────────────────────────────────────────── */
+
+.app-toolbar {
+  grid-area: menubar;
+  display: flex;
+  align-items: stretch;
+  padding: 0;
+  background: var(--color-gray);
+  border-bottom: var(--border);
+  gap: 0;
+}
+
+.toolbar-spacer {
+  flex: 1;
+}
+
+.sidebar-changer-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 27px;
+  height: 100%;
+  padding: 0;
+  border: none;
+  border-left: var(--border);
+  border-radius: 0;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+.sidebar-changer-icon-btn .icon {
+  width: 16px;
+  height: 17px;
+  background-color: var(--color-black);
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-image: url('/icons/sidebar-left-icon.svg');
+  -webkit-mask-image: url('/icons/sidebar-left-icon.svg');
+}
+
+.sidebar-changer-icon-btn .icon-move-right {
+  mask-image: url('/icons/sidebar-right-icon.svg');
+  -webkit-mask-image: url('/icons/sidebar-right-icon.svg');
+}
+
+.sidebar-changer-icon-btn:hover {
+  background: var(--bg-hover-accent);
+}
+
+.sidebar-changer-icon-btn:hover .icon {
+  background-color: var(--color-hover-inverted);
+}
+
+.sidebar-changer-icon-btn:last-child {
+  border-right: var(--border);
+}
+
+.toolbar-btn {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-color);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--font-family);
+  height: 100%;
+  line-height: 1;
+  padding: 0 14px;
+  box-sizing: border-box;
+}
+
+.toolbar-btn:hover {
+  background: var(--bg-hover-accent);
+  color: var(--color-hover);
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.toolbar-btn:disabled:hover {
+  background: var(--bg-hover-none);
+  color: var(--color-hover-reset);
+}
+
+.toolbar-btn-active {
+  background: var(--color-black);
+  color: var(--color-white);
+}
+
+/* ─── Menubar Dropdown ─────────────────────────────────────────────────────── */
+
+.menubar {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  border-left: var(--border);
+}
+
+.menubar-item {
+  position: relative;
+  height: 100%;
+  border-right: var(--border);
+}
+
+.menubar-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 150px;
+  background: var(--bg-input);
+  border: var(--border);
+  z-index: 10000;
+  padding: 2px 0;
+  box-shadow: 2px 2px 0px rgba(0,0,0,0.3);
+}
+
+.menubar-dropdown-item {
+  display: block;
+  width: 100%;
+  padding: 3px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-color);
+  font-size: 12px;
+  font-family: var(--font-family);
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.menubar-dropdown-item:hover:not(:disabled) {
+  background: var(--bg-hover-inverted);
+  color: var(--color-hover-inverted);
+}
+
+.menubar-dropdown-item:disabled {
+  color: var(--color-dark-gray);
+  cursor: not-allowed;
+}

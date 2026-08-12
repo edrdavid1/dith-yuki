@@ -1,0 +1,10 @@
+.tile-canvas {
+  display: block;
+  /* Intrinsic size follows backing-store attributes — never CSS-stretch a
+     stale bitmap while ResizeObserver / React catch up after sidebar resize. */
+  width: auto;
+  height: auto;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  will-change: transform;
+}
