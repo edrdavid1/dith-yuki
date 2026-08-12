@@ -1,5 +1,10 @@
 import Slider from '../common/Slider';
+import DropdownMenu from '../common/DropdownMenu';
 import type { GlitchType } from '../../types';
+import styles from '../../shared/ui/ParamControls.module.css';
+import { bind } from '../../shared/ui/cn';
+
+const cn = bind(styles);
 
 interface GlitchParamsProps {
   glitchType: GlitchType;
@@ -10,18 +15,16 @@ interface GlitchParamsProps {
 
 function GlitchParams({ glitchType, intensity, seed, onChange }: GlitchParamsProps) {
   return (
-    <div className="filter-params">
-      <div className="param-group">
-        <label className="slider-label">Effect Type</label>
-        <select
-          className="param-select"
-          value={glitchType}
-          onChange={(e) => onChange({ glitch_type: e.target.value, intensity, seed })}
-        >
-          <option value="RGBShift">RGB Shift</option>
-          <option value="BlockDisplace">Block Displacement</option>
-        </select>
-      </div>
+    <div className={cn("filter-params")}>
+      <DropdownMenu
+        label="Effect Type"
+        value={glitchType}
+        options={[
+          { value: 'RGBShift', label: 'RGB Shift' },
+          { value: 'BlockDisplace', label: 'Block Displacement' },
+        ]}
+        onSelect={(v) => onChange({ glitch_type: v, intensity, seed })}
+      />
       <Slider
         label="Intensity"
         value={intensity}

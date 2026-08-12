@@ -1,0 +1,129 @@
+/* ─── Color Picker Popup (retro Mac OS style) ──────────────────────────────── */
+
+.color-picker-popup {
+  background: var(--color-gray);
+  border: var(--border);
+  box-shadow: 3px 3px 0px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  min-width: 220px;
+}
+
+/* Override react-colorful styles to match retro theme.
+   react-colorful's classNames are third-party (not module-scoped), so they
+   must stay :global() to avoid being hashed away. */
+.color-picker-popup :global(.react-colorful) {
+  width: 100% !important;
+  height: 160px !important;
+  border-radius: 0 !important;
+  border: var(--border) !important;
+}
+
+.color-picker-popup :global(.react-colorful__saturation) {
+  border-radius: 0 !important;
+  border-bottom: var(--border) !important;
+}
+
+.color-picker-popup :global(.react-colorful__hue),
+.color-picker-popup :global(.react-colorful__alpha) {
+  height: 14px !important;
+  border-radius: 0 !important;
+  margin-top: 6px;
+  border: var(--border) !important;
+}
+
+.color-picker-popup :global(.react-colorful__pointer) {
+  width: 12px !important;
+  height: 12px !important;
+  border-radius: 0 !important;
+  border: var(--border) !important;
+  box-shadow:  var(--shadow-inset-light), var(--shadow-inset-dark), !important;
+}
+
+.color-picker-popup :global(.react-colorful__saturation-pointer) {
+  width: 10px !important;
+  height: 10px !important;
+  border-radius: 0 !important;
+  border: var(--border-width) solid var(--color-white) !important;
+  box-shadow: 0 0 0 var(--border-width) var(--color-black) !important;
+}
+
+/* Input row */
+.color-picker-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.color-picker-hash {
+  font-family: var(--font-family);
+  font-size: 12px;
+  font-weight: bold;
+  color: var(--text-color);
+}
+
+.color-picker-hex-input {
+  flex: 1;
+  height: 20px;
+  padding: 0 6px;
+  border: none;
+  background: var(--bg-input);
+  box-shadow: var(--shadow-field);
+  font-family: var(--font-family);
+  font-size: 12px;
+  font-weight: bold;
+  color: var(--text-color);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.color-picker-hex-input:focus {
+  outline: none;
+}
+
+.color-picker-preview {
+  width: 20px;
+  height: 20px;
+  border: var(--border);
+  flex-shrink: 0;
+}
+
+/* Buttons */
+.color-picker-buttons {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.color-picker-btn {
+  height: 24px;
+  padding: 0 12px;
+  border: var(--border);
+  font-family: var(--font-family);
+  font-size: 11px;
+  font-weight: bold;
+  cursor: pointer;
+  background: var(--color-gray);
+  color: var(--text-color);
+  box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+}
+
+.color-picker-btn:hover {
+  background: var(--bg-hover-picker);
+}
+
+.color-picker-btn:active {
+  box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light);
+}
+
+.color-picker-btn-confirm {
+  background: var(--color-primary);
+  color: var(--color-white);
+  box-shadow: inset -1.5px -1.5px 0px 0px rgba(0,0,0,0.3), inset 1.5px 1.5px 0px 0px rgba(255,255,255,0.3);
+}
+
+.color-picker-btn-confirm:hover {
+  background: var(--bg-hover-picker-confirm);
+}

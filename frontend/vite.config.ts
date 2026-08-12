@@ -3,7 +3,6 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  base: './',
 
   // Не затирать вывод cargo при перезапуске dev-сервера
   clearScreen: false,

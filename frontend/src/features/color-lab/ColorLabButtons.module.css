@@ -1,0 +1,31 @@
+/* ─── Color Lab Buttons ─────────────────────────────────────────────────────── */
+
+.color-lab-button {
+  height: 32px;
+  background: var(--bg-window);
+  border: none !important;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: bold;
+  color: var(--text-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+  padding: 0;
+}
+
+.color-lab-button:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.color-lab-button:active:not(:disabled) {
+  box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light);
+}
+
+.color-lab-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

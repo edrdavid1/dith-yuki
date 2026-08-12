@@ -227,6 +227,26 @@ pub fn compute_prefetch_ring(
     ring
 }
 
+/// Sort tiles in-place by ascending manhattan distance from the grid center.
+/// This ensures center-out dequeue order when tiles are enqueued into a FIFO queue.
+pub fn sort_tiles_center_out(tiles: &mut Vec<TileCoord>) {
+    if tiles.len() <= 1 {
+        return;
+    }
+    let min_x = tiles.iter().map(|t| t.x).min().unwrap();
+    let max_x = tiles.iter().map(|t| t.x).max().unwrap();
+    let min_y = tiles.iter().map(|t| t.y).min().unwrap();
+    let max_y = tiles.iter().map(|t| t.y).max().unwrap();
+    let center_x = (min_x + max_x) as f64 / 2.0;
+    let center_y = (min_y + max_y) as f64 / 2.0;
+
+    tiles.sort_by(|a, b| {
+        let dist_a = (a.x as f64 - center_x).abs() + (a.y as f64 - center_y).abs();
+        let dist_b = (b.x as f64 - center_x).abs() + (b.y as f64 - center_y).abs();
+        dist_a.partial_cmp(&dist_b).unwrap_or(std::cmp::Ordering::Equal)
+    });
+}
+
 // ============================================================================
 // Priority Classification
 // ============================================================================
@@ -331,11 +351,17 @@ pub fn set_viewport(
     drop(snapshot);
 
     // Compute pyramid level
-    let max_level = compute_max_level(doc_width, doc_height);
-    let level = compute_pyramid_level(zoom, max_level);
+    // NOTE: Pyramid level rendering is currently disabled on the frontend
+    // (always requests level 0). Force level 0 here too to avoid scheduling
+    // pyramid tiles that waste worker cycles and compete with real requests.
+    let _max_level = compute_max_level(doc_width, doc_height);
+    let level: u8 = 0;
 
     // Compute visible tiles
-    let visible = compute_visible_tiles(zoom, x, y, width, height, level, doc_width, doc_height);
+    let mut visible = compute_visible_tiles(zoom, x, y, width, height, level, doc_width, doc_height);
+
+    // Sort visible tiles center-out so FIFO enqueue produces center-out dequeue order
+    sort_tiles_center_out(&mut visible);
 
     // Compute prefetch ring
     let prefetch = compute_prefetch_ring(&visible, level, doc_width, doc_height);
@@ -369,6 +395,7 @@ pub fn set_viewport(
                 priority,
             };
             state.scheduler.enqueue(task);
+            state.worker_wake.notify_one();
         }
     }
 
@@ -387,6 +414,7 @@ pub fn set_viewport(
                 priority: Priority::Prefetch,
             };
             state.scheduler.enqueue(task);
+            state.worker_wake.notify_one();
         }
     }
 
@@ -646,5 +674,188 @@ mod tests {
         // Tile at (2, 2): dx=0.5, dy=0.5 → inside (≤ 1.5)
         let near_center = TileCoord { level: 0, x: 2, y: 2 };
         assert_eq!(classify_priority(&near_center, &visible), Priority::ViewportCenter);
+    }
+
+    // --- sort_tiles_center_out tests ---
+
+    #[test]
+    fn sort_center_out_empty_input() {
+        let mut tiles: Vec<TileCoord> = vec![];
+        sort_tiles_center_out(&mut tiles);
+        assert!(tiles.is_empty());
+    }
+
+    #[test]
+    fn sort_center_out_single_tile() {
+        let mut tiles = vec![TileCoord { level: 0, x: 3, y: 7 }];
+        sort_tiles_center_out(&mut tiles);
+        assert_eq!(tiles.len(), 1);
+        assert_eq!(tiles[0], TileCoord { level: 0, x: 3, y: 7 });
+    }
+
+    #[test]
+    fn sort_center_out_2x2_grid_equidistant() {
+        // 2x2 grid: center = (0.5, 0.5)
+        // All tiles are equidistant (manhattan dist = 1.0 each)
+        // Stable sort should preserve original order
+        let mut tiles = vec![
+            TileCoord { level: 0, x: 0, y: 0 },
+            TileCoord { level: 0, x: 1, y: 0 },
+            TileCoord { level: 0, x: 0, y: 1 },
+            TileCoord { level: 0, x: 1, y: 1 },
+        ];
+        let original = tiles.clone();
+        sort_tiles_center_out(&mut tiles);
+        // All equidistant → stable sort preserves original order
+        assert_eq!(tiles, original);
+    }
+
+    #[test]
+    fn sort_center_out_3x3_grid() {
+        // 3x3 grid: center = (1.0, 1.0)
+        // (1,1) dist=0, (0,1)(1,0)(2,1)(1,2) dist=1, (0,0)(2,0)(0,2)(2,2) dist=2
+        let mut tiles: Vec<TileCoord> = (0..3)
+            .flat_map(|y| (0..3).map(move |x| TileCoord { level: 0, x, y }))
+            .collect();
+        sort_tiles_center_out(&mut tiles);
+
+        // First tile should be center (1,1) with distance 0
+        assert_eq!(tiles[0], TileCoord { level: 0, x: 1, y: 1 });
+
+        // Verify distances are non-decreasing
+        let center_x = 1.0_f64;
+        let center_y = 1.0_f64;
+        let distances: Vec<f64> = tiles
+            .iter()
+            .map(|t| (t.x as f64 - center_x).abs() + (t.y as f64 - center_y).abs())
+            .collect();
+        for i in 0..distances.len() - 1 {
+            assert!(
+                distances[i] <= distances[i + 1],
+                "Distance at index {} ({}) > distance at index {} ({})",
+                i,
+                distances[i],
+                i + 1,
+                distances[i + 1]
+            );
+        }
+
+        // Last 4 tiles should be the corners (distance 2)
+        let corners: Vec<TileCoord> = tiles[5..9].to_vec();
+        assert!(corners.contains(&TileCoord { level: 0, x: 0, y: 0 }));
+        assert!(corners.contains(&TileCoord { level: 0, x: 2, y: 0 }));
+        assert!(corners.contains(&TileCoord { level: 0, x: 0, y: 2 }));
+        assert!(corners.contains(&TileCoord { level: 0, x: 2, y: 2 }));
+    }
+
+    #[test]
+    fn sort_center_out_4x4_grid() {
+        // 4x4 grid: center = (1.5, 1.5)
+        // Distances:
+        // (1,1)=1.0, (2,1)=1.0, (1,2)=1.0, (2,2)=1.0
+        // (0,1)=2.0, (1,0)=2.0, (3,1)=2.0, (2,0)=2.0, (0,2)=2.0, (1,3)=2.0, (3,2)=2.0, (2,3)=2.0
+        // (0,0)=3.0, (3,0)=3.0, (0,3)=3.0, (3,3)=3.0
+        let mut tiles: Vec<TileCoord> = (0..4)
+            .flat_map(|y| (0..4).map(move |x| TileCoord { level: 0, x, y }))
+            .collect();
+        sort_tiles_center_out(&mut tiles);
+
+        let center_x = 1.5_f64;
+        let center_y = 1.5_f64;
+        let distances: Vec<f64> = tiles
+            .iter()
+            .map(|t| (t.x as f64 - center_x).abs() + (t.y as f64 - center_y).abs())
+            .collect();
+
+        // Verify non-decreasing distances
+        for i in 0..distances.len() - 1 {
+            assert!(
+                distances[i] <= distances[i + 1],
+                "4x4: distance at index {} ({}) > distance at index {} ({})",
+                i,
+                distances[i],
+                i + 1,
+                distances[i + 1]
+            );
+        }
+
+        // First 4 tiles should be the inner 2x2 (distance 1.0)
+        assert_eq!(distances[0], 1.0);
+        assert_eq!(distances[3], 1.0);
+
+        // Last 4 tiles should be corners (distance 3.0)
+        assert_eq!(distances[12], 3.0);
+        assert_eq!(distances[15], 3.0);
+    }
+
+    #[test]
+    fn sort_center_out_asymmetric_5x2_grid() {
+        // 5×2 grid: center = (2.0, 0.5)
+        // Tiles: (0,0)(1,0)(2,0)(3,0)(4,0)(0,1)(1,1)(2,1)(3,1)(4,1)
+        let mut tiles: Vec<TileCoord> = (0..2)
+            .flat_map(|y| (0..5).map(move |x| TileCoord { level: 0, x, y }))
+            .collect();
+        sort_tiles_center_out(&mut tiles);
+
+        let center_x = 2.0_f64;
+        let center_y = 0.5_f64;
+        let distances: Vec<f64> = tiles
+            .iter()
+            .map(|t| (t.x as f64 - center_x).abs() + (t.y as f64 - center_y).abs())
+            .collect();
+
+        // Verify non-decreasing distances
+        for i in 0..distances.len() - 1 {
+            assert!(
+                distances[i] <= distances[i + 1],
+                "5x2: distance at index {} ({}) > distance at index {} ({}). Tile: ({},{})",
+                i,
+                distances[i],
+                i + 1,
+                distances[i + 1],
+                tiles[i + 1].x,
+                tiles[i + 1].y
+            );
+        }
+
+        // (2,0) and (2,1) are closest: dist = 0.5 each
+        assert_eq!(distances[0], 0.5);
+        assert_eq!(distances[1], 0.5);
+
+        // (0,1) and (4,1) are farthest: dist = 2.5 each
+        assert_eq!(distances[8], 2.5);
+        assert_eq!(distances[9], 2.5);
+    }
+
+    #[test]
+    fn sort_center_out_large_20x20_grid_no_panic() {
+        // Edge case: large grid (400 tiles) sorts without panic or resource exhaustion
+        let mut tiles: Vec<TileCoord> = (0..20)
+            .flat_map(|y| (0..20).map(move |x| TileCoord { level: 0, x, y }))
+            .collect();
+        assert_eq!(tiles.len(), 400);
+
+        sort_tiles_center_out(&mut tiles);
+
+        // All tiles still present
+        assert_eq!(tiles.len(), 400);
+
+        // Verify non-decreasing manhattan distances from center
+        let center_x = 9.5_f64; // (0+19)/2
+        let center_y = 9.5_f64;
+        let distances: Vec<f64> = tiles
+            .iter()
+            .map(|t| (t.x as f64 - center_x).abs() + (t.y as f64 - center_y).abs())
+            .collect();
+        for i in 0..distances.len() - 1 {
+            assert!(
+                distances[i] <= distances[i + 1],
+                "20x20: distance at index {} ({}) > distance at index {} ({})",
+                i,
+                distances[i],
+                i + 1,
+                distances[i + 1]
+            );
+        }
     }
 }

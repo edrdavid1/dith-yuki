@@ -1,0 +1,145 @@
+import { createSlice, createAsyncThunk, type PayloadAction } from '@reduxjs/toolkit';
+import type { FilterInfo } from '../../types';
+import {
+  formatIpcError,
+  getDocumentSnapshot,
+  logIpcError,
+  removeFilter as removeFilterIPC,
+  reorderFilter as reorderFilterIPC,
+} from '../../shared/ipc';
+
+export type FiltersStatus = 'idle' | 'loading' | 'ready' | 'error';
+
+export interface FiltersState {
+  byId: Record<string, FilterInfo>;
+  orderOnImageSource: string[];
+  status: FiltersStatus;
+  error: string | null;
+}
+
+const initialState: FiltersState = {
+  byId: {},
+  orderOnImageSource: [],
+  status: 'idle',
+  error: null,
+};
+
+function unwrapParams(params: Record<string, unknown>): Record<string, unknown> {
+  if (params.DitherV2 && typeof params.DitherV2 === 'object') {
+    return params.DitherV2 as Record<string, unknown>;
+  }
+  if (params.Glow && typeof params.Glow === 'object') {
+    return params.Glow as Record<string, unknown>;
+  }
+  if (params.Crt && typeof params.Crt === 'object') {
+    return params.Crt as Record<string, unknown>;
+  }
+  return params;
+}
+
+export const refreshFilters = createAsyncThunk(
+  'filters/refresh',
+  async (_, { rejectWithValue }) => {
+    try {
+      const response = await getDocumentSnapshot();
+      const imageLayer = response.snapshot.layers[0];
+      if (!imageLayer?.filters) {
+        return [] as FilterInfo[];
+      }
+      return imageLayer.filters.map((f) => ({
+        id: typeof f.id === 'string' ? f.id : String(f.id),
+        kind: f.kind as FilterInfo['kind'],
+        params: unwrapParams(f.params),
+        enabled: f.enabled ?? true,
+      })) as unknown as FilterInfo[];
+    } catch (err) {
+      logIpcError('filters.refresh', err);
+      return rejectWithValue(formatIpcError(err));
+    }
+  }
+);
+
+export const removeFilter = createAsyncThunk(
+  'filters/remove',
+  async (
+    args: { layerId: number; filterId: string },
+    { dispatch, rejectWithValue }
+  ) => {
+    try {
+      await removeFilterIPC(args.layerId, args.filterId);
+      await dispatch(refreshFilters());
+      return args.filterId;
+    } catch (err) {
+      logIpcError('filters.remove', err);
+      return rejectWithValue(formatIpcError(err));
+    }
+  }
+);
+
+export const reorderFilter = createAsyncThunk(
+  'filters/reorder',
+  async (
+    args: { layerId: number; filterId: string; newIndex: number },
+    { dispatch, rejectWithValue }
+  ) => {
+    try {
+      await reorderFilterIPC(args.layerId, args.filterId, args.newIndex);
+      await dispatch(refreshFilters());
+    } catch (err) {
+      logIpcError('filters.reorder', err);
+      return rejectWithValue(formatIpcError(err));
+    }
+  }
+);
+
+const filtersSlice = createSlice({
+  name: 'filters',
+  initialState,
+  reducers: {
+    clearFilters(state) {
+      state.byId = {};
+      state.orderOnImageSource = [];
+      state.status = 'idle';
+      state.error = null;
+    },
+    setFiltersError(state, action: PayloadAction<string | null>) {
+      state.error = action.payload;
+    },
+  },
+  extraReducers: (builder) => {
+    builder
+      .addCase(refreshFilters.pending, (state) => {
+        state.status = 'loading';
+      })
+      .addCase(refreshFilters.fulfilled, (state, action) => {
+        state.byId = {};
+        state.orderOnImageSource = [];
+        for (const filter of action.payload) {
+          state.byId[filter.id] = filter;
+          state.orderOnImageSource.push(filter.id);
+        }
+        state.status = 'ready';
+        state.error = null;
+      })
+      .addCase(refreshFilters.rejected, (state, action) => {
+        state.status = 'error';
+        state.error = (action.payload as string) ?? 'Failed to refresh filters';
+      })
+      .addCase(removeFilter.rejected, (state, action) => {
+        state.error = (action.payload as string) ?? state.error;
+      })
+      .addCase(reorderFilter.rejected, (state, action) => {
+        state.error = (action.payload as string) ?? state.error;
+      });
+  },
+});
+
+export const { clearFilters, setFiltersError } = filtersSlice.actions;
+
+export function selectFiltersList(state: { filters: FiltersState }): FilterInfo[] {
+  return state.filters.orderOnImageSource
+    .map((id) => state.filters.byId[id])
+    .filter(Boolean);
+}
+
+export default filtersSlice.reducer;

@@ -7,6 +7,12 @@
 pub mod types;
 pub use types::*;
 
+pub mod coords;
+pub use coords::*;
+
+pub mod block_cache;
+pub use block_cache::*;
+
 pub mod tile;
 pub use tile::*;
 

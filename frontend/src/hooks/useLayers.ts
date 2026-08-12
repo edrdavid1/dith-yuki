@@ -1,134 +1,113 @@
-import { useState, useCallback, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import type { LayerNodeDto, LayerPropsPatch } from '../components/LayerPanel';
+import { useCallback, useEffect } from 'react';
+import { useAppDispatch, useAppSelector } from '../app/hooks';
+import {
+  addLayerWithEffect as addLayerWithEffectThunk,
+  addRasterLayer,
+  patchLayerProps,
+  refreshLayers,
+  removeLayer as removeLayerThunk,
+  reorderLayer as reorderLayerThunk,
+  toggleLayerVisibility,
+} from '../app/slices/layersSlice';
+import { setSelection } from '../app/slices/selectionSlice';
+import { refreshFilters } from '../app/slices/filtersSlice';
+import type { LayerPropsPatch } from '../shared/types/layers';
+import type { EffectType } from '../types/effects';
+import type { UseLayersReturn } from './useLayers.types';
+
+export type { UseLayersReturn } from './useLayers.types';
 
 interface UseLayersOptions {
   /** The current document ID; when null, layers are empty. */
   docId: number | null;
 }
 
-interface UseLayersReturn {
-  layers: LayerNodeDto[];
-  selectedLayerId: number | null;
-  setSelectedLayerId: (id: number | null) => void;
-  addLayer: () => void;
-  reorderLayer: (layerId: number, newParent: number | null, newIndex: number) => void;
-  setLayerProps: (layerId: number, patch: LayerPropsPatch) => void;
-  error: string | null;
-}
-
 /**
- * Hook for managing the layer tree state and IPC operations.
- *
- * Fetches the layer tree from the backend on mount and after mutations,
- * provides selection state, and wraps add/reorder/setProps IPC calls.
+ * Thin adapter over RTK `layers` + `selection` slices.
+ * Keeps the previous hook API for App / tests during P1 migration.
  */
 export function useLayers({ docId }: UseLayersOptions): UseLayersReturn {
-  const [layers, setLayers] = useState<LayerNodeDto[]>([]);
-  const [selectedLayerId, setSelectedLayerId] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const dispatch = useAppDispatch();
+  const layers = useAppSelector((s) => s.layers.tree);
+  const error = useAppSelector((s) => s.layers.error);
+  const selectedLayerId = useAppSelector((s) => s.selection.layerId);
 
-  // Fetch layer tree from backend
-  const refreshLayers = useCallback(async () => {
-    if (docId === null) {
-      setLayers([]);
-      return;
-    }
-    try {
-      const tree = await invoke<LayerNodeDto[]>('get_layer_tree');
-      setLayers(tree);
-      setError(null);
-    } catch (err) {
-      setError(typeof err === 'string' ? err : String(err));
-    }
-  }, [docId]);
-
-  // Fetch layers on mount and when docId changes
   useEffect(() => {
-    refreshLayers();
-  }, [refreshLayers]);
-
-  // Add a new layer above the selected layer (or at top of root)
-  const addLayer = useCallback(async () => {
-    if (docId === null) return;
-    try {
-      // Find selected layer's position to insert above it
-      const index = findLayerIndex(layers, selectedLayerId);
-      await invoke('add_layer', {
-        req: {
-          kind: 'raster',
-          parent_group: null,
-          index: index !== null ? index + 1 : layers.length,
-        },
-      });
-      setError(null);
-      await refreshLayers();
-    } catch (err) {
-      setError(typeof err === 'string' ? err : String(err));
+    void dispatch(refreshLayers(docId));
+    if (docId !== null) {
+      void dispatch(refreshFilters());
     }
-  }, [docId, layers, selectedLayerId, refreshLayers]);
+  }, [dispatch, docId]);
 
-  // Reorder a layer to a new position
+  const setSelectedLayerId = useCallback(
+    (id: number | null) => {
+      void dispatch(setSelection({ layerId: id, filterId: null }));
+    },
+    [dispatch]
+  );
+
+  const addLayer = useCallback(() => {
+    void dispatch(addRasterLayer({ docId, selectedLayerId, layers }));
+  }, [dispatch, docId, selectedLayerId, layers]);
+
+  const removeLayer = useCallback(
+    (layerId: number) => {
+      void dispatch(removeLayerThunk({ docId, layerId }));
+    },
+    [dispatch, docId]
+  );
+
+  const addLayerWithEffect = useCallback(
+    (effectType: EffectType, _position: number) => {
+      void dispatch(addLayerWithEffectThunk({ docId, layers, effectType })).then((result) => {
+        if (addLayerWithEffectThunk.fulfilled.match(result) && result.payload != null) {
+          void dispatch(setSelection({ layerId: result.payload, filterId: null }));
+          void dispatch(refreshFilters());
+        }
+      });
+    },
+    [dispatch, docId, layers]
+  );
+
+  const toggleVisibility = useCallback(
+    (layerId: number) => {
+      void dispatch(toggleLayerVisibility({ docId, layerId, layers }));
+    },
+    [dispatch, docId, layers]
+  );
+
   const reorderLayer = useCallback(
-    async (layerId: number, newParent: number | null, newIndex: number) => {
-      if (docId === null) return;
-      try {
-        await invoke('reorder_layer', {
-          req: {
-            layer_id: layerId,
-            new_parent: newParent,
-            new_index: newIndex,
-          },
-        });
-        setError(null);
-        await refreshLayers();
-      } catch (err) {
-        setError(typeof err === 'string' ? err : String(err));
-      }
+    (layerId: number, newParent: number | null, newIndex: number) => {
+      void dispatch(reorderLayerThunk({ docId, layerId, newParent, newIndex }));
     },
-    [docId, refreshLayers]
+    [dispatch, docId]
   );
 
-  // Set layer properties (name, opacity, blend_mode, visible)
-  const setLayerPropsHandler = useCallback(
-    async (layerId: number, patch: LayerPropsPatch) => {
-      if (docId === null) return;
-      try {
-        await invoke('set_layer_props', {
-          req: {
-            layer_id: layerId,
-            name: patch.name ?? null,
-            opacity: patch.opacity ?? null,
-            blend_mode: patch.blend_mode ?? null,
-            visible: patch.visible ?? null,
-          },
-        });
-        setError(null);
-        await refreshLayers();
-      } catch (err) {
-        setError(typeof err === 'string' ? err : String(err));
-      }
+  const setLayerProps = useCallback(
+    (layerId: number, patch: LayerPropsPatch) => {
+      void dispatch(patchLayerProps({ docId, layerId, patch }));
     },
-    [docId, refreshLayers]
+    [dispatch, docId]
   );
+
+  const refreshLayersFn = useCallback(async () => {
+    await dispatch(refreshLayers(docId));
+    if (docId !== null) {
+      await dispatch(refreshFilters());
+    }
+  }, [dispatch, docId]);
 
   return {
     layers,
     selectedLayerId,
     setSelectedLayerId,
     addLayer,
+    removeLayer,
+    addLayerWithEffect,
+    toggleVisibility,
     reorderLayer,
-    setLayerProps: setLayerPropsHandler,
+    setLayerProps,
+    refreshLayers: refreshLayersFn,
     error,
   };
-}
-
-/**
- * Find the index of a layer by ID in the root-level list.
- * Returns null if not found at root level.
- */
-function findLayerIndex(layers: LayerNodeDto[], layerId: number | null): number | null {
-  if (layerId === null) return null;
-  const idx = layers.findIndex((l) => l.id === layerId);
-  return idx >= 0 ? idx : null;
 }

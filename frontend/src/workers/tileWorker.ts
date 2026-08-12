@@ -104,8 +104,35 @@ async function fetchAndDecodeTile(docId: number, tile: TileRequest): Promise<voi
       const msg: TileDecodedMessage = { type: 'tile-decoded', key, bitmap };
       postMessage(msg, [bitmap]);
     } else if (response.status === 202) {
-      // Tile is pending computation — main thread will re-request on tile-ready event
+      // Tile is pending computation — retry with exponential backoff.
+      // This is more reliable than depending solely on tile-ready events
+      // which can be missed during React re-renders or viewport changes.
       postMessage({ type: 'tile-pending', key } satisfies TilePendingMessage);
+
+      // Retry up to 5 times with increasing delays: 50, 100, 200, 400, 800ms
+      for (let attempt = 0; attempt < 5; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 50 * Math.pow(2, attempt)));
+        try {
+          const retryResponse = await fetch(url);
+          if (retryResponse.status === 200) {
+            const retryBuffer = await retryResponse.arrayBuffer();
+            if (retryBuffer.byteLength === TILE_BYTE_LENGTH) {
+              const retryImageData = new ImageData(
+                new Uint8ClampedArray(retryBuffer),
+                TILE_SIZE,
+                TILE_SIZE,
+              );
+              const retryBitmap = await createImageBitmap(retryImageData);
+              const retryMsg: TileDecodedMessage = { type: 'tile-decoded', key, bitmap: retryBitmap };
+              postMessage(retryMsg, [retryBitmap]);
+            }
+            break; // Success, stop retrying
+          }
+          // Still 202 — continue loop
+        } catch {
+          break; // Network error, stop retrying
+        }
+      }
     } else {
       // Non-recoverable error (404, 400, etc.)
       const body = await response.text().catch(() => '');
@@ -133,11 +160,11 @@ self.onmessage = async (e: MessageEvent<WorkerInMessage>) => {
   const msg = e.data;
 
   if (msg.type === 'request-tiles') {
-    // Batch fetch: process all requested tiles sequentially to avoid
-    // overwhelming the protocol handler with too many concurrent requests.
-    for (const tile of msg.tiles) {
-      await fetchAndDecodeTile(msg.docId, tile);
-    }
+    // Batch fetch: process all requested tiles in parallel. Each
+    // fetchAndDecodeTile handles its own error and posts results independently.
+    await Promise.all(
+      msg.tiles.map(tile => fetchAndDecodeTile(msg.docId, tile))
+    );
   } else if (msg.type === 'fetch-tile') {
     await fetchAndDecodeTile(msg.docId, {
       level: msg.level,
