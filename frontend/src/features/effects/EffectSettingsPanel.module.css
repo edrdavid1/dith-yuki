@@ -110,3 +110,32 @@
   line-height: 1.35;
   color: var(--color-dark-gray);
 }
+
+.pattern-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 10px 12px;
+}
+
+.pattern-action-btn {
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  background: var(--bg-window);
+  color: var(--text-color);
+  font-family: var(--font-family);
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+  text-align: left;
+}
+
+.pattern-action-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.pattern-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

@@ -78,6 +78,11 @@ impl PaletteKdCache {
     pub fn evict(&self, palette_id: PaletteId) {
         self.entries.remove(&palette_id);
     }
+
+    /// Palette ids currently resident in the cache.
+    pub fn cached_ids(&self) -> Vec<PaletteId> {
+        self.entries.iter().map(|e| *e.key()).collect()
+    }
 }
 
 impl Default for PaletteKdCache {

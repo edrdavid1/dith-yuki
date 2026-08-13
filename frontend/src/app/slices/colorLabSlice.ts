@@ -17,6 +17,8 @@ export interface ColorLabState extends ColorLabDraftSnapshot {
   suppressRemote: boolean;
   /** Bumps when draft arrives from another window — local sync must not re-broadcast. */
   remoteEpoch: number;
+  /** Shared swatch cursor: manual-edit list and Oklab volume viewer. */
+  selectedColorIndex: number | null;
 }
 
 const defaultDraft = (): ColorLabDraftSnapshot => ({
@@ -77,12 +79,18 @@ export function selectDraftSnapshot(state: ColorLabState): ColorLabDraftSnapshot
 
 const hydrated = loadPersistedDraft();
 
+function clampSelectedIndex(length: number, index: number | null): number | null {
+  if (index === null || index < 0 || index >= length) return null;
+  return index;
+}
+
 const initialState: ColorLabState = {
   ...hydrated,
   error: null,
   successMessage: null,
   suppressRemote: false,
   remoteEpoch: 0,
+  selectedColorIndex: null,
 };
 
 const colorLabSlice = createSlice({
@@ -95,6 +103,10 @@ const colorLabSlice = createSlice({
     },
     setColors(state, action: PayloadAction<ColorEntry[]>) {
       state.colors = action.payload;
+      state.selectedColorIndex = clampSelectedIndex(
+        state.colors.length,
+        state.selectedColorIndex
+      );
       state.error = null;
     },
     setColorAt(state, action: PayloadAction<{ index: number; hex: string }>) {
@@ -109,8 +121,17 @@ const colorLabSlice = createSlice({
       state.error = null;
     },
     deleteColor(state, action: PayloadAction<number>) {
-      state.colors = state.colors.filter((_, i) => i !== action.payload);
+      const removed = action.payload;
+      state.colors = state.colors.filter((_, i) => i !== removed);
+      if (state.selectedColorIndex === removed) {
+        state.selectedColorIndex = null;
+      } else if (state.selectedColorIndex !== null && state.selectedColorIndex > removed) {
+        state.selectedColorIndex -= 1;
+      }
       state.error = null;
+    },
+    setSelectedColorIndex(state, action: PayloadAction<number | null>) {
+      state.selectedColorIndex = clampSelectedIndex(state.colors.length, action.payload);
     },
     setExtractMethod(state, action: PayloadAction<ExtractMethod>) {
       state.extractMethod = action.payload;
@@ -124,6 +145,7 @@ const colorLabSlice = createSlice({
       state.colors = next.colors;
       state.extractMethod = next.extractMethod;
       state.extractCount = next.extractCount;
+      state.selectedColorIndex = null;
       state.error = null;
       state.successMessage = null;
     },
@@ -139,6 +161,10 @@ const colorLabSlice = createSlice({
       state.colors = action.payload.colors;
       state.extractMethod = action.payload.extractMethod;
       state.extractCount = action.payload.extractCount;
+      state.selectedColorIndex = clampSelectedIndex(
+        state.colors.length,
+        state.selectedColorIndex
+      );
       state.remoteEpoch += 1;
     },
     setSuppressRemote(state, action: PayloadAction<boolean>) {
@@ -150,6 +176,10 @@ const colorLabSlice = createSlice({
       state.colors = draft.colors;
       state.extractMethod = draft.extractMethod;
       state.extractCount = draft.extractCount;
+      state.selectedColorIndex = clampSelectedIndex(
+        state.colors.length,
+        state.selectedColorIndex
+      );
     },
   },
 });
@@ -160,6 +190,7 @@ export const {
   setColorAt,
   addColor,
   deleteColor,
+  setSelectedColorIndex,
   setExtractMethod,
   setExtractCount,
   resetDraft,

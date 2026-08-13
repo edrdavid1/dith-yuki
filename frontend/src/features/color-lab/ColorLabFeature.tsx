@@ -14,6 +14,7 @@ import {
   setExtractCount,
   setExtractMethod,
   setName,
+  setSelectedColorIndex,
   setSuccessMessage,
 } from '../../app/slices/colorLabSlice';
 import { extractPalette } from '../../app/autoExtract';
@@ -61,9 +62,8 @@ export default function ColorLabFeature({
   const hasDocument = useAppSelector((s) => s.document.hasDocument);
   const layerId = useAppSelector((s) => s.selection.layerId);
   const palettesVersion = useAppSelector((s) => s.palettes.version);
-  const { name, colors, extractMethod, extractCount, error, successMessage } = useAppSelector(
-    (s) => s.colorLab
-  );
+  const { name, colors, extractMethod, extractCount, error, successMessage, selectedColorIndex } =
+    useAppSelector((s) => s.colorLab);
 
   useColorLabDraftSync();
 
@@ -242,9 +242,10 @@ export default function ColorLabFeature({
   }, [colors, dispatch, name]);
 
   const handleOpenColorPicker = useCallback((index: number, e: React.MouseEvent) => {
+    dispatch(setSelectedColorIndex(index));
     setColorPickerIndex(index);
     setPickerAnchorRect((e.currentTarget as HTMLElement).getBoundingClientRect());
-  }, []);
+  }, [dispatch]);
 
   const handleCloseColorPicker = useCallback(() => {
     setColorPickerIndex(null);
@@ -278,6 +279,8 @@ export default function ColorLabFeature({
       onExtractRaw={handleExtract}
       onExtractActual={handleExtract}
       colors={colors}
+      selectedColorIndex={selectedColorIndex}
+      onSelectColor={(index) => dispatch(setSelectedColorIndex(index))}
       canAddColor={colors.length < MAX_COLORS}
       onColorChange={(index, hex) => dispatch(setColorAt({ index, hex }))}
       onDeleteColor={(index) => dispatch(deleteColor(index))}

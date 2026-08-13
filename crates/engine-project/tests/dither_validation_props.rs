@@ -20,6 +20,10 @@ fn arb_valid_mode() -> impl Strategy<Value = DitherModeV2> {
         Just(DitherModeV2::Bayer8x8),
         Just(DitherModeV2::FloydSteinberg),
         Just(DitherModeV2::Atkinson),
+        Just(DitherModeV2::JarvisJudiceNinke),
+        Just(DitherModeV2::Stucki),
+        Just(DitherModeV2::Burkes),
+        Just(DitherModeV2::Sierra),
         // CustomPng with a non-empty path
         "[a-z]{1,20}\\.png".prop_map(|path| DitherModeV2::CustomPng { path }),
     ]
@@ -57,9 +61,42 @@ fn arb_valid_params() -> impl Strategy<Value = DitherParamsV2> {
                 threshold_scale,
                 pixel_size,
                 color_mode,
-                palette_id,            ..Default::default()
+                palette_id,
+                threshold_bias: 0.0,
+                pattern_angle: 0.0,
+                ..Default::default()
             }
         })
+}
+
+/// Generate DitherParamsV2 with out-of-range threshold_bias.
+fn arb_invalid_threshold_bias() -> impl Strategy<Value = DitherParamsV2> {
+    (
+        arb_valid_mode(),
+        2u16..=256u16,
+        (10u32..=400u32),
+        1u8..=32u8,
+        arb_color_mode(),
+        arb_palette_id(),
+        prop_oneof![
+            (-200i32..=-51i32).prop_map(|v| v as f32 / 100.0),
+            (51i32..=200i32).prop_map(|v| v as f32 / 100.0),
+        ],
+    )
+        .prop_map(
+            |(mode, levels, ts_raw, pixel_size, color_mode, palette_id, threshold_bias)| {
+                DitherParamsV2 {
+                    mode,
+                    levels,
+                    threshold_scale: ts_raw as f32 / 100.0,
+                    pixel_size,
+                    color_mode,
+                    palette_id,
+                    threshold_bias,
+                    ..Default::default()
+                }
+            },
+        )
 }
 
 /// Generate DitherParamsV2 with out-of-range levels.
@@ -211,6 +248,16 @@ proptest! {
         prop_assert!(
             params.validate().is_err(),
             "Expected Err for CustomPng with empty path: {:?}", params
+        );
+    }
+
+    /// Out-of-range threshold_bias fails validation.
+    #[test]
+    fn invalid_threshold_bias_fail_validation(params in arb_invalid_threshold_bias()) {
+        prop_assert!(
+            params.validate().is_err(),
+            "Expected Err for out-of-range threshold_bias={}: {:?}",
+            params.threshold_bias, params
         );
     }
 }

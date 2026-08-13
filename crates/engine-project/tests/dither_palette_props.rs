@@ -89,6 +89,10 @@ fn arb_diffusion_mode() -> impl Strategy<Value = DitherModeV2> {
     prop_oneof![
         Just(DitherModeV2::FloydSteinberg),
         Just(DitherModeV2::Atkinson),
+        Just(DitherModeV2::JarvisJudiceNinke),
+        Just(DitherModeV2::Stucki),
+        Just(DitherModeV2::Burkes),
+        Just(DitherModeV2::Sierra),
     ]
 }
 

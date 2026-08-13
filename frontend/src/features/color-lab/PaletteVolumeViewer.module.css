@@ -1,0 +1,55 @@
+.volume-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.volume-summary {
+  font-size: 11px;
+  color: var(--color-dark-gray);
+  font-weight: bold;
+  cursor: pointer;
+  list-style: none;
+}
+
+.volume-summary::-webkit-details-marker {
+  display: none;
+}
+
+.volume-summary::before {
+  content: '▸ ';
+}
+
+.volume-section[open] .volume-summary::before {
+  content: '▾ ';
+}
+
+.volume-canvas-wrap {
+  position: relative;
+  width: 100%;
+  height: 220px;
+  border: var(--border);
+  background: #111;
+  overflow: hidden;
+}
+
+.volume-canvas-wrap-compact {
+  height: 160px;
+}
+
+.volume-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+
+.volume-canvas:active {
+  cursor: grabbing;
+}
+
+.volume-hint {
+  font-size: 10px;
+  color: var(--color-dark-gray);
+}

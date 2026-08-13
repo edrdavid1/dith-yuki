@@ -542,6 +542,8 @@ mod tests {
                 std::sync::atomic::AtomicBool::new(true),
             ),
             float_drag_mouseup_hook: Mutex::new(None),
+            project_path: Mutex::new(None),
+            undo_manager: Mutex::new(crate::undo::UndoManager::new()),
         }
     }
 
@@ -662,5 +664,76 @@ mod tests {
 
         // After computation, cache should have the processed tile
         assert!(state.tile_cache.get_entry(processed_key).is_some());
+    }
+
+    fn make_ed_layer_state() -> AppState {
+        use engine_project::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
+
+        let mut doc = Document::new(DocumentId::new(1), 512, 512);
+        let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, 512, 512);
+        layer.filters.push(FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::FloydSteinberg,
+                levels: 4,
+                threshold_scale: 1.0,
+                pixel_size: 1,
+                color_mode: DitherColorMode::Rgb,
+                palette_id: None,
+                ..Default::default()
+            }),
+        ));
+        doc.root.push(LayerNode::Leaf(layer));
+        let mut state = make_app_state_with_layer(1, false);
+        state.document_handle = DocumentHandle::new(doc);
+        state
+    }
+
+    #[test]
+    fn skip_branch_increments_when_neighbor_raw_missing() {
+        let state = make_ed_layer_state();
+        let current_raw = TileKey {
+            layer: 1,
+            coord: TileCoord { level: 0, x: 1, y: 0 },
+            stage: CacheStage::Raw,
+        };
+        state.tile_cache.get_or_insert(current_raw, Arc::new(PixelTile::new()));
+
+        let processed = TileKey {
+            layer: 1,
+            coord: TileCoord { level: 0, x: 1, y: 0 },
+            stage: CacheStage::Processed,
+        };
+        let _ = compute_processed_tile(processed, &state);
+        assert!(
+            state.diffusion_skip_counter.get() > 0,
+            "missing left raw must hit the skip branch"
+        );
+    }
+
+    #[test]
+    fn evict_layer_of_current_layer_does_not_use_skip_branch() {
+        let state = make_ed_layer_state();
+        let raw = TileKey {
+            layer: 1,
+            coord: TileCoord { level: 0, x: 1, y: 0 },
+            stage: CacheStage::Raw,
+        };
+        state.tile_cache.get_or_insert(raw, Arc::new(PixelTile::new()));
+        state.tile_cache.evict_layer(1);
+        state.diffusion_skip_counter.reset();
+
+        let processed = TileKey {
+            layer: 1,
+            coord: TileCoord { level: 0, x: 1, y: 0 },
+            stage: CacheStage::Processed,
+        };
+        let result = compute_processed_tile(processed, &state);
+        assert!(result.is_err(), "current raw gone after evict_layer");
+        assert_eq!(
+            state.diffusion_skip_counter.get(),
+            0,
+            "Orphan_GC-style whole-layer eviction errors before neighbor skip"
+        );
     }
 }

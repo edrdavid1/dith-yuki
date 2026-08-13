@@ -1,12 +1,12 @@
 import { clampParam } from '../../../types/effects';
 import Slider from '../../../components/common/Slider';
+import NumberInput from '../../../components/common/NumberInput';
 import DropdownMenu from '../../../components/common/DropdownMenu';
 import panelStyles from '../EffectSettingsPanel.module.css';
 import paramStyles from '../../../shared/ui/ParamControls.module.css';
-import inputStyles from '../../../shared/ui/ParamInput.module.css';
 import sliderStyles from '../../../shared/ui/Slider.module.css';
 import { bind } from '../../../shared/ui/cn';
-const cn = bind({ ...panelStyles, ...paramStyles, ...inputStyles, ...sliderStyles });
+const cn = bind({ ...panelStyles, ...paramStyles, ...sliderStyles });
 
 interface GlitchSettingsProps {
   params: Record<string, unknown>;
@@ -50,21 +50,15 @@ function GlitchSettings({ params, onUpdate }: GlitchSettingsProps) {
         onChange={(v) => emit({ intensity: clampParam(v, 0.0, 1.0) })}
       />
 
-      {/* Seed number input */}
-      <div className={cn("param-group")}>
-        <label className={cn("slider-label")}>Seed</label>
-        <input
-          type="number"
-          className={cn("param-input")}
-          min={0}
-          max={99999}
-          value={seed}
-          onChange={(e) => {
-            const val = clampParam(Math.round(Number(e.target.value) || 0), 0, 99999);
-            emit({ seed: val });
-          }}
-        />
-      </div>
+      <NumberInput
+        label="Seed"
+        value={seed}
+        min={0}
+        max={99999}
+        step={1}
+        decimals={0}
+        onChange={(v) => emit({ seed: clampParam(Math.round(v), 0, 99999) })}
+      />
     </div>
   );
 }

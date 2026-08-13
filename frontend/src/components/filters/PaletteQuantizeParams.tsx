@@ -47,6 +47,8 @@ function PaletteQuantizeParams({ paletteId, diffusion, onChange }: PaletteQuanti
           { value: 'Atkinson', label: 'Atkinson' },
           { value: 'JarvisJudiceNinke', label: 'Jarvis-Judice-Ninke' },
           { value: 'Stucki', label: 'Stucki' },
+          { value: 'Burkes', label: 'Burkes' },
+          { value: 'Sierra', label: 'Sierra' },
         ]}
         onSelect={(v) => {
           handleDiffusionChange(v === 'none' ? null : v);

@@ -136,6 +136,48 @@ fn get_threshold(
     get_threshold_i32(params, gx as i32, gy as i32, threshold_cache)
 }
 
+/// Bayer / CustomPng sample the rotated lattice; Wave / Halftone / ED do not.
+#[inline]
+fn samples_rotated_pattern(mode: &DitherModeV2) -> bool {
+    matches!(
+        mode,
+        DitherModeV2::Bayer2x2
+            | DitherModeV2::Bayer4x4
+            | DitherModeV2::Bayer8x8
+            | DitherModeV2::CustomPng { .. }
+    )
+}
+
+/// Block_Then_Rotate: rotate aligned `(gx, gy)` around the origin, then **floor**.
+///
+/// Angle is degrees; wrapped with `rem_euclid(360)` so sampling is periodic.
+/// `angle == 0` (after wrap) is a no-op so default output stays bit-identical.
+///
+/// Formula (design lock): `x' = x cosθ − y sinθ`, `y' = x sinθ + y cosθ`.
+pub(crate) fn rotate_pattern_coord(gx: i32, gy: i32, angle_deg: f32) -> (i32, i32) {
+    let wrapped = angle_deg.rem_euclid(360.0);
+    if wrapped == 0.0 {
+        return (gx, gy);
+    }
+    let theta = wrapped.to_radians();
+    let (cos_t, sin_t) = (theta.cos(), theta.sin());
+    let x = gx as f32;
+    let y = gy as f32;
+    let xr = x * cos_t - y * sin_t;
+    let yr = x * sin_t + y * cos_t;
+    (xr.floor() as i32, yr.floor() as i32)
+}
+
+/// `T' = clamp01(T + bias)` into `[0, 1)`. Bias 0 is a no-op (bit-identity).
+#[inline]
+fn apply_threshold_bias(threshold: f32, bias: f32) -> f32 {
+    if bias == 0.0 {
+        threshold
+    } else {
+        (threshold + bias).clamp(0.0, 0.999_999)
+    }
+}
+
 /// Get threshold using i32 global coordinates (handles negative coords at tile edges).
 /// Uses rem_euclid for correct modular indexing even with negative values.
 fn get_threshold_i32(
@@ -181,9 +223,10 @@ fn get_threshold_i32(
         DitherModeV2::CmykHalftone => {
             unreachable!("CMYK halftone uses dedicated apply path, not get_threshold")
         }
-        DitherModeV2::FloydSteinberg | DitherModeV2::Atkinson => {
+        mode if mode.is_error_diffusion() => {
             unreachable!("ordered dithering engine called with diffusion mode")
         }
+        _ => unreachable!("unhandled dither mode in get_threshold"),
     }
 }
 
@@ -314,18 +357,28 @@ pub fn apply_ordered_with_cache(
             let block_gx = block.x;
             let block_gy = block.y;
 
-            // Get threshold from Bayer / Wave / custom map using block's top-left coordinate.
-            let threshold = get_threshold_i32(params, block_gx, block_gy, threshold_cache)?;
-
-            // Apply threshold_scale: offset = (threshold - 0.5) * threshold_scale
-            let offset = (threshold - 0.5) * params.threshold_scale;
-
-            // Source: block representative from cache when possible; else tile (+ clamp fallback)
+            // Block_Then_Rotate (Track H / ROADMAP §2):
+            //   global → aligned(pixel_size) → [BRC lookup]
+            //   → rotate(pattern_angle) → get_threshold_i32 → T' = clamp01(T + bias)
+            // Do not rotate before alignment: mega-pixel blocks stay axis-aligned rectangles.
             let (r, g, b) = if ps > 1 {
                 read_block_source(tile, coord, block_gx, block_gy, block_cache, layer_id, ps)
             } else {
                 (tile.at(x, y, 0), tile.at(x, y, 1), tile.at(x, y, 2))
             };
+
+            let (pat_gx, pat_gy) = if samples_rotated_pattern(&params.mode) {
+                rotate_pattern_coord(block_gx, block_gy, params.pattern_angle)
+            } else {
+                (block_gx, block_gy)
+            };
+            let threshold = apply_threshold_bias(
+                get_threshold_i32(params, pat_gx, pat_gy, threshold_cache)?,
+                params.threshold_bias,
+            );
+
+            // Apply threshold_scale: offset = (threshold - 0.5) * threshold_scale
+            let offset = (threshold - 0.5) * params.threshold_scale;
 
             // Quantize based on color_mode and palette
             match params.color_mode {
@@ -463,7 +516,18 @@ fn apply_cmyk_halftone(
             };
 
             let (c, m, y_ink, k) = rgb_to_cmyk(src_r, src_g, src_b);
-            let tones = [c, m, y_ink, k];
+            // Ordered-threshold bias: shift CMYK tone (more/fewer dots). No-op at 0.
+            let bias = params.threshold_bias;
+            let tones = if bias == 0.0 {
+                [c, m, y_ink, k]
+            } else {
+                [
+                    (c + bias).clamp(0.0, 1.0),
+                    (m + bias).clamp(0.0, 1.0),
+                    (y_ink + bias).clamp(0.0, 1.0),
+                    (k + bias).clamp(0.0, 1.0),
+                ]
+            };
             let mut dots = [0.0f32; 4];
             for i in 0..4 {
                 let dist = rotated_cell_dist(block_gx, block_gy, s, angles[i]);
@@ -1058,5 +1122,170 @@ mod tests {
             found_different,
             "Bayer pattern should produce different values at adjacent global columns (255 vs 256)"
         );
+    }
+
+    // ─── Track H: threshold bias + pattern angle ─────────────────────────
+
+    #[test]
+    fn rotate_pattern_coord_zero_is_identity() {
+        assert_eq!(rotate_pattern_coord(13, -7, 0.0), (13, -7));
+        assert_eq!(rotate_pattern_coord(13, -7, 360.0), (13, -7));
+        assert_eq!(rotate_pattern_coord(13, -7, -360.0), (13, -7));
+    }
+
+    #[test]
+    fn rotate_pattern_coord_period_360() {
+        let a = rotate_pattern_coord(40, 12, 15.0);
+        let b = rotate_pattern_coord(40, 12, 375.0);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn rotate_pattern_coord_nonzero_changes_sample() {
+        assert_ne!(rotate_pattern_coord(40, 12, 15.0), (40, 12));
+    }
+
+    #[test]
+    fn threshold_bias_zero_matches_default_bayer() {
+        let tile = make_uniform_tile(0.5, 0.5, 0.5, 1.0);
+        let mut params = make_params(DitherModeV2::Bayer4x4, 4, 1.0);
+        let threshold_cache = ThresholdMapCache::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+
+        let baseline = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        params.threshold_bias = 0.0;
+        params.pattern_angle = 0.0;
+        let same = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        assert_eq!(baseline.data, same.data);
+    }
+
+    fn count_high_pixels(tile: &PixelTile) -> usize {
+        let mut n = 0usize;
+        for y in HALO..(HALO + TILE_SIZE) {
+            for x in HALO..(HALO + TILE_SIZE) {
+                if tile.at(x, y, 0) > 0.5 {
+                    n += 1;
+                }
+            }
+        }
+        n
+    }
+
+    #[test]
+    fn threshold_bias_moves_mid_gray_count() {
+        let tile = make_uniform_tile(0.5, 0.5, 0.5, 1.0);
+        let threshold_cache = ThresholdMapCache::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+
+        let mut params = make_params(DitherModeV2::Bayer4x4, 2, 1.0);
+        let mid = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        params.threshold_bias = 0.2;
+        let high = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        params.threshold_bias = -0.2;
+        let low = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+
+        let c_mid = count_high_pixels(&mid);
+        let c_high = count_high_pixels(&high);
+        let c_low = count_high_pixels(&low);
+        assert!(
+            c_high > c_mid,
+            "positive bias should increase high-level pixels ({c_high} vs {c_mid})"
+        );
+        assert!(
+            c_low < c_mid,
+            "negative bias should decrease high-level pixels ({c_low} vs {c_mid})"
+        );
+    }
+
+    #[test]
+    fn pattern_angle_zero_matches_unrotated() {
+        let tile = make_uniform_tile(0.5, 0.5, 0.5, 1.0);
+        let mut params = make_params(DitherModeV2::Bayer4x4, 4, 1.0);
+        let threshold_cache = ThresholdMapCache::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+
+        let a = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        params.pattern_angle = 15.0;
+        let rotated = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        assert_ne!(a.data, rotated.data, "non-zero angle must change Bayer sampling");
+
+        params.pattern_angle = 375.0;
+        let period = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        assert_eq!(rotated.data, period.data, "angle and angle+360 must be bit-identical");
+    }
+
+    #[test]
+    fn pattern_angle_does_not_shear_pixel_size_blocks() {
+        let tile = make_uniform_tile(0.5, 0.3, 0.7, 1.0);
+        let mut params = make_params(DitherModeV2::Bayer4x4, 4, 1.0);
+        params.pixel_size = 4;
+        params.pattern_angle = 30.0;
+        let threshold_cache = ThresholdMapCache::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+        let coord = tc(0, 0);
+
+        let result = apply_ordered(
+            &tile, coord, &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+
+        let ps = 4u32;
+        for y in 0..TILE_FULL_SIZE {
+            for x in 0..TILE_FULL_SIZE {
+                let block = GlobalCoordSigned::from_local_with_halo(coord, x, y, HALO).aligned(ps);
+                if x + 1 < TILE_FULL_SIZE {
+                    let n = GlobalCoordSigned::from_local_with_halo(coord, x + 1, y, HALO).aligned(ps);
+                    if n == block {
+                        assert_eq!(
+                            result.at(x, y, 0),
+                            result.at(x + 1, y, 0),
+                            "horizontal block run sheared at ({x},{y})"
+                        );
+                    }
+                }
+                if y + 1 < TILE_FULL_SIZE {
+                    let n = GlobalCoordSigned::from_local_with_halo(coord, x, y + 1, HALO).aligned(ps);
+                    if n == block {
+                        assert_eq!(
+                            result.at(x, y, 0),
+                            result.at(x, y + 1, 0),
+                            "vertical block run sheared at ({x},{y})"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

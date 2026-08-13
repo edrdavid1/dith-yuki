@@ -1,6 +1,7 @@
 import { useAppSelector } from '../../app/hooks';
 import PreviewFeature from '../preview/PreviewFeature';
 import type { PanelChromeProps } from '../panels/PanelChrome';
+import type { WelcomeActions } from '../../hooks/useWelcomeScreen';
 import styles from './PreviewWindow.module.css';
 import { bind } from '../../shared/ui/cn';
 const cn = bind(styles);
@@ -8,7 +9,10 @@ const cn = bind(styles);
 /**
  * Main-window preview slot: respects docked/undocked preview panel state.
  */
-export default function PreviewSlot({ onTitleBarMouseDown }: PanelChromeProps) {
+export default function PreviewSlot({
+  onTitleBarMouseDown,
+  welcome,
+}: PanelChromeProps & { welcome?: WelcomeActions }) {
   const panels = useAppSelector((s) => s.panels.entities);
   const previewPanel = panels.find((p) => p.id === 'preview');
   const previewDocked = !previewPanel || previewPanel.docked;
@@ -21,5 +25,5 @@ export default function PreviewSlot({ onTitleBarMouseDown }: PanelChromeProps) {
     );
   }
 
-  return <PreviewFeature onTitleBarMouseDown={onTitleBarMouseDown} />;
+  return <PreviewFeature onTitleBarMouseDown={onTitleBarMouseDown} welcome={welcome} />;
 }

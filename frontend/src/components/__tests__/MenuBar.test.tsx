@@ -5,8 +5,15 @@ import MenuBar from '../MenuBar';
 function renderMenuBar(overrides?: Partial<React.ComponentProps<typeof MenuBar>>) {
   const defaults = {
     hasDocument: true,
+    onNewProject: vi.fn(),
     onOpenImage: vi.fn(),
     onSaveImage: vi.fn(),
+    onOpenProject: vi.fn(),
+    onOpenRecent: vi.fn(),
+    onSaveProject: vi.fn(),
+    onSaveProjectAs: vi.fn(),
+    onExportPattern: vi.fn(),
+    onImportPattern: vi.fn(),
     onOpenColorLab: vi.fn(),
     onOpenPreferences: vi.fn(),
   };
@@ -31,17 +38,44 @@ describe('MenuBar', () => {
   it('opens File dropdown on click with correct items', () => {
     renderMenuBar();
     fireEvent.click(screen.getByText('File'));
+    expect(screen.getByText('New Project…')).toBeInTheDocument();
     expect(screen.getByText('Open Image')).toBeInTheDocument();
+    expect(screen.getByText('Open Project…')).toBeInTheDocument();
+    expect(screen.getByText('Save Project')).toBeInTheDocument();
+    expect(screen.getByText('Save Project As…')).toBeInTheDocument();
     expect(screen.getByText('Save/Export')).toBeInTheDocument();
   });
 
-  it('opens Edit dropdown with disabled Undo/Redo', () => {
+  it('opens Presets dropdown with pattern export/import', () => {
+    renderMenuBar();
+    fireEvent.click(screen.getByText('Presets'));
+    expect(screen.getByText('Export Pattern…')).toBeInTheDocument();
+    expect(screen.getByText('Import Pattern…')).toBeInTheDocument();
+  });
+
+  it('opens Edit dropdown with disabled Undo/Redo by default', () => {
     renderMenuBar();
     fireEvent.click(screen.getByText('Edit'));
-    const undo = screen.getByText('Undo');
-    const redo = screen.getByText('Redo');
+    const undo = screen.getByRole('menuitem', { name: /Undo/i });
+    const redo = screen.getByRole('menuitem', { name: /Redo/i });
     expect(undo).toBeDisabled();
     expect(redo).toBeDisabled();
+  });
+
+  it('enables Undo/Redo from flags and invokes callbacks', () => {
+    const onUndo = vi.fn();
+    const onRedo = vi.fn();
+    renderMenuBar({ canUndo: true, canRedo: true, onUndo, onRedo });
+    fireEvent.click(screen.getByText('Edit'));
+    const undo = screen.getByRole('menuitem', { name: /Undo/i });
+    const redo = screen.getByRole('menuitem', { name: /Redo/i });
+    expect(undo).toBeEnabled();
+    expect(redo).toBeEnabled();
+    fireEvent.click(undo);
+    expect(onUndo).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByText('Edit'));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Redo/i }));
+    expect(onRedo).toHaveBeenCalledTimes(1);
   });
 
   it('closes dropdown when clicking the same menu item again', () => {
@@ -107,17 +141,33 @@ describe('MenuBar', () => {
     expect(props.onOpenImage).toHaveBeenCalledTimes(1);
   });
 
-  it('calls onSaveImage when File > Save/Export is clicked', () => {
+  it('calls onExportPattern when Presets > Export Pattern is clicked', () => {
     const { props } = renderMenuBar();
-    fireEvent.click(screen.getByText('File'));
-    fireEvent.click(screen.getByText('Save/Export'));
-    expect(props.onSaveImage).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByText('Presets'));
+    fireEvent.click(screen.getByText('Export Pattern…'));
+    expect(props.onExportPattern).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls onImportPattern when Presets > Import Pattern is clicked', () => {
+    const { props } = renderMenuBar();
+    fireEvent.click(screen.getByText('Presets'));
+    fireEvent.click(screen.getByText('Import Pattern…'));
+    expect(props.onImportPattern).toHaveBeenCalledTimes(1);
   });
 
   it('disables Save/Export when hasDocument is false', () => {
     renderMenuBar({ hasDocument: false });
     fireEvent.click(screen.getByText('File'));
     expect(screen.getByText('Save/Export')).toBeDisabled();
+    expect(screen.getByText('Save Project')).toBeDisabled();
+    expect(screen.getByText('Save Project As…')).toBeDisabled();
+  });
+
+  it('disables pattern actions in Presets when hasDocument is false', () => {
+    renderMenuBar({ hasDocument: false });
+    fireEvent.click(screen.getByText('Presets'));
+    expect(screen.getByText('Export Pattern…')).toBeDisabled();
+    expect(screen.getByText('Import Pattern…')).toBeDisabled();
   });
 
   it('hovering Color Lab when dropdown is open closes the dropdown', () => {
@@ -137,5 +187,39 @@ describe('MenuBar', () => {
     fireEvent.mouseEnter(screen.getByText('Preferences'));
     expect(screen.queryByText('Open Image')).not.toBeInTheDocument();
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('shows New Project even when a document is open', () => {
+    const { props } = renderMenuBar({ hasDocument: true });
+    fireEvent.click(screen.getByText('File'));
+    const item = screen.getByText('New Project…');
+    expect(item).toBeEnabled();
+    fireEvent.click(item);
+    expect(props.onNewProject).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides Open Recent when the recent list is empty', () => {
+    renderMenuBar({ recentEntries: [] });
+    fireEvent.click(screen.getByText('File'));
+    expect(screen.queryByText('Open Recent')).not.toBeInTheDocument();
+  });
+
+  it('opens a recent entry from Open Recent', () => {
+    const { props } = renderMenuBar({
+      recentEntries: [
+        {
+          path: '/tmp/proj.dyproj',
+          kind: 'project',
+          display_name: 'proj.dyproj',
+          opened_at: '2026-08-13T00:00:00.000Z',
+        },
+      ],
+    });
+    fireEvent.click(screen.getByText('File'));
+    expect(screen.getByText('Open Recent')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('proj.dyproj'));
+    expect(props.onOpenRecent).toHaveBeenCalledWith(
+      expect.objectContaining({ path: '/tmp/proj.dyproj', kind: 'project' })
+    );
   });
 });

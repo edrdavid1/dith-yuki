@@ -7,6 +7,7 @@ import {
   removeFilter as removeFilterIPC,
   reorderFilter as reorderFilterIPC,
 } from '../../shared/ipc';
+import { unwrapFilterParams } from '../../shared/unwrapFilterParams';
 
 export type FiltersStatus = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -25,16 +26,7 @@ const initialState: FiltersState = {
 };
 
 function unwrapParams(params: Record<string, unknown>): Record<string, unknown> {
-  if (params.DitherV2 && typeof params.DitherV2 === 'object') {
-    return params.DitherV2 as Record<string, unknown>;
-  }
-  if (params.Glow && typeof params.Glow === 'object') {
-    return params.Glow as Record<string, unknown>;
-  }
-  if (params.Crt && typeof params.Crt === 'object') {
-    return params.Crt as Record<string, unknown>;
-  }
-  return params;
+  return unwrapFilterParams(params);
 }
 
 export const refreshFilters = createAsyncThunk(
@@ -51,6 +43,8 @@ export const refreshFilters = createAsyncThunk(
         kind: f.kind as FilterInfo['kind'],
         params: unwrapParams(f.params),
         enabled: f.enabled ?? true,
+        opacity: typeof f.opacity === 'number' ? f.opacity : 1,
+        blend_mode: typeof f.blend_mode === 'string' ? f.blend_mode : 'Normal',
       })) as unknown as FilterInfo[];
     } catch (err) {
       logIpcError('filters.refresh', err);
@@ -105,6 +99,19 @@ const filtersSlice = createSlice({
     setFiltersError(state, action: PayloadAction<string | null>) {
       state.error = action.payload;
     },
+    patchFilter(
+      state,
+      action: PayloadAction<{ id: string; opacity?: number; blend_mode?: string }>
+    ) {
+      const filter = state.byId[action.payload.id];
+      if (!filter) return;
+      if (typeof action.payload.opacity === 'number') {
+        filter.opacity = action.payload.opacity;
+      }
+      if (typeof action.payload.blend_mode === 'string') {
+        filter.blend_mode = action.payload.blend_mode;
+      }
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -134,7 +141,7 @@ const filtersSlice = createSlice({
   },
 });
 
-export const { clearFilters, setFiltersError } = filtersSlice.actions;
+export const { clearFilters, setFiltersError, patchFilter } = filtersSlice.actions;
 
 export function selectFiltersList(state: { filters: FiltersState }): FilterInfo[] {
   return state.filters.orderOnImageSource

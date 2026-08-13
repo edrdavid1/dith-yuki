@@ -6,6 +6,7 @@ import selectionReducer from './slices/selectionSlice';
 import panelsReducer from './slices/panelsSlice';
 import palettesReducer from './slices/palettesSlice';
 import colorLabReducer from './slices/colorLabSlice';
+import undoReducer from './slices/undoSlice';
 
 const isDev =
   typeof import.meta !== 'undefined' &&
@@ -21,6 +22,7 @@ export function createAppStore() {
       panels: panelsReducer,
       palettes: palettesReducer,
       colorLab: colorLabReducer,
+      undo: undoReducer,
     },
     devTools: isDev,
     middleware: (getDefaultMiddleware) => {

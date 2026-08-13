@@ -119,6 +119,39 @@ pub enum BlendMode {
     Reserved15 = 15,
 }
 
+impl BlendMode {
+    /// Reserved slots are not selectable (Track I: reject on set).
+    pub fn is_reserved(self) -> bool {
+        matches!(
+            self,
+            BlendMode::Reserved12
+                | BlendMode::Reserved13
+                | BlendMode::Reserved14
+                | BlendMode::Reserved15
+        )
+    }
+
+    /// Parse a UI / IPC blend name. Accepts Display names and common aliases.
+    /// Reserved and unknown names return `None` (caller must reject).
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.trim() {
+            "Normal" | "normal" => Some(Self::Normal),
+            "Multiply" | "multiply" => Some(Self::Multiply),
+            "Screen" | "screen" => Some(Self::Screen),
+            "Overlay" | "overlay" => Some(Self::Overlay),
+            "Darken" | "darken" => Some(Self::Darken),
+            "Lighten" | "lighten" => Some(Self::Lighten),
+            "ColorDodge" | "color_dodge" | "colordodge" => Some(Self::ColorDodge),
+            "ColorBurn" | "color_burn" | "colorburn" => Some(Self::ColorBurn),
+            "HardLight" | "hard_light" | "hardlight" => Some(Self::HardLight),
+            "SoftLight" | "soft_light" | "softlight" => Some(Self::SoftLight),
+            "Difference" | "difference" => Some(Self::Difference),
+            "Exclusion" | "exclusion" => Some(Self::Exclusion),
+            _ => None,
+        }
+    }
+}
+
 impl fmt::Display for BlendMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = match self {
@@ -214,6 +247,17 @@ mod tests {
     #[test]
     fn blend_mode_default_is_normal() {
         assert_eq!(BlendMode::default(), BlendMode::Normal);
+    }
+
+    #[test]
+    fn blend_mode_from_name_accepts_ui_and_rejects_reserved() {
+        assert_eq!(BlendMode::from_name("Normal"), Some(BlendMode::Normal));
+        assert_eq!(BlendMode::from_name("color_dodge"), Some(BlendMode::ColorDodge));
+        assert_eq!(BlendMode::from_name("ColorDodge"), Some(BlendMode::ColorDodge));
+        assert!(BlendMode::from_name("Reserved").is_none());
+        assert!(BlendMode::from_name("Reserved12").is_none());
+        assert!(BlendMode::Reserved12.is_reserved());
+        assert!(!BlendMode::Multiply.is_reserved());
     }
 
     #[test]

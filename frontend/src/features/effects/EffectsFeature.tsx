@@ -6,6 +6,7 @@ import { addLayerWithEffect } from '../../app/slices/layersSlice';
 import { refreshFilters, selectFiltersList } from '../../app/slices/filtersSlice';
 import { setSelection } from '../../app/slices/selectionSlice';
 import { useEffectLayer } from '../../hooks/useEffectLayer';
+import { useDocument } from '../../hooks/useDocument';
 import type { EffectType } from '../../types/effects';
 import type { FilterInfo } from '../../types';
 import type { PanelChromeProps } from '../panels/PanelChrome';
@@ -40,6 +41,7 @@ export default function EffectsFeature({
   const allFilters = useAppSelector(selectFiltersList);
   const lastCreatedId = useAppSelector((s) => s.palettes.lastCreatedId);
   const docId = useAppSelector((s) => s.document.docId);
+  const doc = useDocument();
 
   const imageSourceLayer = layers.length > 0 ? layers[0] : null;
   const selectedFilter =
@@ -69,7 +71,9 @@ export default function EffectsFeature({
           id: effectLayer.filterId,
           kind: effectLayer.effectParams.type as FilterInfo['kind'],
           params: effectLayer.effectParams,
-          enabled: true,
+          enabled: selectedFilter?.enabled ?? true,
+          opacity: effectLayer.opacity,
+          blend_mode: effectLayer.blendMode,
         },
       ],
     };
@@ -78,6 +82,9 @@ export default function EffectsFeature({
     effectLayer.effectType,
     effectLayer.effectParams,
     effectLayer.filterId,
+    effectLayer.opacity,
+    effectLayer.blendMode,
+    selectedFilter?.enabled,
     currentLayerForEffect,
     selectedLayerId,
     layers,
@@ -119,6 +126,8 @@ export default function EffectsFeature({
       wave_amplitude,
       wave_phase,
       wave_angle,
+      threshold_bias,
+      pattern_angle,
     } = params;
     effectLayer.updateParams({
       mode,
@@ -132,6 +141,8 @@ export default function EffectsFeature({
       wave_amplitude: wave_amplitude ?? 1,
       wave_phase: wave_phase ?? 0,
       wave_angle: wave_angle ?? 0,
+      threshold_bias: threshold_bias ?? 0,
+      pattern_angle: pattern_angle ?? 0,
     });
   }, [
     lastCreatedId,
@@ -161,6 +172,13 @@ export default function EffectsFeature({
       onTitleBarMouseDown={onTitleBarMouseDown}
       dockSide={dockSide}
       onMoveToSide={onMoveToSide}
+      targetLayerId={currentLayerForEffect ?? selectedLayerId}
+      onExportPattern={() =>
+        void doc.exportPattern(currentLayerForEffect ?? selectedLayerId)
+      }
+      onImportPattern={() =>
+        void doc.importPattern(currentLayerForEffect ?? selectedLayerId)
+      }
     />
   );
 }

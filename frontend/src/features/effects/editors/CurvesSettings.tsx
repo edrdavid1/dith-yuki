@@ -1,11 +1,23 @@
-import { clampParam } from '../../../types/effects';
+import { useEffect, useState } from 'react';
 import DropdownMenu from '../../../components/common/DropdownMenu';
+import NumberInput from '../../../components/common/NumberInput';
+import CurveGraph from './CurveGraph';
+import {
+  fromByte,
+  IDENTITY_CURVE,
+  movePoint,
+  toByte,
+  type CurvePoint,
+  xBounds,
+} from './curveMath';
+import { unwrapFilterParams } from '../../../shared/unwrapFilterParams';
 import styles from './CurvesSettings.module.css';
 import panelStyles from '../EffectSettingsPanel.module.css';
 import paramStyles from '../../../shared/ui/ParamControls.module.css';
 import sliderStyles from '../../../shared/ui/Slider.module.css';
 import buttonStyles from '../../../shared/ui/FilterButtons.module.css';
 import { bind } from '../../../shared/ui/cn';
+
 const cn = bind({ ...styles, ...panelStyles, ...paramStyles, ...sliderStyles, ...buttonStyles });
 
 interface CurvesSettingsProps {
@@ -13,40 +25,80 @@ interface CurvesSettingsProps {
   onUpdate: (params: Record<string, unknown>) => void;
 }
 
+function asCurve(value: unknown): CurvePoint[] {
+  if (!Array.isArray(value) || value.length < 2) return IDENTITY_CURVE.map((p) => [p[0], p[1]]);
+  const points: CurvePoint[] = [];
+  for (const entry of value) {
+    if (Array.isArray(entry) && entry.length >= 2) {
+      const x = Number(entry[0]);
+      const y = Number(entry[1]);
+      if (Number.isFinite(x) && Number.isFinite(y)) points.push([x, y]);
+      continue;
+    }
+    if (entry && typeof entry === 'object') {
+      const rec = entry as Record<string, unknown>;
+      const x = Number(rec.x ?? rec[0]);
+      const y = Number(rec.y ?? rec[1]);
+      if (Number.isFinite(x) && Number.isFinite(y)) points.push([x, y]);
+    }
+  }
+  if (points.length < 2) return IDENTITY_CURVE.map((p) => [p[0], p[1]]);
+  return points;
+}
+
+function curveFromParams(params: Record<string, unknown>): CurvePoint[] {
+  const flat = unwrapFilterParams(params);
+  return asCurve(flat.curve);
+}
+
+function channelFromParams(params: Record<string, unknown>): string {
+  const flat = unwrapFilterParams(params);
+  return typeof flat.channel === 'string' ? flat.channel : 'All';
+}
+
 function CurvesSettings({ params, onUpdate }: CurvesSettingsProps) {
-  const channel = (params.channel as string) || 'All';
-  const curve = (params.curve as [number, number][] | undefined) ?? [[0, 0], [1, 1]];
+  const channel = channelFromParams(params);
+  const curveKey = JSON.stringify(curveFromParams(params));
+  const [curve, setCurve] = useState<CurvePoint[]>(() => curveFromParams(params));
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(0);
+  const selected = selectedIndex !== null ? curve[selectedIndex] ?? null : null;
+
+  useEffect(() => {
+    setCurve(asCurve(JSON.parse(curveKey)));
+  }, [curveKey]);
 
   const emit = (overrides: Record<string, unknown>) => {
+    const nextCurve = (overrides.curve as CurvePoint[] | undefined) ?? curve;
+    if (overrides.curve) setCurve(nextCurve);
     onUpdate({
-      curve: overrides.curve ?? curve,
+      curve: nextCurve,
       channel: overrides.channel ?? channel,
     });
   };
 
-  const handlePointChange = (index: number, axis: 'x' | 'y', value: number) => {
-    const newCurve = [...curve];
-    const point = [...newCurve[index]] as [number, number];
-    point[axis === 'x' ? 0 : 1] = clampParam(value, 0, 1);
-    newCurve[index] = point;
-    emit({ curve: newCurve });
+  const handleCurveChange = (next: CurvePoint[]) => {
+    emit({ curve: next });
   };
 
-  const handleAddPoint = () => {
-    const newCurve = [...curve, [0.5, 0.5] as [number, number]];
-    newCurve.sort((a, b) => a[0] - b[0]);
-    emit({ curve: newCurve });
+  const handleInput = (byte: number) => {
+    if (selectedIndex === null) return;
+    handleCurveChange(movePoint(curve, selectedIndex, fromByte(byte), curve[selectedIndex][1]));
   };
 
-  const handleRemovePoint = (index: number) => {
-    if (curve.length <= 2) return; // need at least 2 points
-    const newCurve = curve.filter((_, i) => i !== index);
-    emit({ curve: newCurve });
+  const handleOutput = (byte: number) => {
+    if (selectedIndex === null) return;
+    handleCurveChange(movePoint(curve, selectedIndex, curve[selectedIndex][0], fromByte(byte)));
   };
+
+  const handleReset = () => {
+    setSelectedIndex(0);
+    emit({ curve: IDENTITY_CURVE.map((p) => [p[0], p[1]]) });
+  };
+
+  const inputBounds = selectedIndex !== null ? xBounds(curve, selectedIndex) : { min: 0, max: 1 };
 
   return (
-    <div className={cn("effect-settings-content")}>
-      {/* Channel dropdown */}
+    <div className={cn('effect-settings-content')}>
       <DropdownMenu
         label="Channel"
         value={channel}
@@ -60,39 +112,39 @@ function CurvesSettings({ params, onUpdate }: CurvesSettingsProps) {
         onSelect={(v) => emit({ channel: v })}
       />
 
-      {/* Curve points editor */}
-      <div className={cn("param-group")}>
-        <label className={cn("slider-label")}>Curve Points</label>
-        <div className={cn("curve-points")}>
-          {curve.map((point, idx) => (
-            <div key={idx} className={cn("curve-point-row")}>
-              <input
-                type="number"
-                className={cn("curve-input")}
-                value={point[0].toFixed(2)}
-                min={0}
-                max={1}
-                step={0.05}
-                onChange={(e) => handlePointChange(idx, 'x', parseFloat(e.target.value) || 0)}
-              />
-              <span className={cn("curve-arrow")}>→</span>
-              <input
-                type="number"
-                className={cn("curve-input")}
-                value={point[1].toFixed(2)}
-                min={0}
-                max={1}
-                step={0.05}
-                onChange={(e) => handlePointChange(idx, 'y', parseFloat(e.target.value) || 0)}
-              />
-              {curve.length > 2 && (
-                <button className={cn("curve-remove-btn")} onClick={() => handleRemovePoint(idx)}>×</button>
-              )}
-            </div>
-          ))}
-          <div className={cn("curve-add-row")}>
-            <button className={cn("filter-add-btn")} onClick={handleAddPoint}>+ Add Point</button>
-          </div>
+      <div className={cn('curve-editor')}>
+        <CurveGraph
+          curve={curve}
+          selectedIndex={selectedIndex}
+          channel={channel}
+          onChange={handleCurveChange}
+          onSelect={setSelectedIndex}
+        />
+
+        <div className={cn('curve-io-row')}>
+          <NumberInput
+            label="Input"
+            value={selected ? toByte(selected[0]) : 0}
+            min={toByte(inputBounds.min)}
+            max={toByte(inputBounds.max)}
+            step={1}
+            decimals={0}
+            disabled={!selected}
+            onChange={handleInput}
+          />
+          <NumberInput
+            label="Output"
+            value={selected ? toByte(selected[1]) : 0}
+            min={0}
+            max={255}
+            step={1}
+            decimals={0}
+            disabled={!selected}
+            onChange={handleOutput}
+          />
+          <button type="button" className={cn('filter-add-btn', 'curve-reset-btn')} onClick={handleReset}>
+            Reset
+          </button>
         </div>
       </div>
     </div>

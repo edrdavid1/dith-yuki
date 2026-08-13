@@ -1,0 +1,109 @@
+.new-project-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 500;
+}
+
+.new-project-dialog {
+  width: 320px;
+  background: var(--bg-window);
+  border: var(--border);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 2px 2px 0px rgba(0, 0, 0, 0.3);
+}
+
+.new-project-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 12px 12px;
+}
+
+.new-project-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  font-family: var(--font-family);
+  font-size: 12px;
+  color: var(--text-color);
+}
+
+.new-project-field legend {
+  padding: 0;
+  margin-bottom: 4px;
+}
+
+.new-project-input {
+  height: 22px;
+  padding: 0 6px;
+  border: var(--border);
+  border-radius: 0;
+  background: var(--bg-input);
+  color: var(--text-color);
+  font-size: 12px;
+  font-family: var(--font-family);
+  box-sizing: border-box;
+}
+
+.new-project-input:focus {
+  outline: none;
+}
+
+.new-project-radio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.new-project-error {
+  margin: 0;
+  font-size: 11px;
+  font-family: var(--font-family);
+  color: var(--color-hover-danger);
+}
+
+.new-project-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.new-project-btn {
+  font-family: var(--font-family);
+  font-size: 12px;
+  padding: 4px 12px;
+  border: var(--border);
+  background: var(--bg-input);
+  color: var(--text-color);
+  cursor: pointer;
+}
+
+.new-project-btn:hover:not(:disabled) {
+  background: var(--bg-hover-accent);
+}
+
+.new-project-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.new-project-btn-primary {
+  background: var(--color-black);
+  color: var(--color-white);
+}
+
+.new-project-btn-primary:hover:not(:disabled) {
+  background: var(--bg-hover-accent);
+  color: var(--color-hover);
+}

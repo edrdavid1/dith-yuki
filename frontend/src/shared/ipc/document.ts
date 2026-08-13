@@ -24,10 +24,22 @@ export interface SnapshotFilterInfo {
   kind: string;
   params: Record<string, unknown>;
   enabled: boolean;
+  opacity?: number;
+  blend_mode?: string;
 }
+
+export type BlankBackground = 'transparent' | 'white';
 
 export async function loadImage(path: string): Promise<LoadImageResponse> {
   return invoke<LoadImageResponse>('load_image', { path });
+}
+
+export async function createDocument(
+  width: number,
+  height: number,
+  background: BlankBackground
+): Promise<LoadImageResponse> {
+  return invoke<LoadImageResponse>('create_document', { width, height, background });
 }
 
 export async function exportImage(req: ExportImageRequest): Promise<void> {

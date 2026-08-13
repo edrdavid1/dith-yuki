@@ -266,7 +266,7 @@ Standard mesh: for each unset pixel, grow maximal width then height while color 
 
 ### Contour Tracing
 
-Moore neighborhood or similar: emit outer path per component; holes **out of scope for v1** unless cheap — document “external only”.
+Moore neighborhood or similar: emit outer path per component; holes **out of scope for v1** unless cheap — document “external only”. Follow-up: [track-c4-svg-followup](../track-c4-svg-followup/) (C4.1).
 
 ### API sketch
 

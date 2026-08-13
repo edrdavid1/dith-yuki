@@ -7,8 +7,10 @@ mod global_mouseup;
 mod panel_commands;
 mod panel_manager;
 mod panel_persistence;
+mod recent_files;
 mod tile_pipeline;
 mod tile_protocol;
+mod undo;
 mod viewport;
 mod worker;
 
@@ -81,6 +83,8 @@ fn main() {
         )),
         float_drag_mouseup_cancel: Arc::new(AtomicBool::new(true)),
         float_drag_mouseup_hook: Mutex::new(None),
+        project_path: Mutex::new(None),
+        undo_manager: Mutex::new(crate::undo::UndoManager::new()),
     };
 
     // Wrap in Arc for sharing between Tauri state and worker threads
@@ -302,9 +306,18 @@ fn main() {
             commands::remove_filter,
             commands::reorder_filter,
             
-            // Image commands
+            // Image / document commands
             commands::load_image,
+            commands::create_document,
             commands::export_image,
+            commands::save_project,
+            commands::save_project_as,
+            commands::open_project,
+            commands::export_pattern,
+            commands::import_pattern,
+            recent_files::get_recent_files,
+            crate::undo::undo,
+            crate::undo::redo,
             
             // Palette commands
             commands::list_palettes,
@@ -312,6 +325,8 @@ fn main() {
             commands::import_builtin_palette,
             commands::generate_ramp_palette,
             commands::generate_harmony_palette,
+            commands::colors_to_oklab,
+            commands::get_palette_oklab,
             commands::import_palette,
             commands::add_palette,
             commands::generate_palette,

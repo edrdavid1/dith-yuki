@@ -13,10 +13,17 @@ export async function addFilter(
 export async function updateFilter(
   layerId: number,
   filterId: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  extras?: { opacity?: number; blend_mode?: string }
 ): Promise<void> {
   return invoke<void>('update_filter', {
-    req: { layer_id: layerId, filter_id: filterId, params },
+    req: {
+      layer_id: layerId,
+      filter_id: filterId,
+      params,
+      opacity: extras?.opacity ?? null,
+      blend_mode: extras?.blend_mode ?? null,
+    },
   });
 }
 

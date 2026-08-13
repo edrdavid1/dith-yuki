@@ -12,6 +12,7 @@ import {
   toggleLayerVisibility,
 } from '../../app/slices/layersSlice';
 import { setSelection } from '../../app/slices/selectionSlice';
+import { useEffectLayer } from '../../hooks/useEffectLayer';
 import { logIpcError } from '../../shared/ipc';
 import type { PanelChromeProps } from '../panels/PanelChrome';
 
@@ -31,6 +32,7 @@ export default function LayersFeature({
   const docId = useAppSelector((s) => s.document.docId);
 
   const imageSourceLayer = layers.length > 0 ? layers[0] : null;
+  const effectLayer = useEffectLayer(imageSourceLayer?.id ?? null, selectedFilterId);
 
   const handleSelect = useCallback(
     (layerId: number) => {
@@ -114,6 +116,13 @@ export default function LayersFeature({
     [dispatch, docId]
   );
 
+  const handleFilterBlendChange = useCallback(
+    (patch: { opacity?: number; blend_mode?: string }) => {
+      effectLayer.updateBlend(patch);
+    },
+    [effectLayer.updateBlend]
+  );
+
   return (
     <LayersPanel
       layers={layers}
@@ -128,6 +137,7 @@ export default function LayersFeature({
       onToggleVisibility={handleToggleVisibility}
       onBlendModeChange={handleBlendModeChange}
       onOpacityChange={handleOpacityChange}
+      onFilterBlendChange={handleFilterBlendChange}
       onTitleBarMouseDown={onTitleBarMouseDown}
       dockSide={dockSide}
       onMoveToSide={onMoveToSide}

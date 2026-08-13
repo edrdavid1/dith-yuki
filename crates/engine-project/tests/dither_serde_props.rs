@@ -20,6 +20,10 @@ fn arb_valid_mode() -> impl Strategy<Value = DitherModeV2> {
         Just(DitherModeV2::Bayer8x8),
         Just(DitherModeV2::FloydSteinberg),
         Just(DitherModeV2::Atkinson),
+        Just(DitherModeV2::JarvisJudiceNinke),
+        Just(DitherModeV2::Stucki),
+        Just(DitherModeV2::Burkes),
+        Just(DitherModeV2::Sierra),
         // CustomPng with a non-empty path (use printable ASCII to avoid JSON encoding edge cases)
         "[a-zA-Z0-9_/]{1,50}\\.png".prop_map(|path| DitherModeV2::CustomPng { path }),
     ]
@@ -57,7 +61,11 @@ fn arb_valid_params() -> impl Strategy<Value = DitherParamsV2> {
                 threshold_scale,
                 pixel_size,
                 color_mode,
-                palette_id,            ..Default::default()
+                palette_id,
+                threshold_bias: ((levels as i32 % 11) - 5) as f32 / 10.0,
+                pattern_angle: (pixel_size as f32) * 15.0,
+                serpentine: levels % 2 == 0,
+                ..Default::default()
             }
         })
 }

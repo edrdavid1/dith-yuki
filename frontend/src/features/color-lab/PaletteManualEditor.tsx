@@ -11,6 +11,8 @@ export interface PaletteManualEditorProps {
   canAddColor: boolean;
   compact?: boolean;
   showSectionTitle?: boolean;
+  selectedIndex?: number | null;
+  onSelect?: (index: number) => void;
   onChange: (index: number, hex: string) => void;
   onDelete: (index: number) => void;
   onAdd: () => void;
@@ -22,6 +24,8 @@ export default function PaletteManualEditor({
   canAddColor,
   compact = false,
   showSectionTitle = true,
+  selectedIndex = null,
+  onSelect,
   onChange,
   onDelete,
   onAdd,
@@ -30,7 +34,16 @@ export default function PaletteManualEditor({
   const list = (
     <div className={cn('color-lab-colors-grid', compact && 'color-lab-colors-grid-compact')}>
       {colors.map((entry, idx) => (
-        <div key={idx} className={cn('color-lab-color-row', compact && 'color-lab-color-row-compact')}>
+        <div
+          key={idx}
+          className={cn(
+            'color-lab-color-row',
+            compact && 'color-lab-color-row-compact',
+            selectedIndex === idx && 'color-lab-color-row-selected'
+          )}
+          aria-selected={selectedIndex === idx}
+          onClick={() => onSelect?.(idx)}
+        >
           <span className={cn('color-lab-color-number')}>{idx + 1}</span>
 
           <div
@@ -39,7 +52,10 @@ export default function PaletteManualEditor({
               compact && 'color-lab-color-preview-compact',
               !entry.valid && 'invalid'
             )}
-            onClick={(e) => onOpenPicker(idx, e)}
+            onClick={(e) => {
+              onSelect?.(idx);
+              onOpenPicker(idx, e);
+            }}
             style={{ cursor: 'pointer', background: entry.valid ? entry.hex : undefined }}
           />
 
@@ -47,13 +63,17 @@ export default function PaletteManualEditor({
             type="text"
             value={entry.hex}
             onChange={(e) => onChange(idx, e.target.value)}
+            onFocus={() => onSelect?.(idx)}
             className={cn('color-lab-color-input', !entry.valid && 'invalid')}
             maxLength={7}
           />
 
           <button
             type="button"
-            onClick={() => onDelete(idx)}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(idx);
+            }}
             className={cn('color-lab-button', 'color-lab-delete-btn')}
             title="Remove color"
           >
@@ -88,16 +108,29 @@ export default function PaletteManualEditor({
       </div>
 
       <div className={cn('color-lab-preview-bar')}>
-        {colors
-          .filter((c) => c.valid)
-          .map((c, idx) => (
+        {colors.map((c, idx) =>
+          c.valid ? (
             <div
               key={idx}
-              className={cn('color-lab-preview-color')}
+              role="button"
+              tabIndex={0}
+              className={cn(
+                'color-lab-preview-color',
+                selectedIndex === idx && 'color-lab-preview-color-selected'
+              )}
               style={{ backgroundColor: c.hex }}
               title={c.hex}
+              aria-pressed={selectedIndex === idx}
+              onClick={() => onSelect?.(idx)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onSelect?.(idx);
+                }
+              }}
             />
-          ))}
+          ) : null
+        )}
       </div>
     </>
   );

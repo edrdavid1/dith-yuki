@@ -49,6 +49,14 @@ Decision: N/A for waiters-as-sole-fix; helpers + register/wake wired lightly
   so contract stays live if skip ever fires. Primary A1 fix = IncomingErrorBuffer.
 ```
 
+**Track N follow-up (2026-08-13):** `TileCache::evict_layer` is now called from Orphan_GC.
+Whole-layer eviction of the *current* layer errors on missing current raw (skip counter
+stays 0). The skip branch **is** reachable when a *neighbor* raw is absent while the
+current raw remains (lab: `skip_branch_increments_when_neighbor_raw_missing`). That
+pattern is LRU / partial-raw loss, not Orphan_GC of an unreferenced `LayerId`.
+Waiters stay as previously wired; no user-visible seam from GC itself → no waiter
+reimplementation (Track N Req 8).
+
 ---
 
 ## 2. A1.2 — Pending diffusion waiters (conditional)

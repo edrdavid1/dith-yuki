@@ -1,15 +1,15 @@
 //! Error diffusion dithering engine (V2 redesign).
 //!
-//! Implements Floyd-Steinberg and Atkinson error diffusion with cross-tile
-//! error propagation via `ErrorResidualsStore`. Processes the core TILE_SIZE×TILE_SIZE
-//! area sequentially (left-to-right, top-to-bottom) and reads source pixels
-//! from the halo region for boundary context.
+//! Implements error-diffusion kernels (FS, Atkinson, JJN, Stucki, Burkes, Sierra)
+//! with cross-tile error propagation via `ErrorResidualsStore`. Processes the
+//! core TILE_SIZE×TILE_SIZE area sequentially (left-to-right, top-to-bottom)
+//! and reads source pixels from the halo region for boundary context.
 //!
 //! **Requirements:** 3.1, 3.2, 3.3, 3.4, 3.5, 4.1, 4.2, 4.3, 4.4, 5.1, 5.2, 6.4, 6.5
 
 use crate::document::Document;
 use crate::error::EngineError;
-use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
+use crate::filter::{DitherColorMode, DitherParamsV2};
 use crate::filters::dither_residuals::{ErrorResiduals, ErrorResidualsStore, CORNER_PATCH};
 use crate::types::LayerId;
 use engine_color::oklab::{linear_to_oklab, LinRgb};
@@ -42,99 +42,39 @@ fn to_luminance(r: f32, g: f32, b: f32) -> f32 {
 
 // ─── Error Distribution ──────────────────────────────────────────────────────
 
-/// Floyd-Steinberg kernel offsets and weights.
-/// (dx, dy, weight) relative to the current pixel.
-const FS_KERNEL: [(i32, i32, f32); 4] = [
-    (1, 0, 7.0 / 16.0),
-    (-1, 1, 3.0 / 16.0),
-    (0, 1, 5.0 / 16.0),
-    (1, 1, 1.0 / 16.0),
-];
-
-/// Atkinson kernel offsets (each neighbor gets 1/8 of error).
-/// Total distributed: 6/8 = 3/4 (intentionally loses 1/4 for sharper results).
-const ATKINSON_KERNEL: [(i32, i32); 6] = [
-    (1, 0),
-    (2, 0),
-    (-1, 1),
-    (0, 1),
-    (1, 1),
-    (0, 2),
-];
-
-/// Distribute error to neighbor positions using Floyd-Steinberg kernel.
-///
-/// Error that would propagate outside the tile boundary (x >= SIZE or y >= SIZE)
-/// is captured into the `right_overflow` and `bottom_overflow` residual buffers.
+/// Scan direction for one global row: `+1` L→R, `-1` R→L.
 #[inline]
-fn distribute_fs(
-    error_buf: &mut [f32],
-    x: usize,
-    y: usize,
-    err: [f32; 3],
-    right_overflow: &mut Vec<f32>,
-    bottom_overflow: &mut Vec<f32>,
-    corner_overflow: &mut Vec<f32>,
-) {
-    for &(dx, dy, weight) in &FS_KERNEL {
-        let nx = x as i32 + dx;
-        let ny = y as i32 + dy;
-        let weighted = [err[0] * weight, err[1] * weight, err[2] * weight];
-
-        if nx >= 0 && (nx as usize) < SIZE && (ny as usize) < SIZE {
-            // Within tile bounds — accumulate in error buffer
-            let idx = (ny as usize * SIZE + nx as usize) * 3;
-            error_buf[idx] += weighted[0];
-            error_buf[idx + 1] += weighted[1];
-            error_buf[idx + 2] += weighted[2];
-        } else if nx >= SIZE as i32 && ny >= 0 && (ny as usize) < SIZE {
-            // Right overflow: col index relative to tile right edge
-            let col = nx as usize - SIZE;
-            if col < 2 {
-                let idx = (ny as usize * 2 + col) * 3;
-                right_overflow[idx] += weighted[0];
-                right_overflow[idx + 1] += weighted[1];
-                right_overflow[idx + 2] += weighted[2];
-            }
-        } else if ny >= SIZE as i32 && nx >= 0 && (nx as usize) < SIZE {
-            // Bottom overflow: row index relative to tile bottom edge
-            let row = ny as usize - SIZE;
-            if row < 2 {
-                let idx = (row * SIZE + nx as usize) * 3;
-                bottom_overflow[idx] += weighted[0];
-                bottom_overflow[idx + 1] += weighted[1];
-                bottom_overflow[idx + 2] += weighted[2];
-            }
-        } else if nx >= SIZE as i32 && ny >= SIZE as i32 {
-            // Diagonal overflow → IncomingErrorBuffer for tile (tx+1, ty+1)
-            let col = nx as usize - SIZE;
-            let row = ny as usize - SIZE;
-            if col < CORNER_PATCH && row < CORNER_PATCH {
-                let idx = (row * CORNER_PATCH + col) * 3;
-                corner_overflow[idx] += weighted[0];
-                corner_overflow[idx + 1] += weighted[1];
-                corner_overflow[idx + 2] += weighted[2];
-            }
-        }
+fn row_direction(serpentine: bool, global_y: i32) -> i32 {
+    if serpentine && global_y.rem_euclid(2) == 1 {
+        -1
+    } else {
+        1
     }
 }
 
-/// Distribute error to neighbor positions using Atkinson kernel (each 1/8).
+/// Distribute quantization error to neighbors using a published kernel table.
 ///
-/// Error that would propagate outside the tile boundary is captured into overflow buffers.
+/// `row_dir` is `+1` (L→R) or `-1` (R→L serpentine). Kernel `dx` is multiplied
+/// by `row_dir` so FS-style `(+1,0)` becomes `(-1,0)` on odd global rows.
+///
+/// Horizontal overflow still feeds the **wavefront-later** tile (`tx+1`):
+/// `nx >= SIZE` → `right_overflow`. Kernel-forward overflow on an R→L row
+/// lands at the left edge (`nx < 0`) and targets the **earlier** wavefront
+/// neighbor — dropped, because that tile is already processed.
 #[inline]
-fn distribute_atkinson(
+fn distribute_kernel(
     error_buf: &mut [f32],
     x: usize,
     y: usize,
     err: [f32; 3],
-    right_overflow: &mut Vec<f32>,
-    bottom_overflow: &mut Vec<f32>,
-    corner_overflow: &mut Vec<f32>,
+    offsets: &[(i32, i32, f32)],
+    right_overflow: &mut [f32],
+    bottom_overflow: &mut [f32],
+    corner_overflow: &mut [f32],
+    row_dir: i32,
 ) {
-    let weight = 1.0 / 8.0;
-    for &(dx, dy) in &ATKINSON_KERNEL {
-        let nx = x as i32 + dx;
+    for &(dx, dy, weight) in offsets {
+        let nx = x as i32 + dx * row_dir;
         let ny = y as i32 + dy;
         let weighted = [err[0] * weight, err[1] * weight, err[2] * weight];
 
@@ -176,11 +116,10 @@ fn distribute_atkinson(
 
 /// Seed the error buffer from the left neighbor's right-edge residuals.
 ///
-/// The left neighbor stored error that propagated past its right edge into our
-/// tile's first 2 columns.
-///
-/// Layout of `left_residuals.right`: `[row * 2 * 3 + col * 3 + channel]`
-/// where row ∈ [0, TILE_SIZE), col ∈ {0, 1}.
+/// Always applied at screen columns 0..2 (the spatial joint with the
+/// wavefront-**earlier** tile). On an R→L row those pixels are visited last,
+/// so the seed waits in `error_buf` until scan-end — we do **not** seed from
+/// the unprocessed screen-right neighbor.
 fn seed_left_boundary(error_buf: &mut [f32], left_residuals: &ErrorResiduals) {
     for row in 0..SIZE {
         for col in 0..2usize {
@@ -337,12 +276,16 @@ pub fn apply_error_diffusion_with_cache(
     // Copy halo region from input to output unchanged
     copy_halo(tile, &mut result);
 
-    // Sequential scan: left-to-right, top-to-bottom (Req 3.1)
+    // Sequential scan: top-to-bottom. Even global rows L→R; odd global rows
+    // R→L when `serpentine` (parity from GlobalCoord.y, never local tile y).
     for y in 0..SIZE {
-        for x in 0..SIZE {
+        let tile_y = y as u32 + HALO;
+        let gy = GlobalCoordSigned::from_local_with_halo(coord, HALO, tile_y, HALO).y;
+        let row_dir = row_direction(params.serpentine, gy);
+        for i in 0..SIZE {
+            let x = if row_dir > 0 { i } else { SIZE - 1 - i };
             // Tile-local coordinates for the core area start at HALO offset
             let tile_x = x as u32 + HALO;
-            let tile_y = y as u32 + HALO;
 
             // Global coordinates — tile_x/tile_y are in full-tile space [0, 260);
             // from_local_with_halo subtracts HALO internally.
@@ -572,23 +515,20 @@ pub fn apply_error_diffusion_with_cache(
 
             // Distribute quantization error to neighbors (Req 3.1, 3.2)
             // Error from the representative is NOT diffused to other pixels in the same block.
-            match params.mode {
-                DitherModeV2::FloydSteinberg => {
-                    distribute_fs(
-                        &mut error_buf, x, y, q_err,
-                        &mut right_overflow, &mut bottom_overflow, &mut corner_overflow,
-                    );
-                }
-                DitherModeV2::Atkinson => {
-                    distribute_atkinson(
-                        &mut error_buf, x, y, q_err,
-                        &mut right_overflow, &mut bottom_overflow, &mut corner_overflow,
-                    );
-                }
-                _ => unreachable!(
-                    "error diffusion engine called with ordered mode"
-                ),
-            }
+            let Some(kernel) = params.mode.diffusion_kernel() else {
+                unreachable!("error diffusion engine called with ordered mode");
+            };
+            distribute_kernel(
+                &mut error_buf,
+                x,
+                y,
+                q_err,
+                kernel.offsets(),
+                &mut right_overflow,
+                &mut bottom_overflow,
+                &mut corner_overflow,
+                row_dir,
+            );
         }
     }
 
@@ -1100,5 +1040,207 @@ mod tests {
                 assert_eq!(result.at(x, y, 3), 0.9);
             }
         }
+    }
+
+    #[test]
+    fn error_diffusion_ignores_threshold_bias() {
+        let tile = make_uniform_tile(0.5, 0.5, 0.5, 1.0);
+        let mut params = make_fs_params(4);
+        let store = ErrorResidualsStore::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let doc = Document::new(DocumentId::new(1), 256, 256);
+        let layer_id = LayerId::new(1);
+
+        let a = apply_error_diffusion(
+            &tile, tc(0, 0), &params, &store, layer_id,
+            &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        params.threshold_bias = 0.3;
+        let store2 = ErrorResidualsStore::new();
+        let b = apply_error_diffusion(
+            &tile, tc(0, 0), &params, &store2, layer_id,
+            &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        assert_eq!(a.data, b.data, "ED modes must ignore threshold_bias");
+    }
+
+    fn channel0_at(buf: &[f32], x: usize, y: usize) -> f32 {
+        buf[(y * SIZE + x) * 3]
+    }
+
+    #[test]
+    fn unit_error_lands_on_published_offsets() {
+        use crate::filter::DiffusionKernel;
+        let kernels = [
+            DiffusionKernel::FloydSteinberg,
+            DiffusionKernel::Atkinson,
+            DiffusionKernel::JarvisJudiceNinke,
+            DiffusionKernel::Stucki,
+            DiffusionKernel::Burkes,
+            DiffusionKernel::Sierra,
+        ];
+        let x = 8usize;
+        let y = 8usize;
+        let err = [1.0f32, 0.0, 0.0];
+        for kernel in kernels {
+            let mut error_buf = vec![0.0f32; SIZE * SIZE * 3];
+            let mut right = vec![0.0f32; SIZE * 2 * 3];
+            let mut bottom = vec![0.0f32; 2 * SIZE * 3];
+            let mut corner = vec![0.0f32; CORNER_PATCH * CORNER_PATCH * 3];
+            distribute_kernel(
+                &mut error_buf,
+                x,
+                y,
+                err,
+                kernel.offsets(),
+                &mut right,
+                &mut bottom,
+                &mut corner,
+                1,
+            );
+            for &(dx, dy, weight) in kernel.offsets() {
+                let nx = (x as i32 + dx) as usize;
+                let ny = (y as i32 + dy) as usize;
+                let got = channel0_at(&error_buf, nx, ny);
+                assert!(
+                    (got - weight).abs() < 1e-6,
+                    "{kernel:?} at ({dx},{dy}): expected {weight}, got {got}"
+                );
+            }
+            assert!(right.iter().all(|v| *v == 0.0), "{kernel:?} interior must not overflow right");
+            assert!(bottom.iter().all(|v| *v == 0.0), "{kernel:?} interior must not overflow bottom");
+            assert!(corner.iter().all(|v| *v == 0.0), "{kernel:?} interior must not overflow corner");
+        }
+    }
+
+    #[test]
+    fn jjn_right_edge_overflow_uses_depth_2() {
+        use crate::filter::DiffusionKernel;
+        let mut error_buf = vec![0.0f32; SIZE * SIZE * 3];
+        let mut right = vec![0.0f32; SIZE * 2 * 3];
+        let mut bottom = vec![0.0f32; 2 * SIZE * 3];
+        let mut corner = vec![0.0f32; CORNER_PATCH * CORNER_PATCH * 3];
+        let y = 4usize;
+        distribute_kernel(
+            &mut error_buf,
+            SIZE - 1,
+            y,
+            [1.0, 0.0, 0.0],
+            DiffusionKernel::JarvisJudiceNinke.offsets(),
+            &mut right,
+            &mut bottom,
+            &mut corner,
+            1,
+        );
+        // (dx=+1, dy=0) → col 0 of right overflow, weight 7/48
+        let col0 = (y * 2 + 0) * 3;
+        // (dx=+2, dy=0) → col 1, weight 5/48
+        let col1 = (y * 2 + 1) * 3;
+        assert!((right[col0] - 7.0 / 48.0).abs() < 1e-6);
+        assert!((right[col1] - 5.0 / 48.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn row_direction_uses_global_y_not_local() {
+        assert_eq!(row_direction(false, 1), 1);
+        assert_eq!(row_direction(false, 0), 1);
+        assert_eq!(row_direction(true, 0), 1);
+        assert_eq!(row_direction(true, 1), -1);
+        assert_eq!(row_direction(true, 256), 1);
+        assert_eq!(row_direction(true, 257), -1);
+        assert_eq!(row_direction(true, -1), -1);
+    }
+
+    #[test]
+    fn rtl_mirrors_kernel_in_x() {
+        use crate::filter::DiffusionKernel;
+        let mut error_buf = vec![0.0f32; SIZE * SIZE * 3];
+        let mut right = vec![0.0f32; SIZE * 2 * 3];
+        let mut bottom = vec![0.0f32; 2 * SIZE * 3];
+        let mut corner = vec![0.0f32; CORNER_PATCH * CORNER_PATCH * 3];
+        let x = 8usize;
+        let y = 8usize;
+        distribute_kernel(
+            &mut error_buf,
+            x,
+            y,
+            [1.0, 0.0, 0.0],
+            DiffusionKernel::FloydSteinberg.offsets(),
+            &mut right,
+            &mut bottom,
+            &mut corner,
+            -1,
+        );
+        // (+1,0) 7/16 → screen (-1,0)
+        assert!((channel0_at(&error_buf, x - 1, y) - 7.0 / 16.0).abs() < 1e-6);
+        // (-1,1) 3/16 → screen (+1,1)
+        assert!((channel0_at(&error_buf, x + 1, y + 1) - 3.0 / 16.0).abs() < 1e-6);
+        assert!((channel0_at(&error_buf, x, y + 1) - 5.0 / 16.0).abs() < 1e-6);
+        assert!((channel0_at(&error_buf, x - 1, y + 1) - 1.0 / 16.0).abs() < 1e-6);
+        assert_eq!(channel0_at(&error_buf, x + 1, y), 0.0);
+    }
+
+    #[test]
+    fn serpentine_false_is_bit_identical_to_ltr() {
+        let tile = make_uniform_tile(0.5, 0.3, 0.7, 1.0);
+        let mut params = make_fs_params(4);
+        params.serpentine = false;
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let doc = Document::new(DocumentId::new(1), 256, 256);
+        let layer_id = LayerId::new(1);
+
+        let store_a = ErrorResidualsStore::new();
+        let a = apply_error_diffusion(
+            &tile, tc(0, 0), &params, &store_a, layer_id,
+            &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        let store_b = ErrorResidualsStore::new();
+        let defaulted = make_fs_params(4);
+        assert!(!defaulted.serpentine);
+        let b = apply_error_diffusion(
+            &tile, tc(0, 0), &defaulted, &store_b, layer_id,
+            &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        assert_eq!(a.data, b.data);
+
+        let mut on = make_fs_params(4);
+        on.serpentine = true;
+        let store_c = ErrorResidualsStore::new();
+        let c = apply_error_diffusion(
+            &tile, tc(0, 0), &on, &store_c, layer_id,
+            &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        assert_ne!(a.data, c.data, "serpentine ON must change odd-row output");
+    }
+
+    #[test]
+    fn serpentine_false_atkinson_identity() {
+        let tile = make_uniform_tile(0.4, 0.5, 0.6, 1.0);
+        let mut params = make_atkinson_params(4);
+        params.serpentine = false;
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let doc = Document::new(DocumentId::new(1), 256, 256);
+        let layer_id = LayerId::new(1);
+        let store_a = ErrorResidualsStore::new();
+        let a = apply_error_diffusion(
+            &tile, tc(0, 0), &params, &store_a, layer_id,
+            &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        let store_b = ErrorResidualsStore::new();
+        let b = apply_error_diffusion(
+            &tile, tc(0, 0), &make_atkinson_params(4), &store_b, layer_id,
+            &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        assert_eq!(a.data, b.data);
     }
 }

@@ -4,6 +4,7 @@ import BuiltinPresetsSection from './BuiltinPresetsSection';
 import HarmonySection from './HarmonySection';
 import ImportExportSection from './ImportExportSection';
 import PaletteManualEditor from './PaletteManualEditor';
+import PaletteVolumeViewer from './PaletteVolumeViewer';
 import RampGeneratorSection from './RampGeneratorSection';
 import ColorLabFooter from './ColorLabFooter';
 import type { ColorEntry, ExtractMethod } from './types';
@@ -34,6 +35,8 @@ export interface ColorLabBodyProps {
   onExtractRaw: () => void;
   onExtractActual: () => void;
   colors: ColorEntry[];
+  selectedColorIndex: number | null;
+  onSelectColor: (index: number) => void;
   canAddColor: boolean;
   onColorChange: (index: number, hex: string) => void;
   onDeleteColor: (index: number) => void;
@@ -144,10 +147,19 @@ export default function ColorLabBody(props: ColorLabBodyProps) {
         canAddColor={props.canAddColor}
         compact={isSidebar}
         showSectionTitle={!isSidebar}
+        selectedIndex={props.selectedColorIndex}
+        onSelect={props.onSelectColor}
         onChange={props.onColorChange}
         onDelete={props.onDeleteColor}
         onAdd={props.onAddColor}
         onOpenPicker={props.onOpenPicker}
+      />
+
+      <PaletteVolumeViewer
+        colors={props.colors}
+        selectedIndex={props.selectedColorIndex}
+        onSelectIndex={props.onSelectColor}
+        compact={isSidebar}
       />
 
       {(props.error || props.successMessage) && (

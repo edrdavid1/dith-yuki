@@ -132,6 +132,16 @@ impl ErrorResidualsStore {
         self.entries.insert((layer_id, coord), residuals);
     }
 
+    /// Layer ids that currently have residual entries.
+    pub fn cached_layer_ids(&self) -> std::collections::HashSet<u32> {
+        self.entries.iter().map(|e| e.key().0.0).collect()
+    }
+
+    /// Drop every residual entry for `layer`. Missing keys are a no-op.
+    pub fn evict_layer(&self, layer: LayerId) {
+        self.entries.retain(|(l, _), _| l.0 != layer.0);
+    }
+
     /// Clear all stored residuals (on document change or invalidation).
     pub fn clear(&self) {
         self.entries.clear();
@@ -270,6 +280,23 @@ mod tests {
 
         assert!(store.get_left(layer, tc(1, 0)).is_none());
         assert!(store.get_top(layer, tc(0, 1)).is_none());
+    }
+
+    #[test]
+    fn evict_layer_removes_target_keeps_other() {
+        let store = ErrorResidualsStore::new();
+        let layer_a = LayerId::new(1);
+        let layer_b = LayerId::new(2);
+
+        let mut a = ErrorResiduals::new();
+        a.right[0] = 1.0;
+        store.store(layer_a, tc(3, 3), a);
+        store.store(layer_b, tc(3, 3), ErrorResiduals::new());
+
+        store.evict_layer(layer_a);
+
+        assert!(store.get_left(layer_a, tc(4, 3)).is_none());
+        assert!(store.get_left(layer_b, tc(4, 3)).is_some());
     }
 
     #[test]

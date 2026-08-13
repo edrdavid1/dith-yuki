@@ -14,6 +14,9 @@
 списка. Треки A и B можно вести параллельно (разные люди/разное время). Трек C
 стартует после закрытия трека A. Трек D (GPU) — строго последним.
 
+Production-release хвост (H–P, C4.1, Color Lab §6): [RELEASE_TRACKS.md](./RELEASE_TRACKS.md).
+Бета-гейт: [track-p-beta/](./track-p-beta/).
+
 ---
 
 ## Трек A — закрыть существующий correctness-долг (делать первым)
@@ -255,6 +258,64 @@ Halftone/CRT/Glow.
 
 ---
 
+## Трек E — `.dyproj` (project persistence) + shared embed
+
+> **Status (2026-08-12):** E0–E5 реализованы в коде — `engine-project::serialize`
+> (archive/assets/migrate/document_dto/id_remap/pixels/project), Tauri
+> `save_project` / `save_project_as` / `open_project`, File menu, soft size warn,
+> `.dyproj` file association stub. Track F может брать E0 API.
+
+Спека: [track-e-dyproj/](./track-e-dyproj/)
+([requirements](./track-e-dyproj/requirements.md) ·
+[design](./track-e-dyproj/design.md) ·
+[tasks](./track-e-dyproj/tasks.md)).
+
+Бриф: [BRIEF_dyproj_dyuki.md](./BRIEF_dyproj_dyuki.md).
+
+Независим от A–D. **E0** (общий zip + threshold-map embedding) — единственный
+блокер для трека F. После E0 можно вести E1–E5 и F параллельно.
+
+---
+
+## Трек F — `.dyuki` (sharable patterns)
+
+> **Status (2026-08-12):** F0–F3 реализованы — `serialize::pattern` pack/unpack,
+> IPC `export_pattern` / `import_pattern`, File + EffectSettingsPanel UI,
+> append-only import с always-new ids. F4 (OS association) — stub в `tauri.conf.json`.
+
+Спека: [track-f-dyuki/](./track-f-dyuki/)
+([requirements](./track-f-dyuki/requirements.md) ·
+[design](./track-f-dyuki/design.md) ·
+[tasks](./track-f-dyuki/tasks.md)).
+
+Бриф: [BRIEF_dyproj_dyuki.md](./BRIEF_dyproj_dyuki.md) §3.
+
+Стартует после **E0**; UI-скелет можно набрасывать раньше. Import всегда
+создаёт новые палитры/фильтры и **append** в стек слоя (как Color Lab).
+
+---
+
+## Трек G — Welcome Screen (New / Open / Recent)
+
+> **Status (2026-08-13):** G0–G5 реализованы — `recent_files.rs` + `get_recent_files`,
+> `create_document` (shared `MAX_DOCUMENT_DIMENSION=8192`), Welcome в `EmptyState`
+> (PreviewFeature empty + fill), `NewProjectDialog`, File → New Project… / Open Recent,
+> один `useWelcomeScreen` на окно. Blank create **не** пишется в Recent.
+
+Спека: [track-g-welcome/](./track-g-welcome/)
+([requirements](./track-g-welcome/requirements.md) ·
+[design](./track-g-welcome/design.md) ·
+[tasks](./track-g-welcome/tasks.md)).
+
+Бриф: [TASK_welcome_screen.md](./TASK_welcome_screen.md).
+
+Независим от A–D и F. Нужен Track E (`open_project` / `save_project`) —
+уже в дереве. Расширяет существующий `EmptyState` (слот в `PreviewFeature`),
+персистентность Recent по образцу `panel_persistence.rs`, blank document
+через тот же `decompose_image_to_tiles`, что `load_image`.
+
+---
+
 ## Итоговый порядок (коротко)
 
 1. **A1 + A2** (закрыть существующий correctness-долг) — параллельно друг
@@ -262,3 +323,115 @@ Halftone/CRT/Glow.
 2. **B1 + B2** — в любой момент, параллельно с A, ничем не блокируются.
 3. **C1-C4** — после A.
 4. **D** — после C (минимум Bayer+Halftone+CRT существуют и стабильны).
+5. **E + F** — независимо от A–D; F после E0, далее ∥ с остатком E.
+6. **G** — ✅ (2026-08-13) Welcome / Recent / `create_document`; после E.
+7. **K / J / H§Bias / L / C4.1 / Color Lab §6** — параллельно, без гейта A.
+   Карта: [RELEASE_TRACKS.md](./RELEASE_TRACKS.md).
+8. **M** (ED-ядра, затем Serpentine) и **I** (per-filter blend) — A1 уже
+   закрыт; Serpentine не смешивать с ядрами в одном PR.
+9. **H§Angle** — A2 уже закрыт; порядок операций см. ROADMAP §2.
+10. **N** — Undo/Redo; после K (debounce уже в дереве); независимо от H–M.
+11. **P** — бета-гейт (dirty / Guard / Apply-replace / QA). P1 до O3.
+    [track-p-beta/](./track-p-beta/). C4.1 и Color Lab §6 параллельно.
+12. **O** — in-app updates; Beta 1. Dirty из P смягчает Restart_Guard.
+
+---
+
+## Трек H — Bayer Threshold Bias + Angle
+
+Спека: [track-h-bayer-params/](./track-h-bayer-params/).
+Источник: [ROADMAP_production_release.md](./ROADMAP_production_release.md) §2.
+
+Bias — сразу. Angle — после A2 (закрыт): rotate паттерна **после**
+`BlockRepresentativeCache`, не до.
+
+**GPU (v1):** CPU path — source of truth. `try_ordered_bayer_gpu` skips when
+`threshold_bias != 0` or `pattern_angle != 0`. Halftone GPU skips non-zero
+bias. Shader uniforms — D follow-up, not this track.
+
+## Трек I — Per-filter Opacity / Blend
+
+> **Status (2026-08-13):** закрыт — `opacity`/`blend_mode` на `FilterInstance`
+> (serde default 1.0 / Normal); `apply_filter_with_blend` после full apply;
+> residual ED не читает opacity; UI Slider + blend select; DnD без второго стека.
+
+Спека: [track-i-filter-blend/](./track-i-filter-blend/).
+Источник: ROADMAP §3. Обёртка в `apply.rs`, residual по полной диффузии.
+`reorder_filter` + DnD в LayersPanel уже есть — не писать второй стек.
+
+## Трек J — Glitch correctness
+> **Status (2026-08-13):** закрыто — `GlobalCoordSigned` + mix(seed, gx, gy, level),
+> offset ≤ HALO, dest Block Displace = pre copy, 2×2 seam tests, seed → NumberInput.
+
+Спека: [track-j-glitch/](./track-j-glitch/).
+`FilterKind::Glitch` / XorShift64 / seed в params уже есть. Долг: локальные
+координаты и clamp 0..259. Сдвиг v1 ≤ HALO (как Glow radius).
+
+## Трек K — Unified Slider / NumberInput
+
+> **Status (2026-08-13):** закрыто — `NumberInput` + compact для curve points;
+> debounce 100ms только в `useEffectLayer`; editors без сырых number/range.
+
+Спека: [track-k-slider/](./track-k-slider/). Делать рано: новые панели H/J/M
+не должны садиться на сырой `<input>`. `Slider.tsx` и debounce 100ms в
+`useEffectLayer` уже есть — довести контракт компонента.
+
+## Трек L — 3D Oklab palette volume
+
+Спека: [track-l-oklab-volume/](./track-l-oklab-volume/).
+Источник: [ADDENDUM_release_plan_L_C4.md](./ADDENDUM_release_plan_L_C4.md).
+Конверсия только Rust (`oklab.rs`); фронт не дублирует.
+
+## Трек C4.1 — SVG export follow-up
+
+Спека: [track-c4-svg-followup/](./track-c4-svg-followup/).
+C4 v1 закрыт 2026-08-12 (`engine-io::svg_export`, holes out of scope, UI
+всегда meshing). Аддендум: явный выбор режима, внутренние контуры, валидный SVG.
+
+## Трек M — ED kernels + Serpentine (ROADMAP «G»)
+
+Спека: [track-m-ed-kernels/](./track-m-ed-kernels/).
+Буква G занята Welcome. Ядра (JJN/Stucki/Burkes/Sierra) → затем Serpentine
+отдельным шагом. Риск Serpentine × wavefront: ROADMAP §1.
+
+## Трек N — Undo / Redo (snapshot history)
+
+Спека: [track-n-undo-redo/](./track-n-undo-redo/)
+([requirements](./track-n-undo-redo/requirements.md) ·
+[design](./track-n-undo-redo/design.md) ·
+[tasks](./track-n-undo-redo/tasks.md)).
+
+Бриф: [TASK_track_n_undo_redo.md](./TASK_track_n_undo_redo.md).
+
+Snapshot `Arc<Document>` (не command/diff), `max_depth = 50`, одна обёртка
+на все мутации `Document`, GC осиротевших `LayerId` (`evict_layer` —
+первый per-layer эвикшен). Debounce undo = Track K 100ms в
+`useEffectLayer`. Replace (`load_image` / `open_project` / `create_document`)
+очищает оба стека.
+
+## Трек O — In-app updates
+
+Спека: [track-o-updates/](./track-o-updates/)
+([requirements](./track-o-updates/requirements.md) ·
+[design](./track-o-updates/design.md) ·
+[tasks](./track-o-updates/tasks.md)).
+
+`tauri-plugin-updater` + Minisign; один канал GitHub `latest.json`;
+кастомный UI (Help / About); Restart_Guard до download; Too_New_File
+(`.dyproj` / `.dyuki`) предлагает Check for Updates. Первый
+updater-билд = `0.2.0` (0.1.0 ставится DMG один раз). Apple notarization
+не блокер этого трека.
+
+## Трек P — Beta product gate
+
+Спека: [track-p-beta/](./track-p-beta/)
+([requirements](./track-p-beta/requirements.md) ·
+[design](./track-p-beta/design.md) ·
+[tasks](./track-p-beta/tasks.md)).
+
+Не новый движок: Dirty_Flag (`Arc::ptr_eq` Saved_Mark), один Unsaved_Guard
+на close / New / Open / O3, Color Lab Apply = replace выбранной палитры,
+ручной QA A §6.2 / D §5.3. Import Image as Layer — P3, только Beta 1
+(после P2). C4.1 и Color Lab §6 остаются своими папками.
+
+Beta 0 = P1+P2+P4 + C4.1 + §6. Beta 1 = Beta 0 + P3 + O.

@@ -50,7 +50,16 @@ fn bayer_matrix(mode: &DitherModeV2) -> Option<BayerMatrixSize> {
     }
 }
 
-/// GpuEligible Bayer: ps==1, no palette, RGB or Gray, prefer-GPU env on.
+/// Cpu path is source of truth for Track H: skip GPU when bias/angle are non-default.
+pub(crate) fn bayer_gpu_eligible(params: &DitherParamsV2) -> bool {
+    params.pixel_size == 1
+        && params.palette_id.is_none()
+        && params.threshold_bias == 0.0
+        && params.pattern_angle == 0.0
+        && bayer_matrix(&params.mode).is_some()
+}
+
+/// GpuEligible Bayer: ps==1, no palette, default bias/angle, RGB or Gray, prefer-GPU env on.
 pub fn try_ordered_bayer_gpu(
     gpu: Option<&GpuContext>,
     tile: &PixelTile,
@@ -61,7 +70,7 @@ pub fn try_ordered_bayer_gpu(
         return None;
     }
     let ctx = gpu?;
-    if params.pixel_size != 1 || params.palette_id.is_some() {
+    if !bayer_gpu_eligible(params) {
         return None;
     }
     let matrix = bayer_matrix(&params.mode)?;
@@ -101,6 +110,10 @@ pub fn try_halftone_gpu(
     }
     let ctx = gpu?;
     if params.pixel_size != 1 || params.palette_id.is_some() {
+        return None;
+    }
+    // GPU shader has no threshold_bias uniform (Track H / D follow-up).
+    if params.threshold_bias != 0.0 {
         return None;
     }
     if !matches!(params.mode, DitherModeV2::CmykHalftone) {
@@ -157,4 +170,48 @@ pub fn try_crt_gpu(
     result.data.copy_from_slice(&tile.data);
     write_core(&mut result, &out);
     Some(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
+
+    fn bayer_params() -> DitherParamsV2 {
+        DitherParamsV2 {
+            mode: DitherModeV2::Bayer4x4,
+            levels: 4,
+            threshold_scale: 1.0,
+            pixel_size: 1,
+            color_mode: DitherColorMode::Rgb,
+            palette_id: None,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn bayer_gpu_eligible_at_defaults() {
+        assert!(bayer_gpu_eligible(&bayer_params()));
+    }
+
+    #[test]
+    fn bayer_gpu_skips_non_default_bias() {
+        let mut p = bayer_params();
+        p.threshold_bias = 0.1;
+        assert!(!bayer_gpu_eligible(&p));
+    }
+
+    #[test]
+    fn bayer_gpu_skips_non_default_angle() {
+        let mut p = bayer_params();
+        p.pattern_angle = 15.0;
+        assert!(!bayer_gpu_eligible(&p));
+    }
+
+    #[test]
+    fn bayer_gpu_skips_pixel_size() {
+        let mut p = bayer_params();
+        p.pixel_size = 2;
+        assert!(!bayer_gpu_eligible(&p));
+    }
 }

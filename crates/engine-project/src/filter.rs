@@ -3,7 +3,11 @@
 use crate::error::EngineError;
 use crate::filters::glitch::GlitchType;
 use crate::filters::curves::CurveChannel;
-use crate::types::{FilterInstanceId, PaletteId};
+use crate::types::{BlendMode, FilterInstanceId, PaletteId};
+
+fn default_filter_opacity() -> f32 {
+    1.0
+}
 use engine_tiles::types::CacheStage;
 use engine_tiles::tile::PixelTile;
 use serde::{Deserialize, Serialize};
@@ -55,6 +59,92 @@ pub enum DiffusionKernel {
     Atkinson,
     JarvisJudiceNinke,
     Stucki,
+    Burkes,
+    Sierra,
+}
+
+impl DiffusionKernel {
+    /// Standard published (dx, dy, weight) tables. Reach is at most 2 px.
+    pub fn offsets(self) -> &'static [(i32, i32, f32)] {
+        match self {
+            Self::FloydSteinberg => &[
+                (1, 0, 7.0 / 16.0),
+                (-1, 1, 3.0 / 16.0),
+                (0, 1, 5.0 / 16.0),
+                (1, 1, 1.0 / 16.0),
+            ],
+            Self::Atkinson => &[
+                (1, 0, 1.0 / 8.0),
+                (2, 0, 1.0 / 8.0),
+                (-1, 1, 1.0 / 8.0),
+                (0, 1, 1.0 / 8.0),
+                (1, 1, 1.0 / 8.0),
+                (0, 2, 1.0 / 8.0),
+            ],
+            Self::JarvisJudiceNinke => &[
+                (1, 0, 7.0 / 48.0),
+                (2, 0, 5.0 / 48.0),
+                (-2, 1, 3.0 / 48.0),
+                (-1, 1, 5.0 / 48.0),
+                (0, 1, 7.0 / 48.0),
+                (1, 1, 5.0 / 48.0),
+                (2, 1, 3.0 / 48.0),
+                (-2, 2, 1.0 / 48.0),
+                (-1, 2, 3.0 / 48.0),
+                (0, 2, 5.0 / 48.0),
+                (1, 2, 3.0 / 48.0),
+                (2, 2, 1.0 / 48.0),
+            ],
+            Self::Stucki => &[
+                (1, 0, 8.0 / 42.0),
+                (2, 0, 4.0 / 42.0),
+                (-2, 1, 2.0 / 42.0),
+                (-1, 1, 4.0 / 42.0),
+                (0, 1, 8.0 / 42.0),
+                (1, 1, 4.0 / 42.0),
+                (2, 1, 2.0 / 42.0),
+                (-2, 2, 1.0 / 42.0),
+                (-1, 2, 2.0 / 42.0),
+                (0, 2, 4.0 / 42.0),
+                (1, 2, 2.0 / 42.0),
+                (2, 2, 1.0 / 42.0),
+            ],
+            Self::Burkes => &[
+                (1, 0, 8.0 / 32.0),
+                (2, 0, 4.0 / 32.0),
+                (-2, 1, 2.0 / 32.0),
+                (-1, 1, 4.0 / 32.0),
+                (0, 1, 8.0 / 32.0),
+                (1, 1, 4.0 / 32.0),
+                (2, 1, 2.0 / 32.0),
+            ],
+            Self::Sierra => &[
+                (1, 0, 5.0 / 32.0),
+                (2, 0, 3.0 / 32.0),
+                (-2, 1, 2.0 / 32.0),
+                (-1, 1, 4.0 / 32.0),
+                (0, 1, 5.0 / 32.0),
+                (1, 1, 4.0 / 32.0),
+                (2, 1, 2.0 / 32.0),
+                (-1, 2, 2.0 / 32.0),
+                (0, 2, 3.0 / 32.0),
+                (1, 2, 2.0 / 32.0),
+            ],
+        }
+    }
+
+    /// Parse the PascalCase UI / IPC name used by PaletteQuantize.
+    pub fn from_ui_name(s: &str) -> Option<Self> {
+        match s {
+            "FloydSteinberg" => Some(Self::FloydSteinberg),
+            "Atkinson" => Some(Self::Atkinson),
+            "JarvisJudiceNinke" => Some(Self::JarvisJudiceNinke),
+            "Stucki" => Some(Self::Stucki),
+            "Burkes" => Some(Self::Burkes),
+            "Sierra" => Some(Self::Sierra),
+            _ => None,
+        }
+    }
 }
 
 // ─── Dither V2 types (redesign) ───────────────────────────────────────────────
@@ -72,10 +162,42 @@ pub enum DitherModeV2 {
     CustomPng { path: String },
     FloydSteinberg,
     Atkinson,
+    JarvisJudiceNinke,
+    Stucki,
+    Burkes,
+    Sierra,
     /// CMYK angled-screen halftone (ordered path, no ED).
     CmykHalftone,
     /// Sinusoidal / line-modulated threshold (ordered path).
     Wave,
+}
+
+impl DitherModeV2 {
+    /// Error-diffusion modes that use the residual / full-row path.
+    pub fn is_error_diffusion(&self) -> bool {
+        matches!(
+            self,
+            Self::FloydSteinberg
+                | Self::Atkinson
+                | Self::JarvisJudiceNinke
+                | Self::Stucki
+                | Self::Burkes
+                | Self::Sierra
+        )
+    }
+
+    /// Matching [`DiffusionKernel`] for ED modes.
+    pub fn diffusion_kernel(&self) -> Option<DiffusionKernel> {
+        match self {
+            Self::FloydSteinberg => Some(DiffusionKernel::FloydSteinberg),
+            Self::Atkinson => Some(DiffusionKernel::Atkinson),
+            Self::JarvisJudiceNinke => Some(DiffusionKernel::JarvisJudiceNinke),
+            Self::Stucki => Some(DiffusionKernel::Stucki),
+            Self::Burkes => Some(DiffusionKernel::Burkes),
+            Self::Sierra => Some(DiffusionKernel::Sierra),
+            _ => None,
+        }
+    }
 }
 
 /// Color processing mode for dithering.
@@ -119,6 +241,19 @@ pub struct DitherParamsV2 {
     /// Wave band angle in degrees (default 0 = vertical bands). Used when mode is `Wave`.
     #[serde(default)]
     pub wave_angle: f32,
+    /// Additive ordered-threshold shift (default 0). Range `[-0.5, 0.5]`.
+    /// Applied as `T' = clamp01(T + bias)` on Bayer / CustomPng / Wave / CmykHalftone.
+    /// Error-diffusion modes ignore this field.
+    #[serde(default)]
+    pub threshold_bias: f32,
+    /// Pattern sampling angle in degrees (default 0). Bayer / CustomPng only.
+    /// Applied after `aligned(pixel_size)` (Block_Then_Rotate). Periodic via `rem_euclid(360)`.
+    #[serde(default)]
+    pub pattern_angle: f32,
+    /// Serpentine scanning for error-diffusion modes (default false = L→R identity).
+    /// Odd **global** rows run R→L with the kernel mirrored in X.
+    #[serde(default)]
+    pub serpentine: bool,
 }
 
 fn default_threshold_scale() -> f32 {
@@ -159,6 +294,9 @@ impl Default for DitherParamsV2 {
             wave_amplitude: default_wave_amplitude(),
             wave_phase: 0.0,
             wave_angle: 0.0,
+            threshold_bias: 0.0,
+            pattern_angle: 0.0,
+            serpentine: false,
         }
     }
 }
@@ -180,7 +318,10 @@ impl From<(DitherMode, u8)> for DitherParamsV2 {
             DitherMode::ErrorDiffusion { kernel } => match kernel {
                 DiffusionKernel::FloydSteinberg => DitherModeV2::FloydSteinberg,
                 DiffusionKernel::Atkinson => DitherModeV2::Atkinson,
-                _ => DitherModeV2::FloydSteinberg, // fallback for JJN/Stucki
+                DiffusionKernel::JarvisJudiceNinke => DitherModeV2::JarvisJudiceNinke,
+                DiffusionKernel::Stucki => DitherModeV2::Stucki,
+                DiffusionKernel::Burkes => DitherModeV2::Burkes,
+                DiffusionKernel::Sierra => DitherModeV2::Sierra,
             },
         };
         DitherParamsV2 {
@@ -195,6 +336,9 @@ impl From<(DitherMode, u8)> for DitherParamsV2 {
             wave_amplitude: default_wave_amplitude(),
             wave_phase: 0.0,
             wave_angle: 0.0,
+            threshold_bias: 0.0,
+            pattern_angle: 0.0,
+            serpentine: false,
         }
     }
 }
@@ -249,6 +393,16 @@ impl DitherParamsV2 {
                     "wave_amplitude must be in range [0, 1]",
                 ));
             }
+        }
+        if !(-0.5..=0.5).contains(&self.threshold_bias) {
+            return Err(EngineError::invalid_filter_params(
+                "threshold_bias must be in range [-0.5, 0.5]",
+            ));
+        }
+        if !self.pattern_angle.is_finite() {
+            return Err(EngineError::invalid_filter_params(
+                "pattern_angle must be finite",
+            ));
         }
         Ok(())
     }
@@ -345,37 +499,59 @@ pub struct FilterInstance {
 
     /// If true, this filter requires full-row processing (not tiled)
     pub requires_full_row: bool,
+
+    /// Visual mix of this filter's full result over its input (`0.0..=1.0`).
+    /// Residual ED always uses the full result; opacity is a post-step.
+    #[serde(default = "default_filter_opacity")]
+    pub opacity: f32,
+
+    /// Blend of full filter output over the pre-filter tile. Default Normal.
+    #[serde(default)]
+    pub blend_mode: BlendMode,
 }
 
 impl FilterInstance {
     /// Create a new filter instance.
     ///
     /// Automatically sets `requires_full_row = true` for error diffusion modes
-    /// (DitherV2 with FloydSteinberg or Atkinson), signaling the scheduler to
-    /// process tiles in row-major order to satisfy cross-tile error dependencies.
+    /// (DitherV2 ED kernels), signaling the scheduler to process tiles in
+    /// wavefront order to satisfy cross-tile error dependencies.
     pub fn new(kind: FilterKind, params: FilterParams) -> Self {
-        let requires_full_row = match &params {
-            FilterParams::DitherV2(p) => matches!(
-                p.mode,
-                DitherModeV2::FloydSteinberg | DitherModeV2::Atkinson
-            ),
-            FilterParams::Dither { mode, .. } => matches!(
-                mode,
-                DitherMode::ErrorDiffusion { .. }
-            ),
-            _ => false,
-        };
+        let requires_full_row = Self::params_require_full_row(&params);
         FilterInstance {
             id: FilterInstanceId::new(),
             kind,
             params,
             enabled: true,
             requires_full_row,
+            opacity: 1.0,
+            blend_mode: BlendMode::Normal,
+        }
+    }
+
+    /// Whether these params need the residual / full-row scheduler path.
+    pub fn params_require_full_row(params: &FilterParams) -> bool {
+        match params {
+            FilterParams::DitherV2(p) => p.mode.is_error_diffusion(),
+            FilterParams::Dither { mode, .. } => {
+                matches!(mode, DitherMode::ErrorDiffusion { .. })
+            }
+            _ => false,
         }
     }
 
     /// Validate the filter parameters.
     pub fn validate(&self) -> Result<(), EngineError> {
+        if !(0.0..=1.0).contains(&self.opacity) {
+            return Err(EngineError::invalid_filter_params(
+                "Filter opacity must be in range [0.0, 1.0]",
+            ));
+        }
+        if self.blend_mode.is_reserved() {
+            return Err(EngineError::invalid_filter_params(
+                "Reserved blend modes are not allowed on filters",
+            ));
+        }
         match &self.params {
             FilterParams::Curves { curve, .. } => {
                 for (x, y) in curve {
@@ -551,6 +727,42 @@ mod tests {
         );
         assert!(filter.enabled);
         assert!(!filter.requires_full_row);
+        assert_eq!(filter.opacity, 1.0);
+        assert_eq!(filter.blend_mode, BlendMode::Normal);
+    }
+
+    #[test]
+    fn filter_instance_serde_missing_opacity_blend_defaults() {
+        let filter = FilterInstance::new(
+            FilterKind::Curves,
+            FilterParams::Curves {
+                curve: vec![(0.0, 0.0), (1.0, 1.0)],
+                channel: CurveChannel::All,
+            },
+        );
+        let mut value = serde_json::to_value(&filter).unwrap();
+        let obj = value.as_object_mut().unwrap();
+        obj.remove("opacity");
+        obj.remove("blend_mode");
+        let restored: FilterInstance = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.opacity, 1.0);
+        assert_eq!(restored.blend_mode, BlendMode::Normal);
+    }
+
+    #[test]
+    fn filter_validate_rejects_opacity_and_reserved_blend() {
+        let mut filter = FilterInstance::new(
+            FilterKind::Curves,
+            FilterParams::Curves {
+                curve: vec![(0.0, 0.0), (1.0, 1.0)],
+                channel: CurveChannel::All,
+            },
+        );
+        filter.opacity = 1.5;
+        assert!(filter.validate().is_err());
+        filter.opacity = 1.0;
+        filter.blend_mode = BlendMode::Reserved12;
+        assert!(filter.validate().is_err());
     }
 
     #[test]
@@ -765,6 +977,10 @@ mod tests {
         assert_eq!(serde_json::to_value(&DitherModeV2::Bayer8x8).unwrap(), serde_json::json!("bayer_8x8"));
         assert_eq!(serde_json::to_value(&DitherModeV2::FloydSteinberg).unwrap(), serde_json::json!("floyd_steinberg"));
         assert_eq!(serde_json::to_value(&DitherModeV2::Atkinson).unwrap(), serde_json::json!("atkinson"));
+        assert_eq!(serde_json::to_value(&DitherModeV2::JarvisJudiceNinke).unwrap(), serde_json::json!("jarvis_judice_ninke"));
+        assert_eq!(serde_json::to_value(&DitherModeV2::Stucki).unwrap(), serde_json::json!("stucki"));
+        assert_eq!(serde_json::to_value(&DitherModeV2::Burkes).unwrap(), serde_json::json!("burkes"));
+        assert_eq!(serde_json::to_value(&DitherModeV2::Sierra).unwrap(), serde_json::json!("sierra"));
         assert_eq!(serde_json::to_value(&DitherModeV2::CmykHalftone).unwrap(), serde_json::json!("cmyk_halftone"));
         assert_eq!(serde_json::to_value(&DitherModeV2::Wave).unwrap(), serde_json::json!("wave"));
     }
@@ -784,6 +1000,10 @@ mod tests {
             DitherModeV2::Bayer8x8,
             DitherModeV2::FloydSteinberg,
             DitherModeV2::Atkinson,
+            DitherModeV2::JarvisJudiceNinke,
+            DitherModeV2::Stucki,
+            DitherModeV2::Burkes,
+            DitherModeV2::Sierra,
             DitherModeV2::CmykHalftone,
             DitherModeV2::Wave,
         ];
@@ -812,6 +1032,17 @@ mod tests {
 
         let mode: DitherModeV2 = serde_json::from_str(r#""floyd_steinberg""#).unwrap();
         assert_eq!(serde_json::to_value(&mode).unwrap(), serde_json::json!("floyd_steinberg"));
+    }
+
+    #[test]
+    fn serpentine_missing_field_defaults_false() {
+        let p: DitherParamsV2 = serde_json::from_str(
+            r#"{"mode":"floyd_steinberg","levels":4}"#,
+        )
+        .unwrap();
+        assert!(!p.serpentine);
+        let json = serde_json::to_value(&p).unwrap();
+        assert_eq!(json["serpentine"], serde_json::json!(false));
     }
 
     #[test]
@@ -857,6 +1088,29 @@ mod tests {
             }),
         );
         assert!(filter.requires_full_row, "Atkinson should require full row processing");
+    }
+
+    #[test]
+    fn dither_v2_m1_kernels_require_full_row() {
+        for mode in [
+            DitherModeV2::JarvisJudiceNinke,
+            DitherModeV2::Stucki,
+            DitherModeV2::Burkes,
+            DitherModeV2::Sierra,
+        ] {
+            let filter = FilterInstance::new(
+                FilterKind::Dither,
+                FilterParams::DitherV2(DitherParamsV2 {
+                    mode: mode.clone(),
+                    levels: 4,
+                    ..Default::default()
+                }),
+            );
+            assert!(
+                filter.requires_full_row,
+                "{mode:?} should require full row processing"
+            );
+        }
     }
 
     #[test]
@@ -967,25 +1221,37 @@ mod tests {
     }
 
     #[test]
-    fn from_legacy_jjn_fallback() {
-        // JarvisJudiceNinke falls back to FloydSteinberg
+    fn from_legacy_jjn_maps_to_jjn() {
         let params = DitherParamsV2::from_legacy(
             DitherMode::ErrorDiffusion { kernel: DiffusionKernel::JarvisJudiceNinke },
             3,
         );
-        assert!(matches!(params.mode, DitherModeV2::FloydSteinberg));
+        assert!(matches!(params.mode, DitherModeV2::JarvisJudiceNinke));
         assert_eq!(params.levels, 8); // 2^3
     }
 
     #[test]
-    fn from_legacy_stucki_fallback() {
-        // Stucki falls back to FloydSteinberg
+    fn from_legacy_stucki_maps_to_stucki() {
         let params = DitherParamsV2::from_legacy(
             DitherMode::ErrorDiffusion { kernel: DiffusionKernel::Stucki },
             6,
         );
-        assert!(matches!(params.mode, DitherModeV2::FloydSteinberg));
+        assert!(matches!(params.mode, DitherModeV2::Stucki));
         assert_eq!(params.levels, 64); // 2^6
+    }
+
+    #[test]
+    fn from_legacy_burkes_and_sierra() {
+        let burkes = DitherParamsV2::from_legacy(
+            DitherMode::ErrorDiffusion { kernel: DiffusionKernel::Burkes },
+            2,
+        );
+        assert!(matches!(burkes.mode, DitherModeV2::Burkes));
+        let sierra = DitherParamsV2::from_legacy(
+            DitherMode::ErrorDiffusion { kernel: DiffusionKernel::Sierra },
+            2,
+        );
+        assert!(matches!(sierra.mode, DitherModeV2::Sierra));
     }
 
     #[test]
@@ -1034,5 +1300,44 @@ mod tests {
             let params = DitherParamsV2::from((mode, depth));
             assert!(params.validate().is_ok(), "Converted params should be valid");
         }
+    }
+
+    // ─── Track H: threshold_bias / pattern_angle ─────────────────────────
+
+    #[test]
+    fn missing_bias_and_angle_fields_deserialize_as_zero() {
+        let params: DitherParamsV2 = serde_json::from_str(
+            r#"{"mode":"bayer_4x4","levels":4}"#,
+        )
+        .unwrap();
+        assert_eq!(params.threshold_bias, 0.0);
+        assert_eq!(params.pattern_angle, 0.0);
+        assert!(params.validate().is_ok());
+    }
+
+    #[test]
+    fn threshold_bias_range_validation() {
+        let mut params = DitherParamsV2::default();
+        params.threshold_bias = -0.5;
+        assert!(params.validate().is_ok());
+        params.threshold_bias = 0.5;
+        assert!(params.validate().is_ok());
+        params.threshold_bias = -0.51;
+        assert!(params.validate().is_err());
+        params.threshold_bias = 0.51;
+        assert!(params.validate().is_err());
+        params.threshold_bias = f32::NAN;
+        assert!(params.validate().is_err());
+    }
+
+    #[test]
+    fn pattern_angle_rejects_non_finite() {
+        let mut params = DitherParamsV2::default();
+        params.pattern_angle = 720.0;
+        assert!(params.validate().is_ok());
+        params.pattern_angle = f32::INFINITY;
+        assert!(params.validate().is_err());
+        params.pattern_angle = f32::NAN;
+        assert!(params.validate().is_err());
     }
 }

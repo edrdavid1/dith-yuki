@@ -13,7 +13,17 @@ import { bind } from '../../shared/ui/cn';
 const cn = bind({ ...paramStyles, ...inputStyles, ...sliderStyles, ...buttonStyles });
 
 /** Simple string modes for the dropdown. */
-type SimpleDitherMode = 'bayer_2x2' | 'bayer_4x4' | 'bayer_8x8' | 'custom_png' | 'floyd_steinberg' | 'atkinson';
+type SimpleDitherMode =
+  | 'bayer_2x2'
+  | 'bayer_4x4'
+  | 'bayer_8x8'
+  | 'custom_png'
+  | 'floyd_steinberg'
+  | 'atkinson'
+  | 'jarvis_judice_ninke'
+  | 'stucki'
+  | 'burkes'
+  | 'sierra';
 
 interface DitherV2ParamsProps {
   mode: DitherModeV2;
@@ -27,8 +37,22 @@ interface DitherV2ParamsProps {
 
 /** Extract a simple string key from the mode for dropdown display. */
 function modeToSimple(mode: DitherModeV2): SimpleDitherMode {
-  if (typeof mode === 'string') return mode;
-  if (typeof mode === 'object' && 'custom_png' in mode) return 'custom_png';
+  if (typeof mode === 'string') {
+    const allowed: SimpleDitherMode[] = [
+      'bayer_2x2',
+      'bayer_4x4',
+      'bayer_8x8',
+      'custom_png',
+      'floyd_steinberg',
+      'atkinson',
+      'jarvis_judice_ninke',
+      'stucki',
+      'burkes',
+      'sierra',
+    ];
+    if (allowed.includes(mode as SimpleDitherMode)) return mode as SimpleDitherMode;
+  }
+  if (typeof mode === 'object' && mode !== null && 'custom_png' in mode) return 'custom_png';
   return 'bayer_4x4';
 }
 
@@ -100,6 +124,10 @@ function DitherV2Params({ mode, levels, thresholdScale, pixelSize, colorMode, pa
           { value: 'custom_png', label: 'Custom Threshold Map' },
           { value: 'floyd_steinberg', label: 'Floyd-Steinberg' },
           { value: 'atkinson', label: 'Atkinson' },
+          { value: 'jarvis_judice_ninke', label: 'Jarvis-Judice-Ninke' },
+          { value: 'stucki', label: 'Stucki' },
+          { value: 'burkes', label: 'Burkes' },
+          { value: 'sierra', label: 'Sierra' },
         ]}
         onSelect={(v) => handleModeChange(v as SimpleDitherMode)}
       />

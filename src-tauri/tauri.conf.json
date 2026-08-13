@@ -27,6 +27,22 @@
     "active": true,
     "targets": ["app", "dmg"],
     "icon": ["icons/icon.png"],
+    "fileAssociations": [
+      {
+        "ext": ["dyproj"],
+        "name": "Dither Project",
+        "description": "Dither Yuki project archive",
+        "role": "Editor",
+        "mimeType": "application/x-dither-project"
+      },
+      {
+        "ext": ["dyuki"],
+        "name": "Dither Pattern",
+        "description": "Dither Yuki sharable pattern",
+        "role": "Editor",
+        "mimeType": "application/x-dither-pattern"
+      }
+    ],
     "macOS": {
       "minimumSystemVersion": "10.15",
       "signingIdentity": null

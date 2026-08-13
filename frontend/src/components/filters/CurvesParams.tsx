@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import DropdownMenu from '../common/DropdownMenu';
+import NumberInput from '../common/NumberInput';
 import type { CurveChannel } from '../../types';
 import curveStyles from '../../features/effects/editors/CurvesSettings.module.css';
 import paramStyles from '../../shared/ui/ParamControls.module.css';
@@ -68,9 +69,27 @@ function CurvesParams({ curve, channel, onChange }: CurvesParamsProps) {
         <div className={cn("curve-points")}>
           {curve.map(([x, y], i) => (
             <div key={i} className={cn("curve-point-row")}>
-              <input type="number" className={cn("curve-input")} min={0} max={1} step={0.05} value={x.toFixed(2)} onChange={(e) => handlePointChange(i, 0, parseFloat(e.target.value) || 0)} />
+              <NumberInput
+                label={`Point ${i + 1} X`}
+                value={x}
+                min={0}
+                max={1}
+                step={0.05}
+                decimals={2}
+                compact
+                onChange={(v) => handlePointChange(i, 0, v)}
+              />
               <span className={cn("curve-arrow")}>→</span>
-              <input type="number" className={cn("curve-input")} min={0} max={1} step={0.05} value={y.toFixed(2)} onChange={(e) => handlePointChange(i, 1, parseFloat(e.target.value) || 0)} />
+              <NumberInput
+                label={`Point ${i + 1} Y`}
+                value={y}
+                min={0}
+                max={1}
+                step={0.05}
+                decimals={2}
+                compact
+                onChange={(v) => handlePointChange(i, 1, v)}
+              />
               {i > 0 && i < curve.length - 1 && (
                 <button className={cn("curve-remove-btn")} onClick={() => handleRemovePoint(i)}>×</button>
               )}
@@ -80,9 +99,27 @@ function CurvesParams({ curve, channel, onChange }: CurvesParamsProps) {
       </div>
 
       <div className={cn("curve-add-row")}>
-        <input type="number" className={cn("curve-input")} min={0} max={1} step={0.05} value={newX.toFixed(2)} onChange={(e) => setNewX(parseFloat(e.target.value) || 0)} />
+        <NumberInput
+          label="New point X"
+          value={newX}
+          min={0}
+          max={1}
+          step={0.05}
+          decimals={2}
+          compact
+          onChange={setNewX}
+        />
         <span className={cn("curve-arrow")}>→</span>
-        <input type="number" className={cn("curve-input")} min={0} max={1} step={0.05} value={newY.toFixed(2)} onChange={(e) => setNewY(parseFloat(e.target.value) || 0)} />
+        <NumberInput
+          label="New point Y"
+          value={newY}
+          min={0}
+          max={1}
+          step={0.05}
+          decimals={2}
+          compact
+          onChange={setNewY}
+        />
         <button className={cn("filter-add-btn")} onClick={handleAddPoint}>+</button>
       </div>
     </div>

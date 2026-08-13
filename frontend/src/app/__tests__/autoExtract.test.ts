@@ -43,6 +43,7 @@ describe('autoExtract', () => {
         successMessage: null,
         suppressRemote: false,
         remoteEpoch: 0,
+        selectedColorIndex: null,
       },
     });
 
