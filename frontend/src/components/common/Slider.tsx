@@ -4,6 +4,9 @@ import retro from '../../shared/ui/RetroSlider.module.css';
 import { bind } from '../../shared/ui/cn';
 const cn = bind({ ...styles, ...retro });
 
+// Immediate onChange for local/parent state. IPC debounce (100ms) lives in
+// useEffectLayer.updateParams — do not add a second timer here (would stack to 200ms).
+// Text field Enter/blur commits immediately (bypass; still one IPC layer).
 
 interface SliderProps {
   label: string;
@@ -20,7 +23,7 @@ export function formatValue(value: number, decimals: number = 2): string {
   return value.toFixed(decimals);
 }
 
-function clampAndSnap(raw: number, min: number, max: number, step: number): number {
+export function clampAndSnap(raw: number, min: number, max: number, step: number): number {
   let clamped = raw;
   if (clamped < min) clamped = min;
   if (clamped > max) clamped = max;

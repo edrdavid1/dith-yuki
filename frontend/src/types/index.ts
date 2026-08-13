@@ -10,6 +10,8 @@ export interface FilterInfo {
   kind: FilterKind;
   params: FilterParams;
   enabled: boolean;
+  opacity: number;
+  blend_mode: string;
 }
 
 export type FilterKind =
@@ -55,6 +57,10 @@ export type DitherModeV2 =
   | { custom_png: { path: string } }
   | 'floyd_steinberg'
   | 'atkinson'
+  | 'jarvis_judice_ninke'
+  | 'stucki'
+  | 'burkes'
+  | 'sierra'
   | 'cmyk_halftone'
   | 'wave';
 
@@ -80,6 +86,12 @@ export interface DitherParamsV2 {
   wave_phase?: number;
   /** Wave angle in degrees */
   wave_angle?: number;
+  /** Ordered-threshold shift [-0.5, 0.5], default 0. Ignored by ED modes. */
+  threshold_bias?: number;
+  /** Bayer / CustomPng pattern sampling angle in degrees, default 0. */
+  pattern_angle?: number;
+  /** ED serpentine scan (odd global rows R→L). Default false. */
+  serpentine?: boolean;
 }
 
 export interface CurvesParams {

@@ -5,11 +5,14 @@ import { refreshFilters } from './slices/filtersSlice';
 import { applyRemote, fetchSelection } from './slices/selectionSlice';
 import { applyPanelEvent, fetchPanels } from './slices/panelsSlice';
 import { applyRemoteDraft, hydrateFromStorage } from './slices/colorLabSlice';
+import { applyUndoState } from './slices/undoSlice';
+import { bumpVersion } from './slices/palettesSlice';
 import {
   onColorLabDraftChanged,
   onDocumentChanged,
   onPanelStateChanged,
   onSelectionChanged,
+  onUndoStateChanged,
 } from '../shared/ipc';
 import type { PanelInfo, PanelStateSnapshot } from '../types/panels';
 
@@ -48,7 +51,10 @@ export function startEngineEventBridge(store: AppStore): EngineBridgeCleanup {
       kind === 'layer_removed' ||
       kind === 'filter_updated' ||
       kind === 'filter_added' ||
-      kind === 'filter_removed'
+      kind === 'filter_removed' ||
+      kind === 'filter_reordered' ||
+      kind === 'document_undone' ||
+      kind === 'document_redone'
     ) {
       if (docId !== null) {
         void dispatch(refreshLayers(docId));
@@ -58,13 +64,28 @@ export function startEngineEventBridge(store: AppStore): EngineBridgeCleanup {
     if (
       kind === 'filter_updated' ||
       kind === 'filter_added' ||
-      kind === 'filter_removed'
+      kind === 'filter_removed' ||
+      kind === 'filter_reordered' ||
+      kind === 'document_undone' ||
+      kind === 'document_redone'
     ) {
       void dispatch(refreshFilters());
     }
 
+    if (kind === 'document_undone' || kind === 'document_redone') {
+      dispatch(bumpVersion());
+    }
+
     // Document open / structural changes — refresh meta
     void dispatch(refreshDocument());
+  }).then((fn) => {
+    if (cancelled) fn();
+    else unsubscribers.push(fn);
+  });
+
+  onUndoStateChanged((event) => {
+    if (cancelled) return;
+    dispatch(applyUndoState(event.payload));
   }).then((fn) => {
     if (cancelled) fn();
     else unsubscribers.push(fn);

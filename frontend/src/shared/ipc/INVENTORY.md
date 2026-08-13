@@ -5,6 +5,7 @@ Snapshot of `frontend/src` before IPC consolidation. Domain `invoke` must live o
 | File | invoke | listen / emit | window | dialog | os | Notes vs old `ipc/*` |
 |------|--------|---------------|--------|--------|-----|----------------------|
 | `shared/ipc/**` | yes | events helpers | — | dialogs | — | Canonical IPC_Layer |
+| `shared/ipc/undo.ts` | yes | undo-state-changed | — | — | — | Track N undo/redo |
 | `ipc/commands.ts` | re-export | — | — | — | — | Compat barrel → shared |
 | `ipc/panelCommands.ts` | re-export | — | — | — | — | Compat barrel → shared |
 | `hooks/useLayers.ts` | ~~raw~~ → layers/document | document-changed | — | — | — | Was duplicating add/remove/props |
@@ -13,7 +14,9 @@ Snapshot of `frontend/src` before IPC consolidation. Domain `invoke` must live o
 | `hooks/useEffectLayer.ts` | ~~raw~~ → document | document-changed, panel-state | — | — | — | Snapshot + filters.update |
 | `hooks/useDocumentState.ts` | ~~raw~~ → document | document-changed | — | — | — | |
 | `hooks/useLayerState.ts` | ~~raw~~ → layers/document | document-changed | — | — | — | |
-| `hooks/useDocument.ts` | via document | — | — | open/save | — | Already used commands |
+| `hooks/useDocument.ts` | via document / project | — | — | open/save | — | Open/create/save + path-parameterized Recent |
+| `hooks/useRecentFiles.ts` | via recent | — | — | — | — | `get_recent_files` |
+| `hooks/useWelcomeScreen.ts` | via useDocument + useRecentFiles | — | — | — | — | One Recent source + New Project per window |
 | `hooks/usePanels.ts` | via panels | panel-state-changed | — | — | — | |
 | `hooks/useCloseRequested.ts` | via panels | — | getCurrentWindow | — | — | Window chrome OK |
 | `App.tsx` | ~~raw~~ → document/filters/palettes/panels | document-changed | — | — | — | Was raw snapshot |

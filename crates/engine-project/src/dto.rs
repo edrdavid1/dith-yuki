@@ -62,6 +62,8 @@ pub struct FilterInstanceDto {
     pub kind: String,
     pub params: serde_json::Value,
     pub enabled: bool,
+    pub opacity: f32,
+    pub blend_mode: String,
 }
 
 /// Convert a Document to a DocumentSnapshotDto.
@@ -133,6 +135,8 @@ fn filter_to_dto(filter: &FilterInstance) -> FilterInstanceDto {
         kind: filter.kind.to_string(),
         params,
         enabled: filter.enabled,
+        opacity: filter.opacity,
+        blend_mode: filter.blend_mode.to_string(),
     }
 }
 
@@ -180,6 +184,8 @@ mod tests {
 
         assert_eq!(dto.kind, "Curves");
         assert!(dto.enabled);
+        assert_eq!(dto.opacity, 1.0);
+        assert_eq!(dto.blend_mode, "Normal");
     }
 
     #[test]

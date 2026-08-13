@@ -31,6 +31,9 @@ export const EFFECT_DEFAULTS: Record<EffectType, Record<string, unknown>> = {
     wave_amplitude: 1,
     wave_phase: 0,
     wave_angle: 0,
+    threshold_bias: 0,
+    pattern_angle: 0,
+    serpentine: false,
   },
   Glitching: {
     glitch_type: 'RGBShift',

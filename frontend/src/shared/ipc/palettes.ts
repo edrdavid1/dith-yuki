@@ -57,6 +57,23 @@ export type HarmonyRuleName =
   | 'Triadic'
   | 'SplitComplementary';
 
+export interface OklabPointDto {
+  l: number;
+  a: number;
+  b: number;
+  srgb_hex: string;
+}
+
+/** Draft hex list → Oklab (Rust `oklab.rs`). Do not convert sRGB→Oklab in JS. */
+export async function colorsToOklab(colors: string[]): Promise<OklabPointDto[]> {
+  return invoke<OklabPointDto[]>('colors_to_oklab', { colors });
+}
+
+/** Saved document palette → Oklab (same math as `colorsToOklab`). */
+export async function getPaletteOklab(paletteId: number): Promise<OklabPointDto[]> {
+  return invoke<OklabPointDto[]>('get_palette_oklab', { paletteId });
+}
+
 export async function generateHarmonyPalette(
   baseHex: string,
   rule: HarmonyRuleName,

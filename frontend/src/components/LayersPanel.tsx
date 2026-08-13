@@ -3,6 +3,7 @@ import { useCallback, useState, useEffect, useRef } from 'react';
 import type { KeyboardEvent } from 'react';
 import type { LayerNodeDto } from '../shared/types/layers';
 import type { FilterInfo } from '../types';
+import { BLEND_MODES } from '../shared/blendModes';
 import DropdownMenu from './common/DropdownMenu';
 import SimpleBar from 'simplebar-react';
 import WindowTitlebar from '../shared/ui/WindowTitlebar';
@@ -30,6 +31,8 @@ export interface LayersPanelProps {
   onToggleVisibility: (id: number) => void;
   onBlendModeChange: (layerId: number, mode: string) => void;
   onOpacityChange: (layerId: number, opacity: number) => void;
+  /** Per-filter opacity/blend when a filter row is selected. */
+  onFilterBlendChange: (patch: { opacity?: number; blend_mode?: string }) => void;
   /** Mouse down handler for the title bar — used for panel drag-to-reorder/undock */
   onTitleBarMouseDown?: (e: React.MouseEvent) => void;
   dockSide?: DockSide;
@@ -37,11 +40,6 @@ export interface LayersPanelProps {
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-
-const BLEND_MODES = [
-  'Normal', 'Multiply', 'Screen', 'Overlay', 'Darken', 'Lighten',
-  'ColorDodge', 'ColorBurn', 'HardLight', 'SoftLight', 'Difference', 'Exclusion',
-] as const;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -84,6 +82,7 @@ export default function LayersPanel({
   onToggleVisibility,
   onBlendModeChange,
   onOpacityChange,
+  onFilterBlendChange,
   onTitleBarMouseDown,
   dockSide,
   onMoveToSide,
@@ -93,8 +92,20 @@ export default function LayersPanel({
     : null;
 
   const imageSourceLayer = layers.length > 0 ? layers[0] : null;
+  const selectedFilter =
+    selectedFilterId !== null
+      ? filters.find((filter) => filter.id === selectedFilterId) ?? null
+      : null;
   const trashDisabled = selectedFilterId === null;
-  const currentOpacityPercent = selectedLayer ? Math.round(selectedLayer.opacity * 100) : 100;
+  const controlsDisabled = selectedFilter === null && selectedLayerId === null;
+  const currentOpacityPercent = selectedFilter
+    ? Math.round((selectedFilter.opacity ?? 1) * 100)
+    : selectedLayer
+      ? Math.round(selectedLayer.opacity * 100)
+      : 100;
+  const currentBlendMode = selectedFilter
+    ? (selectedFilter.blend_mode ?? 'Normal')
+    : (selectedLayer?.blend_mode ?? 'Normal');
   const [opacityText, setOpacityText] = useState(`${currentOpacityPercent}%`);
   const [opacityEditing, setOpacityEditing] = useState(false);
   const [isOpacityPopupOpen, setIsOpacityPopupOpen] = useState(false);
@@ -246,22 +257,26 @@ export default function LayersPanel({
   }, [isOpacityPopupOpen]);
 
   useEffect(() => {
-    if (selectedLayerId === null) {
+    if (selectedLayerId === null && selectedFilterId === null) {
       setIsOpacityPopupOpen(false);
     }
-  }, [selectedLayerId]);
+  }, [selectedLayerId, selectedFilterId]);
 
   const handleBlendModeChange = useCallback((mode: string) => {
+    if (selectedFilterId !== null) {
+      onFilterBlendChange({ blend_mode: mode });
+      return;
+    }
     if (selectedLayerId !== null) {
       onBlendModeChange(selectedLayerId, mode);
     }
-  }, [selectedLayerId, onBlendModeChange]);
+  }, [selectedFilterId, selectedLayerId, onBlendModeChange, onFilterBlendChange]);
 
   const toggleOpacityPopup = useCallback(() => {
-    if (selectedLayerId !== null) {
+    if (selectedFilterId !== null || selectedLayerId !== null) {
       setIsOpacityPopupOpen((open) => !open);
     }
-  }, [selectedLayerId]);
+  }, [selectedFilterId, selectedLayerId]);
 
   const commitOpacity = useCallback(() => {
     const raw = opacityText.replace('%', '').trim();
@@ -274,12 +289,14 @@ export default function LayersPanel({
     }
 
     const clamped = Math.min(100, Math.max(0, Math.round(parsed)));
-    if (selectedLayerId !== null) {
+    if (selectedFilterId !== null) {
+      onFilterBlendChange({ opacity: clamped / 100 });
+    } else if (selectedLayerId !== null) {
       onOpacityChange(selectedLayerId, clamped / 100);
     }
     setOpacityText(`${clamped}%`);
     setOpacityEditing(false);
-  }, [opacityText, currentOpacityPercent, selectedLayerId, onOpacityChange]);
+  }, [opacityText, currentOpacityPercent, selectedFilterId, selectedLayerId, onOpacityChange, onFilterBlendChange]);
 
   const handleOpacityInputKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -312,10 +329,10 @@ export default function LayersPanel({
       {/* Blend mode + Opacity row */}
       <div className={cn("lp-controls")}>
         <DropdownMenu
-          value={selectedLayer?.blend_mode ?? 'Normal'}
+          value={currentBlendMode}
           options={BLEND_MODES.map((mode) => ({ value: mode, label: mode }))}
           onSelect={handleBlendModeChange}
-          disabled={selectedLayerId === null}
+          disabled={controlsDisabled}
           className={cn("lp-dropdown-wrap-small")}
         />
 
@@ -326,7 +343,7 @@ export default function LayersPanel({
               className={cn("lp-opacity-input")}
               type="text"
               value={opacityText}
-              disabled={selectedLayerId === null}
+              disabled={controlsDisabled}
               aria-label="Opacity"
               onChange={(e) => setOpacityText(e.target.value)}
               onFocus={() => setOpacityEditing(true)}
@@ -337,7 +354,7 @@ export default function LayersPanel({
               type="button"
               className={cn("lp-opacity-btn")}
               onClick={toggleOpacityPopup}
-              disabled={selectedLayerId === null}
+              disabled={controlsDisabled}
               aria-label="Open opacity slider"
             />
             {isOpacityPopupOpen && (
@@ -352,7 +369,9 @@ export default function LayersPanel({
                       const rect = track.getBoundingClientRect();
                       const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
                       const val = Math.round(ratio * 100);
-                      if (selectedLayerId !== null) {
+                      if (selectedFilterId !== null) {
+                        onFilterBlendChange({ opacity: val / 100 });
+                      } else if (selectedLayerId !== null) {
                         onOpacityChange(selectedLayerId, val / 100);
                       }
                       setOpacityText(`${val}%`);

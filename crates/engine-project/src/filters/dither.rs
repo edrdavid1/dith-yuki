@@ -193,37 +193,7 @@ impl DitherFilter {
 }
 
 fn distribute_error(buffer: &mut [f32], x: usize, y: usize, c: usize, size: usize, error: f32, kernel: DiffusionKernel) {
-    match kernel {
-        DiffusionKernel::FloydSteinberg => {
-            let offsets: &[(i32, i32, f32)] = &[
-                (1, 0, 7.0 / 16.0), (-1, 1, 3.0 / 16.0), (0, 1, 5.0 / 16.0), (1, 1, 1.0 / 16.0),
-            ];
-            apply_offsets(buffer, x, y, c, size, error, offsets);
-        }
-        DiffusionKernel::Atkinson => {
-            let offsets: &[(i32, i32, f32)] = &[
-                (1, 0, 1.0/8.0), (2, 0, 1.0/8.0), (-1, 1, 1.0/8.0),
-                (0, 1, 1.0/8.0), (1, 1, 1.0/8.0), (0, 2, 1.0/8.0),
-            ];
-            apply_offsets(buffer, x, y, c, size, error, offsets);
-        }
-        DiffusionKernel::JarvisJudiceNinke => {
-            let offsets: &[(i32, i32, f32)] = &[
-                (1, 0, 7.0/48.0), (2, 0, 5.0/48.0),
-                (-2, 1, 3.0/48.0), (-1, 1, 5.0/48.0), (0, 1, 7.0/48.0), (1, 1, 5.0/48.0), (2, 1, 3.0/48.0),
-                (-2, 2, 1.0/48.0), (-1, 2, 3.0/48.0), (0, 2, 5.0/48.0), (1, 2, 3.0/48.0), (2, 2, 1.0/48.0),
-            ];
-            apply_offsets(buffer, x, y, c, size, error, offsets);
-        }
-        DiffusionKernel::Stucki => {
-            let offsets: &[(i32, i32, f32)] = &[
-                (1, 0, 8.0/42.0), (2, 0, 4.0/42.0),
-                (-2, 1, 2.0/42.0), (-1, 1, 4.0/42.0), (0, 1, 8.0/42.0), (1, 1, 4.0/42.0), (2, 1, 2.0/42.0),
-                (-2, 2, 1.0/42.0), (-1, 2, 2.0/42.0), (0, 2, 4.0/42.0), (1, 2, 2.0/42.0), (2, 2, 1.0/42.0),
-            ];
-            apply_offsets(buffer, x, y, c, size, error, offsets);
-        }
-    }
+    apply_offsets(buffer, x, y, c, size, error, kernel.offsets());
 }
 
 #[inline]

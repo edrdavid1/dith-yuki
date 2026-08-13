@@ -72,3 +72,18 @@
 .filter-params {
   padding-top: 4px;
 }
+
+.param-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  font-family: var(--font-family);
+  color: var(--text-color);
+  cursor: pointer;
+}
+
+.param-checkbox-row input {
+  margin: 0;
+}

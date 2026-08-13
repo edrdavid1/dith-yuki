@@ -200,66 +200,7 @@ impl PaletteQuantizeFilter {
         err_b: f32,
         kernel: DiffusionKernel,
     ) {
-        match kernel {
-            DiffusionKernel::FloydSteinberg => {
-                // right: 7/16, below-left: 3/16, below: 5/16, below-right: 1/16
-                let offsets: [(i32, i32, f32); 4] = [
-                    (1, 0, 7.0 / 16.0),
-                    (-1, 1, 3.0 / 16.0),
-                    (0, 1, 5.0 / 16.0),
-                    (1, 1, 1.0 / 16.0),
-                ];
-                Self::apply_kernel(error_buf, x, y, size, err_l, err_a, err_b, &offsets);
-            }
-            DiffusionKernel::Atkinson => {
-                // 6 neighbors, each get 1/8
-                let offsets: [(i32, i32, f32); 6] = [
-                    (1, 0, 1.0 / 8.0),
-                    (2, 0, 1.0 / 8.0),
-                    (-1, 1, 1.0 / 8.0),
-                    (0, 1, 1.0 / 8.0),
-                    (1, 1, 1.0 / 8.0),
-                    (0, 2, 1.0 / 8.0),
-                ];
-                Self::apply_kernel(error_buf, x, y, size, err_l, err_a, err_b, &offsets);
-            }
-            DiffusionKernel::JarvisJudiceNinke => {
-                // 12 neighbors with weights summing to 48
-                let offsets: [(i32, i32, f32); 12] = [
-                    (1, 0, 7.0 / 48.0),
-                    (2, 0, 5.0 / 48.0),
-                    (-2, 1, 3.0 / 48.0),
-                    (-1, 1, 5.0 / 48.0),
-                    (0, 1, 7.0 / 48.0),
-                    (1, 1, 5.0 / 48.0),
-                    (2, 1, 3.0 / 48.0),
-                    (-2, 2, 1.0 / 48.0),
-                    (-1, 2, 3.0 / 48.0),
-                    (0, 2, 5.0 / 48.0),
-                    (1, 2, 3.0 / 48.0),
-                    (2, 2, 1.0 / 48.0),
-                ];
-                Self::apply_kernel(error_buf, x, y, size, err_l, err_a, err_b, &offsets);
-            }
-            DiffusionKernel::Stucki => {
-                // 12 neighbors with weights summing to 42
-                let offsets: [(i32, i32, f32); 12] = [
-                    (1, 0, 8.0 / 42.0),
-                    (2, 0, 4.0 / 42.0),
-                    (-2, 1, 2.0 / 42.0),
-                    (-1, 1, 4.0 / 42.0),
-                    (0, 1, 8.0 / 42.0),
-                    (1, 1, 4.0 / 42.0),
-                    (2, 1, 2.0 / 42.0),
-                    (-2, 2, 1.0 / 42.0),
-                    (-1, 2, 2.0 / 42.0),
-                    (0, 2, 4.0 / 42.0),
-                    (1, 2, 2.0 / 42.0),
-                    (2, 2, 1.0 / 42.0),
-                ];
-                Self::apply_kernel(error_buf, x, y, size, err_l, err_a, err_b, &offsets);
-            }
-        }
+        Self::apply_kernel(error_buf, x, y, size, err_l, err_a, err_b, kernel.offsets());
     }
 
     /// Apply a set of (dx, dy, weight) offsets to distribute error into the buffer.

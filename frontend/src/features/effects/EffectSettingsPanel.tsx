@@ -28,6 +28,10 @@ export interface EffectSettingsPanelProps {
   onTitleBarMouseDown?: (e: React.MouseEvent) => void;
   dockSide?: DockSide;
   onMoveToSide?: (side: DockSide) => void;
+  /** Leaf layer to export/import a `.dyuki` pattern against. */
+  targetLayerId?: number | null;
+  onExportPattern?: () => void;
+  onImportPattern?: () => void;
 }
 
 function filterKindToEffectType(kind: FilterKind): EffectType | null {
@@ -76,7 +80,32 @@ export default function EffectSettingsPanel({
   onTitleBarMouseDown,
   dockSide,
   onMoveToSide,
+  targetLayerId = null,
+  onExportPattern,
+  onImportPattern,
 }: EffectSettingsPanelProps) {
+  const canUsePattern = targetLayerId != null;
+  const patternActions = (
+    <div className={cn('pattern-actions')}>
+      <button
+        type="button"
+        className={cn('pattern-action-btn')}
+        disabled={!canUsePattern}
+        onClick={() => onExportPattern?.()}
+      >
+        Export as pattern…
+      </button>
+      <button
+        type="button"
+        className={cn('pattern-action-btn')}
+        disabled={!canUsePattern}
+        onClick={() => onImportPattern?.()}
+      >
+        Import pattern…
+      </button>
+    </div>
+  );
+
   if (!selectedLayer || selectedLayer.filters.length === 0) {
     return (
       <div className={cn('effect-settings-panel', 'effect-chooser-panel')}>
@@ -107,6 +136,7 @@ export default function EffectSettingsPanel({
                 </button>
               ))}
             </div>
+            {patternActions}
           </SimpleBar>
         </div>
       </div>
@@ -150,7 +180,10 @@ export default function EffectSettingsPanel({
       />
       <div className={cn("effect-settings-scroll")}>
         <SimpleBar style={{ height: '100%' }}>
-          <div className={cn("effect-settings-body")}>{renderSettings()}</div>
+          <div className={cn("effect-settings-body")}>
+            {renderSettings()}
+            {patternActions}
+          </div>
         </SimpleBar>
       </div>
     </div>

@@ -183,6 +183,26 @@ impl TileCache {
         }
     }
 
+    /// Remove every cached stage for `layer` (Raw / Processed / Composite).
+    ///
+    /// Stale LRU-queue entries for the removed keys are ignored on pop,
+    /// matching existing eviction. Missing keys are a no-op.
+    pub fn evict_layer(&self, layer: crate::LayerId) {
+        let mut removed = 0usize;
+        self.entries.retain(|key, _| {
+            if key.layer == layer {
+                removed += 1;
+                false
+            } else {
+                true
+            }
+        });
+        if removed > 0 {
+            self.used_bytes
+                .fetch_sub(removed * TILE_BYTES, Ordering::Relaxed);
+        }
+    }
+
     /// Evict least-recently-used tiles if cache exceeds budget.
     ///
     /// Compares current `used_bytes` against `budget_bytes`.
@@ -631,6 +651,62 @@ mod tests {
         let viewport = std::collections::HashSet::new();
         cache.evict_preserving_viewport(&viewport);
 
+        assert_eq!(cache.entry_count(), 1);
+    }
+
+    #[test]
+    fn evict_layer_removes_all_stages_keeps_other_layer() {
+        let cache = TileCache::new(10_000_000);
+        let tile = Arc::new(PixelTile::new());
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
+        let stages = [CacheStage::Raw, CacheStage::Processed, CacheStage::Composite];
+        for stage in stages {
+            cache.get_or_insert(
+                TileKey {
+                    layer: 1,
+                    coord,
+                    stage,
+                },
+                tile.clone(),
+            );
+            cache.get_or_insert(
+                TileKey {
+                    layer: 2,
+                    coord,
+                    stage,
+                },
+                tile.clone(),
+            );
+        }
+        assert_eq!(cache.entry_count(), 6);
+
+        cache.evict_layer(1);
+
+        for stage in stages {
+            assert!(!cache.entries.contains_key(&TileKey {
+                layer: 1,
+                coord,
+                stage,
+            }));
+            assert!(cache.entries.contains_key(&TileKey {
+                layer: 2,
+                coord,
+                stage,
+            }));
+        }
+        assert_eq!(cache.entry_count(), 3);
+        assert_eq!(cache.used_bytes_count(), 3 * TILE_BYTES);
+    }
+
+    #[test]
+    fn evict_layer_missing_keys_is_noop() {
+        let cache = TileCache::new(10_000_000);
+        cache.get_or_insert(make_key(2, 0, 0), Arc::new(PixelTile::new()));
+        cache.evict_layer(1);
         assert_eq!(cache.entry_count(), 1);
     }
 

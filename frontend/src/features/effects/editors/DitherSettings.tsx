@@ -17,8 +17,27 @@ type SimpleDitherMode =
   | 'custom_png'
   | 'floyd_steinberg'
   | 'atkinson'
+  | 'jarvis_judice_ninke'
+  | 'stucki'
+  | 'burkes'
+  | 'sierra'
   | 'cmyk_halftone'
   | 'wave';
+
+const SIMPLE_MODES: SimpleDitherMode[] = [
+  'bayer_2x2',
+  'bayer_4x4',
+  'bayer_8x8',
+  'custom_png',
+  'floyd_steinberg',
+  'atkinson',
+  'jarvis_judice_ninke',
+  'stucki',
+  'burkes',
+  'sierra',
+  'cmyk_halftone',
+  'wave',
+];
 
 interface DitherSettingsProps {
   params: Record<string, unknown>;
@@ -27,18 +46,7 @@ interface DitherSettingsProps {
 
 function modeToSimple(mode: DitherModeV2 | string | unknown): SimpleDitherMode {
   if (typeof mode === 'string') {
-    if (
-      [
-        'bayer_2x2',
-        'bayer_4x4',
-        'bayer_8x8',
-        'custom_png',
-        'floyd_steinberg',
-        'atkinson',
-        'cmyk_halftone',
-        'wave',
-      ].includes(mode)
-    ) {
+    if (SIMPLE_MODES.includes(mode as SimpleDitherMode)) {
       return mode as SimpleDitherMode;
     }
     return 'floyd_steinberg';
@@ -66,7 +74,33 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
   const waveAmplitude = clampParam(Number(params.wave_amplitude) ?? 1, 0, 1);
   const wavePhase = Number(params.wave_phase) || 0;
   const waveAngle = Number(params.wave_angle) || 0;
+  const thresholdBias = clampParam(Number(params.threshold_bias ?? 0), -0.5, 0.5);
+  const patternAngle = Number(params.pattern_angle ?? 0);
   const simpleMode = modeToSimple(mode);
+
+  const isOrderedMode = [
+    'bayer_2x2',
+    'bayer_4x4',
+    'bayer_8x8',
+    'custom_png',
+    'wave',
+    'cmyk_halftone',
+  ].includes(simpleMode);
+  const isPatternAngleMode = [
+    'bayer_2x2',
+    'bayer_4x4',
+    'bayer_8x8',
+    'custom_png',
+  ].includes(simpleMode);
+  const isEdMode = [
+    'floyd_steinberg',
+    'atkinson',
+    'jarvis_judice_ninke',
+    'stucki',
+    'burkes',
+    'sierra',
+  ].includes(simpleMode);
+  const serpentine = Boolean(params.serpentine);
 
   const emit = (overrides: Record<string, unknown>) => {
     onUpdate({
@@ -81,6 +115,9 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
       wave_amplitude: overrides.wave_amplitude ?? waveAmplitude,
       wave_phase: overrides.wave_phase ?? wavePhase,
       wave_angle: overrides.wave_angle ?? waveAngle,
+      threshold_bias: overrides.threshold_bias ?? thresholdBias,
+      pattern_angle: overrides.pattern_angle ?? patternAngle,
+      serpentine: overrides.serpentine ?? serpentine,
     });
   };
 
@@ -96,13 +133,17 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
         value={simpleMode}
         options={[
           { value: 'floyd_steinberg', label: 'Floyd-Steinberg' },
+          { value: 'atkinson', label: 'Atkinson' },
+          { value: 'jarvis_judice_ninke', label: 'Jarvis-Judice-Ninke' },
+          { value: 'stucki', label: 'Stucki' },
+          { value: 'burkes', label: 'Burkes' },
+          { value: 'sierra', label: 'Sierra' },
           { value: 'bayer_2x2', label: 'Bayer 2×2' },
           { value: 'bayer_4x4', label: 'Bayer 4×4' },
           { value: 'bayer_8x8', label: 'Bayer 8×8' },
           { value: 'cmyk_halftone', label: 'CMYK Halftone' },
           { value: 'wave', label: 'Wave' },
           { value: 'custom_png', label: 'Custom PNG' },
-          { value: 'atkinson', label: 'Atkinson' },
         ]}
         onSelect={(v) => {
           const newMode = v as SimpleDitherMode;
@@ -139,6 +180,41 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
         decimals={0}
         onChange={(v) => emit({ levels: clampParam(Math.round(v), 2, 256) })}
       />
+
+      {isEdMode && (
+        <label className={cn('param-checkbox-row')}>
+          <input
+            type="checkbox"
+            checked={serpentine}
+            onChange={(e) => emit({ serpentine: e.target.checked })}
+          />
+          Serpentine
+        </label>
+      )}
+
+      {isOrderedMode && (
+        <Slider
+          label="Threshold Bias"
+          value={thresholdBias}
+          min={-0.5}
+          max={0.5}
+          step={0.01}
+          decimals={2}
+          onChange={(v) => emit({ threshold_bias: clampParam(v, -0.5, 0.5) })}
+        />
+      )}
+
+      {isPatternAngleMode && (
+        <Slider
+          label="Pattern Angle"
+          value={patternAngle}
+          min={0}
+          max={360}
+          step={1}
+          decimals={0}
+          onChange={(v) => emit({ pattern_angle: v })}
+        />
+      )}
 
       {simpleMode === 'cmyk_halftone' && (
         <Slider

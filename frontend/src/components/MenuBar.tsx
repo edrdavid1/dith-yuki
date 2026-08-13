@@ -1,16 +1,28 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import styles from '../features/document/MenuBar.module.css';
 import { bind } from '../shared/ui/cn';
+import type { RecentFileEntry } from '../shared/ipc/recent';
+import { isMacOS } from '../lib/platform';
 const cn = bind(styles);
 
 interface MenuBarProps {
   hasDocument: boolean;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  recentEntries?: RecentFileEntry[];
+  onNewProject?: () => void;
   onOpenImage: () => void;
   onSaveImage: () => void;
+  onOpenProject: () => void;
+  onOpenRecent?: (entry: RecentFileEntry) => void;
+  onSaveProject: () => void;
+  onSaveProjectAs: () => void;
+  onExportPattern: () => void;
+  onImportPattern: () => void;
   onOpenColorLab: () => void;
   onOpenPreferences: () => void;
-  workspacePresets?: Array<{ id: string; label: string }>;
-  onApplyWorkspacePreset?: (id: string) => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
 }
 
 type MenuId = 'file' | 'edit' | 'presets' | 'colorlab' | 'preferences' | 'help';
@@ -34,12 +46,22 @@ const DIRECT_OPEN_MENUS: ReadonlySet<MenuId> = new Set(['colorlab', 'preferences
 
 function MenuBar({
   hasDocument,
+  canUndo = false,
+  canRedo = false,
+  recentEntries = [],
+  onNewProject,
   onOpenImage,
   onSaveImage,
+  onOpenProject,
+  onOpenRecent,
+  onSaveProject,
+  onSaveProjectAs,
+  onExportPattern,
+  onImportPattern,
   onOpenColorLab,
   onOpenPreferences,
-  workspacePresets = [],
-  onApplyWorkspacePreset,
+  onUndo,
+  onRedo,
 }: MenuBarProps) {
   const [openMenu, setOpenMenu] = useState<MenuId | null>(null);
   const menuBarRef = useRef<HTMLDivElement>(null);
@@ -108,9 +130,64 @@ function MenuBar({
             <button
               className={cn("menubar-dropdown-item")}
               role="menuitem"
+              onClick={() => handleAction(onNewProject ?? (() => {}))}
+            >
+              New Project…
+            </button>
+            <button
+              className={cn("menubar-dropdown-item")}
+              role="menuitem"
               onClick={() => handleAction(onOpenImage)}
             >
               Open Image
+            </button>
+            <button
+              className={cn("menubar-dropdown-item")}
+              role="menuitem"
+              onClick={() => handleAction(onOpenProject)}
+            >
+              Open Project…
+            </button>
+            {recentEntries.length > 0 && (
+              <div className={cn('menubar-submenu-wrap')}>
+                <button
+                  className={cn('menubar-dropdown-item', 'menubar-submenu-trigger')}
+                  role="menuitem"
+                  aria-haspopup="true"
+                  type="button"
+                >
+                  Open Recent
+                </button>
+                <div className={cn('menubar-submenu')} role="menu" aria-label="Open Recent">
+                  {recentEntries.map((entry) => (
+                    <button
+                      key={entry.path}
+                      className={cn('menubar-dropdown-item')}
+                      role="menuitem"
+                      type="button"
+                      onClick={() => handleAction(() => onOpenRecent?.(entry))}
+                    >
+                      {entry.display_name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <button
+              className={cn("menubar-dropdown-item")}
+              role="menuitem"
+              onClick={() => handleAction(onSaveProject)}
+              disabled={!hasDocument}
+            >
+              Save Project
+            </button>
+            <button
+              className={cn("menubar-dropdown-item")}
+              role="menuitem"
+              onClick={() => handleAction(onSaveProjectAs)}
+              disabled={!hasDocument}
+            >
+              Save Project As…
             </button>
             <button
               className={cn("menubar-dropdown-item")}
@@ -122,38 +199,51 @@ function MenuBar({
             </button>
           </div>
         );
-      case 'edit':
+      case 'edit': {
+        const undoChord = isMacOS() ? '⌘Z' : 'Ctrl+Z';
+        const redoChord = isMacOS() ? '⇧⌘Z' : 'Ctrl+Shift+Z';
         return (
           <div className={cn("menubar-dropdown")} role="menu">
-            <button className={cn("menubar-dropdown-item")} role="menuitem" disabled>
-              Undo
+            <button
+              className={cn("menubar-dropdown-item")}
+              role="menuitem"
+              disabled={!canUndo}
+              onClick={() => canUndo && onUndo && handleAction(onUndo)}
+            >
+              <span>Undo</span>
+              <span className={cn('menubar-shortcut')}>{undoChord}</span>
             </button>
-            <button className={cn("menubar-dropdown-item")} role="menuitem" disabled>
-              Redo
+            <button
+              className={cn("menubar-dropdown-item")}
+              role="menuitem"
+              disabled={!canRedo}
+              onClick={() => canRedo && onRedo && handleAction(onRedo)}
+            >
+              <span>Redo</span>
+              <span className={cn('menubar-shortcut')}>{redoChord}</span>
             </button>
           </div>
         );
+      }
       case 'presets':
         return (
           <div className={cn("menubar-dropdown")} role="menu">
-            {workspacePresets.length === 0 ? (
-              <button className={cn("menubar-dropdown-item")} role="menuitem" disabled>
-                No workspace presets
-              </button>
-            ) : (
-              workspacePresets.map((preset) => (
-                <button
-                  key={preset.id}
-                  className={cn("menubar-dropdown-item")}
-                  role="menuitem"
-                  onClick={() =>
-                    handleAction(() => onApplyWorkspacePreset?.(preset.id))
-                  }
-                >
-                  {preset.label}
-                </button>
-              ))
-            )}
+            <button
+              className={cn("menubar-dropdown-item")}
+              role="menuitem"
+              onClick={() => handleAction(onExportPattern)}
+              disabled={!hasDocument}
+            >
+              Export Pattern…
+            </button>
+            <button
+              className={cn("menubar-dropdown-item")}
+              role="menuitem"
+              onClick={() => handleAction(onImportPattern)}
+              disabled={!hasDocument}
+            >
+              Import Pattern…
+            </button>
           </div>
         );
       case 'help':

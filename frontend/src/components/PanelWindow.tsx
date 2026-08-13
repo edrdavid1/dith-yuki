@@ -16,12 +16,28 @@ import EffectsFeature from '../features/effects/EffectsFeature';
 import LayersFeature from '../features/layers/LayersFeature';
 import PreviewFeature from '../features/preview/PreviewFeature';
 import PreferencesFeature from '../features/preferences/PreferencesFeature';
+import NewProjectDialog from './NewProjectDialog';
+import { useWelcomeScreen } from '../hooks/useWelcomeScreen';
 import styles from '../features/panels/PanelWindow.module.css';
 import { bind } from '../shared/ui/cn';
 const cn = bind(styles);
 
 interface PanelWindowProps {
   panelId: string;
+}
+
+function FloatingPreview(): JSX.Element {
+  const { welcome, newProjectOpen, closeNewProject, handleCreate } = useWelcomeScreen();
+  return (
+    <>
+      <PreviewFeature hideTitleBar fill welcome={welcome} />
+      <NewProjectDialog
+        isOpen={newProjectOpen}
+        onClose={closeNewProject}
+        onCreate={handleCreate}
+      />
+    </>
+  );
 }
 
 /**
@@ -198,7 +214,7 @@ function PanelWindow({ panelId }: PanelWindowProps): JSX.Element {
       case 'colorlab':
         return <ColorLabFeature variant="full" />;
       case 'preview':
-        return <PreviewFeature hideTitleBar fill />;
+        return <FloatingPreview />;
       case 'preferences':
         return <PreferencesFeature />;
       default:

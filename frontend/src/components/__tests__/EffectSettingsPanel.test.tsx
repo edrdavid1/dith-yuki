@@ -1,13 +1,28 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import type { ReactElement } from 'react';
 import EffectSettingsPanel from '../EffectSettingsPanel';
 import type { LayerWithFilters } from '../EffectSettingsPanel';
 import type { FilterInfo } from '../../types';
+import { StoreProvider } from '../../app/__tests__/testStore';
 
 // Mock listPalettes IPC call
 vi.mock('../../ipc/commands', () => ({
   listPalettes: vi.fn().mockResolvedValue([]),
 }));
+
+function renderPanel(ui: ReactElement) {
+  return render(<StoreProvider>{ui}</StoreProvider>);
+}
+
+function sliderValueInput(label: string): HTMLInputElement {
+  const labelEl = screen.getByText(label);
+  const input = labelEl.parentElement?.querySelector('input');
+  if (!input) {
+    throw new Error(`no value input for ${label}`);
+  }
+  return input as HTMLInputElement;
+}
 
 function makeDitherLayer(overrides?: Partial<Record<string, unknown>>): LayerWithFilters {
   return {
@@ -27,6 +42,8 @@ function makeDitherLayer(overrides?: Partial<Record<string, unknown>>): LayerWit
         ...overrides,
       },
       enabled: true,
+      opacity: 1,
+      blend_mode: 'Normal',
     } as FilterInfo],
   };
 }
@@ -45,6 +62,8 @@ function makeGlitchLayer(): LayerWithFilters {
         seed: 0,
       },
       enabled: true,
+      opacity: 1,
+      blend_mode: 'Normal',
     } as FilterInfo],
   };
 }
@@ -62,6 +81,8 @@ function makeCurvesLayer(): LayerWithFilters {
         channel: 'All',
       },
       enabled: true,
+      opacity: 1,
+      blend_mode: 'Normal',
     } as FilterInfo],
   };
 }
@@ -82,6 +103,8 @@ function makeRGBLayer(): LayerWithFilters {
         output_white: 1.0,
       },
       enabled: true,
+      opacity: 1,
+      blend_mode: 'Normal',
     } as FilterInfo],
   };
 }
@@ -131,65 +154,96 @@ describe('EffectSettingsPanel', () => {
 
   describe('Dithering settings', () => {
     it('renders algorithm dropdown with correct options', () => {
-      render(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
+      renderPanel(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
       expect(screen.getByText('Algorithm')).toBeInTheDocument();
-      const select = screen.getAllByRole('combobox').find(el => 
-        el.querySelector('option[value="floyd_steinberg"]')
-      );
-      expect(select).toBeTruthy();
+      fireEvent.click(screen.getByText('Floyd-Steinberg'));
+      expect(screen.getByRole('option', { name: 'Jarvis-Judice-Ninke' })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: 'Stucki' })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: 'Burkes' })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: 'Sierra' })).toBeInTheDocument();
     });
 
     it('renders pixel size slider with range 1–32', () => {
-      render(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
+      renderPanel(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
       expect(screen.getByText('Pixel Size')).toBeInTheDocument();
-      // Check that the slider element with min 1 and max 32 exists
-      const sliders = document.querySelectorAll('input[type="range"]');
-      const pixelSizeSlider = Array.from(sliders).find(
-        s => s.getAttribute('min') === '1' && s.getAttribute('max') === '32'
-      );
-      expect(pixelSizeSlider).toBeTruthy();
+      expect(sliderValueInput('Pixel Size').value).toBe('1');
     });
 
     it('renders threshold scale slider with range 0.1–4.0', () => {
-      render(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
+      renderPanel(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
       expect(screen.getByText('Threshold Scale')).toBeInTheDocument();
-      const sliders = document.querySelectorAll('input[type="range"]');
-      const tsSlider = Array.from(sliders).find(
-        s => s.getAttribute('min') === '0.1' && s.getAttribute('max') === '4'
-      );
-      expect(tsSlider).toBeTruthy();
+      expect(sliderValueInput('Threshold Scale').value).toBe('1.0');
     });
 
     it('renders levels slider with range 2–256', () => {
-      render(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
+      renderPanel(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
       expect(screen.getByText('Levels')).toBeInTheDocument();
-      const sliders = document.querySelectorAll('input[type="range"]');
-      const levelsSlider = Array.from(sliders).find(
-        s => s.getAttribute('min') === '2' && s.getAttribute('max') === '256'
-      );
-      expect(levelsSlider).toBeTruthy();
+      expect(sliderValueInput('Levels').value).toBe('4');
     });
 
     it('calls onUpdateParams with clamped pixel size', () => {
-      render(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
-      const sliders = document.querySelectorAll('input[type="range"]');
-      const pixelSizeSlider = Array.from(sliders).find(
-        s => s.getAttribute('min') === '1' && s.getAttribute('max') === '32'
-      ) as HTMLInputElement;
-      
-      fireEvent.change(pixelSizeSlider, { target: { value: '16' } });
+      renderPanel(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
+      const input = sliderValueInput('Pixel Size');
+      fireEvent.change(input, { target: { value: '16' } });
+      fireEvent.blur(input);
       expect(onUpdateParams).toHaveBeenCalledWith(1, 'filter-1', expect.objectContaining({ pixel_size: 16 }));
     });
 
     it('calls onUpdateParams when algorithm changes', () => {
-      render(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
-      const selects = screen.getAllByRole('combobox');
-      const algorithmSelect = selects.find(s => 
-        s.querySelector('option[value="bayer_2x2"]')
-      ) as HTMLSelectElement;
-      
-      fireEvent.change(algorithmSelect, { target: { value: 'bayer_4x4' } });
+      renderPanel(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
+      fireEvent.click(screen.getByText('Floyd-Steinberg'));
+      fireEvent.click(screen.getByRole('option', { name: 'Bayer 4×4' }));
       expect(onUpdateParams).toHaveBeenCalledWith(1, 'filter-1', expect.objectContaining({ mode: 'bayer_4x4' }));
+    });
+
+    it('hides threshold bias and pattern angle for error diffusion', () => {
+      renderPanel(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
+      expect(screen.queryByText('Threshold Bias')).not.toBeInTheDocument();
+      expect(screen.queryByText('Pattern Angle')).not.toBeInTheDocument();
+    });
+
+    it('shows serpentine checkbox for error diffusion', () => {
+      renderPanel(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
+      const box = screen.getByRole('checkbox', { name: 'Serpentine' });
+      expect(box).not.toBeChecked();
+      fireEvent.click(box);
+      expect(onUpdateParams).toHaveBeenCalledWith(
+        1,
+        'filter-1',
+        expect.objectContaining({ serpentine: true }),
+      );
+    });
+
+    it('hides serpentine checkbox for Bayer', () => {
+      renderPanel(
+        <EffectSettingsPanel
+          selectedLayer={makeDitherLayer({ mode: 'bayer_4x4' })}
+          onUpdateParams={onUpdateParams}
+        />
+      );
+      expect(screen.queryByRole('checkbox', { name: 'Serpentine' })).not.toBeInTheDocument();
+    });
+
+    it('shows threshold bias and pattern angle for Bayer', () => {
+      renderPanel(
+        <EffectSettingsPanel
+          selectedLayer={makeDitherLayer({ mode: 'bayer_4x4' })}
+          onUpdateParams={onUpdateParams}
+        />
+      );
+      expect(screen.getByText('Threshold Bias')).toBeInTheDocument();
+      expect(screen.getByText('Pattern Angle')).toBeInTheDocument();
+    });
+
+    it('shows threshold bias but not pattern angle for Wave', () => {
+      renderPanel(
+        <EffectSettingsPanel
+          selectedLayer={makeDitherLayer({ mode: 'wave' })}
+          onUpdateParams={onUpdateParams}
+        />
+      );
+      expect(screen.getByText('Threshold Bias')).toBeInTheDocument();
+      expect(screen.queryByText('Pattern Angle')).not.toBeInTheDocument();
     });
   });
 
@@ -203,46 +257,40 @@ describe('EffectSettingsPanel', () => {
     it('renders intensity slider with range 0–1', () => {
       render(<EffectSettingsPanel selectedLayer={makeGlitchLayer()} onUpdateParams={onUpdateParams} />);
       expect(screen.getByText('Intensity')).toBeInTheDocument();
-      const sliders = document.querySelectorAll('input[type="range"]');
-      const intensitySlider = Array.from(sliders).find(
-        s => s.getAttribute('min') === '0' && s.getAttribute('max') === '1'
-      );
-      expect(intensitySlider).toBeTruthy();
+      expect(screen.getByDisplayValue('0.50')).toBeInTheDocument();
     });
 
     it('renders seed number input', () => {
       render(<EffectSettingsPanel selectedLayer={makeGlitchLayer()} onUpdateParams={onUpdateParams} />);
       expect(screen.getByText('Seed')).toBeInTheDocument();
-      const seedInput = document.querySelector('input[type="number"]') as HTMLInputElement;
+      const seedInput = screen.getByLabelText('Seed') as HTMLInputElement;
       expect(seedInput).toBeTruthy();
       expect(seedInput.value).toBe('0');
     });
 
     it('clamps seed to 0–99999 range', () => {
       render(<EffectSettingsPanel selectedLayer={makeGlitchLayer()} onUpdateParams={onUpdateParams} />);
-      const seedInput = document.querySelector('input[type="number"]') as HTMLInputElement;
+      const seedInput = screen.getByLabelText('Seed') as HTMLInputElement;
       fireEvent.change(seedInput, { target: { value: '150000' } });
+      fireEvent.blur(seedInput);
       expect(onUpdateParams).toHaveBeenCalledWith(2, 'filter-2', expect.objectContaining({ seed: 99999 }));
     });
   });
 
   describe('Curves settings', () => {
-    it('renders channel dropdown', () => {
+    it('renders channel dropdown and graph editor', () => {
       render(<EffectSettingsPanel selectedLayer={makeCurvesLayer()} onUpdateParams={onUpdateParams} />);
       expect(screen.getByText('Channel')).toBeInTheDocument();
-      const select = screen.getByRole('combobox');
-      expect(select).toHaveValue('All');
-    });
-
-    it('shows curve points editor', () => {
-      render(<EffectSettingsPanel selectedLayer={makeCurvesLayer()} onUpdateParams={onUpdateParams} />);
-      expect(screen.getByText('Curve Points')).toBeInTheDocument();
+      expect(screen.getByText('All')).toBeInTheDocument();
+      expect(screen.getByTestId('curve-graph')).toBeInTheDocument();
+      expect(screen.getByLabelText('Input')).toHaveValue('0');
+      expect(screen.getByLabelText('Output')).toHaveValue('0');
     });
 
     it('calls onUpdateParams when channel changes', () => {
       render(<EffectSettingsPanel selectedLayer={makeCurvesLayer()} onUpdateParams={onUpdateParams} />);
-      const select = screen.getByRole('combobox');
-      fireEvent.change(select, { target: { value: 'Red' } });
+      fireEvent.click(screen.getByLabelText('Open dropdown'));
+      fireEvent.click(screen.getByRole('option', { name: 'Red' }));
       expect(onUpdateParams).toHaveBeenCalledWith(3, 'filter-3', expect.objectContaining({ channel: 'Red' }));
     });
   });
@@ -259,22 +307,66 @@ describe('EffectSettingsPanel', () => {
 
     it('renders gamma slider with range 0.1–10', () => {
       render(<EffectSettingsPanel selectedLayer={makeRGBLayer()} onUpdateParams={onUpdateParams} />);
-      const sliders = document.querySelectorAll('input[type="range"]');
-      const gammaSlider = Array.from(sliders).find(
-        s => s.getAttribute('min') === '0.1' && s.getAttribute('max') === '10'
-      );
-      expect(gammaSlider).toBeTruthy();
+      expect(sliderValueInput('Gamma').value).toBe('1.0');
     });
 
     it('calls onUpdateParams with updated gamma', () => {
       render(<EffectSettingsPanel selectedLayer={makeRGBLayer()} onUpdateParams={onUpdateParams} />);
-      const sliders = document.querySelectorAll('input[type="range"]');
-      const gammaSlider = Array.from(sliders).find(
-        s => s.getAttribute('min') === '0.1' && s.getAttribute('max') === '10'
-      ) as HTMLInputElement;
-      
-      fireEvent.change(gammaSlider, { target: { value: '2.5' } });
+      const input = sliderValueInput('Gamma');
+      fireEvent.change(input, { target: { value: '2.5' } });
+      fireEvent.blur(input);
       expect(onUpdateParams).toHaveBeenCalledWith(4, 'filter-4', expect.objectContaining({ gamma: 2.5 }));
+    });
+  });
+
+  describe('per-filter blend', () => {
+    it('does not duplicate opacity/blend controls (those live in Layers)', () => {
+      renderPanel(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
+      expect(screen.queryByText('Blend')).not.toBeInTheDocument();
+      expect(screen.queryByText('Opacity')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('pattern export/import', () => {
+    it('disables pattern actions when no target layer', () => {
+      render(<EffectSettingsPanel selectedLayer={null} onUpdateParams={onUpdateParams} />);
+      expect(screen.getByText('Export as pattern…')).toBeDisabled();
+      expect(screen.getByText('Import pattern…')).toBeDisabled();
+    });
+
+    it('enables pattern actions when a layer is targeted', () => {
+      const onExportPattern = vi.fn();
+      const onImportPattern = vi.fn();
+      render(
+        <EffectSettingsPanel
+          selectedLayer={{
+            id: 1,
+            name: 'Layer',
+            filters: [
+              {
+                id: 'filter-1',
+                kind: 'Glow',
+                params: { type: 'Glow', radius: 1, intensity: 1, threshold: 0 },
+                enabled: true,
+                opacity: 1,
+                blend_mode: 'Normal',
+              } as FilterInfo,
+            ],
+          }}
+          onUpdateParams={onUpdateParams}
+          targetLayerId={1}
+          onExportPattern={onExportPattern}
+          onImportPattern={onImportPattern}
+        />
+      );
+      const exp = screen.getByText('Export as pattern…');
+      const imp = screen.getByText('Import pattern…');
+      expect(exp).not.toBeDisabled();
+      expect(imp).not.toBeDisabled();
+      fireEvent.click(exp);
+      fireEvent.click(imp);
+      expect(onExportPattern).toHaveBeenCalledTimes(1);
+      expect(onImportPattern).toHaveBeenCalledTimes(1);
     });
   });
 });

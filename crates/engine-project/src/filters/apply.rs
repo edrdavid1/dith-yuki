@@ -13,11 +13,12 @@ use super::gpu_bridge::{try_crt_gpu, try_halftone_gpu, try_ordered_bayer_gpu};
 use super::levels::LevelsFilter;
 use super::palette_quantize::PaletteQuantizeFilter;
 use engine_gpu::GpuContext;
+use crate::compositor::blend_tile;
 use crate::document::Document;
 use crate::error::EngineError;
 use crate::filter::{DitherModeV2, DitherParamsV2, FilterInstance, FilterParams};
 use crate::layer::Layer;
-use crate::types::LayerId;
+use crate::types::{BlendMode, LayerId};
 use engine_color::palette_cache::PaletteKdCache;
 use engine_color::palette_lut::{PaletteLutCache, DEFAULT_LUT_SIZE};
 use engine_color::threshold_map::ThresholdMapCache;
@@ -103,13 +104,45 @@ pub fn apply_filter_to_tile_with_caches(
             continue; // Skip disabled filters
         }
 
-        result = apply_single_filter(
+        result = apply_filter_with_blend(
             &result, filter, coord, palette_cache, lut_cache, threshold_cache, document,
             residuals_store, block_cache, layer.id, gpu,
         )?;
     }
 
     Ok(result)
+}
+
+/// Full_Then_Blend: apply the filter at 100%, then optionally blend over `pre`.
+///
+/// Error-diffusion residuals are written inside `apply_single_filter` from the
+/// full result. Opacity never enters kind-specific apply modules.
+fn apply_filter_with_blend(
+    pre: &PixelTile,
+    filter: &FilterInstance,
+    coord: TileCoord,
+    palette_cache: &PaletteKdCache,
+    lut_cache: &PaletteLutCache,
+    threshold_cache: &ThresholdMapCache,
+    document: &Document,
+    residuals_store: &ErrorResidualsStore,
+    block_cache: &BlockRepresentativeCache,
+    layer_id: LayerId,
+    gpu: Option<&GpuContext>,
+) -> Result<PixelTile, EngineError> {
+    let full_result = apply_single_filter(
+        pre, filter, coord, palette_cache, lut_cache, threshold_cache, document,
+        residuals_store, block_cache, layer_id, gpu,
+    )?;
+
+    if filter.opacity >= 1.0 && filter.blend_mode == BlendMode::Normal {
+        return Ok(full_result);
+    }
+
+    let mut out = PixelTile::new();
+    out.data.copy_from_slice(&pre.data);
+    blend_tile(&mut out, &full_result, filter.blend_mode, filter.opacity);
+    Ok(out)
 }
 
 /// Apply a single filter to a tile.
@@ -233,12 +266,13 @@ fn dispatch_dither_v2(
                 block_cache, layer_id,
             )
         }
-        DitherModeV2::FloydSteinberg | DitherModeV2::Atkinson => {
+        mode if mode.is_error_diffusion() => {
             apply_error_diffusion_with_cache(
                 tile, coord, params, residuals_store, layer_id,
                 palette_cache, lut_cache, document, block_cache,
             )
         }
+        _ => unreachable!("unhandled dither mode in dispatch"),
     }
 }
 
@@ -573,5 +607,142 @@ mod tests {
 
         let result = apply_single_filter(&tile, &filter, coord, &pc, &lc, &tc, &doc, &rs, &BlockRepresentativeCache::new(), layer_id, None);
         assert!(result.is_ok());
+    }
+
+    fn fill_gray(tile: &mut PixelTile, v: f32) {
+        for y in 0..260u32 {
+            for x in 0..260u32 {
+                tile.set(x, y, 0, v);
+                tile.set(x, y, 1, v);
+                tile.set(x, y, 2, v);
+                tile.set(x, y, 3, 1.0);
+            }
+        }
+    }
+
+    #[test]
+    fn filter_blend_fast_path_matches_single_filter() {
+        use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
+
+        let mut tile = PixelTile::new();
+        fill_gray(&mut tile, 0.4);
+        let filter = FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::FloydSteinberg,
+                levels: 4,
+                threshold_scale: 1.0,
+                pixel_size: 1,
+                color_mode: DitherColorMode::Rgb,
+                palette_id: None,
+                ..Default::default()
+            }),
+        );
+        assert_eq!(filter.opacity, 1.0);
+        assert_eq!(filter.blend_mode, BlendMode::Normal);
+
+        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let (pc, lc, tc, doc, rs) = make_caches_and_doc();
+        let layer_id = LayerId::new(1);
+        let blocks = BlockRepresentativeCache::new();
+
+        let full = apply_single_filter(
+            &tile, &filter, coord, &pc, &lc, &tc, &doc, &rs, &blocks, layer_id, None,
+        )
+        .unwrap();
+        let wrapped = apply_filter_with_blend(
+            &tile, &filter, coord, &pc, &lc, &tc, &doc, &rs, &blocks, layer_id, None,
+        )
+        .unwrap();
+        assert_eq!(full.data.as_ref(), wrapped.data.as_ref());
+    }
+
+    #[test]
+    fn filter_blend_opacity_half_matches_blend_tile() {
+        use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
+
+        let mut tile = PixelTile::new();
+        fill_gray(&mut tile, 0.4);
+        let mut filter = FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::FloydSteinberg,
+                levels: 4,
+                threshold_scale: 1.0,
+                pixel_size: 1,
+                color_mode: DitherColorMode::Rgb,
+                palette_id: None,
+                ..Default::default()
+            }),
+        );
+        filter.opacity = 0.5;
+
+        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let (pc, lc, tc, doc, rs) = make_caches_and_doc();
+        let layer_id = LayerId::new(1);
+        let blocks = BlockRepresentativeCache::new();
+
+        let full = apply_single_filter(
+            &tile, &filter, coord, &pc, &lc, &tc, &doc, &rs, &blocks, layer_id, None,
+        )
+        .unwrap();
+        let blended = apply_filter_with_blend(
+            &tile, &filter, coord, &pc, &lc, &tc, &doc, &rs, &blocks, layer_id, None,
+        )
+        .unwrap();
+
+        let mut expected = PixelTile::new();
+        expected.data.copy_from_slice(&tile.data);
+        blend_tile(&mut expected, &full, BlendMode::Normal, 0.5);
+
+        for y in engine_tiles::HALO..(engine_tiles::HALO + engine_tiles::TILE_SIZE) {
+            for x in engine_tiles::HALO..(engine_tiles::HALO + engine_tiles::TILE_SIZE) {
+                for c in 0..4u32 {
+                    let a = blended.at(x, y, c);
+                    let e = expected.at(x, y, c);
+                    assert!(
+                        (a - e).abs() < 1e-5,
+                        "mix mismatch at ({x},{y},c{c}): got {a} expected {e}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn glow_opacity_half_is_visual_mix_only() {
+        let mut tile = PixelTile::new();
+        fill_gray(&mut tile, 0.8);
+        let mut filter = FilterInstance::new(
+            FilterKind::Glow,
+            FilterParams::Glow {
+                radius: 1.0,
+                intensity: 1.0,
+                threshold: 0.0,
+            },
+        );
+        filter.opacity = 0.5;
+
+        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let (pc, lc, tc, doc, rs) = make_caches_and_doc();
+        let layer_id = LayerId::new(1);
+        let blocks = BlockRepresentativeCache::new();
+
+        let full = apply_single_filter(
+            &tile, &filter, coord, &pc, &lc, &tc, &doc, &rs, &blocks, layer_id, None,
+        )
+        .unwrap();
+        let blended = apply_filter_with_blend(
+            &tile, &filter, coord, &pc, &lc, &tc, &doc, &rs, &blocks, layer_id, None,
+        )
+        .unwrap();
+
+        let mut expected = PixelTile::new();
+        expected.data.copy_from_slice(&tile.data);
+        blend_tile(&mut expected, &full, BlendMode::Normal, 0.5);
+
+        let x = engine_tiles::HALO + 8;
+        let y = engine_tiles::HALO + 8;
+        assert!((blended.at(x, y, 0) - expected.at(x, y, 0)).abs() < 1e-5);
     }
 }

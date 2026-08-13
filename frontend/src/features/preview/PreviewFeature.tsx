@@ -6,12 +6,15 @@ import { useAppSelector } from '../../app/hooks';
 import { useViewport } from '../../hooks/useViewport';
 import { logIpcError, setViewport } from '../../shared/ipc';
 import type { PanelChromeProps } from '../panels/PanelChrome';
+import type { WelcomeActions } from '../../hooks/useWelcomeScreen';
 
 export type PreviewFeatureProps = PanelChromeProps & {
   /** When true, hide the Preview titlebar (floating window has its own chrome). */
   hideTitleBar?: boolean;
   /** Stretch to fill floating window content area. */
   fill?: boolean;
+  /** Welcome actions for the no-document slot (main + floating preview). */
+  welcome?: WelcomeActions;
 };
 
 /**
@@ -22,6 +25,7 @@ export default function PreviewFeature({
   onTitleBarMouseDown,
   hideTitleBar = false,
   fill = false,
+  welcome,
 }: PreviewFeatureProps) {
   const docId = useAppSelector((s) => s.document.docId);
   const docWidth = useAppSelector((s) => s.document.width);
@@ -110,23 +114,16 @@ export default function PreviewFeature({
   }, [docId, docWidth, docHeight, hasDocument]);
 
   if (!hasDocument || !docId) {
-    if (fill) {
-      return (
-        <div
-          style={{
-            flex: 1,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#888',
-            fontFamily: 'var(--font-family)',
-          }}
-        >
-          No document open
-        </div>
-      );
-    }
-    return <EmptyState />;
+    return (
+      <EmptyState
+        fill={fill}
+        recentEntries={welcome?.recentEntries}
+        onNewProject={welcome?.onNewProject}
+        onOpenImage={welcome?.onOpenImage}
+        onOpenProject={welcome?.onOpenProject}
+        onOpenRecent={welcome?.onOpenRecent}
+      />
+    );
   }
 
   const showCanvas = viewport.canvasWidth > 0 && viewport.canvasHeight > 0;

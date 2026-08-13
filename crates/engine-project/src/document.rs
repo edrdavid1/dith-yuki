@@ -250,6 +250,14 @@ impl DocumentHandle {
         self.current.load_full()
     }
 
+    /// Atomically replace the live document with an existing `Arc`.
+    ///
+    /// Used by undo/redo so the stacked snapshot is restored by pointer,
+    /// without deep-cloning the tree.
+    pub fn store(&self, doc: Arc<Document>) {
+        self.current.store(doc);
+    }
+
     /// Mutate the document atomically.
     ///
     /// The closure receives a mutable reference to a cloned document.

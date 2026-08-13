@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import MenuBar from '../components/MenuBar';
 import Notification from '../components/common/Notification';
-import { useDocument } from '../hooks/useDocument';
+import NewProjectDialog from '../components/NewProjectDialog';
+import { useWelcomeScreen } from '../hooks/useWelcomeScreen';
 import { usePanels } from '../hooks/usePanels';
+import { useUndoShortcuts } from '../hooks/useUndoShortcuts';
 import { useAppDispatch, useAppSelector } from './hooks';
 import { refreshFilters } from './slices/filtersSlice';
 import { refreshLayers } from './slices/layersSlice';
+import { redo as redoDocument, undo as undoDocument } from './slices/undoSlice';
 import { useShell } from './shell/ShellContext';
 import {
   onDockAffinity,
@@ -18,11 +21,6 @@ import {
 import type { DockSide } from '../types/panels';
 import PreviewSlot from '../features/preview/PreviewSlot';
 import DockedSidebar, { sidebarEffectiveWidth } from '../features/panels/DockedSidebar';
-import {
-  applyWorkspacePreset,
-  builtinWorkspacePresets,
-  listWorkspacePresets,
-} from '../features/panels/workspacePresets';
 import styles from './AppLayout.module.css';
 import menuStyles from '../features/document/MenuBar.module.css';
 import previewStyles from '../features/preview/Preview.module.css';
@@ -37,10 +35,22 @@ const PREVIEW_UNDOCK_THRESHOLD_PX = 5;
  */
 export default function AppLayout() {
   const dispatch = useAppDispatch();
-  const doc = useDocument();
+  const {
+    doc,
+    welcome,
+    newProjectOpen,
+    closeNewProject,
+    handleCreate,
+    onSaveImage,
+    onSaveProject,
+    onSaveProjectAs,
+  } = useWelcomeScreen();
   const { panels, visibleDocked, error: panelError } = usePanels();
   const layersError = useAppSelector((s) => s.layers.error);
   const filtersError = useAppSelector((s) => s.filters.error);
+  const canUndo = useAppSelector((s) => s.undo.canUndo);
+  const canRedo = useAppSelector((s) => s.undo.canRedo);
+  useUndoShortcuts();
   const {
     leftSidebar,
     rightSidebar,
@@ -205,44 +215,33 @@ export default function AppLayout() {
     }
   }, []);
 
-  const handleApplyWorkspacePreset = useCallback(
-    async (presetId: string) => {
-      const preset = listWorkspacePresets().find((p) => p.id === presetId);
-      if (!preset) return;
-      try {
-        await applyWorkspacePreset(preset, {
-          setSidebarWidth,
-          setSidebarCollapsed,
-          setSplitRatio,
-        });
-      } catch (err) {
-        console.error('Apply workspace preset failed:', err);
-      }
-    },
-    [setSidebarWidth, setSidebarCollapsed, setSplitRatio]
-  );
-
   const currentError = doc.error || layersError || filtersError;
   const displayError = currentError && currentError !== dismissedError ? currentError : null;
   const displayPanelError = panelError && panelError !== dismissedPanelError ? panelError : null;
 
   const gridTemplateColumns = `${leftW}px 1fr ${rightW}px`;
-  const workspaceMenuItems = builtinWorkspacePresets().map((p) => ({
-    id: p.id,
-    label: p.name,
-  }));
 
   return (
     <div className={cn('app-layout', 'app-layout-dual')} style={{ gridTemplateColumns }}>
       <div className={cn('app-toolbar')}>
         <MenuBar
           hasDocument={doc.hasDocument}
-          onOpenImage={doc.openImage}
-          onSaveImage={doc.saveImage}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          recentEntries={welcome.recentEntries}
+          onNewProject={welcome.onNewProject}
+          onOpenImage={welcome.onOpenImage}
+          onSaveImage={onSaveImage}
+          onOpenProject={welcome.onOpenProject}
+          onOpenRecent={welcome.onOpenRecent}
+          onSaveProject={onSaveProject}
+          onSaveProjectAs={onSaveProjectAs}
+          onExportPattern={() => void doc.exportPattern()}
+          onImportPattern={() => void doc.importPattern()}
           onOpenColorLab={handleOpenColorLab}
           onOpenPreferences={handleOpenPreferences}
-          workspacePresets={workspaceMenuItems}
-          onApplyWorkspacePreset={(id) => void handleApplyWorkspacePreset(id)}
+          onUndo={() => void dispatch(undoDocument())}
+          onRedo={() => void dispatch(redoDocument())}
         />
         <div className={cn('toolbar-spacer')} />
         <button
@@ -280,7 +279,7 @@ export default function AppLayout() {
       />
 
       <div className={cn('app-canvas')} data-panel-id="preview">
-        <PreviewSlot onTitleBarMouseDown={handlePreviewTitleMouseDown} />
+        <PreviewSlot onTitleBarMouseDown={handlePreviewTitleMouseDown} welcome={welcome} />
       </div>
 
       <DockedSidebar
@@ -311,6 +310,11 @@ export default function AppLayout() {
         message={displayPanelError}
         type="error"
         onDismiss={() => setDismissedPanelError(panelError)}
+      />
+      <NewProjectDialog
+        isOpen={newProjectOpen}
+        onClose={closeNewProject}
+        onCreate={handleCreate}
       />
     </div>
   );

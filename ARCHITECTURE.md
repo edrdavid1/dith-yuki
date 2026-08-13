@@ -7,6 +7,9 @@
 > - [TILE_PIPELINE.md](./TILE_PIPELINE.md) — тайловый pipeline, глобальные координаты, cross-tile зависимости, GPU path (§10)
 > - [COLOR_AND_COLOR_LAB.md](./COLOR_AND_COLOR_LAB.md) — as-built цвет, палитры, Color Lab, auto-extract, generators
 > - [.cursor-spec/track-d-gpu/](./.cursor-spec/track-d-gpu/) — Track D: requirements / design / tasks для `engine-gpu`
+> - [.cursor-spec/track-e-dyproj/](./.cursor-spec/track-e-dyproj/) — Track E: `.dyproj` persistence + shared zip/asset embed (`engine-project::serialize`)
+> - [.cursor-spec/track-f-dyuki/](./.cursor-spec/track-f-dyuki/) — Track F: `.dyuki` sharable patterns (`serialize::pattern`, `export_pattern` / `import_pattern`)
+> - [.cursor-spec/track-g-welcome/](./.cursor-spec/track-g-welcome/) — Track G: Welcome screen, `create_document`, Recent Files
 
 ---
 
@@ -50,7 +53,8 @@ dither-yuki-2/
 │       ├── worker.rs           # Background worker loop, tile-ready events
 │       ├── panel_manager.rs    # PanelManager: panel state machine
 │       ├── panel_commands.rs   # IPC для dock/undock/hide/show/reorder
-│       └── panel_persistence.rs # JSON disk persistence для panel layout
+│       ├── panel_persistence.rs # JSON disk persistence для panel layout
+│       └── recent_files.rs      # Recent Files JSON (Welcome / File → Open Recent)
 ├── crates/
 │   ├── engine-core/            # Базовые типы (Phase 0 stub)
 │   ├── engine-tiles/           # Тайловый кэш, scheduler, decompose, pyramid
@@ -138,11 +142,14 @@ dither-yuki-2/
 │       │   ├── WindowControls.tsx    # Close/minimize/maximize buttons
 │       │   ├── AppTitlebar.tsx       # Custom cross-platform titlebar
 │       │   ├── EffectChooserDialog.tsx # Add-effect modal
-│       │   ├── EmptyState.tsx        # No-document placeholder
+│       │   ├── NewProjectDialog.tsx  # Blank document size/background
+│       │   ├── EmptyState.tsx        # Welcome (no-document slot in PreviewFeature)
 │       │   ├── common/              # Slider, DropdownMenu, ResizeHandle, Notification
 │       │   └── filters/             # Per-filter parameter editors
 │       ├── hooks/
-│       │   ├── useDocument.ts        # Open/save/export document
+│       │   ├── useDocument.ts        # Open/save/export/create document
+│       │   ├── useRecentFiles.ts     # get_recent_files (lifted via useWelcomeScreen)
+│       │   ├── useWelcomeScreen.ts   # One Recent source + New Project dialog per window
 │       │   ├── useViewport.ts        # Zoom/pan + set_viewport IPC
 │       │   ├── usePan.ts             # Middle-mouse / Space+click panning
 │       │   ├── useLayers.ts          # Layer CRUD + selection
@@ -152,9 +159,8 @@ dither-yuki-2/
 │       │   ├── useSelectionState.ts  # Layer/filter selection coordination
 │       │   └── useCloseRequested.ts  # Window close handling
 │       ├── workers/tileWorker.ts     # Web Worker: fetch tile:// → ImageBitmap
-│       ├── ipc/
-│       │   ├── commands.ts           # Typed Tauri invoke wrappers
-│       │   └── panelCommands.ts      # Panel IPC wrappers
+│       ├── shared/ipc/               # Canonical IPC (document, project, recent, …)
+│       ├── ipc/                      # Compat barrels → shared/ipc
 │       ├── types/                    # TypeScript interfaces (effects, panels, index)
 │       ├── utils/                    # viewport.ts, tileRetry, tileFallback, hexConvert
 │       ├── lib/platform.ts           # OS detection (macOS/Windows/Linux)
@@ -214,7 +220,7 @@ graph LR
 ```mermaid
 graph TB
     subgraph Frontend ["Frontend (React/TypeScript)"]
-        MenuBar[MenuBar: Open / Save / Export]
+        MenuBar[MenuBar: New / Open / Recent / Save]
         TileCanvas[TileCanvas: canvas + Web Worker]
         EffectPanel[EffectSettingsPanel: filter params]
         LayerPanel[LayersPanel: tree + drag-and-drop]
@@ -228,6 +234,8 @@ graph TB
         tile_proto[tile:// custom protocol]
         tile_ready[tile-ready event push]
         load_image[load_image]
+        create_document[create_document]
+        get_recent_files[get_recent_files]
         get_layer_tree[get_layer_tree]
         filter_cmds[add_filter / update_filter / remove_filter]
         palette_cmds[add_palette / remove_palette / import_palette]
@@ -255,6 +263,8 @@ graph TB
     end
 
     MenuBar -->|invoke| load_image
+    MenuBar -->|invoke| create_document
+    MenuBar -->|invoke| get_recent_files
     MenuBar -->|invoke| export_image
     EffectPanel -->|invoke| filter_cmds
     ColorLab -->|invoke| palette_cmds
@@ -264,6 +274,8 @@ graph TB
     panel_cmds --> PanelMgr
 
     load_image --> AppState
+    create_document --> AppState
+    get_recent_files --> AppState
     set_viewport --> ViewportSt
     set_viewport -->|schedule dirty tiles| SchedulerQ
     tile_proto --> TileCache
@@ -325,7 +337,7 @@ graph TB
 ```rust
 pub struct AppState {
     pub document_handle: DocumentHandle,     // Lock-free доступ к Document
-    pub tile_cache: TileCache,               // LRU кэш тайлов (256 MB бюджет)
+    pub tile_cache: TileCache,               // LRU кэш тайлов (256 MB бюджет) + evict_layer
     pub scheduler: Scheduler,                // Priority task queues для worker pool
     pub viewport: Mutex<ViewportState>,      // Текущий viewport для priority decisions
     pub palette_cache: PaletteKdCache,       // Concurrent KD-tree кэш палитр
@@ -338,6 +350,7 @@ pub struct AppState {
     /// Track D: optional wgpu device (None = CPU-only / no adapter)
     pub gpu: Option<Arc<engine_gpu::GpuContext>>,
     pub panel_manager: Mutex<PanelManager>,  // Multi-window panel state
+    pub undo_manager: Mutex<UndoManager>,    // Track N: snapshot Arc<Document> stacks, max_depth=50
     // … selection, dock_affinity, float-drag hooks …
 }
 ```
@@ -365,11 +378,24 @@ pub struct DocumentHandle {
 | Операция | Сложность | Блокировка |
 |----------|-----------|-----------|
 | `snapshot()` | O(1) | Lock-free (ArcSwap::load_full) |
+| `store(arc)` | O(1) | Атомарный swap, без lock |
 | `mutate(closure)` | O(n) clone | Атомарный swap, без lock |
 
 - `snapshot()` — возвращает `Arc<Document>`, дешёвая атомарная операция
+- `store(arc)` — атомарно подменяет live-указатель без deep-clone (undo/redo)
 - `mutate(f)` — клонирует текущий `Document`, применяет `f(&mut Document)`, атомарно подменяет
 - Гарантирует consistent snapshot для читателей, нет deadlock
+
+### 3.2.1 Undo / Redo (Track N)
+
+`UndoManager` живёт на `AppState` (`src-tauri/src/undo.rs`), не внутри `DocumentHandle`.
+История — bounded стек `Arc<Document>` (`max_depth = 50`), не command/diff.
+
+- Все document-мутации Tauri идут через `with_document_undo`: снимок `before` до mutate, push на успех, на `Err` стеки не трогаются.
+- `load_image` / `open_project` / `create_document` / `new_document` вызывают `clear_history` (не undo-шаг).
+- `undo` / `redo` делают `DocumentHandle::store(Arc)` + `increment_document_gen` на live-снимке, затем тот же путь, что replace: `invalidate_after_document_replace` + `schedule_dirty_viewport_tiles` + `document-changed` (`document_undone` / `document_redone`).
+- Orphan_GC: `TileCache::evict_layer` / `ErrorResidualsStore::evict_layer` / `BlockRepresentativeCache::evict_layer` для `LayerId`, которых нет ни в live, ни в undo, ни в redo. Пиксельный paint в модели нет — snapshot структуры достаточен.
+- Фронт: событие `undo-state-changed`, кастомный MenuBar, window `keydown` (⌘Z / Ctrl+Z), без второго debounce (граница шага = Track K 100ms в `useEffectLayer`).
 
 ### 3.3 Tile Protocol Handler (tile://)
 
@@ -463,12 +489,18 @@ pub struct PanelManager {
 - Floating panels → отдельные Tauri WebviewWindow (`index.html?panel=<id>`)
 - Синхронизация через `panel-state-changed` Tauri event (fan-out ко всем окнам)
 - Persistence → JSON в app data directory, загружается при старте
+  (`panel_state.json`; рядом — `recent_files.json`, см. §3.9)
 
 ### 3.8 IPC-команды (сводка)
 
 | Команда | Назначение |
 |---------|-----------|
-| `load_image` | Decode image → decompose to tiles → create Document |
+| `load_image` | Decode image → decompose to tiles → create Document; record Recent (Image) |
+| `create_document` | In-memory blank raster (same decompose/replace as `load_image`; **not** recorded in Recent) |
+| `get_recent_files` | Load `{app_data_dir}/recent_files.json`, prune missing paths, rewrite if dropped |
+| `open_project` | Open `.dyproj` → replace document; record Recent (Project) |
+| `save_project` / `save_project_as` | Write `.dyproj`; record Recent (Project) |
+| `export_pattern` / `import_pattern` | `.dyuki` pack/unpack (Track F) |
 | `export_image` | Full-res composite → PNG/JPEG encode → fs::write |
 | `set_viewport` | Update viewport → schedule dirty tiles |
 | `get_layer_tree` | Snapshot → serialize LayerNodeDto[] |
@@ -480,6 +512,25 @@ pub struct PanelManager {
 | `list_builtin_palettes` / `import_builtin_palette` | Built-in retro presets → Document palette |
 | `generate_ramp_palette` / `generate_harmony_palette` | Draft-only color lists (no Document write) |
 | `undock_panel` / `dock_panel` / `show_panel` / `hide_panel` / `reorder_panels` | Panel management |
+
+### 3.9 Welcome Screen и Recent Files (Track G)
+
+При `!hasDocument` слот preview (`PreviewFeature`, включая `fill` / floating window) рендерит **Welcome** в существующем `EmptyState.tsx` — не отдельный competing component.
+
+**Blank document — `create_document(width, height, background)`:**
+- Bounds: `1..=MAX_DOCUMENT_DIMENSION` (8192), та же константа, что `load_image`
+- Buffer: f32 RGBA в numeric space `load_image` (`u8/255.0`). Transparent = zeros; White = `1,1,1,1`
+- Дальше тот же путь, что `load_image`: `decompose_image_to_tiles` → один raster leaf (`LayerId::new(1)`) → `project_path = None` → invalidate + schedule + `document-changed` (`document_created`)
+- **Не** вызывает `record_recent_file` (нет пути на диске, пока пользователь не Save Project)
+
+**Recent Files — `src-tauri/src/recent_files.rs`:**
+- JSON `{app_data_dir}/recent_files.json` (рядом с `panel_state.json`); `MAX_RECENT = 10`
+- Запись `{ path, kind: image|project, display_name, opened_at }` (ISO-8601 UTC; relative time считается на фронте)
+- `record_recent_file` после **успеха** `load_image` (Image), `open_project` / `save_project` / `save_project_as` (Project). Ошибка записи логируется и **не** валит user command
+- `get_recent_files`: `exists()` prune; если что-то выкинули — rewrite; rewrite fail → всё равно вернуть отфильтрованный список
+- Missing/corrupt JSON → пустой список, не IPC error
+
+**Frontend wiring:** один `useWelcomeScreen()` на окно (`AppLayout` / floating Preview) поднимает `useRecentFiles` + `useDocument` (`openImageAt` / `openProjectAt` / `createDocument`). Welcome и File-меню получают одни и те же `entries` и колбэки. `NewProjectDialog` один на окно (defaults 1920×1080 Transparent). File: **New Project…** (всегда enabled) + **Open Recent** (скрыт, если список пуст).
 
 ---
 
@@ -934,9 +985,11 @@ SIMD-ускорение: `levels_row_simd` (wide f32x4) для batch processing 
 
 ### 5.6 Glitch
 
-- **RGBShift:** хроматическая аберрация (shift RGB channels by offset)
-- **BlockDisplace:** блочное смещение
-- Детерминистический XorShift64 PRNG (seed XOR tile coords)
+- **RGBShift:** хроматическая аберрация (X-only channel shift)
+- **BlockDisplace:** блочное смещение (16px, origin = `floor(gx/16)*16` в глобальных пикселях)
+- Детерминистический XorShift64; ключ PRNG = `seed XOR f(global_x, global_y, level)` для dest-пикселя (RGB) или dest-block origin (Block Displace) — не `TileCoord`
+- Координаты через `GlobalCoordSigned`; v1 `|offset| ≤ HALO` (как Glow radius)
+- Спека correctness: [track-j-glitch](.cursor-spec/track-j-glitch/)
 
 ### 5.7 CRT / Glow
 
@@ -1049,6 +1102,8 @@ graph TD
 
     subgraph Hooks
         useDocument
+        useWelcomeScreen
+        useRecentFiles
         useViewport
         usePan
         useLayers
@@ -1066,7 +1121,7 @@ graph TD
 | Компонент | Ответственность |
 |-----------|----------------|
 | `App` | Root layout, hooks orchestration, panel visibility logic |
-| `MenuBar` | File open/save/export, app-level actions |
+| `MenuBar` | File: New Project… / Open Image / Open Project… / Open Recent / Save; app-level actions |
 | `PreviewWindow` | Preview viewport wrapper + zoom controls |
 | `TileCanvas` | HTML5 `<canvas>` + Web Worker, tile fetch/decode/render |
 | `EffectSettingsPanel` | Switch по filter.kind → parameter editor |
@@ -1081,7 +1136,8 @@ graph TD
 | `AppTitlebar` | Cross-platform titlebar (macOS/Windows/Linux) |
 | `WindowControls` | Close/minimize/maximize buttons |
 | `EffectChooserDialog` | Modal для выбора типа нового фильтра |
-| `EmptyState` | Placeholder при отсутствии документа |
+| `NewProjectDialog` | Modal: width / height / Transparent\|White → `create_document` |
+| `EmptyState` | Welcome screen при отсутствии документа (PreviewFeature empty + fill) |
 | `common/*` | Slider, DropdownMenu, ResizeHandle, Notification |
 
 ### 7.4 TileCanvas + Web Worker
@@ -1104,7 +1160,9 @@ graph TD
 
 | Hook | Назначение |
 |------|-----------|
-| `useDocument` | Open/save/export, docId/width/height/loading/error state |
+| `useDocument` | Open/save/export/create; `openImageAt` / `openProjectAt` for Recent; docId/width/height/loading/error |
+| `useRecentFiles` | `get_recent_files` on mount; `{ entries, refresh }` |
+| `useWelcomeScreen` | One Recent source + New Project dialog + refresh-after-open/save (per window) |
 | `useViewport` | Zoom/pan state, debounced set_viewport IPC, fitToView |
 | `usePan` | Middle-mouse / Space+click panning, cursor management |
 | `useLayers` | Layer CRUD, selection, get_layer_tree refresh |
@@ -1162,6 +1220,7 @@ graph TD
 ├──────────────────────────────────────────────────┤
 │  Blocking Thread Pool (tokio)                    │
 │  ├── Image decode (load_image)                   │
+│  ├── Blank buffer fill (create_document)         │
 │  ├── Image export (PNG/JPEG encoding)            │
 │  └── File I/O (palette import/export)            │
 └──────────────────────────────────────────────────┘
@@ -1350,9 +1409,35 @@ sequenceDiagram
     Backend->>Backend: image::open() → decode → RGBA u8 → f32
     Backend->>Cache: decompose_image_to_tiles → Raw tiles at level 0
     Backend->>Backend: Create Document + Layer
+    Backend->>Backend: record_recent_file(path, Image)
     Backend-->>useDocument: {doc_id, width, height, tile_count}
     Note over TileCanvas: fitToView() → set_viewport → schedule → workers → tile-ready
     TileCanvas->>TileCanvas: Web Worker fetches tiles → canvas draws
+```
+
+### 12.1b New Project (blank document)
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Welcome as EmptyState / File
+    participant Dialog as NewProjectDialog
+    participant useDocument
+    participant IPC as Tauri IPC
+    participant Backend
+    participant Cache as TileCache
+
+    User->>Welcome: New Project
+    Welcome->>Dialog: open
+    User->>Dialog: width / height / background → Create
+    Dialog->>useDocument: createDocument({width, height, background})
+    useDocument->>IPC: invoke("create_document", …)
+    IPC->>Backend: validate 1..=8192
+    Backend->>Backend: fill f32 RGBA buffer
+    Backend->>Cache: decompose_image_to_tiles
+    Backend->>Backend: Document + one raster leaf, project_path = None
+    Note over Backend: no record_recent_file
+    Backend-->>useDocument: {doc_id, width, height, tile_count}
 ```
 
 ### 12.2 Обновление параметров фильтра
@@ -1486,7 +1571,7 @@ Error diffusion has intra-tile dependency (L→R, T→B) but each tile is indepe
 |-------------|---------|
 | Single document | Одновременно один документ (doc_id=1) |
 | Max 8192×8192 | Изображения > 8192px отклоняются |
-| No undo/redo | revision++ есть, undo stack нет |
+| No undo/redo | ~~revision++ есть, undo stack нет~~ **Track N:** snapshot `Arc<Document>`, `max_depth=50` |
 | Pyramid forced level 0 | Frontend всегда level 0, zoom-out масштабирует на canvas |
 | Oklab = sRGB primaries only | Матрица RGB→LMS для Rec.709; не-sRGB рабочие пространства нуждаются в промежуточной конвертации |
 | Error diffusion cross-tile | Halo truncation (ошибка обрезается на границе тайла); `ErrorResiduals` store спроектирован, но row-major scheduler для sequential processing — TODO |
@@ -1496,7 +1581,7 @@ Error diffusion has intra-tile dependency (L→R, T→B) but each tile is indepe
 ### 14.2 Будущие улучшения
 
 - [ ] Pyramid downsample pipeline integration (level > 0)
-- [ ] Undo/redo stack (command pattern over Document mutations)
+- [x] Undo/redo snapshot stack (Track N: `UndoManager` + `with_document_undo`; paint-aware undo still out of scope)
 - [ ] Row-major scheduler for cross-tile error diffusion
 - [ ] Proper Luminance via Oklab L* channel
 - [ ] Mask editing tools UI

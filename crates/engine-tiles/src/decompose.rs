@@ -104,7 +104,8 @@ pub fn decompose_image_to_tiles(
                 },
                 stage: CacheStage::Raw,
             };
-            cache.get_or_insert(key, Arc::new(tile));
+            // Always overwrite: reload/open must not keep stale Raw from a prior document.
+            cache.insert_fresh(key, Arc::new(tile));
         }
     }
 

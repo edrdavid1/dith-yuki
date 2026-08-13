@@ -22,6 +22,7 @@ pub mod invalidation;
 pub mod layer;
 pub mod mask;
 pub mod palette_gen;
+pub mod serialize;
 pub mod simd;
 pub mod types;
 

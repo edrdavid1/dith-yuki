@@ -31,6 +31,12 @@ fn arb_legacy_dither_mode() -> impl Strategy<Value = DitherMode> {
         Just(DitherMode::ErrorDiffusion {
             kernel: DiffusionKernel::Stucki,
         }),
+        Just(DitherMode::ErrorDiffusion {
+            kernel: DiffusionKernel::Burkes,
+        }),
+        Just(DitherMode::ErrorDiffusion {
+            kernel: DiffusionKernel::Sierra,
+        }),
     ]
 }
 
@@ -130,20 +136,31 @@ proptest! {
         prop_assert!(matches!(at.mode, DitherModeV2::Atkinson),
             "Atkinson kernel should map to Atkinson mode");
 
-        // JJN and Stucki fall back to FloydSteinberg
         let jjn = DitherParamsV2::from((
             DitherMode::ErrorDiffusion { kernel: DiffusionKernel::JarvisJudiceNinke },
             color_depth,
         ));
-        prop_assert!(matches!(jjn.mode, DitherModeV2::FloydSteinberg),
-            "JarvisJudiceNinke should fall back to FloydSteinberg");
+        prop_assert!(matches!(jjn.mode, DitherModeV2::JarvisJudiceNinke),
+            "JarvisJudiceNinke should map to JarvisJudiceNinke mode");
 
         let stucki = DitherParamsV2::from((
             DitherMode::ErrorDiffusion { kernel: DiffusionKernel::Stucki },
             color_depth,
         ));
-        prop_assert!(matches!(stucki.mode, DitherModeV2::FloydSteinberg),
-            "Stucki should fall back to FloydSteinberg");
+        prop_assert!(matches!(stucki.mode, DitherModeV2::Stucki),
+            "Stucki should map to Stucki mode");
+
+        let burkes = DitherParamsV2::from((
+            DitherMode::ErrorDiffusion { kernel: DiffusionKernel::Burkes },
+            color_depth,
+        ));
+        prop_assert!(matches!(burkes.mode, DitherModeV2::Burkes));
+
+        let sierra = DitherParamsV2::from((
+            DitherMode::ErrorDiffusion { kernel: DiffusionKernel::Sierra },
+            color_depth,
+        ));
+        prop_assert!(matches!(sierra.mode, DitherModeV2::Sierra));
     }
 }
 

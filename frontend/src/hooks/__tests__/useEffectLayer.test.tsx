@@ -23,6 +23,8 @@ function makeFilter(kind: string, params: Record<string, unknown>, id = 'filter-
     kind: kind as FilterInfo['kind'],
     params: { type: kind, ...params } as FilterInfo['params'],
     enabled: true,
+    opacity: 1,
+    blend_mode: 'Normal',
   };
 }
 
@@ -102,6 +104,33 @@ describe('useEffectLayer', () => {
       type: 'Glitch',
       glitch_type: 'RGBShift',
       intensity: 0.5,
+    });
+  });
+
+  it('flattens externally tagged Curves params from the engine snapshot', () => {
+    const { wrapper } = wrapperFor([
+      {
+        id: 'filter-curves',
+        kind: 'Curves',
+        params: {
+          Curves: {
+            curve: [[0, 0], [0.5, 0.8], [1, 1]],
+            channel: 'Red',
+          },
+        } as unknown as FilterInfo['params'],
+        enabled: true,
+        opacity: 1,
+        blend_mode: 'Normal',
+      },
+    ]);
+
+    const { result } = renderHook(() => useEffectLayer(1, 'filter-curves'), { wrapper });
+
+    expect(result.current.effectType).toBe('Curves');
+    expect(result.current.effectParams).toMatchObject({
+      type: 'Curves',
+      channel: 'Red',
+      curve: [[0, 0], [0.5, 0.8], [1, 1]],
     });
   });
 

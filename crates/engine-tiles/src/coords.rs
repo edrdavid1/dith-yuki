@@ -120,6 +120,19 @@ impl GlobalCoordSigned {
         let ps = pattern_size as i32;
         (self.x.rem_euclid(ps) as u32, self.y.rem_euclid(ps) as u32)
     }
+
+    /// Inverse of [`from_local_with_halo`]: global → signed local (including halo).
+    ///
+    /// The result may fall outside `[0, TILE_SIZE + 2*halo)` when the global
+    /// point is not in this tile's buffer — callers clamp or skip.
+    #[inline]
+    #[must_use]
+    pub fn to_local_with_halo(self, tile: TileCoord, halo: u32) -> (i32, i32) {
+        (
+            self.x - tile.x as i32 * TILE_SIZE as i32 + halo as i32,
+            self.y - tile.y as i32 * TILE_SIZE as i32 + halo as i32,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -261,5 +274,18 @@ mod tests {
         let (px, py) = g.pattern_cell(8);
         assert_eq!(px, 6); // -2 rem_euclid 8 = 6
         assert_eq!(py, 6);
+    }
+
+    #[test]
+    fn to_local_with_halo_inverts_from_local() {
+        let halo = 2u32;
+        let t = tile(1, 2);
+        for local_x in [0u32, halo, halo + 10, halo + TILE_SIZE - 1, halo + TILE_SIZE + 1] {
+            for local_y in [0u32, halo, halo + 7] {
+                let g = GlobalCoordSigned::from_local_with_halo(t, local_x, local_y, halo);
+                let (lx, ly) = g.to_local_with_halo(t, halo);
+                assert_eq!((lx, ly), (local_x as i32, local_y as i32));
+            }
+        }
     }
 }

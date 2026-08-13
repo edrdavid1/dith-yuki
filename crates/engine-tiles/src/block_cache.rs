@@ -99,6 +99,31 @@ impl BlockRepresentativeCache {
         self.dithered.clear();
     }
 
+    /// Layer ids present in raw, dithered, or populated maps.
+    pub fn cached_layer_ids(&self) -> std::collections::HashSet<u32> {
+        let mut ids = std::collections::HashSet::new();
+        for e in self.raw.iter() {
+            ids.insert(e.key().layer);
+        }
+        for e in self.dithered.iter() {
+            ids.insert(e.key().layer);
+        }
+        for e in self.populated.iter() {
+            ids.insert((*e.key() >> 8) as u32);
+        }
+        ids
+    }
+
+    /// Drop raw, dithered, and populated entries for `layer`. Missing keys are a no-op.
+    pub fn evict_layer(&self, layer: u32) {
+        self.raw.retain(|k, _| k.layer != layer);
+        self.dithered.retain(|k, _| k.layer != layer);
+        self.populated.retain(|k, _| {
+            let packed_layer = (*k >> 8) as u32;
+            packed_layer != layer
+        });
+    }
+
     /// Full invalidate — raw image changed.
     pub fn invalidate_all(&self) {
         self.raw.clear();
@@ -280,6 +305,26 @@ mod tests {
         cache.invalidate_all();
         assert!(!cache.is_populated(1, 4));
         assert!(cache.generation() > gen);
+    }
+
+    #[test]
+    fn evict_layer_removes_target_keeps_other() {
+        let cache = BlockRepresentativeCache::new();
+        let rgba_a = vec![0.25f32; 4 * 4 * 4];
+        let rgba_b = vec![0.75f32; 4 * 4 * 4];
+        cache.populate_from_buffer(&rgba_a, 4, 4, 1, 2);
+        cache.populate_from_buffer(&rgba_b, 4, 4, 2, 2);
+        cache.insert_dithered(BlockCoord::from_global(1, 0, 0, 2), [0.1, 0.2, 0.3]);
+        cache.insert_dithered(BlockCoord::from_global(2, 0, 0, 2), [0.4, 0.5, 0.6]);
+
+        cache.evict_layer(1);
+
+        assert!(cache.get_raw(BlockCoord::from_global(1, 0, 0, 2)).is_none());
+        assert!(cache.get_dithered(BlockCoord::from_global(1, 0, 0, 2)).is_none());
+        assert!(!cache.is_populated(1, 2));
+        assert!(cache.get_raw(BlockCoord::from_global(2, 0, 0, 2)).is_some());
+        assert!(cache.get_dithered(BlockCoord::from_global(2, 0, 0, 2)).is_some());
+        assert!(cache.is_populated(2, 2));
     }
 
     #[test]
