@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import MenuBar from '../components/MenuBar';
 import Notification from '../components/common/Notification';
 import NewProjectDialog from '../components/NewProjectDialog';
@@ -24,6 +25,7 @@ import DockedSidebar, { sidebarEffectiveWidth } from '../features/panels/DockedS
 import styles from './AppLayout.module.css';
 import menuStyles from '../features/document/MenuBar.module.css';
 import previewStyles from '../features/preview/Preview.module.css';
+import { projectBasename } from '../shared/unsavedGuard';
 import { bind } from '../shared/ui/cn';
 
 const cn = bind({ ...styles, ...menuStyles, ...previewStyles });
@@ -44,6 +46,8 @@ export default function AppLayout() {
     onSaveImage,
     onSaveProject,
     onSaveProjectAs,
+    confirmReplace,
+    unsavedDialog,
   } = useWelcomeScreen();
   const { panels, visibleDocked, error: panelError } = usePanels();
   const layersError = useAppSelector((s) => s.layers.error);
@@ -51,6 +55,39 @@ export default function AppLayout() {
   const canUndo = useAppSelector((s) => s.undo.canUndo);
   const canRedo = useAppSelector((s) => s.undo.canRedo);
   useUndoShortcuts();
+
+  const allowCloseRef = useRef(false);
+  const confirmReplaceRef = useRef(confirmReplace);
+  confirmReplaceRef.current = confirmReplace;
+
+  useEffect(() => {
+    const bullet = doc.hasDocument && doc.dirty ? '• ' : '';
+    const name = doc.hasDocument ? projectBasename(doc.projectPath) : 'Untitled';
+    void getCurrentWindow().setTitle(`${bullet}${name} — Dither Engine`);
+  }, [doc.dirty, doc.hasDocument, doc.projectPath]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+    const win = getCurrentWindow();
+    void win
+      .onCloseRequested(async (event) => {
+        if (allowCloseRef.current) return;
+        event.preventDefault();
+        const ok = await confirmReplaceRef.current();
+        if (!ok) return;
+        allowCloseRef.current = true;
+        await win.destroy();
+      })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
   const {
     leftSidebar,
     rightSidebar,
@@ -316,6 +353,8 @@ export default function AppLayout() {
         onClose={closeNewProject}
         onCreate={handleCreate}
       />
+      {unsavedDialog}
+      {doc.svgDialog}
     </div>
   );
 }

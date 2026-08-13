@@ -26,6 +26,8 @@ export interface DocumentState {
   layerId: number | null;
   /** Remembered `.dyproj` path after Save As / Open Project (UI hint only). */
   projectPath: string | null;
+  /** Track P: diverges from last save / replace. */
+  dirty: boolean;
 }
 
 const initialState: DocumentState = {
@@ -38,6 +40,7 @@ const initialState: DocumentState = {
   error: null,
   layerId: null,
   projectPath: null,
+  dirty: false,
 };
 
 export const refreshDocument = createAsyncThunk(
@@ -225,11 +228,15 @@ const documentSlice = createSlice({
             | 'notification'
             | 'loading'
             | 'projectPath'
+            | 'dirty'
           >
         >
       >
     ) {
       Object.assign(state, action.payload);
+    },
+    setDirty(state, action: PayloadAction<boolean>) {
+      state.dirty = action.payload;
     },
   },
   extraReducers: (builder) => {
@@ -261,6 +268,7 @@ const documentSlice = createSlice({
         state.layerId = action.payload.layerId;
         state.hasDocument = true;
         state.projectPath = null;
+        state.dirty = false;
         state.error = null;
       })
       .addCase(openImage.rejected, (state, action) => {
@@ -280,6 +288,7 @@ const documentSlice = createSlice({
         state.layerId = action.payload.layerId;
         state.hasDocument = true;
         state.projectPath = null;
+        state.dirty = false;
         state.error = null;
       })
       .addCase(createDocument.rejected, (state, action) => {
@@ -307,6 +316,7 @@ const documentSlice = createSlice({
         state.layerId = action.payload.layerId;
         state.hasDocument = true;
         state.projectPath = action.payload.projectPath;
+        state.dirty = false;
         state.error = null;
       })
       .addCase(openProject.rejected, (state, action) => {
@@ -316,6 +326,7 @@ const documentSlice = createSlice({
       .addCase(saveProject.fulfilled, (state, action) => {
         state.notification = action.payload.notification;
         state.projectPath = action.payload.projectPath;
+        state.dirty = false;
         state.error = null;
       })
       .addCase(saveProject.rejected, (state, action) => {
@@ -325,6 +336,7 @@ const documentSlice = createSlice({
       .addCase(saveProjectAs.fulfilled, (state, action) => {
         state.notification = action.payload.notification;
         state.projectPath = action.payload.projectPath;
+        state.dirty = false;
         state.error = null;
       })
       .addCase(saveProjectAs.rejected, (state, action) => {
@@ -350,5 +362,5 @@ const documentSlice = createSlice({
   },
 });
 
-export const { clearNotification, clearError, setDocumentMeta } = documentSlice.actions;
+export const { clearNotification, clearError, setDocumentMeta, setDirty } = documentSlice.actions;
 export default documentSlice.reducer;

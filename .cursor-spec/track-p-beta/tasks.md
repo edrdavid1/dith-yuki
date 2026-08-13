@@ -16,7 +16,7 @@ C4.1 / Color Lab §6 parallel anytime.
 
 ## 0. Baseline
 
-- [ ] 0.1 Inventory
+- [x] 0.1 Inventory
   - `AppState.project_path`; `documentSlice.projectPath`; no dirty
   - `main.rs` CloseRequested = panels only; window label `main`
   - Tauri 2 `onCloseRequested` / `destroy` vs `exit` (no re-entry loop)
@@ -26,7 +26,7 @@ C4.1 / Color Lab §6 parallel anytime.
   - Track A §6.2 / Track D §5.3 empty boxes
   - _Requirements: 1, 2, 4, 6_
 
-- [ ] 0.2 Link docs
+- [x] 0.2 Link docs
   - This folder from `RELEASE_TRACKS.md`, `tech-debit.md`
   - Color Lab gap #1 → P2; задача 1 Import Layer → P3
   - Track O design: Saved_Mark is the dirty-flag O3 was waiting for
@@ -35,11 +35,11 @@ C4.1 / Color Lab §6 parallel anytime.
 **§0.1 result (fill in):**
 
 ```
-Date:
-Close API chosen (frontend onCloseRequested vs Rust emit):
-destroy vs exit:
-save_project_as live Arc:
-modify_palette IPC gap:
+Date: 2026-08-13
+Close API chosen (frontend onCloseRequested vs Rust emit): frontend getCurrentWindow().onCloseRequested on `main`
+destroy vs exit: preventDefault → Guard → allowCloseRef + destroy()
+save_project_as live Arc: mark_clean snapshots live Arc after successful write
+modify_palette IPC gap: replace_palette wraps modify_palette + name
 Gate: proceed P1
 ```
 
@@ -47,30 +47,30 @@ Gate: proceed P1
 
 ## 1. P1 — Dirty_Flag + Unsaved_Guard + title
 
-- [ ] 1.1 Backend Saved_Mark
+- [x] 1.1 Backend Saved_Mark
   - `AppState.saved_snapshot: Mutex<Option<Arc<Document>>>`
   - `is_document_dirty` command
   - `dirty-changed` emit from wrapper, undo/redo, clear_history, save
   - Mark clean on save / open_project / load_image / create_document install
   - _Requirements: 1.1–1.7_
 
-- [ ] 1.2 Frontend state
+- [x] 1.2 Frontend state
   - `documentSlice.dirty` from event + getter on bootstrap
   - Title: `{• }{basename | Untitled} — Dither Engine`
   - _Requirements: 1.7, 3_
 
-- [ ] 1.3 `runUnsavedGuard`
+- [x] 1.3 `runUnsavedGuard`
   - Modal chrome like NewProjectDialog; three buttons; locked copy
   - Save / Don’t Save / Cancel; Save As if no `project_path`; fail aborts
   - _Requirements: 2.1, 2.4–2.6_
 
-- [ ] 1.4 Wire entry points
+- [x] 1.4 Wire entry points
   - `main` `onCloseRequested`
   - File + Welcome: New / Open Image / Open Project / Open Recent
   - Panels unchanged
   - _Requirements: 2.2–2.3, 2.7–2.8_
 
-- [ ] 1.5 Tests
+- [x] 1.5 Tests
   - Rust: ptr_eq after save; undo to mark = clean; replace install = clean;
     mutation = dirty
   - RTL: Cancel keeps window/doc; Save As cancel aborts; no Guard when clean
@@ -80,18 +80,18 @@ Gate: proceed P1
 
 ## 2. P2 — Apply replace
 
-- [ ] 2.1 IPC `replace_palette`
+- [x] 2.1 IPC `replace_palette`
   - `modify_palette` + name; undo wrapper; cache invalidate like
     `update_palette_color`
   - _Requirements: 4.1, 4.5_
 
-- [ ] 2.2 Color Lab selection on slice
+- [x] 2.2 Color Lab selection on slice
   - Move `selectedPaletteId` onto `colorLabSlice`
   - `extractPalette` / Apply set it; Apply replace vs add
   - Builtin / file import still add
   - _Requirements: 4.2–4.4_
 
-- [ ] 2.3 Tests
+- [x] 2.3 Tests
   - extract → Apply → palette count unchanged
   - Apply with null selection → count + 1
   - filter `palette_id` unchanged on replace
@@ -150,10 +150,10 @@ Do not start until 2.3 is green.
 
 ## 5. P5 — Docs
 
-- [ ] 5.1 `RELEASE_TRACKS.md` as-built row for P; Beta 0 / Beta 1 lines
+- [x] 5.1 `RELEASE_TRACKS.md` as-built row for P; Beta 0 / Beta 1 lines
   - _Requirements: 7_
 
-- [ ] 5.2 Short ARCHITECTURE / beta notes: dirty Arc identity; GPU still
+- [x] 5.2 Short ARCHITECTURE / beta notes: dirty Arc identity; GPU still
   `DITHER_GPU=1`; 0.1.0 → 0.2.0 is Track O
   - _Requirements: 7.1–7.2_
 
@@ -163,12 +163,12 @@ Do not start until 2.3 is green.
 
 ### Beta 0 (this track + siblings)
 
-- [ ] P1: close / New / Open never drop a dirty doc without Guard
-- [ ] P2: extract + Apply does not clone the palette
+- [x] P1: close / New / Open never drop a dirty doc without Guard
+- [x] P2: extract + Apply does not clone the palette
 - [ ] P4 checklists recorded
-- [ ] C4.1 DoD (sibling)
-- [ ] Color Lab §6 DoD (sibling)
-- [ ] Release notes: GPU opt-in; no updater in 0.1.0-line DMG
+- [x] C4.1 DoD (sibling)
+- [x] Color Lab §6 DoD (sibling)
+- [x] Release notes: GPU opt-in; no updater in 0.1.0-line DMG
 
 ### Beta 1
 

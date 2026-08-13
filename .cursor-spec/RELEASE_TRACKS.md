@@ -21,13 +21,13 @@
 | **J** | [track-j-glitch/](./track-j-glitch/) | ROADMAP J | нет | закрыто 2026-08-13: GlobalCoord + HALO cap + seam tests |
 | **H** | [track-h-bayer-params/](./track-h-bayer-params/) | ROADMAP H | Bias — сразу; Angle — после A2 (уже зелёный) | `threshold_bias` / `pattern_angle` on `DitherParamsV2`; Block_Then_Rotate; GPU skip when non-default |
 | **L** | [track-l-oklab-volume/](./track-l-oklab-volume/) | ADDENDUM L | нет | закрыто 2026-08-13: `colors_to_oklab` / `get_palette_oklab`; static gamut JSON; `PaletteVolumeViewer` (three, L up) |
-| **C4.1** | [track-c4-svg-followup/](./track-c4-svg-followup/) | ADDENDUM C4 | нет | `engine-io::svg_export` v1; holes out of scope; UI всегда GreedyMeshing |
+| **C4.1** | [track-c4-svg-followup/](./track-c4-svg-followup/) | ADDENDUM C4 | нет | закрыто 2026-08-13: `svg_algorithm` on `export_image`; Pixel Grid / Contour UI; contour evenodd holes; stays in `engine-io` |
 | **M** | [track-m-ed-kernels/](./track-m-ed-kernels/) | ROADMAP G (remap) | A1 закрыт (уже); Serpentine отдельным шагом после ядер | V2: только FS/Atkinson; legacy `DiffusionKernel` имеет JJN/Stucki |
 | **I** | [track-i-filter-blend/](./track-i-filter-blend/) | ROADMAP I | A1 закрыт (уже) | `FilterInstance.opacity` + `blend_mode`; wrapper `apply_filter_with_blend` + `blend_tile`; UI на EffectSettingsPanel; DnD = `reorder_filter` |
-| Color Lab §6 | [color-lab.md](./color-lab.md) | ROADMAP (не трек) | нет | `generate.rs` без chroma/contrast весов |
+| Color Lab §6 | [color-lab.md](./color-lab.md) | ROADMAP (не трек) | нет | закрыто 2026-08-13: `GenerateWeights` systematic resample; chroma/contrast sliders; 0/0 bit-identical |
 | **N** | [track-n-undo-redo/](./track-n-undo-redo/) | [TASK_track_n_undo_redo.md](./TASK_track_n_undo_redo.md) | K закрыт (debounce) | snapshot `Arc<Document>` depth 50; wrapper; orphan `evict_layer`; Edit + ⌘Z |
 | **O** | [track-o-updates/](./track-o-updates/) | бета: in-app updates | нет (dirty-flag смягчает Restart_Guard, не блокирует) | нет плагина; Help пустой; `0.1.0`; GitHub `edrdavid1/dith-yuki` |
-| **P** | [track-p-beta/](./track-p-beta/) | бета: dirty, Guard, Apply-replace, QA | N закрыт (уже) | нет `unsaved`; Apply = всегда `add_palette`; A §6.2 / D §5.3 пустые |
+| **P** | [track-p-beta/](./track-p-beta/) | бета: dirty, Guard, Apply-replace, QA | N закрыт (уже) | P1+P2 in tree 2026-08-13: Saved_Mark `ptr_eq`; Unsaved_Guard; Apply = `replace_palette`; P4 QA pending; P3/O = Beta 1 |
 
 ## Параллельность (из аддендума, буквы актуальные)
 

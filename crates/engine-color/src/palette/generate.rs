@@ -6,6 +6,7 @@
 use std::collections::HashSet;
 
 use super::{LinearColor, PaletteError};
+use crate::oklab::{linear_to_oklab, LinRgb};
 
 /// Cap samples fed into MedianCut / K-Means so large photos stay interactive.
 /// Stride-sampling in the Tauri command should keep counts near this already;
@@ -19,6 +20,39 @@ pub enum PaletteGenMethod {
     MedianCut,
     /// K-Means clustering with k-means++ initialization.
     KMeans,
+}
+
+/// Chroma / contrast bias for extract. Both 0 = current unweighted behaviour.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GenerateWeights {
+    pub chroma_weight: f32,
+    pub contrast_weight: f32,
+}
+
+impl Default for GenerateWeights {
+    fn default() -> Self {
+        Self {
+            chroma_weight: 0.0,
+            contrast_weight: 0.0,
+        }
+    }
+}
+
+impl GenerateWeights {
+    pub fn is_identity(self) -> bool {
+        self.chroma_weight == 0.0 && self.contrast_weight == 0.0
+    }
+
+    pub fn validated(self) -> Result<Self, PaletteError> {
+        if !(0.0..=1.0).contains(&self.chroma_weight)
+            || !(0.0..=1.0).contains(&self.contrast_weight)
+        {
+            return Err(PaletteError::GenerationFailed(
+                "chroma_weight and contrast_weight must be in 0.0..=1.0".to_string(),
+            ));
+        }
+        Ok(self)
+    }
 }
 
 /// Generate a palette from an iterator of linear RGB pixels.
@@ -38,6 +72,17 @@ pub fn generate_palette(
     target_count: u16,
     method: PaletteGenMethod,
 ) -> Result<Vec<LinearColor>, PaletteError> {
+    generate_palette_weighted(pixels, target_count, method, GenerateWeights::default())
+}
+
+/// Like [`generate_palette`], with optional chroma/contrast resampling.
+pub fn generate_palette_weighted(
+    pixels: impl Iterator<Item = LinearColor>,
+    target_count: u16,
+    method: PaletteGenMethod,
+    weights: GenerateWeights,
+) -> Result<Vec<LinearColor>, PaletteError> {
+    let weights = weights.validated()?;
     let mut pixel_list: Vec<LinearColor> = pixels.collect();
 
     if pixel_list.is_empty() {
@@ -47,6 +92,9 @@ pub fn generate_palette(
     }
 
     pixel_list = subsample_pixels(pixel_list, MAX_GENERATION_SAMPLES);
+    if !weights.is_identity() {
+        pixel_list = weighted_resample(&pixel_list, weights);
+    }
 
     // Deduplicate: if fewer unique colors than target, return only unique colors
     let unique = deduplicate(&pixel_list);
@@ -58,6 +106,45 @@ pub fn generate_palette(
         PaletteGenMethod::MedianCut => median_cut(pixel_list, target_count as usize),
         PaletteGenMethod::KMeans => kmeans(pixel_list, target_count as usize),
     }
+}
+
+/// Systematic weighted resample: CDF quantiles, no RNG.
+fn weighted_resample(pixels: &[LinearColor], w: GenerateWeights) -> Vec<LinearColor> {
+    if pixels.is_empty() {
+        return Vec::new();
+    }
+    let labs: Vec<_> = pixels
+        .iter()
+        .map(|c| linear_to_oklab(LinRgb { r: c.r, g: c.g, b: c.b }))
+        .collect();
+    let chromas: Vec<f32> = labs
+        .iter()
+        .map(|o| (o.a * o.a + o.b * o.b).sqrt())
+        .collect();
+    let mean_l = labs.iter().map(|o| o.l).sum::<f32>() / labs.len() as f32;
+    let contrasts: Vec<f32> = labs.iter().map(|o| (o.l - mean_l).abs()).collect();
+    let max_c = chromas.iter().copied().fold(0.0f32, f32::max).max(1e-6);
+    let max_k = contrasts.iter().copied().fold(0.0f32, f32::max).max(1e-6);
+
+    let sample_w: Vec<f32> = (0..pixels.len())
+        .map(|i| 1.0 + w.chroma_weight * (chromas[i] / max_c) + w.contrast_weight * (contrasts[i] / max_k))
+        .collect();
+    let total: f32 = sample_w.iter().sum();
+    let mut cdf = Vec::with_capacity(pixels.len());
+    let mut acc = 0.0;
+    for wt in &sample_w {
+        acc += *wt;
+        cdf.push(acc);
+    }
+
+    let n = pixels.len();
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let t = ((i as f32 + 0.5) / n as f32) * total;
+        let idx = cdf.partition_point(|x| *x < t).min(pixels.len() - 1);
+        out.push(pixels[idx]);
+    }
+    out
 }
 
 /// Evenly thin a pixel list down to at most `max_samples`.
@@ -484,5 +571,71 @@ mod tests {
             generate_palette(pixels.into_iter(), 10, PaletteGenMethod::KMeans).unwrap();
 
         assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn zero_weights_match_unweighted() {
+        let pixels: Vec<LinearColor> = (0..64)
+            .map(|i| {
+                let t = i as f32 / 63.0;
+                LinearColor { r: t, g: 0.2, b: 1.0 - t }
+            })
+            .collect();
+        let a = generate_palette(pixels.clone().into_iter(), 6, PaletteGenMethod::MedianCut).unwrap();
+        let b = generate_palette_weighted(
+            pixels.into_iter(),
+            6,
+            PaletteGenMethod::MedianCut,
+            GenerateWeights::default(),
+        )
+        .unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn high_chroma_weight_keeps_saturated_accent() {
+        let mut pixels = vec![LinearColor { r: 0.5, g: 0.5, b: 0.5 }; 200];
+        pixels.extend(std::iter::repeat(LinearColor { r: 1.0, g: 0.0, b: 0.0 }).take(8));
+        let zero = generate_palette_weighted(
+            pixels.clone().into_iter(),
+            4,
+            PaletteGenMethod::MedianCut,
+            GenerateWeights::default(),
+        )
+        .unwrap();
+        let biased = generate_palette_weighted(
+            pixels.into_iter(),
+            4,
+            PaletteGenMethod::MedianCut,
+            GenerateWeights {
+                chroma_weight: 1.0,
+                contrast_weight: 0.0,
+            },
+        )
+        .unwrap();
+        let has_red = |p: &[LinearColor]| p.iter().any(|c| c.r > 0.7 && c.g < 0.3 && c.b < 0.3);
+        assert!(
+            has_red(&biased) || !has_red(&zero),
+            "chroma weight should not drop the red accent; zero={zero:?} biased={biased:?}"
+        );
+        assert!(
+            has_red(&biased),
+            "expected a high-chroma red swatch in K=4: {biased:?}"
+        );
+    }
+
+    #[test]
+    fn weights_out_of_range_error() {
+        let pixels = vec![LinearColor { r: 1.0, g: 0.0, b: 0.0 }];
+        let err = generate_palette_weighted(
+            pixels.into_iter(),
+            2,
+            PaletteGenMethod::MedianCut,
+            GenerateWeights {
+                chroma_weight: 1.5,
+                contrast_weight: 0.0,
+            },
+        );
+        assert!(err.is_err());
     }
 }

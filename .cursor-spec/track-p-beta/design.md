@@ -1,6 +1,6 @@
 # Design: Track P — Beta product gate
 
-> **Status:** spec only. Checklist: [tasks.md](./tasks.md).
+> **Status:** P1+P2 in tree; P4 eyeball QA pending; P3 = Beta 1. Checklist: [tasks.md](./tasks.md).
 > Requirements: [requirements.md](./requirements.md).
 
 ## Overview

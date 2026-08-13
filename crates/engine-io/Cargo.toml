@@ -11,3 +11,4 @@ dirs = "5"
 
 [dev-dependencies]
 proptest = "1"
+roxmltree = "0.20"

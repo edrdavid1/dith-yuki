@@ -102,10 +102,27 @@ export async function addPalette(
 export async function generatePalette(
   layerId: number,
   targetCount: number,
-  method: string
+  method: string,
+  weights?: { chromaWeight?: number; contrastWeight?: number }
 ): Promise<PaletteDto> {
   return invoke<PaletteDto>('generate_palette', {
-    req: { layer_id: layerId, target_count: targetCount, method },
+    req: {
+      layer_id: layerId,
+      target_count: targetCount,
+      method,
+      chroma_weight: weights?.chromaWeight ?? 0,
+      contrast_weight: weights?.contrastWeight ?? 0,
+    },
+  });
+}
+
+export async function replacePalette(
+  paletteId: number,
+  name: string,
+  colors: [number, number, number][]
+): Promise<PaletteDto> {
+  return invoke<PaletteDto>('replace_palette', {
+    req: { palette_id: paletteId, name, colors },
   });
 }
 

@@ -1,7 +1,7 @@
 //! SVG export via greedy meshing and contour tracing.
 //!
 //! Converts an RGBA8 raster into an SVG string of merged `<rect>` elements
-//! (greedy meshing) or external `<path>` contours.
+//! (greedy meshing) or `<path>` contours with even-odd holes.
 
 use crate::sandbox::{resolve_export_path, SandboxError};
 use std::fs;
@@ -11,7 +11,7 @@ use thiserror::Error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SvgAlgorithm {
     GreedyMeshing,
-    /// External contours only (holes out of scope for v1).
+    /// Connected equal-color components; inner contours use even-odd fill.
     ContourTracing,
 }
 
@@ -178,14 +178,14 @@ fn greedy_mesh_rects(width: u32, height: u32, rgba: &[u8], tol: u8) -> String {
     out
 }
 
-/// External contour tracing (Moore neighborhood) — holes out of scope for v1.
+/// Contour tracing: 4-connected equal-color components, inner holes as evenodd subpaths.
 fn contour_paths(width: u32, height: u32, rgba: &[u8], tol: u8) -> String {
+    use std::collections::HashSet;
+
     let w = width as usize;
-    let h = height as usize;
-    let mut visited = vec![false; w * h];
+    let mut visited = vec![false; w * height as usize];
     let mut out = String::new();
 
-    // 8-connected Moore offsets clockwise starting from west of start
     const DIRS: [(i32, i32); 8] = [
         (1, 0),
         (1, 1),
@@ -209,21 +209,11 @@ fn contour_paths(width: u32, height: u32, rgba: &[u8], tol: u8) -> String {
                 continue;
             }
 
-            // Flood-fill component to mark visited, then emit bounding external path
-            // via walking the outer edge of the component.
             let mut stack = vec![(x, y)];
-            let mut min_x = x;
-            let mut min_y = y;
-            let mut max_x = x;
-            let mut max_y = y;
             let mut cells = Vec::new();
             visited[idx] = true;
             while let Some((cx, cy)) = stack.pop() {
                 cells.push((cx, cy));
-                min_x = min_x.min(cx);
-                min_y = min_y.min(cy);
-                max_x = max_x.max(cx);
-                max_y = max_y.max(cy);
                 for (dx, dy) in [(1i32, 0), (-1, 0), (0, 1), (0, -1)] {
                     let nx = cx as i32 + dx;
                     let ny = cy as i32 + dy;
@@ -243,30 +233,127 @@ fn contour_paths(width: u32, height: u32, rgba: &[u8], tol: u8) -> String {
                 }
             }
 
-            // External contour: axis-aligned outline of the component bbox is wrong for
-            // non-rect shapes. Walk boundary pixels with Moore for a closed path.
-            let path = moore_external_path(&cells, width, height, &DIRS);
-            if path.is_empty() {
+            let set: HashSet<(u32, u32)> = cells.iter().copied().collect();
+            let outer = moore_external_path(&cells, width, height, &DIRS);
+            if outer.is_empty() {
                 continue;
             }
-            let mut d = String::new();
-            for (i, (px, py)) in path.iter().enumerate() {
-                if i == 0 {
-                    d.push_str(&format!("M{} {} ", px, py));
-                } else {
-                    d.push_str(&format!("L{} {} ", px, py));
+            let mut d = path_d(&outer);
+            for hole in enclosed_holes(&set, width, height) {
+                let inner = moore_external_path(&hole, width, height, &DIRS);
+                if inner.is_empty() {
+                    continue;
                 }
+                d.push(' ');
+                d.push_str(&path_d(&inner));
             }
-            d.push('Z');
             out.push_str(&format!(
-                r#"  <path d="{d}" fill="{fill}"/>
+                r#"  <path d="{d}" fill="{fill}" fill-rule="evenodd"/>
 "#,
                 fill = hex_rgb(color)
             ));
-            let _ = (min_x, min_y, max_x, max_y); // silence if unused in future
         }
     }
     out
+}
+
+fn path_d(points: &[(i32, i32)]) -> String {
+    let mut d = String::new();
+    for (i, (px, py)) in points.iter().enumerate() {
+        if i == 0 {
+            d.push_str(&format!("M{} {} ", px, py));
+        } else {
+            d.push_str(&format!("L{} {} ", px, py));
+        }
+    }
+    d.push('Z');
+    d
+}
+
+fn enclosed_holes(
+    component: &std::collections::HashSet<(u32, u32)>,
+    width: u32,
+    height: u32,
+) -> Vec<Vec<(u32, u32)>> {
+    let w = width as usize;
+    let h = height as usize;
+    let mut exterior = vec![false; w * h];
+    let mut stack = Vec::new();
+
+    let mut seed = |x: u32, y: u32| {
+        let i = (y * width + x) as usize;
+        if component.contains(&(x, y)) || exterior[i] {
+            return;
+        }
+        exterior[i] = true;
+        stack.push((x, y));
+    };
+    if width == 0 || height == 0 {
+        return Vec::new();
+    }
+    for x in 0..width {
+        seed(x, 0);
+        seed(x, height - 1);
+    }
+    for y in 0..height {
+        seed(0, y);
+        seed(width - 1, y);
+    }
+
+    while let Some((cx, cy)) = stack.pop() {
+        for (dx, dy) in [(1i32, 0), (-1, 0), (0, 1), (0, -1)] {
+            let nx = cx as i32 + dx;
+            let ny = cy as i32 + dy;
+            if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
+                continue;
+            }
+            let nx = nx as u32;
+            let ny = ny as u32;
+            if component.contains(&(nx, ny)) {
+                continue;
+            }
+            let i = (ny * width + nx) as usize;
+            if exterior[i] {
+                continue;
+            }
+            exterior[i] = true;
+            stack.push((nx, ny));
+        }
+    }
+
+    let mut seen = vec![false; w * h];
+    let mut holes = Vec::new();
+    for y in 0..height {
+        for x in 0..width {
+            let i = (y * width + x) as usize;
+            if component.contains(&(x, y)) || exterior[i] || seen[i] {
+                continue;
+            }
+            let mut cells = Vec::new();
+            let mut st = vec![(x, y)];
+            seen[i] = true;
+            while let Some((cx, cy)) = st.pop() {
+                cells.push((cx, cy));
+                for (dx, dy) in [(1i32, 0), (-1, 0), (0, 1), (0, -1)] {
+                    let nx = cx as i32 + dx;
+                    let ny = cy as i32 + dy;
+                    if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
+                        continue;
+                    }
+                    let nx = nx as u32;
+                    let ny = ny as u32;
+                    let ni = (ny * width + nx) as usize;
+                    if component.contains(&(nx, ny)) || exterior[ni] || seen[ni] {
+                        continue;
+                    }
+                    seen[ni] = true;
+                    st.push((nx, ny));
+                }
+            }
+            holes.push(cells);
+        }
+    }
+    holes
 }
 
 fn moore_external_path(
@@ -436,5 +523,86 @@ mod tests {
         .unwrap();
         assert!(svg.contains("<path "));
         assert!(svg.contains("#0080ff"));
+    }
+
+    #[test]
+    fn greedy_two_blocks_not_one_rect_per_pixel() {
+        let w = 8u32;
+        let h = 4u32;
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let i = ((y * w + x) * 4) as usize;
+                if x < 4 {
+                    rgba[i..i + 4].copy_from_slice(&[255, 0, 0, 255]);
+                } else {
+                    rgba[i..i + 4].copy_from_slice(&[0, 0, 255, 255]);
+                }
+            }
+        }
+        let svg = raster_to_svg(
+            w,
+            h,
+            &rgba,
+            &SvgExportOptions {
+                algorithm: SvgAlgorithm::GreedyMeshing,
+                tolerance: 0,
+            },
+        )
+        .unwrap();
+        let rects = svg.matches("<rect ").count();
+        assert_eq!(rects, 2, "expected 2 merged rects, got {rects}:\n{svg}");
+        assert!(rects < (w * h) as usize);
+        roxmltree::Document::parse(&svg).expect("valid xml");
+    }
+
+    #[test]
+    fn contour_donut_has_hole_and_parses() {
+        // 5×5 red ring, transparent center 3×3? Use 5×5 with 1-pixel hole.
+        let w = 5u32;
+        let h = 5u32;
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let hole = x >= 1 && x <= 3 && y >= 1 && y <= 3;
+                if hole {
+                    continue;
+                }
+                let i = ((y * w + x) * 4) as usize;
+                rgba[i..i + 4].copy_from_slice(&[255, 0, 0, 255]);
+            }
+        }
+        let svg = raster_to_svg(
+            w,
+            h,
+            &rgba,
+            &SvgExportOptions {
+                algorithm: SvgAlgorithm::ContourTracing,
+                tolerance: 0,
+            },
+        )
+        .unwrap();
+        assert!(svg.contains("fill-rule=\"evenodd\""));
+        let path = svg
+            .split("<path ")
+            .nth(1)
+            .expect("path element")
+            .split('>')
+            .next()
+            .unwrap();
+        let m_count = path.matches("M").count() + path.matches("m").count();
+        assert!(
+            m_count >= 2,
+            "donut needs outer+inner subpath, got {m_count} in {path}"
+        );
+        roxmltree::Document::parse(&svg).expect("valid xml");
+    }
+
+    #[test]
+    fn svg_parses_as_xml() {
+        let rgba = vec![0, 255, 0, 255];
+        let svg = raster_to_svg(1, 1, &rgba, &SvgExportOptions::default()).unwrap();
+        let doc = roxmltree::Document::parse(&svg).unwrap();
+        assert_eq!(doc.root_element().tag_name().name(), "svg");
     }
 }

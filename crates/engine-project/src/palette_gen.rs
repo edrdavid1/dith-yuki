@@ -3,7 +3,7 @@
 //! This module provides utility functions to generate palettes from a layer's
 //! pixel content and store the result in the Document.
 
-use engine_color::palette::generate::{generate_palette, PaletteGenMethod};
+use engine_color::palette::generate::{generate_palette_weighted, GenerateWeights, PaletteGenMethod};
 use engine_color::palette::LinearColor;
 
 use crate::document::Document;
@@ -74,6 +74,25 @@ pub fn generate_palette_from_layer(
     target_count: u16,
     method: PaletteGenMethod,
 ) -> Result<PaletteId, EngineError> {
+    generate_palette_from_layer_weighted(
+        document,
+        layer_id,
+        pixels,
+        target_count,
+        method,
+        GenerateWeights::default(),
+    )
+}
+
+/// Like [`generate_palette_from_layer`] with chroma/contrast weights.
+pub fn generate_palette_from_layer_weighted(
+    document: &mut Document,
+    layer_id: LayerId,
+    pixels: impl Iterator<Item = (LinearColor, f32)>,
+    target_count: u16,
+    method: PaletteGenMethod,
+    weights: GenerateWeights,
+) -> Result<PaletteId, EngineError> {
     // 1. Find the layer to get its name and validate it exists
     let layer_name = find_layer_in_nodes(&document.root, layer_id)
         .ok_or_else(|| EngineError::layer_not_found(layer_id))?
@@ -94,9 +113,13 @@ pub fn generate_palette_from_layer(
     }
 
     // 4. Call generate_palette
-    let colors = generate_palette(opaque_pixels.into_iter(), target_count, method).map_err(
-        |e| EngineError::invalid_state(format!("palette generation failed: {}", e)),
-    )?;
+    let colors = generate_palette_weighted(
+        opaque_pixels.into_iter(),
+        target_count,
+        method,
+        weights,
+    )
+    .map_err(|e| EngineError::invalid_state(format!("palette generation failed: {}", e)))?;
 
     // 5. Format name as "{layer_name}_{method}" truncated to 64 chars
     let palette_name = format_palette_name(&layer_name, method);

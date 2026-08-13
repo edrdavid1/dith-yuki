@@ -38,7 +38,7 @@ pub use invalidation::{
 };
 pub use layer::{flatten_bottom_to_top, walk_bottom_to_top, Layer, LayerGroup, LayerNode, LayerRef};
 pub use mask::{apply_mask, MaskRef, MaskStorage};
-pub use palette_gen::generate_palette_from_layer;
+pub use palette_gen::{generate_palette_from_layer, generate_palette_from_layer_weighted};
 pub use simd::{
     blend_row_scalar, blend_row_simd, f32_to_rgba8_row_scalar, f32_to_rgba8_row_simd,
     levels_row_scalar, levels_row_simd,

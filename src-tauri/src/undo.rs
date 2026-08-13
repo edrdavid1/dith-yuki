@@ -27,6 +27,43 @@ pub struct UndoStateDto {
     pub can_redo: bool,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+pub struct DirtyDto {
+    pub dirty: bool,
+}
+
+fn has_live_document(state: &AppState) -> bool {
+    !state.document_handle.snapshot().root.is_empty()
+}
+
+/// Track P: dirty iff there is a document and the live Arc is not the Saved_Mark.
+pub fn is_dirty(state: &AppState) -> bool {
+    if !has_live_document(state) {
+        return false;
+    }
+    let live = state.document_handle.snapshot();
+    match state.saved_snapshot.lock() {
+        Ok(guard) => match guard.as_ref() {
+            Some(saved) => !Arc::ptr_eq(saved, &live),
+            None => true,
+        },
+        Err(_) => true,
+    }
+}
+
+/// Remember the live Arc as clean (after save or document replace).
+pub fn mark_clean(state: &AppState) {
+    if let Ok(mut guard) = state.saved_snapshot.lock() {
+        *guard = Some(state.document_handle.snapshot());
+    }
+}
+
+pub fn emit_dirty(app: Option<&AppHandle>, state: &AppState) {
+    if let Some(app) = app {
+        let _ = app.emit("dirty-changed", DirtyDto { dirty: is_dirty(state) });
+    }
+}
+
 pub struct UndoManager {
     undo_stack: VecDeque<Arc<Document>>,
     redo_stack: Vec<Arc<Document>>,
@@ -161,6 +198,8 @@ pub fn clear_history(state: &AppState, app: Option<&AppHandle>) -> Result<UndoSt
     };
     sync_palette_caches(state, &live);
     emit_undo_state(app, dto);
+    mark_clean(state);
+    emit_dirty(app, state);
     Ok(dto)
 }
 
@@ -177,6 +216,7 @@ where
     let result = f()?;
     let dto = record_mutation(state, before)?;
     emit_undo_state(app, dto);
+    emit_dirty(app, state);
     Ok(result)
 }
 
@@ -204,6 +244,7 @@ fn restore_and_invalidate(
     schedule_dirty_viewport_tiles(state);
     emit_document_changed(app, kind, None);
     emit_undo_state(Some(app), dto);
+    emit_dirty(Some(app), state);
     Ok(dto)
 }
 
@@ -247,6 +288,11 @@ pub fn redo(
     state: State<'_, Arc<AppState>>,
 ) -> Result<UndoStateDto, String> {
     apply_redo(&state, &app_handle)
+}
+
+#[tauri::command]
+pub fn is_document_dirty(state: State<'_, Arc<AppState>>) -> Result<bool, String> {
+    Ok(is_dirty(&state))
 }
 
 #[cfg(test)]
@@ -505,5 +551,49 @@ mod tests {
         assert!(!dto.can_redo);
         assert!(lock_undo(&state).unwrap().undo_stack.is_empty());
         assert!(lock_undo(&state).unwrap().redo_stack.is_empty());
+    }
+
+    #[test]
+    fn empty_doc_is_not_dirty() {
+        let state = crate::commands::make_test_app_state();
+        assert!(!is_dirty(&state));
+    }
+
+    #[test]
+    fn mutation_dirties_after_mark_clean() {
+        let state = crate::commands::make_test_app_state();
+        add_test_layer(&state);
+        mark_clean(&state);
+        assert!(!is_dirty(&state), "install/save mark is clean");
+        dummy_mutate(&state).unwrap();
+        assert!(is_dirty(&state));
+    }
+
+    #[test]
+    fn undo_to_saved_mark_is_clean() {
+        let state = crate::commands::make_test_app_state();
+        add_test_layer(&state);
+        mark_clean(&state);
+        dummy_mutate(&state).unwrap();
+        assert!(is_dirty(&state));
+        {
+            let mut undo = lock_undo(&state).unwrap();
+            let prev = undo.undo_stack.pop_back().unwrap();
+            let current = state.document_handle.snapshot();
+            undo.redo_stack.push(current);
+            drop(undo);
+            state.document_handle.store(prev);
+        }
+        assert!(!is_dirty(&state));
+    }
+
+    #[test]
+    fn clear_history_marks_clean() {
+        let state = crate::commands::make_test_app_state();
+        add_test_layer(&state);
+        dummy_mutate(&state).unwrap();
+        assert!(is_dirty(&state));
+        clear_history(&state, None).unwrap();
+        assert!(!is_dirty(&state));
     }
 }

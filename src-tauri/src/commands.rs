@@ -137,6 +137,8 @@ pub struct AppState {
     pub project_path: Mutex<Option<std::path::PathBuf>>,
     /// Track N: snapshot undo/redo (not taken by workers).
     pub undo_manager: Mutex<crate::undo::UndoManager>,
+    /// Track P: live Arc at last clean point (save / replace). Dirty = !ptr_eq.
+    pub saved_snapshot: Mutex<Option<std::sync::Arc<engine_project::Document>>>,
 }
 
 // ============================================================================
@@ -1403,6 +1405,9 @@ pub async fn save_project_as(
         crate::recent_files::RecentFileKind::Project,
     );
 
+    crate::undo::mark_clean(&state);
+    crate::undo::emit_dirty(Some(&app_handle), &state);
+
     Ok(SaveProjectResponse {
         path: stored,
         size_warning: result.size_warning,
@@ -1771,6 +1776,9 @@ pub struct ExportImageRequest {
     pub path: String,
     pub format: String,       // "PNG" or "JPEG"
     pub quality: Option<u8>,  // 1-100, default 90 for JPEG
+    /// `"greedy_meshing"` | `"contour_tracing"`; ignored for raster.
+    #[serde(default)]
+    pub svg_algorithm: Option<String>,
 }
 
 /// Export the current document (with all filters applied at full resolution) to a file.
@@ -1828,6 +1836,7 @@ pub async fn export_image(
     let req_format = req.format.clone();
     let req_path = req.path.clone();
     let req_quality = req.quality;
+    let req_svg_algorithm = req.svg_algorithm.clone();
     let state_clone = state.inner().clone();
 
     tauri::async_runtime::spawn_blocking(move || {
@@ -1921,8 +1930,12 @@ pub async fn export_image(
             }
             "SVG" => {
                 use engine_io::{write_svg_file, SvgAlgorithm, SvgExportOptions};
+                let algorithm = match req_svg_algorithm.as_deref() {
+                    Some("contour_tracing") => SvgAlgorithm::ContourTracing,
+                    _ => SvgAlgorithm::GreedyMeshing,
+                };
                 let opts = SvgExportOptions {
-                    algorithm: SvgAlgorithm::GreedyMeshing,
+                    algorithm,
                     tolerance: 0,
                 };
                 write_svg_file(&req_path, img_width, img_height, &rgba_buffer, &opts)
@@ -1962,6 +1975,10 @@ pub struct GeneratePaletteRequest {
     pub layer_id: u32,
     pub target_count: u16,
     pub method: String, // "MedianCut" or "KMeans"
+    #[serde(default)]
+    pub chroma_weight: f32,
+    #[serde(default)]
+    pub contrast_weight: f32,
 }
 
 /// Convert a document palette to a PaletteDto (linear→sRGB for display).
@@ -2330,6 +2347,69 @@ pub fn add_palette(
     })
 }
 
+/// Replace an existing document palette's name + colors (Color Lab Apply).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReplacePaletteRequest {
+    pub palette_id: u32,
+    pub name: String,
+    pub colors: Vec<[u8; 3]>,
+}
+
+#[tauri::command]
+pub fn replace_palette(
+    req: ReplacePaletteRequest,
+    app_handle: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<PaletteDto, String> {
+    use engine_color::palette::{srgb_to_linear, LinearColor};
+    use engine_project::types::PaletteId;
+
+    let trimmed = req.name.trim().to_string();
+    if trimmed.is_empty() || trimmed.len() > 255 {
+        return Err("Name must be 1–255 characters".to_string());
+    }
+    if req.colors.is_empty() {
+        return Err("Palette must contain at least one color".to_string());
+    }
+
+    {
+        let snapshot = state.document_handle.snapshot();
+        if !snapshot.palettes.iter().any(|p| p.id == req.palette_id) {
+            return Err(format!("Palette {} not found", req.palette_id));
+        }
+    }
+
+    let linear_colors: Vec<LinearColor> = req
+        .colors
+        .iter()
+        .map(|[r, g, b]| LinearColor {
+            r: srgb_to_linear(*r),
+            g: srgb_to_linear(*g),
+            b: srgb_to_linear(*b),
+        })
+        .collect();
+
+    crate::undo::with_document_undo(&state, Some(&app_handle), || {
+        state.document_handle.mutate(|doc| {
+            let _ = doc.modify_palette(PaletteId::new(req.palette_id), linear_colors.clone());
+            if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id) {
+                palette.name = trimmed.clone();
+            }
+            doc.increment_generation();
+        });
+
+        invalidate_palette_changed(PaletteId::new(req.palette_id), &state);
+
+        let snapshot = state.document_handle.snapshot();
+        let palette = snapshot
+            .palettes
+            .iter()
+            .find(|p| p.id == req.palette_id)
+            .ok_or_else(|| format!("Palette {} not found", req.palette_id))?;
+        Ok(palette_to_dto(palette))
+    })
+}
+
 /// Generate a palette from a layer's pixels.
 ///
 /// Heavy work runs on a blocking pool so the UI stays responsive. Large images
@@ -2363,6 +2443,14 @@ fn generate_palette_blocking(
     if req.target_count < 2 || req.target_count > 256 {
         return Err("target_count must be between 2 and 256".to_string());
     }
+
+    let weights = engine_color::palette::generate::GenerateWeights {
+        chroma_weight: req.chroma_weight,
+        contrast_weight: req.contrast_weight,
+    };
+    weights
+        .validated()
+        .map_err(|e| e.to_string())?;
 
     let snapshot = state.document_handle.snapshot();
     let doc_width = snapshot.width;
@@ -2431,12 +2519,13 @@ fn generate_palette_blocking(
     let mut palette_id_raw = 0u32;
     crate::undo::with_document_undo(state, app, || {
         state.document_handle.mutate(|doc| {
-            match engine_project::palette_gen::generate_palette_from_layer(
+            match engine_project::palette_gen::generate_palette_from_layer_weighted(
                 doc,
                 engine_project::types::LayerId::new(req.layer_id),
                 pixels.into_iter(),
                 req.target_count,
                 method,
+                weights,
             ) {
                 Ok(pid) => {
                     palette_id_raw = pid.0;
@@ -3091,6 +3180,7 @@ pub(crate) fn make_test_app_state() -> Arc<AppState> {
         float_drag_mouseup_hook: Mutex::new(None),
         project_path: Mutex::new(None),
         undo_manager: Mutex::new(crate::undo::UndoManager::new()),
+        saved_snapshot: Mutex::new(None),
     })
 }
 

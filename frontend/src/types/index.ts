@@ -147,4 +147,5 @@ export interface ExportImageRequest {
   path: string;
   format: 'PNG' | 'JPEG' | 'SVG';
   quality?: number;
+  svg_algorithm?: 'greedy_meshing' | 'contour_tracing';
 }
