@@ -20,6 +20,8 @@ export interface ColorLabDraftSnapshot {
   colors: ColorEntry[];
   extractMethod: ExtractMethod;
   extractCount: number;
+  chromaWeight?: number;
+  contrastWeight?: number;
 }
 
 export const MAX_COLORS = 256;

@@ -8,13 +8,16 @@ import {
   addColor,
   deleteColor,
   resetDraft,
+  setChromaWeight,
   setColorAt,
   setColors,
+  setContrastWeight,
   setError,
   setExtractCount,
   setExtractMethod,
   setName,
   setSelectedColorIndex,
+  setSelectedPaletteId,
   setSuccessMessage,
 } from '../../app/slices/colorLabSlice';
 import { extractPalette } from '../../app/autoExtract';
@@ -27,12 +30,14 @@ import {
   importPalette,
   listPalettes,
   logIpcError,
+  replacePalette,
   type PaletteDto,
 } from '../../shared/ipc';
 import { openDialog, saveDialog } from '../../shared/ipc/dialogs';
 import { toHex, sortByBrightness } from '../../types/effects';
 import type { PanelChromeProps } from '../panels/PanelChrome';
 import ColorLabBody, { type ColorLabVariant } from './ColorLabBody';
+import { shouldReplaceSelectedPalette } from './paletteApply';
 import { createColorEntry, MAX_COLORS } from './types';
 import { useColorLabDraftSync } from './useColorLabDraftSync';
 import styles from './ColorLabWindow.module.css';
@@ -62,13 +67,22 @@ export default function ColorLabFeature({
   const hasDocument = useAppSelector((s) => s.document.hasDocument);
   const layerId = useAppSelector((s) => s.selection.layerId);
   const palettesVersion = useAppSelector((s) => s.palettes.version);
-  const { name, colors, extractMethod, extractCount, error, successMessage, selectedColorIndex } =
-    useAppSelector((s) => s.colorLab);
+  const {
+    name,
+    colors,
+    extractMethod,
+    extractCount,
+    chromaWeight,
+    contrastWeight,
+    error,
+    successMessage,
+    selectedColorIndex,
+    selectedPaletteId,
+  } = useAppSelector((s) => s.colorLab);
 
   useColorLabDraftSync();
 
   const [palettes, setPalettes] = useState<PaletteDto[]>([]);
-  const [selectedPaletteId, setSelectedPaletteId] = useState<number | null>(null);
   const [colorPickerIndex, setColorPickerIndex] = useState<number | null>(null);
   const [pickerAnchorRect, setPickerAnchorRect] = useState<DOMRect | null>(null);
 
@@ -93,7 +107,7 @@ export default function ColorLabFeature({
     }
     const result = await dispatch(extractPalette({ layerId }));
     if (extractPalette.fulfilled.match(result)) {
-      setSelectedPaletteId(null);
+      dispatch(setSelectedPaletteId(result.payload.id));
     }
   }, [dispatch, hasDocument, layerId]);
 
@@ -102,7 +116,7 @@ export default function ColorLabFeature({
     (paletteId: number) => {
       const palette = palettes.find((p) => p.id === paletteId);
       if (!palette) return;
-      setSelectedPaletteId(paletteId);
+      dispatch(setSelectedPaletteId(paletteId));
       dispatch(setName(palette.name));
       dispatch(
         setColors(
@@ -124,7 +138,7 @@ export default function ColorLabFeature({
       const dto = await importPalette(filePath as string);
       dispatch(setColors(dto.colors.map(([r, g, b]) => createColorEntry(toHex(r, g, b)))));
       if (dto.name) dispatch(setName(dto.name));
-      setSelectedPaletteId(dto.id ?? null);
+      dispatch(setSelectedPaletteId(dto.id ?? null));
       dispatch(bumpVersion({ lastCreatedId: dto.id }));
       dispatch(setError(null));
     } catch (err: unknown) {
@@ -139,7 +153,7 @@ export default function ColorLabFeature({
         const dto = await importBuiltinPalette(id);
         dispatch(setColors(dto.colors.map(([r, g, b]) => createColorEntry(toHex(r, g, b)))));
         if (dto.name) dispatch(setName(dto.name));
-        setSelectedPaletteId(dto.id ?? null);
+        dispatch(setSelectedPaletteId(dto.id ?? null));
         dispatch(bumpVersion({ lastCreatedId: dto.id }));
         void emitPaletteChanged();
         dispatch(setError(null));
@@ -155,7 +169,7 @@ export default function ColorLabFeature({
     (hexColors: string[]) => {
       // Replace draft colors with generated ramp/harmony (document only on Apply)
       dispatch(setColors(hexColors.map((hex) => createColorEntry(hex.startsWith('#') ? hex : `#${hex}`))));
-      setSelectedPaletteId(null);
+      dispatch(setSelectedPaletteId(null));
       dispatch(setError(null));
     },
     [dispatch]
@@ -225,12 +239,14 @@ export default function ColorLabFeature({
       return;
     }
     try {
-      const dto = await addPalette(
-        name.trim(),
-        validColors.map((c) => [c.r, c.g, c.b] as [number, number, number])
-      );
+      const rgb = validColors.map((c) => [c.r, c.g, c.b] as [number, number, number]);
+      const nameTrimmed = name.trim();
+      const dto =
+        selectedPaletteId !== null && shouldReplaceSelectedPalette(selectedPaletteId, palettes)
+          ? await replacePalette(selectedPaletteId, nameTrimmed, rgb)
+          : await addPalette(nameTrimmed, rgb);
       dispatch(bumpVersion({ lastCreatedId: dto.id }));
-      setSelectedPaletteId(dto.id);
+      dispatch(setSelectedPaletteId(dto.id));
       void emitPaletteChanged();
       dispatch(setError(null));
       dispatch(setSuccessMessage('Palette saved.'));
@@ -239,7 +255,7 @@ export default function ColorLabFeature({
       dispatch(setError(formatIpcError(err)));
       logIpcError('ColorLabFeature.apply', err);
     }
-  }, [colors, dispatch, name]);
+  }, [colors, dispatch, name, palettes, selectedPaletteId]);
 
   const handleOpenColorPicker = useCallback((index: number, e: React.MouseEvent) => {
     dispatch(setSelectedColorIndex(index));
@@ -267,15 +283,18 @@ export default function ColorLabFeature({
       name={name}
       onNameChange={(v) => {
         dispatch(setName(v));
-        setSelectedPaletteId(null);
       }}
       paletteOptions={palettes.map((p) => ({ id: p.id, name: p.name }))}
       selectedPaletteId={selectedPaletteId}
       onSelectPalette={handleSelectPalette}
       extractMethod={extractMethod}
       extractCount={extractCount}
+      chromaWeight={chromaWeight}
+      contrastWeight={contrastWeight}
       onMethodChange={(m) => dispatch(setExtractMethod(m))}
       onCountChange={(n) => dispatch(setExtractCount(n))}
+      onChromaWeightChange={(v) => dispatch(setChromaWeight(v))}
+      onContrastWeightChange={(v) => dispatch(setContrastWeight(v))}
       onExtractRaw={handleExtract}
       onExtractActual={handleExtract}
       colors={colors}
@@ -291,7 +310,6 @@ export default function ColorLabFeature({
       onSort={handleSortByBrightness}
       onReset={() => {
         dispatch(resetDraft());
-        setSelectedPaletteId(null);
       }}
       onApply={handleApply}
       onImport={handleImport}

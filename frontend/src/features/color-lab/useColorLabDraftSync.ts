@@ -16,6 +16,8 @@ export function useColorLabDraftSync(): void {
   const colors = useAppSelector((s) => s.colorLab.colors);
   const extractMethod = useAppSelector((s) => s.colorLab.extractMethod);
   const extractCount = useAppSelector((s) => s.colorLab.extractCount);
+  const chromaWeight = useAppSelector((s) => s.colorLab.chromaWeight);
+  const contrastWeight = useAppSelector((s) => s.colorLab.contrastWeight);
   const remoteEpoch = useAppSelector((s) => s.colorLab.remoteEpoch);
 
   const skipFirst = useRef(true);
@@ -27,6 +29,8 @@ export function useColorLabDraftSync(): void {
       colors,
       extractMethod,
       extractCount,
+      chromaWeight,
+      contrastWeight,
     };
 
     if (skipFirst.current) {
@@ -47,5 +51,5 @@ export function useColorLabDraftSync(): void {
     void emitColorLabDraftChanged(draft).finally(() => {
       window.setTimeout(() => dispatch(setSuppressRemote(false)), 80);
     });
-  }, [colors, dispatch, extractCount, extractMethod, name, remoteEpoch]);
+  }, [colors, dispatch, extractCount, extractMethod, name, chromaWeight, contrastWeight, remoteEpoch]);
 }

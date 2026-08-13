@@ -30,8 +30,12 @@ export interface ColorLabBodyProps {
   onSelectPalette: (paletteId: number) => void;
   extractMethod: ExtractMethod;
   extractCount: number;
+  chromaWeight: number;
+  contrastWeight: number;
   onMethodChange: (method: ExtractMethod) => void;
   onCountChange: (count: number) => void;
+  onChromaWeightChange: (value: number) => void;
+  onContrastWeightChange: (value: number) => void;
   onExtractRaw: () => void;
   onExtractActual: () => void;
   colors: ColorEntry[];
@@ -82,8 +86,12 @@ export default function ColorLabBody(props: ColorLabBodyProps) {
           compact
           extractMethod={props.extractMethod}
           extractCount={props.extractCount}
+          chromaWeight={props.chromaWeight}
+          contrastWeight={props.contrastWeight}
           onMethodChange={props.onMethodChange}
           onCountChange={props.onCountChange}
+          onChromaWeightChange={props.onChromaWeightChange}
+          onContrastWeightChange={props.onContrastWeightChange}
           onExtractRaw={props.onExtractRaw}
           onExtractActual={props.onExtractActual}
         />
@@ -92,8 +100,12 @@ export default function ColorLabBody(props: ColorLabBodyProps) {
           <AutoExtractSection
             extractMethod={props.extractMethod}
             extractCount={props.extractCount}
+            chromaWeight={props.chromaWeight}
+            contrastWeight={props.contrastWeight}
             onMethodChange={props.onMethodChange}
             onCountChange={props.onCountChange}
+            onChromaWeightChange={props.onChromaWeightChange}
+            onContrastWeightChange={props.onContrastWeightChange}
             onExtractRaw={props.onExtractRaw}
             onExtractActual={props.onExtractActual}
           />

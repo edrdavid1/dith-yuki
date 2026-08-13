@@ -1,5 +1,5 @@
 import type { AppDispatch, AppStore } from './store';
-import { refreshDocument } from './slices/documentSlice';
+import { refreshDocument, setDirty } from './slices/documentSlice';
 import { refreshLayers } from './slices/layersSlice';
 import { refreshFilters } from './slices/filtersSlice';
 import { applyRemote, fetchSelection } from './slices/selectionSlice';
@@ -9,10 +9,12 @@ import { applyUndoState } from './slices/undoSlice';
 import { bumpVersion } from './slices/palettesSlice';
 import {
   onColorLabDraftChanged,
+  onDirtyChanged,
   onDocumentChanged,
   onPanelStateChanged,
   onSelectionChanged,
   onUndoStateChanged,
+  isDocumentDirty,
 } from '../shared/ipc';
 import type { PanelInfo, PanelStateSnapshot } from '../types/panels';
 
@@ -37,6 +39,9 @@ export function startEngineEventBridge(store: AppStore): EngineBridgeCleanup {
       void dispatch(refreshLayers(docId));
       void dispatch(refreshFilters());
     }
+  });
+  void isDocumentDirty().then((dirty) => {
+    if (!cancelled) dispatch(setDirty(dirty));
   });
 
   onDocumentChanged((event) => {
@@ -86,6 +91,14 @@ export function startEngineEventBridge(store: AppStore): EngineBridgeCleanup {
   onUndoStateChanged((event) => {
     if (cancelled) return;
     dispatch(applyUndoState(event.payload));
+  }).then((fn) => {
+    if (cancelled) fn();
+    else unsubscribers.push(fn);
+  });
+
+  onDirtyChanged((event) => {
+    if (cancelled) return;
+    dispatch(setDirty(event.payload.dirty));
   }).then((fn) => {
     if (cancelled) fn();
     else unsubscribers.push(fn);

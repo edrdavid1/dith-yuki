@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { useDocument } from './useDocument';
 import { useRecentFiles } from './useRecentFiles';
+import { useUnsavedGuard } from './useUnsavedGuard';
 import { openRecentByKind, type RecentFileEntry } from '../shared/ipc/recent';
 import type { BlankBackground } from '../shared/ipc/document';
 
@@ -20,9 +21,15 @@ export function useWelcomeScreen() {
   const doc = useDocument();
   const { entries, refresh } = useRecentFiles();
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const { confirmReplace, dialog: unsavedDialog } = useUnsavedGuard({
+    hasDocument: doc.hasDocument,
+    dirty: doc.dirty,
+    projectPath: doc.projectPath,
+    save: doc.saveProject,
+  });
 
   const runAndRefresh = useCallback(
-    async (op: () => Promise<void>) => {
+    async (op: () => Promise<unknown>) => {
       await op();
       await refresh();
     },
@@ -30,27 +37,36 @@ export function useWelcomeScreen() {
   );
 
   const onNewProject = useCallback(() => {
-    setNewProjectOpen(true);
-  }, []);
+    void confirmReplace().then((ok) => {
+      if (ok) setNewProjectOpen(true);
+    });
+  }, [confirmReplace]);
 
   const onOpenImage = useCallback(() => {
-    void runAndRefresh(doc.openImage);
-  }, [doc.openImage, runAndRefresh]);
+    void confirmReplace().then((ok) => {
+      if (ok) void runAndRefresh(doc.openImage);
+    });
+  }, [confirmReplace, doc.openImage, runAndRefresh]);
 
   const onOpenProject = useCallback(() => {
-    void runAndRefresh(doc.openProject);
-  }, [doc.openProject, runAndRefresh]);
+    void confirmReplace().then((ok) => {
+      if (ok) void runAndRefresh(doc.openProject);
+    });
+  }, [confirmReplace, doc.openProject, runAndRefresh]);
 
   const onOpenRecent = useCallback(
     (entry: RecentFileEntry) => {
-      void runAndRefresh(async () => {
-        await openRecentByKind(entry, {
-          openImageAt: doc.openImageAt,
-          openProjectAt: doc.openProjectAt,
+      void confirmReplace().then((ok) => {
+        if (!ok) return;
+        void runAndRefresh(async () => {
+          await openRecentByKind(entry, {
+            openImageAt: doc.openImageAt,
+            openProjectAt: doc.openProjectAt,
+          });
         });
       });
     },
-    [doc.openImageAt, doc.openProjectAt, runAndRefresh]
+    [confirmReplace, doc.openImageAt, doc.openProjectAt, runAndRefresh]
   );
 
   const onSaveImage = useCallback(() => {
@@ -93,5 +109,7 @@ export function useWelcomeScreen() {
     onSaveImage,
     onSaveProject,
     onSaveProjectAs,
+    confirmReplace,
+    unsavedDialog,
   };
 }

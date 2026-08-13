@@ -544,6 +544,7 @@ mod tests {
             float_drag_mouseup_hook: Mutex::new(None),
             project_path: Mutex::new(None),
             undo_manager: Mutex::new(crate::undo::UndoManager::new()),
+            saved_snapshot: Mutex::new(None),
         }
     }
 

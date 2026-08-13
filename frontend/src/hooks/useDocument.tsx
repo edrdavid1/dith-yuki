@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '../app/hooks';
 import {
   clearNotification,
@@ -18,6 +18,7 @@ import { maybeAutoExtractPalette } from '../app/autoExtract';
 import { useShell } from '../app/shell/ShellContext';
 import { openDialog, saveDialog } from '../shared/ipc';
 import type { BlankBackground } from '../shared/ipc/document';
+import SvgExportDialog, { type SvgExportAlgorithm } from '../components/SvgExportDialog';
 
 /**
  * Document open/save flows backed by RTK `document` slice.
@@ -27,6 +28,8 @@ export function useDocument() {
   const state = useAppSelector((s) => s.document);
   const selectedLayerId = useAppSelector((s) => s.selection.layerId);
   const { autoExtractPalettes } = useShell();
+  const [svgOpen, setSvgOpen] = useState(false);
+  const svgResolver = useRef<((algo: SvgExportAlgorithm | null) => void) | null>(null);
 
   const openImageAtFn = useCallback(
     async (filePath: string) => {
@@ -79,6 +82,17 @@ export function useDocument() {
             : ('PNG' as const);
 
       const filename = filePath.split(/[/\\]/).pop() ?? filePath;
+      let svg_algorithm: SvgExportAlgorithm | undefined;
+      if (format === 'SVG') {
+        const picked = await new Promise<SvgExportAlgorithm | null>((resolve) => {
+          svgResolver.current = resolve;
+          setSvgOpen(true);
+        });
+        setSvgOpen(false);
+        svgResolver.current = null;
+        if (!picked) return;
+        svg_algorithm = picked;
+      }
       await dispatch(
         saveImage({
           doc_id: state.docId,
@@ -86,6 +100,7 @@ export function useDocument() {
           format,
           quality: format === 'JPEG' ? 90 : undefined,
           filename,
+          svg_algorithm,
         })
       );
     } catch {
@@ -118,23 +133,24 @@ export function useDocument() {
     }
   }, [openProjectAtFn]);
 
-  const saveProjectFn = useCallback(async () => {
-    if (!state.hasDocument) return;
+  const saveProjectFn = useCallback(async (): Promise<boolean> => {
+    if (!state.hasDocument) return false;
     try {
       if (state.projectPath) {
-        await dispatch(saveProject(null));
-        return;
+        const result = await dispatch(saveProject(null));
+        return saveProject.fulfilled.match(result);
       }
       const filePath = await saveDialog({
         filters: [{ name: 'Dither Project', extensions: ['dyproj'] }],
       });
-      if (!filePath) return;
+      if (!filePath) return false;
       const path = filePath.toLowerCase().endsWith('.dyproj')
         ? filePath
         : `${filePath}.dyproj`;
-      await dispatch(saveProjectAs(path));
+      const result = await dispatch(saveProjectAs(path));
+      return saveProjectAs.fulfilled.match(result);
     } catch {
-      // Dialog cancel / IPC errors handled in thunk
+      return false;
     }
   }, [dispatch, state.hasDocument, state.projectPath]);
 
@@ -231,6 +247,7 @@ export function useDocument() {
     notification: state.notification,
     hasDocument: state.hasDocument,
     projectPath: state.projectPath,
+    dirty: state.dirty,
     openImage: openImageFn,
     openImageAt: openImageAtFn,
     saveImage: saveImageFn,
@@ -242,5 +259,12 @@ export function useDocument() {
     exportPattern: exportPatternFn,
     importPattern: importPatternFn,
     clearNotification: clearNotificationFn,
+    svgDialog: (
+      <SvgExportDialog
+        isOpen={svgOpen}
+        onExport={(algo) => svgResolver.current?.(algo)}
+        onClose={() => svgResolver.current?.(null)}
+      />
+    ),
   };
 }

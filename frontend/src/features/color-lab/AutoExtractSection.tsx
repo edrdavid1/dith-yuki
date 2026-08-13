@@ -12,8 +12,12 @@ export interface AutoExtractSectionProps {
   compact?: boolean;
   extractMethod: ExtractMethod;
   extractCount: number;
+  chromaWeight: number;
+  contrastWeight: number;
   onMethodChange: (method: ExtractMethod) => void;
   onCountChange: (count: number) => void;
+  onChromaWeightChange: (value: number) => void;
+  onContrastWeightChange: (value: number) => void;
   onExtractRaw: () => void;
   onExtractActual: () => void;
 }
@@ -22,8 +26,12 @@ export default function AutoExtractSection({
   compact = false,
   extractMethod,
   extractCount,
+  chromaWeight,
+  contrastWeight,
   onMethodChange,
   onCountChange,
+  onChromaWeightChange,
+  onContrastWeightChange,
   onExtractRaw,
   onExtractActual,
 }: AutoExtractSectionProps) {
@@ -38,6 +46,24 @@ export default function AutoExtractSection({
           step={1}
           decimals={0}
           onChange={(v) => onCountChange(Math.round(v))}
+        />
+        <Slider
+          label="chroma"
+          value={chromaWeight}
+          min={0}
+          max={1}
+          step={0.05}
+          decimals={2}
+          onChange={onChromaWeightChange}
+        />
+        <Slider
+          label="contrast"
+          value={contrastWeight}
+          min={0}
+          max={1}
+          step={0.05}
+          decimals={2}
+          onChange={onContrastWeightChange}
         />
 
         <div className={cn('color-lab-buttons', 'color-lab-buttons-row')}>
@@ -73,6 +99,24 @@ export default function AutoExtractSection({
         step={1}
         decimals={0}
         onChange={(v) => onCountChange(Math.round(v))}
+      />
+      <Slider
+        label="chroma"
+        value={chromaWeight}
+        min={0}
+        max={1}
+        step={0.05}
+        decimals={2}
+        onChange={onChromaWeightChange}
+      />
+      <Slider
+        label="contrast"
+        value={contrastWeight}
+        min={0}
+        max={1}
+        step={0.05}
+        decimals={2}
+        onChange={onContrastWeightChange}
       />
 
       <div className={cn('color-lab-buttons')}>

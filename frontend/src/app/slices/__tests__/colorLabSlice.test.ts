@@ -5,6 +5,7 @@ import {
   resetDraft,
   setColors,
   setSelectedColorIndex,
+  setSelectedPaletteId,
 } from '../colorLabSlice';
 import { createColorEntry } from '../../../features/color-lab/types';
 import { createTestStore } from '../../__tests__/testStore';
@@ -54,5 +55,13 @@ describe('colorLabSlice selectedColorIndex', () => {
     store.dispatch(setSelectedColorIndex(0));
     store.dispatch(resetDraft());
     expect(store.getState().colorLab.selectedColorIndex).toBeNull();
+  });
+
+  it('tracks selectedPaletteId for Apply replace', () => {
+    const store = createTestStore();
+    store.dispatch(setSelectedPaletteId(3));
+    expect(store.getState().colorLab.selectedPaletteId).toBe(3);
+    store.dispatch(resetDraft());
+    expect(store.getState().colorLab.selectedPaletteId).toBeNull();
   });
 });

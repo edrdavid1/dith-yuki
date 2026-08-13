@@ -27,7 +27,7 @@ interface PanelWindowProps {
 }
 
 function FloatingPreview(): JSX.Element {
-  const { welcome, newProjectOpen, closeNewProject, handleCreate } = useWelcomeScreen();
+  const { welcome, newProjectOpen, closeNewProject, handleCreate, unsavedDialog } = useWelcomeScreen();
   return (
     <>
       <PreviewFeature hideTitleBar fill welcome={welcome} />
@@ -36,6 +36,7 @@ function FloatingPreview(): JSX.Element {
         onClose={closeNewProject}
         onCreate={handleCreate}
       />
+      {unsavedDialog}
     </>
   );
 }

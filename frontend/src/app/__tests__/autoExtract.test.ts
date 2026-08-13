@@ -33,23 +33,14 @@ describe('autoExtract', () => {
       color_count: 2,
     });
 
-    const store = createTestStore({
-      colorLab: {
-        name: 'Untitled Palette',
-        colors: [],
-        extractMethod: 'MedianCut',
-        extractCount: 8,
-        error: null,
-        successMessage: null,
-        suppressRemote: false,
-        remoteEpoch: 0,
-        selectedColorIndex: null,
-      },
-    });
+    const store = createTestStore();
 
     const result = await store.dispatch(extractPalette({ layerId: 1 }));
     expect(extractPalette.fulfilled.match(result)).toBe(true);
-    expect(mockGeneratePalette).toHaveBeenCalledWith(1, 8, 'MedianCut');
+    expect(mockGeneratePalette).toHaveBeenCalledWith(1, 8, 'MedianCut', {
+      chromaWeight: 0,
+      contrastWeight: 0,
+    });
 
     const state = store.getState();
     expect(state.palettes.lastCreatedId).toBe(7);
@@ -57,6 +48,7 @@ describe('autoExtract', () => {
     expect(state.colorLab.name).toBe('Layer_MedianCut');
     expect(state.colorLab.colors).toHaveLength(2);
     expect(state.colorLab.colors[0].hex).toBe('#0f380f');
+    expect(state.colorLab.selectedPaletteId).toBe(7);
     expect(state.colorLab.error).toBeNull();
   });
 
@@ -93,7 +85,10 @@ describe('autoExtract', () => {
 
     await maybeAutoExtractPalette(store.dispatch, 2, true);
 
-    expect(mockGeneratePalette).toHaveBeenCalledWith(2, 8, 'MedianCut');
+    expect(mockGeneratePalette).toHaveBeenCalledWith(2, 8, 'MedianCut', {
+      chromaWeight: 0,
+      contrastWeight: 0,
+    });
     expect(store.getState().palettes.lastCreatedId).toBe(3);
     // Prior lastCreatedId is replaced by the new extract; filter palette_ids live
     // in the engine document and are never patched by this frontend path.

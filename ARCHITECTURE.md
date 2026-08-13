@@ -351,6 +351,7 @@ pub struct AppState {
     pub gpu: Option<Arc<engine_gpu::GpuContext>>,
     pub panel_manager: Mutex<PanelManager>,  // Multi-window panel state
     pub undo_manager: Mutex<UndoManager>,    // Track N: snapshot Arc<Document> stacks, max_depth=50
+    pub saved_snapshot: Mutex<Option<Arc<Document>>>, // Track P: Saved_Mark; dirty = !ptr_eq(live, mark)
     // … selection, dock_affinity, float-drag hooks …
 }
 ```
@@ -396,6 +397,10 @@ pub struct DocumentHandle {
 - `undo` / `redo` делают `DocumentHandle::store(Arc)` + `increment_document_gen` на live-снимке, затем тот же путь, что replace: `invalidate_after_document_replace` + `schedule_dirty_viewport_tiles` + `document-changed` (`document_undone` / `document_redone`).
 - Orphan_GC: `TileCache::evict_layer` / `ErrorResidualsStore::evict_layer` / `BlockRepresentativeCache::evict_layer` для `LayerId`, которых нет ни в live, ни в undo, ни в redo. Пиксельный paint в модели нет — snapshot структуры достаточен.
 - Фронт: событие `undo-state-changed`, кастомный MenuBar, window `keydown` (⌘Z / Ctrl+Z), без второго debounce (граница шага = Track K 100ms в `useEffectLayer`).
+
+### 3.2.2 Dirty flag (Track P)
+
+`saved_snapshot` is the live `Arc<Document>` at the last clean point (successful save, or `clear_history` after open / load / create). Dirty is `!Arc::ptr_eq(live, saved_mark)` — not `Document.revision`. Empty / welcome (no layers) is not dirty. Frontend title: `{• }{basename | Untitled} — Dither Engine`. One Unsaved_Guard (Save / Don’t Save / Cancel) on main-window close and File New/Open. GPU filters stay opt-in (`DITHER_GPU=1`); `0.1.0` has no in-app updater (Track O / `0.2.0`).
 
 ### 3.3 Tile Protocol Handler (tile://)
 

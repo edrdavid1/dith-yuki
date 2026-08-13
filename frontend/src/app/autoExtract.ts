@@ -1,6 +1,6 @@
 import { createAsyncThunk } from '@reduxjs/toolkit';
 import { bumpVersion } from './slices/palettesSlice';
-import { setColors, setError, setName } from './slices/colorLabSlice';
+import { setColors, setError, setName, setSelectedPaletteId } from './slices/colorLabSlice';
 import { getAutoExtractPalettesPref } from './shell/ShellContext';
 import {
   formatIpcError,
@@ -29,16 +29,20 @@ export const extractPalette = createAsyncThunk<
   ExtractPaletteArgs,
   { state: RootState; rejectValue: string }
 >('colorLab/extractPalette', async (args, { dispatch, getState, rejectWithValue }) => {
-  const { extractCount, extractMethod } = getState().colorLab;
+  const { extractCount, extractMethod, chromaWeight, contrastWeight } = getState().colorLab;
   const targetCount = args.targetCount ?? extractCount;
   const method = args.method ?? extractMethod;
 
   dispatch(setError(null));
   try {
-    const dto = await generatePalette(args.layerId, targetCount, method);
+    const dto = await generatePalette(args.layerId, targetCount, method, {
+      chromaWeight,
+      contrastWeight,
+    });
     dispatch(setName(dto.name || 'Untitled Palette'));
     dispatch(setColors(dto.colors.map(([r, g, b]) => createColorEntry(toHex(r, g, b)))));
     dispatch(bumpVersion({ lastCreatedId: dto.id }));
+    dispatch(setSelectedPaletteId(dto.id));
     return dto;
   } catch (err: unknown) {
     const message = formatIpcError(err);

@@ -438,6 +438,7 @@ mod tests {
         assert!(result.is_ok());
 
         let palette = doc.get_palette(id).unwrap();
+        assert_eq!(palette.id, id.0);
         assert_eq!(palette.revision, 2);
         assert_eq!(palette.colors.len(), 2);
         assert_eq!(palette.colors[0].g, 1.0);

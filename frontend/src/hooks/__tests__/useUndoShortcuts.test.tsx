@@ -45,6 +45,7 @@ function renderHarness(opts: { canUndo?: boolean; canRedo?: boolean; hasDocument
       error: null,
       layerId: 1,
       projectPath: null,
+      dirty: false,
     },
     undo: {
       canUndo: opts.canUndo ?? true,

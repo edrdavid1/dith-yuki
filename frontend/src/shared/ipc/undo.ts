@@ -19,3 +19,17 @@ export async function onUndoStateChanged(
 ): Promise<UnlistenFn> {
   return listen<UndoStateDto>('undo-state-changed', handler);
 }
+
+export interface DirtyDto {
+  dirty: boolean;
+}
+
+export async function isDocumentDirty(): Promise<boolean> {
+  return invoke<boolean>('is_document_dirty');
+}
+
+export async function onDirtyChanged(
+  handler: (event: Event<DirtyDto>) => void
+): Promise<UnlistenFn> {
+  return listen<DirtyDto>('dirty-changed', handler);
+}

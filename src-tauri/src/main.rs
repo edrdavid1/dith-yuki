@@ -85,6 +85,7 @@ fn main() {
         float_drag_mouseup_hook: Mutex::new(None),
         project_path: Mutex::new(None),
         undo_manager: Mutex::new(crate::undo::UndoManager::new()),
+        saved_snapshot: Mutex::new(None),
     };
 
     // Wrap in Arc for sharing between Tauri state and worker threads
@@ -318,6 +319,7 @@ fn main() {
             recent_files::get_recent_files,
             crate::undo::undo,
             crate::undo::redo,
+            crate::undo::is_document_dirty,
             
             // Palette commands
             commands::list_palettes,
@@ -329,6 +331,7 @@ fn main() {
             commands::get_palette_oklab,
             commands::import_palette,
             commands::add_palette,
+            commands::replace_palette,
             commands::generate_palette,
             commands::remove_palette,
             commands::rename_palette,

@@ -19,6 +19,10 @@ export interface ColorLabState extends ColorLabDraftSnapshot {
   remoteEpoch: number;
   /** Shared swatch cursor: manual-edit list and Oklab volume viewer. */
   selectedColorIndex: number | null;
+  /** Document palette Apply will replace; null → add. */
+  selectedPaletteId: number | null;
+  chromaWeight: number;
+  contrastWeight: number;
 }
 
 const defaultDraft = (): ColorLabDraftSnapshot => ({
@@ -26,7 +30,14 @@ const defaultDraft = (): ColorLabDraftSnapshot => ({
   colors: [],
   extractMethod: 'MedianCut',
   extractCount: 8,
+  chromaWeight: 0,
+  contrastWeight: 0,
 });
+
+function clampWeight(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return Math.min(1, Math.max(0, value));
+}
 
 function storageAvailable(): boolean {
   try {
@@ -53,6 +64,8 @@ function loadPersistedDraft(): ColorLabDraftSnapshot {
         typeof parsed.extractCount === 'number'
           ? Math.min(64, Math.max(2, Math.round(parsed.extractCount)))
           : 8,
+      chromaWeight: clampWeight(parsed.chromaWeight),
+      contrastWeight: clampWeight(parsed.contrastWeight),
     };
   } catch {
     return defaultDraft();
@@ -74,6 +87,8 @@ export function selectDraftSnapshot(state: ColorLabState): ColorLabDraftSnapshot
     colors: state.colors,
     extractMethod: state.extractMethod,
     extractCount: state.extractCount,
+    chromaWeight: state.chromaWeight,
+    contrastWeight: state.contrastWeight,
   };
 }
 
@@ -91,6 +106,9 @@ const initialState: ColorLabState = {
   suppressRemote: false,
   remoteEpoch: 0,
   selectedColorIndex: null,
+  selectedPaletteId: null,
+  chromaWeight: hydrated.chromaWeight ?? 0,
+  contrastWeight: hydrated.contrastWeight ?? 0,
 };
 
 const colorLabSlice = createSlice({
@@ -139,13 +157,25 @@ const colorLabSlice = createSlice({
     setExtractCount(state, action: PayloadAction<number>) {
       state.extractCount = Math.min(64, Math.max(2, Math.round(action.payload)));
     },
+    setChromaWeight(state, action: PayloadAction<number>) {
+      state.chromaWeight = clampWeight(action.payload);
+    },
+    setContrastWeight(state, action: PayloadAction<number>) {
+      state.contrastWeight = clampWeight(action.payload);
+    },
+    setSelectedPaletteId(state, action: PayloadAction<number | null>) {
+      state.selectedPaletteId = action.payload;
+    },
     resetDraft(state) {
       const next = defaultDraft();
       state.name = next.name;
       state.colors = next.colors;
       state.extractMethod = next.extractMethod;
       state.extractCount = next.extractCount;
+      state.chromaWeight = next.chromaWeight ?? 0;
+      state.contrastWeight = next.contrastWeight ?? 0;
       state.selectedColorIndex = null;
+      state.selectedPaletteId = null;
       state.error = null;
       state.successMessage = null;
     },
@@ -161,6 +191,8 @@ const colorLabSlice = createSlice({
       state.colors = action.payload.colors;
       state.extractMethod = action.payload.extractMethod;
       state.extractCount = action.payload.extractCount;
+      state.chromaWeight = clampWeight(action.payload.chromaWeight);
+      state.contrastWeight = clampWeight(action.payload.contrastWeight);
       state.selectedColorIndex = clampSelectedIndex(
         state.colors.length,
         state.selectedColorIndex
@@ -176,6 +208,8 @@ const colorLabSlice = createSlice({
       state.colors = draft.colors;
       state.extractMethod = draft.extractMethod;
       state.extractCount = draft.extractCount;
+      state.chromaWeight = draft.chromaWeight ?? 0;
+      state.contrastWeight = draft.contrastWeight ?? 0;
       state.selectedColorIndex = clampSelectedIndex(
         state.colors.length,
         state.selectedColorIndex
@@ -193,6 +227,9 @@ export const {
   setSelectedColorIndex,
   setExtractMethod,
   setExtractCount,
+  setChromaWeight,
+  setContrastWeight,
+  setSelectedPaletteId,
   resetDraft,
   setError,
   setSuccessMessage,
