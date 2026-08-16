@@ -54,6 +54,7 @@ fn bayer_matrix(mode: &DitherModeV2) -> Option<BayerMatrixSize> {
 pub(crate) fn bayer_gpu_eligible(params: &DitherParamsV2) -> bool {
     params.pixel_size == 1
         && params.palette_id.is_none()
+        && !params.palette_dither_mode.is_guided()
         && params.threshold_bias == 0.0
         && params.pattern_angle == 0.0
         && bayer_matrix(&params.mode).is_some()
@@ -77,7 +78,8 @@ pub fn try_ordered_bayer_gpu(
     let color_mode = match params.color_mode {
         DitherColorMode::Rgb => 0u32,
         DitherColorMode::Grayscale => 1u32,
-    };
+    } + if params.dither_alpha { 2 } else { 0 };
+    // Shader: 0=rgb, 1=gray, 2=rgb+dither_alpha, 3=gray+dither_alpha.
     let input = extract_core(tile);
     let out = apply_bayer_gpu(
         ctx,
@@ -132,6 +134,7 @@ pub fn try_halftone_gpu(
             threshold_scale: params.threshold_scale,
             tile_x: coord.x,
             tile_y: coord.y,
+            dither_alpha: params.dither_alpha,
         },
     )
     .ok()?;
@@ -175,7 +178,7 @@ pub fn try_crt_gpu(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
+    use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2, PaletteDitherMode};
 
     fn bayer_params() -> DitherParamsV2 {
         DitherParamsV2 {
@@ -212,6 +215,23 @@ mod tests {
     fn bayer_gpu_skips_pixel_size() {
         let mut p = bayer_params();
         p.pixel_size = 2;
+        assert!(!bayer_gpu_eligible(&p));
+    }
+
+    #[test]
+    fn guided_gpu_not_eligible() {
+        let mut p = bayer_params();
+        p.palette_dither_mode = PaletteDitherMode::Guided {
+            channel_levels: None,
+        };
+        assert!(!bayer_gpu_eligible(&p));
+        p.palette_id = Some(crate::types::PaletteId::new(1));
+        p.palette_dither_mode = PaletteDitherMode::Strict;
+        assert!(!bayer_gpu_eligible(&p));
+        p.palette_id = None;
+        p.palette_dither_mode = PaletteDitherMode::Mixed {
+            channel_levels: Some(4),
+        };
         assert!(!bayer_gpu_eligible(&p));
     }
 }

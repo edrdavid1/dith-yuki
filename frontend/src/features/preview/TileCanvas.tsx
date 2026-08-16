@@ -1,8 +1,9 @@
 import { useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { listen } from '@tauri-apps/api/event';
+import { onDocumentChanged } from '../../shared/ipc';
 import styles from './TileCanvas.module.css';
 import { bind } from '../../shared/ui/cn';
-import { snapTileDrawRect } from './zoomSnap';
+import { snapCssPx } from './zoomSnap';
 
 const cn = bind(styles);
 
@@ -88,19 +89,20 @@ export function computeVisibleTiles(
 /**
  * Compute the pyramid level for the given zoom factor.
  *
- * NOTE: Pyramid level rendering is disabled until the full pyramid generation
- * pipeline is integrated (level 0 composite tiles must be pre-computed before
- * higher levels can be generated). Currently always returns 0 to ensure all
- * tiles load correctly at any image size.
+ * Matches backend `compute_pyramid_level`: max(0, floor(log2(1/zoom))),
+ * clamped to floor(log2(max_dim / 256)). Zoom ≥ 1 always uses level 0.
  */
 export function computePyramidLevel(
-  _zoom: number,
-  _docWidth: number,
-  _docHeight: number,
+  zoom: number,
+  docWidth: number,
+  docHeight: number,
 ): number {
-  // TODO: Re-enable once pyramid tile generation pipeline reliably pre-computes
-  // level 0 composites before attempting higher-level generation.
-  return 0;
+  if (zoom >= 1) return 0;
+  const maxDim = Math.max(docWidth, docHeight);
+  if (maxDim <= TILE_SIZE) return 0;
+  const maxLevel = Math.floor(Math.log2(maxDim / TILE_SIZE));
+  const level = Math.floor(Math.log2(1 / zoom));
+  return Math.max(0, Math.min(level, maxLevel));
 }
 
 /**
@@ -139,6 +141,119 @@ export function parseTileKey(key: string): TileCoord {
   };
 }
 
+export function tileKey(t: TileCoord): string {
+  return `${t.level}/${t.x}/${t.y}`;
+}
+
+/**
+ * True when every visible tile that is already on screen has a buffered
+ * replacement. Used so a filter change paints as one frame, not a mix of
+ * old and new effect.
+ */
+export function shouldCommitTileRefresh(
+  displayedKeys: Iterable<string>,
+  pendingKeys: Iterable<string>,
+  visibleKeys: string[],
+): boolean {
+  const displayed = new Set(displayedKeys);
+  const pending = new Set(pendingKeys);
+  const displayedVisible = visibleKeys.filter((k) => displayed.has(k));
+  if (displayedVisible.length === 0) return false;
+  return displayedVisible.every((k) => pending.has(k));
+}
+
+/** Drop worker results from a previous filter/document generation. */
+export function shouldAcceptDecodedRev(
+  decodedRev: number | undefined,
+  currentRev: number,
+): boolean {
+  return (decodedRev ?? 0) >= currentRev;
+}
+
+/** Safety valve after E+C: do not wait forever for one missing tile. */
+export const COMMIT_WAIT_MS = 100;
+
+export interface TileBlit {
+  sx: number;
+  sy: number;
+  sw: number;
+  sh: number;
+  dx: number;
+  dy: number;
+  dw: number;
+  dh: number;
+}
+
+function almostInt(v: number): number | null {
+  const r = Math.round(v);
+  return Math.abs(v - r) < 1e-6 ? r : null;
+}
+
+/**
+ * Screen blit for one pyramid tile, clipped to document bounds.
+ * Dest x/y/w/h are **device pixels** (HiDPI backing store), not CSS px.
+ *
+ * When `zoom * dpr` is an integer, every tile is placed on one shared
+ * document-pixel grid so Bayer cells stay the same size and do not overlap.
+ */
+export function computeTileBlit(
+  x: number,
+  y: number,
+  level: number,
+  viewport: ViewportState,
+  docWidth: number,
+  docHeight: number,
+  dpr: number = devicePixelRatio(),
+): TileBlit | null {
+  const scale = 1 << level;
+  const tileDocSize = TILE_SIZE * scale;
+  const docX = x * tileDocSize;
+  const docY = y * tileDocSize;
+  if (docX >= docWidth || docY >= docHeight) return null;
+
+  const coverW = Math.min(tileDocSize, docWidth - docX);
+  const coverH = Math.min(tileDocSize, docHeight - docY);
+  if (coverW <= 0 || coverH <= 0) return null;
+
+  const sx = 0;
+  const sy = 0;
+  const sw = (coverW / tileDocSize) * TILE_SIZE;
+  const sh = (coverH / tileDocSize) * TILE_SIZE;
+
+  const zoom = viewport.zoom;
+  const docDevice = zoom * dpr;
+  const dc = almostInt(docDevice);
+
+  let dx: number;
+  let dy: number;
+  let dw: number;
+  let dh: number;
+  if (dc !== null) {
+    const ox = Math.round(-viewport.panX * docDevice);
+    const oy = Math.round(-viewport.panY * docDevice);
+    dx = ox + docX * dc;
+    dy = oy + docY * dc;
+    dw = coverW * dc;
+    dh = coverH * dc;
+  } else {
+    const startX = (docX - viewport.panX) * docDevice;
+    const startY = (docY - viewport.panY) * docDevice;
+    const endX = (docX + coverW - viewport.panX) * docDevice;
+    const endY = (docY + coverH - viewport.panY) * docDevice;
+    dx = Math.round(startX);
+    dy = Math.round(startY);
+    dw = Math.round(endX) - dx;
+    dh = Math.round(endY) - dy;
+  }
+
+  if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return null;
+  return { sx, sy, sw, sh, dx, dy, dw, dh };
+}
+
+function devicePixelRatio(): number {
+  return typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 /**
@@ -156,11 +271,16 @@ export default function TileCanvas({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const workerRef = useRef<Worker | null>(null);
   const tileMapRef = useRef<Map<string, ImageBitmap>>(new Map());
+  const refreshPendingRef = useRef<Map<string, ImageBitmap>>(new Map());
   const rafRef = useRef<number | null>(null);
   const viewportRef = useRef(viewport);
   const lastDrawnViewportRef = useRef(viewport);
+  const docSizeRef = useRef({ docWidth, docHeight });
+  const tileRevRef = useRef(0);
+  const commitTimerRef = useRef<number | null>(null);
 
   viewportRef.current = viewport;
+  docSizeRef.current = { docWidth, docHeight };
 
   // ─── Draw tiles to canvas ──────────────────────────────────────────────
 
@@ -173,40 +293,47 @@ export default function TileCanvas({
     const vp = viewportRef.current;
     lastDrawnViewportRef.current = vp;
 
+    const dpr = devicePixelRatio();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#666666';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.imageSmoothingEnabled = false;
 
+    const currentLevel = computePyramidLevel(vp.zoom, docWidth, docHeight);
+
+    // Only the active pyramid level. Drawing coarser tiles underneath
+    // (nearest-neighbour, 2^L × oversized) is what made zoom-in pixels look wrong.
     for (const [key, bitmap] of tileMapRef.current) {
       const { x, y, level } = parseTileKey(key);
-      const screenPos = tileToScreen(x, y, level, vp);
-      const scale = vp.zoom * (1 << level);
-      const drawSize = TILE_SIZE * scale;
-
-      let dx: number;
-      let dy: number;
-      let dw: number;
-      let dh: number;
-      if (vp.zoomMode === 'integer') {
-        // Canvas2D path (no WebGL). DPR-aware snap avoids subpixel gaps at 2×/3×.
-        const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
-        ({ dx, dy, dw, dh } = snapTileDrawRect(screenPos.x, screenPos.y, drawSize, dpr));
-      } else {
-        dx = Math.floor(screenPos.x);
-        dy = Math.floor(screenPos.y);
-        dw = Math.ceil(screenPos.x + drawSize) - dx;
-        dh = Math.ceil(screenPos.y + drawSize) - dy;
+      if (level !== currentLevel) continue;
+      const blit = computeTileBlit(x, y, level, vp, docWidth, docHeight, dpr);
+      if (!blit) continue;
+      if (
+        blit.dx + blit.dw < 0 ||
+        blit.dy + blit.dh < 0 ||
+        blit.dx > canvas.width ||
+        blit.dy > canvas.height
+      ) {
+        continue;
       }
-
-      if (dx + dw < 0 || dy + dh < 0 || dx > canvas.width || dy > canvas.height) continue;
-      ctx.drawImage(bitmap, dx, dy, dw, dh);
+      ctx.drawImage(
+        bitmap,
+        blit.sx,
+        blit.sy,
+        blit.sw,
+        blit.sh,
+        blit.dx,
+        blit.dy,
+        blit.dw,
+        blit.dh,
+      );
     }
 
     // Reset CSS transform since canvas is now drawn at correct position
     if (canvas) {
       canvas.style.transform = '';
     }
-  }, []);
+  }, [docWidth, docHeight]);
 
   const scheduleRedraw = useCallback(() => {
     if (rafRef.current !== null) return;
@@ -216,17 +343,74 @@ export default function TileCanvas({
     });
   }, [drawTiles]);
 
+  const flushPendingCommit = useCallback(() => {
+    const displayed = tileMapRef.current;
+    const pending = refreshPendingRef.current;
+    if (pending.size === 0) return;
+    for (const [k, next] of [...pending.entries()]) {
+      const old = displayed.get(k);
+      if (old && old !== next) old.close();
+      displayed.set(k, next);
+      pending.delete(k);
+    }
+    scheduleRedraw();
+  }, [scheduleRedraw]);
+
+  const clearCommitTimer = useCallback(() => {
+    if (commitTimerRef.current != null) {
+      window.clearTimeout(commitTimerRef.current);
+      commitTimerRef.current = null;
+    }
+  }, []);
+
+  const armCommitTimeout = useCallback(() => {
+    if (commitTimerRef.current != null) return;
+    commitTimerRef.current = window.setTimeout(() => {
+      commitTimerRef.current = null;
+      flushPendingCommit();
+    }, COMMIT_WAIT_MS);
+  }, [flushPendingCommit]);
+
   // ─── Handle worker messages ─────────────────────────────────────────────
 
   const handleWorkerMessage = useCallback(
     (e: MessageEvent) => {
       const msg = e.data;
-      if (msg.type === 'tile-decoded') {
-        tileMapRef.current.set(msg.key, msg.bitmap);
-        scheduleRedraw();
+      if (msg.type !== 'tile-decoded') return;
+
+      const key = msg.key as string;
+      const bitmap = msg.bitmap as ImageBitmap;
+      const decodedRev = msg.rev as number | undefined;
+      if (!shouldAcceptDecodedRev(decodedRev, tileRevRef.current)) {
+        bitmap.close();
+        return;
       }
+
+      const displayed = tileMapRef.current;
+      const pending = refreshPendingRef.current;
+
+      // First coverage of this tile (load / pan / LOD): show immediately.
+      if (!displayed.has(key)) {
+        displayed.set(key, bitmap);
+        scheduleRedraw();
+        return;
+      }
+
+      const prevPending = pending.get(key);
+      if (prevPending && prevPending !== bitmap) prevPending.close();
+      pending.set(key, bitmap);
+      armCommitTimeout();
+
+      const { docWidth: w, docHeight: h } = docSizeRef.current;
+      const visibleKeys = computeVisibleTiles(viewportRef.current, w, h).map(tileKey);
+      if (!shouldCommitTileRefresh(displayed.keys(), pending.keys(), visibleKeys)) {
+        return;
+      }
+
+      clearCommitTimer();
+      flushPendingCommit();
     },
-    [scheduleRedraw],
+    [armCommitTimeout, clearCommitTimer, flushPendingCommit, scheduleRedraw],
   );
 
   // ─── Initialize Web Worker ──────────────────────────────────────────────
@@ -246,10 +430,18 @@ export default function TileCanvas({
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
       }
+      if (commitTimerRef.current != null) {
+        window.clearTimeout(commitTimerRef.current);
+        commitTimerRef.current = null;
+      }
       for (const bitmap of tileMapRef.current.values()) {
         bitmap.close();
       }
       tileMapRef.current.clear();
+      for (const bitmap of refreshPendingRef.current.values()) {
+        bitmap.close();
+      }
+      refreshPendingRef.current.clear();
     };
   }, [handleWorkerMessage]);
 
@@ -261,12 +453,28 @@ export default function TileCanvas({
     const canvas = canvasRef.current;
     const lastVp = lastDrawnViewportRef.current;
 
+    // Drop bitmaps from other pyramid levels when zoom crosses a LOD boundary.
+    const currentLevel = computePyramidLevel(viewport.zoom, docWidth, docHeight);
+    for (const [key, bitmap] of [...tileMapRef.current.entries()]) {
+      if (parseTileKey(key).level !== currentLevel) {
+        bitmap.close();
+        tileMapRef.current.delete(key);
+      }
+    }
+    for (const [key, bitmap] of [...refreshPendingRef.current.entries()]) {
+      if (parseTileKey(key).level !== currentLevel) {
+        bitmap.close();
+        refreshPendingRef.current.delete(key);
+      }
+    }
+
     // If only pan changed (same zoom), apply CSS transform for instant visual shift
     if (canvas && viewport.zoom === lastVp.zoom &&
         viewport.canvasWidth === lastVp.canvasWidth &&
         viewport.canvasHeight === lastVp.canvasHeight) {
-      const dx = (lastVp.panX - viewport.panX) * viewport.zoom;
-      const dy = (lastVp.panY - viewport.panY) * viewport.zoom;
+      const dpr = devicePixelRatio();
+      const dx = snapCssPx((lastVp.panX - viewport.panX) * viewport.zoom, dpr);
+      const dy = snapCssPx((lastVp.panY - viewport.panY) * viewport.zoom, dpr);
       canvas.style.transform = `translate(${dx}px, ${dy}px)`;
     }
 
@@ -282,6 +490,7 @@ export default function TileCanvas({
           type: 'request-tiles',
           tiles: needed,
           docId,
+          rev: tileRevRef.current,
         });
       }
     }
@@ -291,16 +500,66 @@ export default function TileCanvas({
 
   useEffect(() => {
     const unlisten = listen<TileReadyPayload>('tile-ready', (event) => {
-      const { level, x, y } = event.payload;
+      const { level, x, y, stage, doc_id } = event.payload;
+      if (doc_id !== docId) return;
+      if (stage && stage !== 'composite') return;
+      const currentLevel = computePyramidLevel(
+        viewportRef.current.zoom,
+        docWidth,
+        docHeight,
+      );
+      if (level !== currentLevel) return;
       workerRef.current?.postMessage({
         type: 'fetch-tile',
         level,
         x,
         y,
         docId,
+        rev: tileRevRef.current,
       });
     });
     return () => { unlisten.then((fn) => fn()); };
+  }, [docId, docWidth, docHeight]);
+
+  useEffect(() => {
+    const unlisten = onDocumentChanged(() => {
+      tileRevRef.current += 1;
+      if (commitTimerRef.current != null) {
+        window.clearTimeout(commitTimerRef.current);
+        commitTimerRef.current = null;
+      }
+      for (const bitmap of refreshPendingRef.current.values()) {
+        bitmap.close();
+      }
+      refreshPendingRef.current.clear();
+      if (!workerRef.current) return;
+      const visible = computeVisibleTiles(
+        viewportRef.current,
+        docWidth,
+        docHeight,
+      );
+      if (visible.length === 0) return;
+      workerRef.current.postMessage({
+        type: 'request-tiles',
+        tiles: visible,
+        docId,
+        rev: tileRevRef.current,
+      });
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [docId, docWidth, docHeight]);
+
+  useEffect(() => {
+    for (const bitmap of tileMapRef.current.values()) {
+      bitmap.close();
+    }
+    tileMapRef.current.clear();
+    for (const bitmap of refreshPendingRef.current.values()) {
+      bitmap.close();
+    }
+    refreshPendingRef.current.clear();
   }, [docId]);
 
   // ─── Force refetch all visible tiles after docId changes (initial load) ─
@@ -317,6 +576,7 @@ export default function TileCanvas({
         type: 'request-tiles',
         tiles: visible,
         docId,
+        rev: tileRevRef.current,
       });
     }, 300);
     
@@ -337,12 +597,18 @@ export default function TileCanvas({
     const h = Math.max(0, Math.round(viewport.canvasHeight));
     if (w === 0 || h === 0) return;
 
-    if (canvas.width !== w || canvas.height !== h) {
+    const dpr = devicePixelRatio();
+    const bw = Math.round(w * dpr);
+    const bh = Math.round(h * dpr);
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+
+    if (canvas.width !== bw || canvas.height !== bh) {
       // Drop any pan translate before the backing store changes — a stale
       // transform + new CSS box reads as the image jumping sideways.
       canvas.style.transform = '';
-      canvas.width = w;
-      canvas.height = h;
+      canvas.width = bw;
+      canvas.height = bh;
       drawTiles();
     }
   }, [viewport.canvasWidth, viewport.canvasHeight, drawTiles]);

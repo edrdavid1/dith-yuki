@@ -3,6 +3,7 @@ import type { FilterInfo, FilterKind } from '../../types';
 import type { EffectType } from '../../types/effects';
 import { EFFECT_TO_FILTER_KIND } from '../../types/effects';
 import Icon from '../../icons/iconRegistry';
+import Tooltip from '../../shared/ui/Tooltip';
 import SimpleBar from 'simplebar-react';
 import WindowTitlebar from '../../shared/ui/WindowTitlebar';
 import DitherSettings from './editors/DitherSettings';
@@ -11,6 +12,7 @@ import CurvesSettings from './editors/CurvesSettings';
 import RGBSettings from './editors/RGBSettings';
 import GlowSettings from './editors/GlowSettings';
 import CrtSettings from './editors/CrtSettings';
+import AdjustSettings from './editors/AdjustSettings';
 import styles from './EffectSettingsPanel.module.css';
 import { bind } from '../../shared/ui/cn';
 const cn = bind(styles);
@@ -45,17 +47,19 @@ function filterKindToEffectType(kind: FilterKind): EffectType | null {
 function EffectIcon({ type }: { type: EffectType }) {
   switch (type) {
     case 'Dithering':
-      return <Icon name="effect.dithering" width={24} height={24} />;
+      return <Icon name="effect.dithering" width={20} height={20} />;
     case 'Glitching':
-      return <Icon name="effect.glitching" width={24} height={24} />;
+      return <Icon name="effect.glitching" width={20} height={20} />;
     case 'Curves':
-      return <Icon name="effect.curves" width={24} height={24} />;
+      return <Icon name="effect.curves" width={20} height={20} />;
     case 'RGBChannels':
-      return <Icon name="effect.rgb" width={24} height={24} />;
+      return <Icon name="effect.rgb" width={20} height={20} />;
     case 'Glow':
-      return <Icon name="effect.glitching" width={24} height={24} />;
+      return <Icon name="effect.glow" width={20} height={20} />;
     case 'CRT':
-      return <Icon name="effect.dithering" width={24} height={24} />;
+      return <Icon name="effect.crt" width={20} height={20} />;
+    case 'Adjust':
+      return <Icon name="effect.adjust" width={20} height={20} />;
     default:
       return null;
   }
@@ -68,6 +72,7 @@ const EFFECT_OPTIONS: { type: EffectType; label: string }[] = [
   { type: 'RGBChannels', label: 'RGB channels' },
   { type: 'Glow', label: 'Glow' },
   { type: 'CRT', label: 'CRT' },
+  { type: 'Adjust', label: 'Adjust' },
 ];
 
 /**
@@ -87,22 +92,28 @@ export default function EffectSettingsPanel({
   const canUsePattern = targetLayerId != null;
   const patternActions = (
     <div className={cn('pattern-actions')}>
-      <button
-        type="button"
-        className={cn('pattern-action-btn')}
-        disabled={!canUsePattern}
-        onClick={() => onExportPattern?.()}
-      >
-        Export as pattern…
-      </button>
-      <button
-        type="button"
-        className={cn('pattern-action-btn')}
-        disabled={!canUsePattern}
-        onClick={() => onImportPattern?.()}
-      >
-        Import pattern…
-      </button>
+      <Tooltip label="Export as pattern">
+        <button
+          type="button"
+          className={cn('pattern-action-btn')}
+          disabled={!canUsePattern}
+          onClick={() => onExportPattern?.()}
+          aria-label="Export as pattern"
+        >
+          <Icon name="export" width={16} height={16} />
+        </button>
+      </Tooltip>
+      <Tooltip label="Import pattern">
+        <button
+          type="button"
+          className={cn('pattern-action-btn')}
+          disabled={!canUsePattern}
+          onClick={() => onImportPattern?.()}
+          aria-label="Import pattern"
+        >
+          <Icon name="import" width={16} height={16} />
+        </button>
+      </Tooltip>
     </div>
   );
 
@@ -165,6 +176,8 @@ export default function EffectSettingsPanel({
         return <GlowSettings params={params} onUpdate={handleUpdate} />;
       case 'CRT':
         return <CrtSettings params={params} onUpdate={handleUpdate} />;
+      case 'Adjust':
+        return <AdjustSettings params={params} onUpdate={handleUpdate} />;
       default:
         return <div className={cn("effect-settings-content")}>Unknown effect type</div>;
     }

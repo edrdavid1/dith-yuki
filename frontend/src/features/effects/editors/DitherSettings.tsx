@@ -60,11 +60,39 @@ function simpleToMode(simple: SimpleDitherMode): DitherModeV2 | string {
   return simple;
 }
 
+function isGuidedMode(mode: unknown): boolean {
+  return typeof mode === 'object' && mode !== null && 'guided' in mode;
+}
+
+function isMixedMode(mode: unknown): boolean {
+  return typeof mode === 'object' && mode !== null && 'mixed' in mode;
+}
+
+function usesChannelLevels(mode: unknown): boolean {
+  return isGuidedMode(mode) || isMixedMode(mode);
+}
+
+function paletteModeKey(mode: unknown): 'strict' | 'guided' | 'mixed' | 'simple' {
+  if (isGuidedMode(mode)) return 'guided';
+  if (isMixedMode(mode)) return 'mixed';
+  if (mode === 'simple') return 'simple';
+  return 'strict';
+}
+
+function guidedChannelLevels(mode: unknown): number | null {
+  if (typeof mode !== 'object' || mode === null) return null;
+  const rec = mode as { guided?: { channel_levels?: number | null }; mixed?: { channel_levels?: number | null } };
+  const n = rec.guided?.channel_levels ?? rec.mixed?.channel_levels;
+  return typeof n === 'number' ? n : null;
+}
+
 /**
  * Dither effect params. Palette comes from Color Lab (`lastCreatedId`), not a local selector.
  */
 function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
   const lastCreatedId = useAppSelector((s) => s.palettes.lastCreatedId);
+  const boundPaletteId =
+    lastCreatedId ?? (typeof params.palette_id === 'number' ? params.palette_id : null);
   const mode = params.mode ?? 'floyd_steinberg';
   const levels = clampParam(Number(params.levels) || 4, 2, 256);
   const thresholdScale = clampParam(Number(params.threshold_scale) || 1.0, 0.1, 4.0);
@@ -101,6 +129,11 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
     'sierra',
   ].includes(simpleMode);
   const serpentine = Boolean(params.serpentine);
+  const ditherAlpha = params.dither_alpha !== false;
+  const paletteBound = boundPaletteId != null;
+  const paletteDitherMode = params.palette_dither_mode;
+  const paletteMode = paletteModeKey(paletteDitherMode);
+  const channelLevels = clampParam(guidedChannelLevels(paletteDitherMode) ?? 3, 2, 16);
 
   const emit = (overrides: Record<string, unknown>) => {
     onUpdate({
@@ -109,7 +142,12 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
       threshold_scale: overrides.threshold_scale ?? thresholdScale,
       pixel_size: overrides.pixel_size ?? pixelSize,
       color_mode: overrides.color_mode ?? (params.color_mode ?? 'rgb'),
-      palette_id: lastCreatedId,
+      palette_id:
+        typeof params.palette_id === 'number' ? params.palette_id : lastCreatedId,
+      palette_dither_mode:
+        overrides.palette_dither_mode ??
+        params.palette_dither_mode ??
+        'strict',
       halftone_cell_size: overrides.halftone_cell_size ?? cellSize,
       wave_wavelength: overrides.wave_wavelength ?? waveWavelength,
       wave_amplitude: overrides.wave_amplitude ?? waveAmplitude,
@@ -118,6 +156,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
       threshold_bias: overrides.threshold_bias ?? thresholdBias,
       pattern_angle: overrides.pattern_angle ?? patternAngle,
       serpentine: overrides.serpentine ?? serpentine,
+      dither_alpha: overrides.dither_alpha ?? ditherAlpha,
     });
   };
 
@@ -125,7 +164,10 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
     <div className={cn('effect-settings-content')}>
       <p className={cn('effect-palette-hint')}>
         Palette is controlled in Color Lab
-        {lastCreatedId != null ? ` (palette #${lastCreatedId})` : ' — extract or apply a palette first'}.
+        {boundPaletteId != null
+          ? ` (palette #${boundPaletteId}). Levels is ignored`
+          : ' — extract or apply a palette first'}
+        .
       </p>
 
       <DropdownMenu
@@ -151,6 +193,54 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
         }}
       />
 
+      {paletteBound && (
+        <>
+          <DropdownMenu
+            label="Palette dither"
+            value={paletteMode}
+            options={[
+              { value: 'strict', label: 'Strict — exact palette colors' },
+              { value: 'simple', label: 'Simple — sRGB Euclidean (classic)' },
+              { value: 'guided', label: 'Guided — palette-derived range (richer)' },
+              { value: 'mixed', label: 'Mixed — Guided then palette dither' },
+            ]}
+            onSelect={(v) => {
+              if (v === 'guided') {
+                emit({
+                  palette_dither_mode: { guided: { channel_levels: channelLevels } },
+                });
+              } else if (v === 'mixed') {
+                emit({
+                  palette_dither_mode: { mixed: { channel_levels: channelLevels } },
+                });
+              } else if (v === 'simple') {
+                emit({ palette_dither_mode: 'simple' });
+              } else {
+                emit({ palette_dither_mode: 'strict' });
+              }
+            }}
+          />
+          {usesChannelLevels(paletteDitherMode) && (
+            <Slider
+              label="Levels per channel"
+              value={channelLevels}
+              min={2}
+              max={16}
+              step={1}
+              decimals={0}
+              onChange={(v) =>
+                emit({
+                  palette_dither_mode:
+                    paletteMode === 'mixed'
+                      ? { mixed: { channel_levels: clampParam(Math.round(v), 2, 16) } }
+                      : { guided: { channel_levels: clampParam(Math.round(v), 2, 16) } },
+                })
+              }
+            />
+          )}
+        </>
+      )}
+
       <Slider
         label="Pixel Size"
         value={pixelSize}
@@ -160,6 +250,15 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
         decimals={0}
         onChange={(v) => emit({ pixel_size: clampParam(Math.round(v), 1, 32) })}
       />
+
+      <label className={cn('param-checkbox-row')}>
+        <input
+          type="checkbox"
+          checked={ditherAlpha}
+          onChange={(e) => emit({ dither_alpha: e.target.checked })}
+        />
+        Pixelate Alpha
+      </label>
 
       <Slider
         label="Threshold Scale"

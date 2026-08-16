@@ -2,6 +2,8 @@
 
 > Техническая документация по тайловой обработке, глобальным координатам,
 > cross-tile зависимостям и порядку вычислений.
+>
+> Стоимость тайла / рычаги оптимизации: **§11** и [ARCHITECTURE.md](./ARCHITECTURE.md) §13.
 
 ---
 
@@ -91,8 +93,7 @@ SVG export (document composite → greedy meshing / contour paths) lives in
 
 | Фильтр | Зависимость | Файл |
 |--------|------------|------|
-| Error Diffusion (Floyd-Steinberg) | Left + Top neighbor | `filters/dither_diffusion.rs` |
-| Error Diffusion (Atkinson) | Left + Top neighbor | `filters/dither_diffusion.rs` |
+| Error Diffusion (FS, Atkinson, JJN, Stucki, Burkes, Sierra) | Left + Top + Diag neighbor | `filters/dither_diffusion.rs` |
 
 Эти фильтры распространяют ошибку квантизации на соседние пиксели. На границе
 тайла ошибка "перетекает" в соседний тайл через `ErrorResidualsStore`.
@@ -202,13 +203,16 @@ for y in 0..TILE_FULL_SIZE {        // 0..260 (including halo)
 
 ## 6. Error Diffusion (dither_diffusion.rs)
 
+Ядра V2: Floyd–Steinberg, Atkinson, Jarvis–Judice–Ninke, Stucki, Burkes, Sierra.
+`serpentine`: нечётные **глобальные** строки (не local y) идут R→L, `dx` ядра зеркалится.
+
 ### Алгоритм (для одного тайла)
 
 ```
 1. Seed error_buf от left/top/diag neighbors (ErrorResidualsStore)
 2. For each pixel (x, y) в core area [0..TILE_SIZE), L→R, T→B:
    a. Read source pixel + accumulated error
-   b. Quantize (uniform or palette via Oklab KD-tree)
+   b. Quantize (uniform or palette via Oklab **LUT**, not KD-tree walk)
    c. Compute quantization error
    d. Distribute error to neighbors (FS/Atkinson kernel)
    e. Overflow → right / bottom / corner (IncomingErrorBuffer) buffers
@@ -263,13 +267,15 @@ ColorDodge, ColorBurn, HardLight, SoftLight, Difference, Exclusion.
 ```
 loop {
     task = scheduler.dequeue()   // highest priority first
-    if task.generation != current_gen → discard (stale)
+    if task.generation != current_gen → discard (stale)  # including Composite layer 0
     match task.stage:
         Raw → load_raw_tile
         Processed → compute_processed_tile  // + dependency enforcement
         Composite → compute_composite_tile  // + ensure_processed_tiles_fresh
-    insert_fresh into cache
-    emit tile-ready event → frontend
+    insert_fresh_gen(task.generation) into cache  # refuse if cache already holds a newer gen
+    if Composite and coarser than viewport.level → enqueue parent (L0→L1→L2)
+    emit tile-ready event → frontend  (only Composite at viewport.level)
+    no task → WorkerWake.wait()  // Condvar, not sleep(1ms)
 }
 ```
 
@@ -277,7 +283,9 @@ loop {
 
 Задачи носят `generation` (document gen) и `layer_generation` (layer gen) от момента
 создания. Если document или layer gen продвинулся — задача стала stale, worker
-её пропускает. Это предотвращает перезапись свежих результатов устаревшими.
+её пропускает (включая Composite layer 0). `insert_fresh_gen` повторно отказывается
+записать результат, если в кэше уже лежит более новый generation. Это предотвращает
+перезапись свежих результатов устаревшими при overlapping compute.
 
 ---
 
@@ -308,24 +316,84 @@ loop {
 
 ## 10. GPU path (`engine-gpu`, Track D)
 
-Optional wgpu compute for **pattern** filters. Error Diffusion (FS/Atkinson) stays CPU-only.
+Optional wgpu compute for **pattern** filters. Error Diffusion stays CPU-only.
 
 ### Switches
 
 | Env | Effect |
 |-----|--------|
 | `DITHER_FORCE_CPU=1` | Never use GPU (skip adapter init in app, or force CPU in apply) |
-| `DITHER_GPU=1` | Prefer GPU when `GpuContext` is available (default: CPU until ops flip) |
+| `DITHER_GPU=1` | Prefer GPU when `GpuContext` is available. **Default: off.** |
 
 ### Contract
 
 - **I/O:** RGBA32 float core `256×256` only (no halo in v1 GPU path).
 - **Uniforms:** `tile_offset = (tile.x * 256, tile.y * 256)` — same as `GlobalCoord::from_local(tile, 0, 0)`.
 - **Workgroup:** `16×16`; dispatch `(16, 16, 1)`.
-- **Eligible:** Bayer2/4/8 (`pixel_size==1`, no palette); CMYK Halftone (same + RGB); CRT.
-- **Not eligible:** ED, CustomPng, Wave (v1), Glow (deferred CPU), `pixel_size>1`, palette (CPU post-pass later).
-- **Fallback:** map_async timeout/error → increment `GpuContext::map_timeout_counter` → CPU path.
-- **Submit sync:** mutex on `GpuContext` for encode/submit/map (worker-safe).
+- **Eligible:** Bayer2/4/8 (`pixel_size==1`, no palette, bias=0, angle=0); CMYK Halftone (same + bias=0); CRT.
+  `dither_alpha` encoded in `color_mode` 0–3; does **not** skip GPU.
+- **Not eligible:** all ED kernels, CustomPng, Wave, Glow, `pixel_size>1`, palette, non-zero bias/angle (Bayer).
+- **Fallback:** map_async timeout/error → increment `map_timeout_counter` → CPU path.
+- **Submit sync:** `GpuContext.submit_lock` for the whole encode/submit/map. **No buffer pool** —
+  four wgpu buffers allocated per tile.
+- **Bridge tax:** `extract_core` / `write_core` are scalar `at()`/`set()` loops over 256².
 - **Parity:** Bayer exact (`f32 ==`); Halftone/CRT max ‖Δ‖∞ ≤ `1/255`.
 
-See `.cursor-spec/track-d-gpu/` for design and tasks.
+See `.cursor-spec/track-d-gpu/` for design and tasks. Cost vs CPU: ARCHITECTURE.md §13.4.
+
+---
+
+## 11. Стоимость одного тайла (для оптимизации)
+
+Это as-built cost model. Полная карта preview-latency — ARCHITECTURE.md §13.
+
+### Размеры
+
+```
+PixelTile  = 260 × 260 × 4 × f32 = 1.03 MB   (кэш Raw/Processed/Composite)
+GPU core   = 256 × 256 × 4 × f32 = 1.00 MB   (без halo)
+tile://    = 256 × 256 × 4 × u8  = 256 KB
+```
+
+### CPU ordered (Bayer, один фильтр)
+
+```
+Raw copy → PixelTile::new+copy → ordered 260² (GlobalCoord + threshold)
+        → Arc insert → Composite blend → f32_to_rgba8 → tile:// → ImageBitmap
+```
+
+Тайлы независимы → N воркеров почти линейны. Halo 2px считается вместе с core.
+
+### CPU error diffusion
+
+```
+ensure left, top, diag Processed (рекурсия на ЭТОМ воркере)
+  → seed residuals → scan 256² с ядром → store right/bottom/corner
+```
+
+Волна зависимостей ломает параллелизм. «Медленный FS» часто = ожидание соседа,
+не медленная арифметика пикселя. LUT уже O(1); оставшийся per-pixel cost —
+`linear_to_oklab`, если включена палитра.
+
+### GPU Bayer (когда `DITHER_GPU=1` и eligible)
+
+```
+extract_core (скаляр 256²) → submit_lock
+  → alloc 4 buffers → upload 1MB → dispatch → map_async
+  → download 1MB → write_core (скаляр) → halo из source
+```
+
+Один тайл в debug/Metal может быть ~1.5–2× быстрее скалярного CPU-loop.
+Viewport из десятков тайлов на CPU-пуле часто быстрее, потому что GPU **один**
+и под lock. Не включать GPU «чтобы стало быстро», пока нет pool/batch.
+
+### Что трогать в каком порядке
+
+1. Профиль `tile_worker_loop` на реальном слайдере (Bayer vs FS vs zoom-out).
+2. Zoom-out → display pyramid (box-filter L0 Composite; filters stay L0).
+3. Filter stack alloc → in-place/ping-pong PixelTile.
+4. ED → не GPU; уменьшать лишнюю работу (viewport-only, skip halo preview).
+5. GPU v2 только после (3) и только с persistent buffers + без глобального lock.
+
+Инварианты: `GlobalCoord`/`rem_euclid`, ED corner residuals, GPU parity, LUT
+границы ячеек. Не «ускорять» копированием локальных координат тайла.

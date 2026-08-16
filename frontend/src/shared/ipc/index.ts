@@ -12,3 +12,4 @@ export * from './undo';
 export * from './events';
 export * from './dialogs';
 export * from './errors';
+export * from './updates';

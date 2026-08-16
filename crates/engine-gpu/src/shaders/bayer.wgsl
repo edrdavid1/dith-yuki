@@ -9,6 +9,7 @@ struct TileUniforms {
 struct BayerUniforms {
     tile: TileUniforms,
     // matrix_n (unused in entry; levels, threshold_scale, color_mode)
+    // color_mode: 0=rgb, 1=gray, +2 if dither_alpha
     params: vec4<f32>,
 }
 
@@ -79,6 +80,8 @@ fn dither_at(gid: vec3<u32>, threshold: f32) {
     let levels = u.params.y;
     let threshold_scale = u.params.z;
     let color_mode = u.params.w;
+    let dither_a = color_mode >= 1.5;
+    let is_gray = (color_mode % 2.0) >= 0.5;
     let offset = (threshold - 0.5) * threshold_scale;
 
     let r = input_px[idx];
@@ -86,7 +89,7 @@ fn dither_at(gid: vec3<u32>, threshold: f32) {
     let b = input_px[idx + 2u];
     let a = input_px[idx + 3u];
 
-    if (color_mode < 0.5) {
+    if (!is_gray) {
         output_px[idx] = quantize_uniform(r, levels, offset);
         output_px[idx + 1u] = quantize_uniform(g, levels, offset);
         output_px[idx + 2u] = quantize_uniform(b, levels, offset);
@@ -97,7 +100,25 @@ fn dither_at(gid: vec3<u32>, threshold: f32) {
         output_px[idx + 1u] = q;
         output_px[idx + 2u] = q;
     }
-    output_px[idx + 3u] = a;
+    if (dither_a) {
+        if (a <= 0.0) {
+            output_px[idx + 3u] = 0.0;
+        } else if (a >= 1.0) {
+            output_px[idx + 3u] = 1.0;
+        } else if (a > threshold) {
+            output_px[idx + 3u] = 1.0;
+        } else {
+            output_px[idx + 3u] = 0.0;
+        }
+    } else {
+        output_px[idx + 3u] = a;
+    }
+    if (dither_a && output_px[idx + 3u] <= 0.0) {
+        output_px[idx] = 0.0;
+        output_px[idx + 1u] = 0.0;
+        output_px[idx + 2u] = 0.0;
+        output_px[idx + 3u] = 0.0;
+    }
 }
 
 @compute @workgroup_size(16, 16)

@@ -27,6 +27,7 @@ export interface RequestTilesMessage {
   type: 'request-tiles';
   tiles: TileRequest[];
   docId: number;
+  rev?: number;
 }
 
 export interface FetchTileMessage {
@@ -35,6 +36,7 @@ export interface FetchTileMessage {
   x: number;
   y: number;
   docId: number;
+  rev?: number;
 }
 
 export type WorkerInMessage = RequestTilesMessage | FetchTileMessage;
@@ -43,6 +45,7 @@ export interface TileDecodedMessage {
   type: 'tile-decoded';
   key: string;
   bitmap: ImageBitmap;
+  rev?: number;
 }
 
 export interface TilePendingMessage {
@@ -66,17 +69,22 @@ const TILE_BYTE_LENGTH = TILE_SIZE * TILE_SIZE * 4; // 262,144 bytes RGBA8
  * In Tauri's webview, the tile:// protocol URLs may be normalized to
  * tile://localhost/... so we use the format that Tauri expects.
  */
-function buildTileUrl(docId: number, tile: TileRequest): string {
-  return `tile://localhost/doc/${docId}/layer/composite/stage/composite/l/${tile.level}/${tile.x}/${tile.y}`;
+function buildTileUrl(docId: number, tile: TileRequest, rev?: number): string {
+  const base = `tile://localhost/doc/${docId}/layer/composite/stage/composite/l/${tile.level}/${tile.x}/${tile.y}`;
+  return typeof rev === 'number' ? `${base}?g=${rev}` : base;
 }
 
 /**
  * Fetch a single tile from the tile:// protocol, decode the raw RGBA8
  * bytes into an ImageBitmap, and post it back to the main thread.
  */
-async function fetchAndDecodeTile(docId: number, tile: TileRequest): Promise<void> {
+async function fetchAndDecodeTile(
+  docId: number,
+  tile: TileRequest,
+  rev?: number,
+): Promise<void> {
   const key = `${tile.level}/${tile.x}/${tile.y}`;
-  const url = buildTileUrl(docId, tile);
+  const url = buildTileUrl(docId, tile, rev);
 
   try {
     const response = await fetch(url);
@@ -98,10 +106,13 @@ async function fetchAndDecodeTile(docId: number, tile: TileRequest): Promise<voi
         TILE_SIZE,
         TILE_SIZE,
       );
-      const bitmap = await createImageBitmap(imageData);
+      const bitmap = await createImageBitmap(imageData, {
+        premultiplyAlpha: 'none',
+        colorSpaceConversion: 'none',
+      });
 
       // Transfer the bitmap (zero-copy) to the main thread
-      const msg: TileDecodedMessage = { type: 'tile-decoded', key, bitmap };
+      const msg: TileDecodedMessage = { type: 'tile-decoded', key, bitmap, rev };
       postMessage(msg, [bitmap]);
     } else if (response.status === 202) {
       // Tile is pending computation — retry with exponential backoff.
@@ -123,7 +134,12 @@ async function fetchAndDecodeTile(docId: number, tile: TileRequest): Promise<voi
                 TILE_SIZE,
               );
               const retryBitmap = await createImageBitmap(retryImageData);
-              const retryMsg: TileDecodedMessage = { type: 'tile-decoded', key, bitmap: retryBitmap };
+              const retryMsg: TileDecodedMessage = {
+                type: 'tile-decoded',
+                key,
+                bitmap: retryBitmap,
+                rev,
+              };
               postMessage(retryMsg, [retryBitmap]);
             }
             break; // Success, stop retrying
@@ -163,13 +179,13 @@ self.onmessage = async (e: MessageEvent<WorkerInMessage>) => {
     // Batch fetch: process all requested tiles in parallel. Each
     // fetchAndDecodeTile handles its own error and posts results independently.
     await Promise.all(
-      msg.tiles.map(tile => fetchAndDecodeTile(msg.docId, tile))
+      msg.tiles.map(tile => fetchAndDecodeTile(msg.docId, tile, msg.rev))
     );
   } else if (msg.type === 'fetch-tile') {
     await fetchAndDecodeTile(msg.docId, {
       level: msg.level,
       x: msg.x,
       y: msg.y,
-    });
+    }, msg.rev);
   }
 };

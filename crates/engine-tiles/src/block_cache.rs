@@ -12,7 +12,25 @@
 use crate::coords::GlobalCoord;
 use crate::{CacheStage, TileCache, TileCoord, TileKey, HALO, TILE_SIZE};
 use dashmap::DashMap;
+use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+thread_local! {
+    /// When false, [`BlockRepresentativeCache::get_raw`] returns None so a
+    /// later stack filter (e.g. dither after Adjust) samples its input tile
+    /// instead of document Raw.
+    static SAMPLE_RAW_BLOCKS: Cell<bool> = const { Cell::new(true) };
+}
+
+/// Run `f` with [`get_raw`] enabled or disabled for this thread.
+pub fn with_raw_block_sampling<R>(enabled: bool, f: impl FnOnce() -> R) -> R {
+    SAMPLE_RAW_BLOCKS.with(|c| {
+        let prev = c.replace(enabled);
+        let out = f();
+        c.set(prev);
+        out
+    })
+}
 
 /// Raw RGBA sample (linear floats), matching a single pixel in a [`PixelTile`].
 pub type RawPixelValue = [f32; 4];
@@ -79,6 +97,9 @@ impl BlockRepresentativeCache {
     }
 
     pub fn get_raw(&self, block: BlockCoord) -> Option<RawPixelValue> {
+        if !SAMPLE_RAW_BLOCKS.with(|c| c.get()) {
+            return None;
+        }
         self.raw.get(&block).map(|v| *v)
     }
 
@@ -344,5 +365,18 @@ mod tests {
             .get_raw(BlockCoord::from_global(1, 0, 0, 4))
             .unwrap()[0];
         assert_eq!(after, 0.75);
+    }
+
+    #[test]
+    fn get_raw_respects_thread_local_sampling_flag() {
+        let cache = BlockRepresentativeCache::new();
+        let rgba = vec![0.25f32; 4 * 4 * 4];
+        cache.populate_from_buffer(&rgba, 4, 4, 1, 2);
+        let key = BlockCoord::from_global(1, 0, 0, 2);
+        assert!(cache.get_raw(key).is_some());
+        with_raw_block_sampling(false, || {
+            assert!(cache.get_raw(key).is_none());
+        });
+        assert!(cache.get_raw(key).is_some());
     }
 }

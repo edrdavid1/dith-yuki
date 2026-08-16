@@ -1,4 +1,4 @@
-import { createSlice, createAsyncThunk, type PayloadAction } from '@reduxjs/toolkit';
+import { createSlice, createAsyncThunk, createSelector, type PayloadAction } from '@reduxjs/toolkit';
 import type { FilterInfo } from '../../types';
 import {
   formatIpcError,
@@ -6,6 +6,7 @@ import {
   logIpcError,
   removeFilter as removeFilterIPC,
   reorderFilter as reorderFilterIPC,
+  updateFilter as updateFilterIPC,
 } from '../../shared/ipc';
 import { unwrapFilterParams } from '../../shared/unwrapFilterParams';
 
@@ -70,6 +71,29 @@ export const removeFilter = createAsyncThunk(
   }
 );
 
+export const toggleFilterEnabled = createAsyncThunk(
+  'filters/toggleEnabled',
+  async (
+    args: { layerId: number; filterId: string },
+    { getState, dispatch, rejectWithValue }
+  ) => {
+    const state = getState() as { filters: FiltersState };
+    const filter = state.filters.byId[args.filterId];
+    if (!filter) return;
+    const record = filter.params as unknown as Record<string, unknown>;
+    const { type: _type, ...params } = record;
+    try {
+      await updateFilterIPC(args.layerId, args.filterId, params, {
+        enabled: !filter.enabled,
+      });
+      await dispatch(refreshFilters());
+    } catch (err) {
+      logIpcError('filters.toggleEnabled', err);
+      return rejectWithValue(formatIpcError(err));
+    }
+  }
+);
+
 export const reorderFilter = createAsyncThunk(
   'filters/reorder',
   async (
@@ -101,7 +125,12 @@ const filtersSlice = createSlice({
     },
     patchFilter(
       state,
-      action: PayloadAction<{ id: string; opacity?: number; blend_mode?: string }>
+      action: PayloadAction<{
+        id: string;
+        opacity?: number;
+        blend_mode?: string;
+        enabled?: boolean;
+      }>
     ) {
       const filter = state.byId[action.payload.id];
       if (!filter) return;
@@ -110,6 +139,9 @@ const filtersSlice = createSlice({
       }
       if (typeof action.payload.blend_mode === 'string') {
         filter.blend_mode = action.payload.blend_mode;
+      }
+      if (typeof action.payload.enabled === 'boolean') {
+        filter.enabled = action.payload.enabled;
       }
     },
   },
@@ -137,16 +169,26 @@ const filtersSlice = createSlice({
       })
       .addCase(reorderFilter.rejected, (state, action) => {
         state.error = (action.payload as string) ?? state.error;
+      })
+      .addCase(toggleFilterEnabled.rejected, (state, action) => {
+        state.error = (action.payload as string) ?? state.error;
       });
   },
 });
 
 export const { clearFilters, setFiltersError, patchFilter } = filtersSlice.actions;
 
-export function selectFiltersList(state: { filters: FiltersState }): FilterInfo[] {
-  return state.filters.orderOnImageSource
-    .map((id) => state.filters.byId[id])
-    .filter(Boolean);
-}
+const EMPTY_FILTERS: FilterInfo[] = [];
+
+export const selectFiltersList = createSelector(
+  [
+    (state: { filters: FiltersState }) => state.filters.orderOnImageSource,
+    (state: { filters: FiltersState }) => state.filters.byId,
+  ],
+  (order, byId): FilterInfo[] => {
+    if (order.length === 0) return EMPTY_FILTERS;
+    return order.map((id) => byId[id]).filter(Boolean);
+  },
+);
 
 export default filtersSlice.reducer;

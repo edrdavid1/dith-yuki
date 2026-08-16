@@ -26,6 +26,9 @@
 
 use crate::{TileKey};
 use crossbeam::queue::SegQueue;
+use dashmap::DashMap;
+use dashmap::mapref::entry::Entry;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Priority level for tile recomputation tasks.
 ///
@@ -134,6 +137,9 @@ pub struct Scheduler {
     viewport_edge_queue: SegQueue<RecomputeTask>,
     /// Queue for Prefetch priority tasks.
     prefetch_queue: SegQueue<RecomputeTask>,
+    /// Highest generation currently sitting in a queue for this key.
+    queued_gen: DashMap<TileKey, u64>,
+    queued_count: AtomicUsize,
 }
 
 impl Scheduler {
@@ -151,6 +157,8 @@ impl Scheduler {
             viewport_center_queue: SegQueue::new(),
             viewport_edge_queue: SegQueue::new(),
             prefetch_queue: SegQueue::new(),
+            queued_gen: DashMap::new(),
+            queued_count: AtomicUsize::new(0),
         }
     }
 
@@ -176,6 +184,45 @@ impl Scheduler {
     /// assert_eq!(scheduler.dequeue().map(|t| t.priority), Some(Priority::ViewportCenter));
     /// ```
     pub fn enqueue(&self, task: RecomputeTask) {
+        self.push_queue(task);
+    }
+
+    /// Enqueue unless this key is already queued at the same or a newer generation.
+    ///
+    /// Used by the pyramid parent-wake / retry path to avoid flooding the queues
+    /// with duplicate Composite tasks for the same tile.
+    pub fn enqueue_dedup(&self, task: RecomputeTask) -> bool {
+        if let Some(g) = self.queued_gen.get(&task.key) {
+            if *g >= task.generation {
+                return false;
+            }
+        }
+        self.push_queue(task);
+        true
+    }
+
+    /// True if this key currently has at least one task in a queue.
+    pub fn contains_key(&self, key: &TileKey) -> bool {
+        self.queued_gen.contains_key(key)
+    }
+
+    /// Approximate number of queued tasks (incremented on push, decremented on pop).
+    pub fn queued_len(&self) -> usize {
+        self.queued_count.load(Ordering::Acquire)
+    }
+
+    fn push_queue(&self, task: RecomputeTask) {
+        match self.queued_gen.entry(task.key) {
+            Entry::Occupied(mut occ) => {
+                if task.generation > *occ.get() {
+                    occ.insert(task.generation);
+                }
+            }
+            Entry::Vacant(v) => {
+                v.insert(task.generation);
+            }
+        }
+        self.queued_count.fetch_add(1, Ordering::Release);
         match task.priority {
             Priority::Immediate => self.immediate_queue.push(task),
             Priority::ViewportCenter => self.viewport_center_queue.push(task),
@@ -223,11 +270,20 @@ impl Scheduler {
     /// assert_eq!(scheduler.dequeue(), None);
     /// ```
     pub fn dequeue(&self) -> Option<RecomputeTask> {
-        self.immediate_queue
+        let task = self
+            .immediate_queue
             .pop()
             .or_else(|| self.viewport_center_queue.pop())
             .or_else(|| self.viewport_edge_queue.pop())
-            .or_else(|| self.prefetch_queue.pop())
+            .or_else(|| self.prefetch_queue.pop())?;
+        self.queued_count.fetch_sub(1, Ordering::Release);
+        if let Some(g) = self.queued_gen.get(&task.key) {
+            if *g == task.generation {
+                drop(g);
+                self.queued_gen.remove(&task.key);
+            }
+        }
+        Some(task)
     }
 
     /// Drain all queues, discarding all pending tasks.
@@ -249,6 +305,8 @@ impl Scheduler {
         while self.viewport_center_queue.pop().is_some() {}
         while self.viewport_edge_queue.pop().is_some() {}
         while self.prefetch_queue.pop().is_some() {}
+        self.queued_count.store(0, Ordering::Release);
+        self.queued_gen.clear();
     }
 }
 
@@ -432,6 +490,48 @@ mod tests {
         let scheduler = Scheduler::new();
         scheduler.clear_all();
         assert_eq!(scheduler.dequeue(), None);
+    }
+
+    #[test]
+    fn enqueue_dedup_skips_same_key_same_or_older_generation() {
+        let scheduler = Scheduler::new();
+        let mut a = make_task(Priority::Immediate, 0, 0, 0);
+        a.generation = 2;
+        a.key.stage = CacheStage::Composite;
+        let mut b = a;
+        b.generation = 2;
+        let mut older = a;
+        older.generation = 1;
+
+        assert!(scheduler.enqueue_dedup(a));
+        assert!(!scheduler.enqueue_dedup(b));
+        assert!(!scheduler.enqueue_dedup(older));
+        assert_eq!(scheduler.queued_len(), 1);
+        assert!(scheduler.contains_key(&a.key));
+
+        let dequeued = scheduler.dequeue().unwrap();
+        assert_eq!(dequeued.generation, 2);
+        assert_eq!(scheduler.dequeue(), None);
+        assert!(!scheduler.contains_key(&a.key));
+    }
+
+    #[test]
+    fn enqueue_dedup_allows_newer_generation() {
+        let scheduler = Scheduler::new();
+        let mut a = make_task(Priority::Immediate, 0, 0, 0);
+        a.generation = 1;
+        a.key.stage = CacheStage::Composite;
+        let mut newer = a;
+        newer.generation = 2;
+
+        assert!(scheduler.enqueue_dedup(a));
+        assert!(scheduler.enqueue_dedup(newer));
+        assert_eq!(scheduler.queued_len(), 2);
+
+        let first = scheduler.dequeue().unwrap();
+        let second = scheduler.dequeue().unwrap();
+        assert_eq!(first.generation, 1);
+        assert_eq!(second.generation, 2);
     }
 }
 

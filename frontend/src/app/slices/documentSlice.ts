@@ -5,6 +5,7 @@ import {
   loadImage as loadImageIPC,
   createDocument as createDocumentIPC,
   exportImage as exportImageIPC,
+  importImageLayer as importImageLayerIPC,
   openProject as openProjectIPC,
   saveProject as saveProjectIPC,
   saveProjectAs as saveProjectAsIPC,
@@ -96,6 +97,19 @@ export const createDocument = createAsyncThunk(
       };
     } catch (err) {
       logIpcError('document.createDocument', err);
+      return rejectWithValue(formatIpcError(err));
+    }
+  }
+);
+
+export const importImageLayer = createAsyncThunk(
+  'document/importImageLayer',
+  async (path: string, { rejectWithValue }) => {
+    try {
+      const response = await importImageLayerIPC(path);
+      return { layerId: response.layer_id };
+    } catch (err) {
+      logIpcError('document.importImageLayer', err);
       return rejectWithValue(formatIpcError(err));
     }
   }
@@ -294,6 +308,20 @@ const documentSlice = createSlice({
       .addCase(createDocument.rejected, (state, action) => {
         state.loading = false;
         state.error = (action.payload as string) ?? 'Failed to create document';
+      })
+      .addCase(importImageLayer.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+        state.notification = null;
+      })
+      .addCase(importImageLayer.fulfilled, (state, action) => {
+        state.loading = false;
+        state.layerId = action.payload.layerId;
+        state.error = null;
+      })
+      .addCase(importImageLayer.rejected, (state, action) => {
+        state.loading = false;
+        state.error = (action.payload as string) ?? 'Failed to import image layer';
       })
       .addCase(saveImage.fulfilled, (state, action) => {
         state.notification = action.payload;

@@ -173,7 +173,138 @@ describe('useEffectLayer', () => {
       await vi.advanceTimersByTimeAsync(100);
     });
 
-    expect(mockUpdateFilter).toHaveBeenCalledWith(1, 'filter-abc-123', { levels: 8 });
+        expect(mockUpdateFilter).toHaveBeenCalledWith(
+          1,
+          'filter-abc-123',
+          expect.objectContaining({ levels: 8 }),
+        );
+  });
+
+  it('coalesces a 500ms continuous slider gesture into one update_filter', async () => {
+    vi.useFakeTimers();
+    mockUpdateFilter.mockResolvedValue(undefined);
+
+    const { wrapper } = wrapperFor([
+      makeFilter('DitherV2', {
+        mode: 'bayer_8x8',
+        levels: 4,
+        threshold_scale: 1.0,
+        pixel_size: 1,
+        color_mode: 'rgb',
+        palette_id: null,
+      }),
+    ]);
+
+    const { result } = renderHook(() => useEffectLayer(1, 'filter-abc-123'), { wrapper });
+
+    for (let i = 0; i < 30; i++) {
+      act(() => {
+        result.current.updateParams({ threshold_scale: 1 + i * 0.02 });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(16);
+      });
+    }
+
+    expect(mockUpdateFilter).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+
+    expect(mockUpdateFilter).toHaveBeenCalledTimes(1);
+    expect(mockUpdateFilter).toHaveBeenCalledWith(
+      1,
+      'filter-abc-123',
+      expect.objectContaining({
+        threshold_scale: 1 + 29 * 0.02,
+      }),
+    );
+  });
+
+  it('fires one update_filter per pause when slider ticks are >100ms apart', async () => {
+    vi.useFakeTimers();
+    mockUpdateFilter.mockResolvedValue(undefined);
+
+    const { wrapper } = wrapperFor([
+      makeFilter('DitherV2', {
+        mode: 'bayer_8x8',
+        levels: 4,
+        threshold_scale: 1.0,
+        pixel_size: 1,
+        color_mode: 'rgb',
+        palette_id: null,
+      }),
+    ]);
+
+    const { result } = renderHook(() => useEffectLayer(1, 'filter-abc-123'), { wrapper });
+
+    for (let i = 0; i < 4; i++) {
+      act(() => {
+        result.current.updateParams({ threshold_scale: 1 + i * 0.1 });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120);
+      });
+    }
+
+    expect(mockUpdateFilter).toHaveBeenCalledTimes(4);
+  });
+
+  it('coalesces slider ticks while a previous update_filter is in-flight', async () => {
+    vi.useFakeTimers();
+    const resolvers: Array<() => void> = [];
+    mockUpdateFilter.mockImplementation(() => {
+      if (resolvers.length === 0) {
+        return new Promise<void>((resolve) => {
+          resolvers.push(resolve);
+        });
+      }
+      return Promise.resolve();
+    });
+
+    const { wrapper } = wrapperFor([
+      makeFilter('DitherV2', {
+        mode: 'bayer_8x8',
+        levels: 4,
+        threshold_scale: 1.0,
+        pixel_size: 1,
+        color_mode: 'rgb',
+        palette_id: null,
+      }),
+    ]);
+
+    const { result } = renderHook(() => useEffectLayer(1, 'filter-abc-123'), { wrapper });
+
+    act(() => {
+      result.current.updateParams({ threshold_scale: 1.1 });
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120);
+    });
+    expect(mockUpdateFilter).toHaveBeenCalledTimes(1);
+
+    for (let i = 2; i <= 4; i++) {
+      act(() => {
+        result.current.updateParams({ threshold_scale: 1 + i * 0.1 });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120);
+      });
+    }
+    expect(mockUpdateFilter).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolvers[0]();
+    });
+    expect(mockUpdateFilter).toHaveBeenCalledTimes(2);
+    expect(mockUpdateFilter).toHaveBeenLastCalledWith(
+      1,
+      'filter-abc-123',
+      expect.objectContaining({
+        threshold_scale: 1.4,
+      }),
+    );
   });
 
   it('rolls back optimistic params when updateFilter fails', async () => {

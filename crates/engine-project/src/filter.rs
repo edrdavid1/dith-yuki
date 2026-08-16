@@ -4,14 +4,18 @@ use crate::error::EngineError;
 use crate::filters::glitch::GlitchType;
 use crate::filters::curves::CurveChannel;
 use crate::types::{BlendMode, FilterInstanceId, PaletteId};
-
-fn default_filter_opacity() -> f32 {
-    1.0
-}
 use engine_tiles::types::CacheStage;
 use engine_tiles::tile::PixelTile;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+fn default_channel_enabled() -> bool {
+    true
+}
+
+fn default_filter_opacity() -> f32 {
+    1.0
+}
 
 /// Filter kind enumeration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,6 +27,7 @@ pub enum FilterKind {
     Glitch,
     Glow,
     Crt,
+    Adjust,
     Placeholder,
 }
 
@@ -36,8 +41,17 @@ impl std::fmt::Display for FilterKind {
             FilterKind::Glitch => write!(f, "Glitch"),
             FilterKind::Glow => write!(f, "Glow"),
             FilterKind::Crt => write!(f, "Crt"),
+            FilterKind::Adjust => write!(f, "Adjust"),
             FilterKind::Placeholder => write!(f, "Placeholder"),
         }
+    }
+}
+
+impl FilterKind {
+    /// Tone/correction ops. Newly added instances go at the bottom of the
+    /// Layers list (end of `filters`) so they run before stylize filters.
+    pub fn inserts_under_stylize(self) -> bool {
+        matches!(self, Self::Adjust | Self::Curves | Self::Levels)
     }
 }
 
@@ -208,6 +222,50 @@ pub enum DitherColorMode {
     Grayscale,
 }
 
+/// How a bound palette constrains dither (Track Q).
+///
+/// `Strict` (default) picks exact palette colors via two-nearest Oklab.
+/// `Guided` quantizes each RGB channel in the palette's min/max range;
+/// output need not match a palette entry.
+/// `Mixed` Guided-quantizes each channel, then applies the same two-nearest
+/// Oklab dither as Strict to that guided RGB (exact swatches, calmer steps).
+/// `Simple` matches old Dither Yuki (`findClosestColor` in sRGB bytes):
+/// Bayer adds `(T-0.5)*threshold_scale*64` then nearest; ED residual is
+/// `(old−new)*threshold_scale` in sRGB. Palettes are document swatches.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaletteDitherMode {
+    Strict,
+    Guided {
+        #[serde(default)]
+        channel_levels: Option<u8>,
+    },
+    Mixed {
+        #[serde(default)]
+        channel_levels: Option<u8>,
+    },
+    Simple,
+}
+
+impl Default for PaletteDitherMode {
+    fn default() -> Self {
+        Self::Strict
+    }
+}
+
+impl PaletteDitherMode {
+    pub fn is_guided(self) -> bool {
+        matches!(self, Self::Guided { .. } | Self::Mixed { .. })
+    }
+
+    pub fn channel_levels(self) -> Option<u8> {
+        match self {
+            Self::Guided { channel_levels } | Self::Mixed { channel_levels } => channel_levels,
+            Self::Strict | Self::Simple => None,
+        }
+    }
+}
+
 /// Full dither filter parameters (V2 redesign).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DitherParamsV2 {
@@ -226,6 +284,10 @@ pub struct DitherParamsV2 {
     /// Optional palette reference for palette-constrained quantization.
     #[serde(default)]
     pub palette_id: Option<PaletteId>,
+    /// Strict (exact palette colors) vs Guided (per-channel range). Default Strict.
+    /// Ignored when `palette_id` is `None`. Missing JSON → Strict.
+    #[serde(default)]
+    pub palette_dither_mode: PaletteDitherMode,
     /// CMYK halftone cell size in px (2–64, default 8). Used when mode is `CmykHalftone`.
     #[serde(default = "default_halftone_cell_size")]
     pub halftone_cell_size: u8,
@@ -247,13 +309,19 @@ pub struct DitherParamsV2 {
     #[serde(default)]
     pub threshold_bias: f32,
     /// Pattern sampling angle in degrees (default 0). Bayer / CustomPng only.
-    /// Applied after `aligned(pixel_size)` (Block_Then_Rotate). Periodic via `rem_euclid(360)`.
+    /// Applied after `aligned(pixel_size)` (Block_Then_Rotate), then Bayer/CustomPng
+    /// index the map in block units (`div_euclid(pixel_size)`). Periodic via `rem_euclid(360)`.
     #[serde(default)]
     pub pattern_angle: f32,
     /// Serpentine scanning for error-diffusion modes (default false = L→R identity).
     /// Odd **global** rows run R→L with the kernel mirrored in X.
     #[serde(default)]
     pub serpentine: bool,
+    /// When true, alpha is sampled per `pixel_size` block and quantized to 0/1
+    /// (pixel-art silhouette on transparent PNGs). When false, source alpha is
+    /// copied per pixel. Default true; missing JSON field deserializes as true.
+    #[serde(default = "default_dither_alpha")]
+    pub dither_alpha: bool,
 }
 
 fn default_threshold_scale() -> f32 {
@@ -280,6 +348,10 @@ fn default_wave_amplitude() -> f32 {
     1.0
 }
 
+fn default_dither_alpha() -> bool {
+    true
+}
+
 impl Default for DitherParamsV2 {
     fn default() -> Self {
         Self {
@@ -289,6 +361,7 @@ impl Default for DitherParamsV2 {
             pixel_size: 1,
             color_mode: DitherColorMode::Rgb,
             palette_id: None,
+            palette_dither_mode: PaletteDitherMode::Strict,
             halftone_cell_size: default_halftone_cell_size(),
             wave_wavelength: default_wave_wavelength(),
             wave_amplitude: default_wave_amplitude(),
@@ -297,6 +370,7 @@ impl Default for DitherParamsV2 {
             threshold_bias: 0.0,
             pattern_angle: 0.0,
             serpentine: false,
+            dither_alpha: true,
         }
     }
 }
@@ -331,6 +405,7 @@ impl From<(DitherMode, u8)> for DitherParamsV2 {
             pixel_size: 1,
             color_mode: DitherColorMode::Rgb,
             palette_id: None,
+            palette_dither_mode: PaletteDitherMode::Strict,
             halftone_cell_size: default_halftone_cell_size(),
             wave_wavelength: default_wave_wavelength(),
             wave_amplitude: default_wave_amplitude(),
@@ -339,6 +414,7 @@ impl From<(DitherMode, u8)> for DitherParamsV2 {
             threshold_bias: 0.0,
             pattern_angle: 0.0,
             serpentine: false,
+            dither_alpha: true,
         }
     }
 }
@@ -404,7 +480,47 @@ impl DitherParamsV2 {
                 "pattern_angle must be finite",
             ));
         }
+        if let Some(n) = self.palette_dither_mode.channel_levels() {
+            if !(2..=16).contains(&n) {
+                return Err(EngineError::invalid_filter_params(
+                    "channel_levels must be in range [2, 16]",
+                ));
+            }
+        }
         Ok(())
+    }
+
+    /// Copy or binary-dither alpha.
+    ///
+    /// Fully transparent (`<= 0`) and fully opaque (`>= 1`) stay 0/1 so solid
+    /// pixels are never eaten by threshold scale. Soft edges compare `src_a`
+    /// against `threshold` (ordered T, or `0.5` for error diffusion / CMYK).
+    #[inline]
+    pub fn map_alpha(&self, src_a: f32, threshold: f32) -> f32 {
+        if !self.dither_alpha {
+            return src_a;
+        }
+        if src_a <= 0.0 {
+            0.0
+        } else if src_a >= 1.0 {
+            1.0
+        } else if src_a > threshold {
+            1.0
+        } else {
+            0.0
+        }
+    }
+
+    /// RGB + binary alpha. Transparent output is cleared so zoom/PNG cannot
+    /// show the pre-dither (Adjust) fringe as a contour.
+    #[inline]
+    pub fn dithered_rgba(&self, r: f32, g: f32, b: f32, src_a: f32, threshold: f32) -> [f32; 4] {
+        let a = self.map_alpha(src_a, threshold);
+        if self.dither_alpha && a <= 0.0 {
+            [0.0, 0.0, 0.0, 0.0]
+        } else {
+            [r, g, b, a]
+        }
     }
 }
 
@@ -427,6 +543,13 @@ pub enum FilterParams {
         gamma: f32,
         output_black: f32,
         output_white: f32,
+        /// When false, that channel is forced to 0. Missing in old files → on.
+        #[serde(default = "default_channel_enabled")]
+        channel_r: bool,
+        #[serde(default = "default_channel_enabled")]
+        channel_g: bool,
+        #[serde(default = "default_channel_enabled")]
+        channel_b: bool,
     },
     /// Dither: palette-free channel quantization with various modes
     Dither {
@@ -471,6 +594,21 @@ pub enum FilterParams {
         /// RGB subpixel mask strength (0 .. 1, default 0).
         #[serde(default)]
         mask_strength: f32,
+    },
+    /// Contrast / brightness / saturation / blur / sharpness / noise.
+    Adjust {
+        /// Contrast around mid-gray (−1 .. 1). 0 = identity.
+        contrast: f32,
+        /// Additive brightness (−1 .. 1). 0 = identity.
+        brightness: f32,
+        /// Saturation (−1 .. 1). −1 = grayscale, 0 = identity.
+        saturation: f32,
+        /// Blur amount (0 .. 2). Mapped to an in-tile pixel radius in apply.
+        blur: f32,
+        /// Unsharp-mask amount (0 .. 2). 0 = skip.
+        sharpness: f32,
+        /// Deterministic RGB noise amount (0 .. 1). 0 = skip.
+        noise: f32,
     },
     /// Placeholder for future filters
     Placeholder(String),
@@ -569,6 +707,9 @@ impl FilterInstance {
                 gamma,
                 output_black,
                 output_white,
+                channel_r: _,
+                channel_g: _,
+                channel_b: _,
             } => {
                 if input_black >= input_white {
                     return Err(EngineError::invalid_filter_params(
@@ -672,6 +813,46 @@ impl FilterInstance {
                 }
                 Ok(())
             }
+            FilterParams::Adjust {
+                contrast,
+                brightness,
+                saturation,
+                blur,
+                sharpness,
+                noise,
+            } => {
+                if !(-1.0..=1.0).contains(contrast) {
+                    return Err(EngineError::invalid_filter_params(
+                        "Adjust contrast must be in range [-1.0, 1.0]",
+                    ));
+                }
+                if !(-1.0..=1.0).contains(brightness) {
+                    return Err(EngineError::invalid_filter_params(
+                        "Adjust brightness must be in range [-1.0, 1.0]",
+                    ));
+                }
+                if !(-1.0..=1.0).contains(saturation) {
+                    return Err(EngineError::invalid_filter_params(
+                        "Adjust saturation must be in range [-1.0, 1.0]",
+                    ));
+                }
+                if !(0.0..=2.0).contains(blur) {
+                    return Err(EngineError::invalid_filter_params(
+                        "Adjust blur must be in range [0.0, 2.0] (HALO cap)",
+                    ));
+                }
+                if !(0.0..=2.0).contains(sharpness) {
+                    return Err(EngineError::invalid_filter_params(
+                        "Adjust sharpness must be in range [0.0, 2.0]",
+                    ));
+                }
+                if !(0.0..=1.0).contains(noise) {
+                    return Err(EngineError::invalid_filter_params(
+                        "Adjust noise must be in range [0.0, 1.0]",
+                    ));
+                }
+                Ok(())
+            }
             FilterParams::Placeholder(_) => Ok(()),
         }
     }
@@ -709,6 +890,7 @@ pub fn apply_filter_to_tile(
         FilterKind::Glitch => Arc::new(PixelTile::new()),
         FilterKind::Glow => Arc::new(PixelTile::new()),
         FilterKind::Crt => Arc::new(PixelTile::new()),
+        FilterKind::Adjust => Arc::new(PixelTile::new()),
         FilterKind::Placeholder => Arc::new(PixelTile::new()),
     }
 }
@@ -796,6 +978,9 @@ mod tests {
                 gamma: 1.0,
                 output_black: 0.0,
                 output_white: 1.0,
+                channel_r: true,
+                channel_g: true,
+                channel_b: true,
             },
         );
         assert!(filter.validate().is_ok());
@@ -808,9 +993,31 @@ mod tests {
                 gamma: 1.0,
                 output_black: 0.0,
                 output_white: 1.0,
+                channel_r: true,
+                channel_g: true,
+                channel_b: true,
             },
         );
         assert!(invalid_filter.validate().is_err());
+    }
+
+    #[test]
+    fn levels_legacy_json_enables_all_channels() {
+        let params: FilterParams = serde_json::from_str(
+            r#"{"Levels":{"input_black":0.0,"input_white":1.0,"gamma":1.0,"output_black":0.0,"output_white":1.0}}"#,
+        )
+        .unwrap();
+        match params {
+            FilterParams::Levels {
+                channel_r,
+                channel_g,
+                channel_b,
+                ..
+            } => {
+                assert!(channel_r && channel_g && channel_b);
+            }
+            other => panic!("expected Levels, got {:?}", other),
+        }
     }
 
     #[test]
@@ -965,6 +1172,7 @@ mod tests {
         assert_eq!(FilterKind::Glitch.to_string(), "Glitch");
         assert_eq!(FilterKind::Glow.to_string(), "Glow");
         assert_eq!(FilterKind::Crt.to_string(), "Crt");
+        assert_eq!(FilterKind::Adjust.to_string(), "Adjust");
         assert_eq!(FilterKind::Placeholder.to_string(), "Placeholder");
     }
 
@@ -1312,7 +1520,61 @@ mod tests {
         .unwrap();
         assert_eq!(params.threshold_bias, 0.0);
         assert_eq!(params.pattern_angle, 0.0);
+        assert!(params.dither_alpha, "missing dither_alpha deserializes as true");
         assert!(params.validate().is_ok());
+    }
+
+    #[test]
+    fn dither_v2_legacy_document_defaults_to_strict_palette_mode() {
+        let params: DitherParamsV2 = serde_json::from_str(
+            r#"{"mode":"bayer_4x4","levels":4}"#,
+        )
+        .unwrap();
+        assert_eq!(params.palette_dither_mode, PaletteDitherMode::Strict);
+        let mut guided = DitherParamsV2::default();
+        guided.palette_dither_mode = PaletteDitherMode::Guided {
+            channel_levels: Some(1),
+        };
+        assert!(guided.validate().is_err());
+        guided.palette_dither_mode = PaletteDitherMode::Guided {
+            channel_levels: Some(3),
+        };
+        assert!(guided.validate().is_ok());
+        let mut mixed = DitherParamsV2::default();
+        mixed.palette_dither_mode = PaletteDitherMode::Mixed {
+            channel_levels: Some(1),
+        };
+        assert!(mixed.validate().is_err());
+        mixed.palette_dither_mode = PaletteDitherMode::Mixed {
+            channel_levels: Some(4),
+        };
+        assert!(mixed.validate().is_ok());
+        let simple: DitherParamsV2 = serde_json::from_str(
+            r#"{"mode":"bayer_4x4","levels":4,"palette_dither_mode":"simple"}"#,
+        )
+        .unwrap();
+        assert_eq!(simple.palette_dither_mode, PaletteDitherMode::Simple);
+    }
+
+    #[test]
+    fn map_alpha_binary_keeps_solid_and_thresholds_soft() {
+        let mut params = DitherParamsV2::default();
+        params.dither_alpha = true;
+        assert_eq!(params.map_alpha(0.0, 0.25), 0.0);
+        assert_eq!(params.map_alpha(1.0, 0.99), 1.0);
+        assert_eq!(params.map_alpha(0.4, 0.25), 1.0);
+        assert_eq!(params.map_alpha(0.4, 0.5), 0.0);
+        params.dither_alpha = false;
+        assert_eq!(params.map_alpha(0.42, 0.5), 0.42);
+    }
+
+    #[test]
+    fn dithered_rgba_clears_rgb_when_alpha_punched() {
+        let mut params = DitherParamsV2::default();
+        params.dither_alpha = true;
+        assert_eq!(params.dithered_rgba(0.8, 0.2, 0.1, 0.0, 0.5), [0.0, 0.0, 0.0, 0.0]);
+        let on = params.dithered_rgba(0.8, 0.2, 0.1, 1.0, 0.5);
+        assert_eq!(on, [0.8, 0.2, 0.1, 1.0]);
     }
 
     #[test]

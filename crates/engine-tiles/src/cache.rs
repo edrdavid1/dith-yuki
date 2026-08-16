@@ -357,31 +357,60 @@ impl TileCache {
     /// If the key already exists, the existing entry is replaced in-place (no net memory change).
     /// If the key is new, `used_bytes` is incremented and the key is added to the LRU queue.
     pub fn insert_fresh(&self, key: TileKey, tile: Arc<PixelTile>) {
-        if self.entries.contains_key(&key) {
-            // Replace existing entry in-place
-            self.entries.insert(
-                key,
-                CacheEntry {
+        let _ = self.insert_fresh_gen(key, tile, 0);
+    }
+
+    /// Insert a freshly computed tile at `generation`.
+    ///
+    /// Returns `false` (and leaves the cache unchanged) if the key already holds
+    /// a **newer** generation — so a slow stale Composite cannot overwrite a
+    /// newer result. Same or older cached generation is replaced. The per-key
+    /// DashMap entry lock makes the compare-and-swap atomic.
+    pub fn insert_fresh_gen(&self, key: TileKey, tile: Arc<PixelTile>, generation: u64) -> bool {
+        use dashmap::mapref::entry::Entry;
+        match self.entries.entry(key) {
+            Entry::Occupied(mut occ) => {
+                if occ.get().generation > generation {
+                    return false;
+                }
+                occ.insert(CacheEntry {
                     tile,
-                    generation: 0,
+                    generation,
                     last_touched: Instant::now(),
                     dirty: AtomicBool::new(false),
-                },
-            );
-        } else {
-            // New entry
-            self.entries.insert(
-                key,
-                CacheEntry {
+                });
+                true
+            }
+            Entry::Vacant(v) => {
+                v.insert(CacheEntry {
                     tile,
-                    generation: 0,
+                    generation,
                     last_touched: Instant::now(),
                     dirty: AtomicBool::new(false),
-                },
-            );
-            self.used_bytes.fetch_add(TILE_BYTES, Ordering::Relaxed);
-            self.lru_queue.push(key);
+                });
+                self.used_bytes.fetch_add(TILE_BYTES, Ordering::Relaxed);
+                self.lru_queue.push(key);
+                true
+            }
         }
+    }
+
+    /// Protocol Ready: 200 only when the entry is clean and not behind `doc_gen`.
+    pub fn tile_entry_is_ready(dirty: bool, entry_generation: u64, doc_gen: u64) -> bool {
+        !dirty && entry_generation >= doc_gen
+    }
+
+    /// If `live_gen` is ahead of the cached generation, mark dirty and return true
+    /// so the caller can enqueue the current generation. No-op when cache already
+    /// matches live (stale insert lost the race against a still-current frame).
+    pub fn mark_dirty_if_generation_behind(&self, key: TileKey, live_gen: u64) -> bool {
+        if let Some(entry) = self.entries.get(&key) {
+            if live_gen > entry.generation {
+                entry.dirty.store(true, Ordering::Release);
+                return true;
+            }
+        }
+        false
     }
 
     /// Retrieve a tile entry without modifying it.
@@ -726,5 +755,78 @@ mod tests {
         // Should evict until under budget (1 tile remains)
         assert_eq!(cache.entry_count(), 1);
         assert_eq!(cache.used_bytes_count(), TILE_BYTES);
+    }
+
+    fn composite_key() -> TileKey {
+        TileKey {
+            layer: 0,
+            coord: TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            },
+            stage: CacheStage::Composite,
+        }
+    }
+
+    fn marked_tile(r: f32) -> Arc<PixelTile> {
+        let mut tile = PixelTile::new();
+        tile.set(0, 0, 0, r);
+        Arc::new(tile)
+    }
+
+    #[test]
+    fn insert_fresh_gen_keeps_newer_generation() {
+        let cache = TileCache::new(10_000_000);
+        let key = composite_key();
+
+        assert!(cache.insert_fresh_gen(key, marked_tile(0.1), 1));
+        assert!(cache.insert_fresh_gen(key, marked_tile(0.2), 2));
+        assert!(
+            !cache.insert_fresh_gen(key, marked_tile(0.9), 1),
+            "stale gen 1 must not overwrite gen 2"
+        );
+
+        let entry = cache.entries.get(&key).unwrap();
+        assert_eq!(entry.generation, 2);
+        assert!((entry.tile.at(0, 0, 0) - 0.2).abs() < 1e-6);
+        assert!(!entry.dirty.load(Ordering::Acquire));
+        drop(entry);
+
+        // Live doc_gen advanced to 3: rejected stale write must not leave a
+        // silently-ready (clean, behind) entry.
+        assert!(cache.mark_dirty_if_generation_behind(key, 3));
+        let entry = cache.entries.get(&key).unwrap();
+        assert_eq!(entry.generation, 2);
+        assert!(entry.dirty.load(Ordering::Acquire));
+        assert!(!TileCache::tile_entry_is_ready(
+            entry.dirty.load(Ordering::Acquire),
+            entry.generation,
+            3
+        ));
+    }
+
+    #[test]
+    fn mark_dirty_if_behind_noop_when_cache_matches_live() {
+        let cache = TileCache::new(10_000_000);
+        let key = composite_key();
+        assert!(cache.insert_fresh_gen(key, marked_tile(0.2), 2));
+        assert!(!cache.insert_fresh_gen(key, marked_tile(0.9), 1));
+        assert!(!cache.mark_dirty_if_generation_behind(key, 2));
+        assert!(!cache.entries.get(&key).unwrap().dirty.load(Ordering::Acquire));
+        assert!(TileCache::tile_entry_is_ready(false, 2, 2));
+        assert!(!TileCache::tile_entry_is_ready(false, 1, 2));
+        assert!(!TileCache::tile_entry_is_ready(true, 2, 2));
+    }
+
+    #[test]
+    fn insert_fresh_gen_replaces_equal_generation() {
+        let cache = TileCache::new(10_000_000);
+        let key = composite_key();
+        assert!(cache.insert_fresh_gen(key, marked_tile(0.1), 5));
+        assert!(cache.insert_fresh_gen(key, marked_tile(0.5), 5));
+        let entry = cache.entries.get(&key).unwrap();
+        assert_eq!(entry.generation, 5);
+        assert!((entry.tile.at(0, 0, 0) - 0.5).abs() < 1e-6);
     }
 }

@@ -7,10 +7,10 @@ import {
 } from '../shared/documentLimits';
 import type { BlankBackground } from '../shared/ipc/document';
 import styles from '../features/document/NewProjectDialog.module.css';
-import titlebarStyles from '../shared/ui/WindowTitlebar.module.css';
 import { bind } from '../shared/ui/cn';
+import { DialogTitlebar } from '../shared/ui/WindowTitlebar';
 
-const cn = bind({ ...styles, ...titlebarStyles });
+const cn = bind(styles);
 
 export interface NewProjectDialogProps {
   isOpen: boolean;
@@ -92,15 +92,7 @@ function NewProjectDialog({ isOpen, onCreate, onClose }: NewProjectDialogProps) 
         aria-label="New Project"
         onKeyDown={handleKeyDown}
       >
-        <div className={cn('window-titlebar')}>
-          <button
-            className={cn('window-titlebar-btn')}
-            onClick={onClose}
-            aria-label="Close"
-            type="button"
-          />
-          <span className={cn('window-title')}>New Project</span>
-        </div>
+        <DialogTitlebar title="New Project" onClose={onClose} />
 
         <form className={cn('new-project-body')} onSubmit={handleSubmit}>
           <label className={cn('new-project-field')}>

@@ -1,10 +1,10 @@
 import { useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import styles from '../features/document/NewProjectDialog.module.css';
-import titlebarStyles from '../shared/ui/WindowTitlebar.module.css';
 import { bind } from '../shared/ui/cn';
+import { DialogTitlebar } from '../shared/ui/WindowTitlebar';
 
-const cn = bind({ ...styles, ...titlebarStyles });
+const cn = bind(styles);
 
 export interface UnsavedGuardDialogProps {
   isOpen: boolean;
@@ -53,17 +53,7 @@ export default function UnsavedGuardDialog({
         aria-labelledby="unsaved-guard-title"
         onKeyDown={handleKeyDown}
       >
-        <div className={cn('window-titlebar')}>
-          <button
-            className={cn('window-titlebar-btn')}
-            onClick={onCancel}
-            aria-label="Close"
-            type="button"
-          />
-          <span className={cn('window-title')} id="unsaved-guard-title">
-            Save changes?
-          </span>
-        </div>
+        <DialogTitlebar title="Save changes?" titleId="unsaved-guard-title" onClose={onCancel} />
         <div className={cn('new-project-body')}>
           <p className={cn('new-project-field')}>
             Save changes to {basename} before closing?

@@ -1,6 +1,6 @@
 {
   "productName": "Dither",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.dither.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -26,26 +26,49 @@
   "bundle": {
     "active": true,
     "targets": ["app", "dmg"],
-    "icon": ["icons/icon.png"],
+    "icon": [
+      "icons/icon.png",
+      "icons/app-icon.icns",
+      "icons/app-icon.ico"
+    ],
     "fileAssociations": [
       {
         "ext": ["dyproj"],
         "name": "Dither Project",
         "description": "Dither Yuki project archive",
         "role": "Editor",
-        "mimeType": "application/x-dither-project"
+        "rank": "Owner",
+        "mimeType": "application/x-dither-project",
+        "exportedType": {
+          "identifier": "com.dither.app.project",
+          "conformsTo": ["public.data", "com.pkware.zip-archive"]
+        }
       },
       {
         "ext": ["dyuki"],
         "name": "Dither Pattern",
         "description": "Dither Yuki sharable pattern",
         "role": "Editor",
-        "mimeType": "application/x-dither-pattern"
+        "rank": "Owner",
+        "mimeType": "application/x-dither-pattern",
+        "exportedType": {
+          "identifier": "com.dither.app.pattern",
+          "conformsTo": ["public.data", "com.pkware.zip-archive"]
+        }
       }
     ],
     "macOS": {
       "minimumSystemVersion": "10.15",
       "signingIdentity": null
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMzN0YzQjUyQzU3QjVDM0YKUldRL1hIdkZVanQvdzE4TU1xcU1lWjdqV1VZSm5UUmYxeUI4YVBqeXI3aURSTVVsakkyc21FY0YK",
+      "endpoints": [
+        "https://github.com/edrdavid1/dith-yuki/releases/latest/download/latest.json"
+      ]
     }
   }
 }

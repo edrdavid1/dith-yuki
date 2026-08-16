@@ -71,7 +71,7 @@ pub fn f32_to_rgba8_row_scalar(dst: &mut [u8], src: &[f32]) {
 /// Applies LUT lookup to RGB channels, copies alpha unchanged.
 /// `src` and `dst` are row slices of RGBA pixels (length = pixel_count * 4).
 /// `lut` is a 4096-entry pre-computed lookup table.
-pub fn levels_row_simd(dst: &mut [f32], src: &[f32], lut: &[f32]) {
+pub fn levels_row_simd(dst: &mut [f32], src: &[f32], lut: &[f32], channels: [bool; 3]) {
     debug_assert_eq!(dst.len(), src.len());
     debug_assert_eq!(dst.len() % 4, 0);
     debug_assert!(lut.len() >= 4096);
@@ -79,8 +79,11 @@ pub fn levels_row_simd(dst: &mut [f32], src: &[f32], lut: &[f32]) {
     let pixel_count = dst.len() / 4;
     for i in 0..pixel_count {
         let base = i * 4;
-        // Apply LUT to RGB channels
         for c in 0..3 {
+            if !channels[c] {
+                dst[base + c] = 0.0;
+                continue;
+            }
             let val = src[base + c].clamp(0.0, 1.0);
             let idx_f = val * 4095.0;
             let idx_lo = idx_f as usize;
@@ -88,14 +91,13 @@ pub fn levels_row_simd(dst: &mut [f32], src: &[f32], lut: &[f32]) {
             let frac = idx_f - idx_lo as f32;
             dst[base + c] = lut[idx_lo] * (1.0 - frac) + lut[idx_hi] * frac;
         }
-        // Copy alpha unchanged
         dst[base + 3] = src[base + 3];
     }
 }
 
 /// Scalar fallback for LUT application.
 pub fn levels_row_scalar(dst: &mut [f32], src: &[f32], lut: &[f32]) {
-    levels_row_simd(dst, src, lut);
+    levels_row_simd(dst, src, lut, [true, true, true]);
 }
 
 /// Apply a single blend mode formula per channel (scalar).
@@ -276,7 +278,7 @@ mod tests {
         let src = vec![0.0, 0.5, 1.0, 0.8]; // one pixel
         let mut dst = vec![0.0f32; 4];
 
-        levels_row_simd(&mut dst, &src, &lut);
+        levels_row_simd(&mut dst, &src, &lut, [true, true, true]);
 
         // With identity LUT, output should match input for RGB
         assert!((dst[0] - 0.0).abs() < 1e-4);
@@ -293,7 +295,7 @@ mod tests {
         let src = vec![0.0, 0.25, 0.75, 1.0]; // one pixel
         let mut dst = vec![0.0f32; 4];
 
-        levels_row_simd(&mut dst, &src, &lut);
+        levels_row_simd(&mut dst, &src, &lut, [true, true, true]);
 
         // RGB channels should be inverted
         assert!((dst[0] - 1.0).abs() < 1e-3);
@@ -310,7 +312,7 @@ mod tests {
         let mut dst_simd = vec![0.0f32; 8];
         let mut dst_scalar = vec![0.0f32; 8];
 
-        levels_row_simd(&mut dst_simd, &src, &lut);
+        levels_row_simd(&mut dst_simd, &src, &lut, [true, true, true]);
         levels_row_scalar(&mut dst_scalar, &src, &lut);
 
         for (a, b) in dst_simd.iter().zip(dst_scalar.iter()) {
@@ -324,7 +326,7 @@ mod tests {
         let src = vec![-0.5, 1.5, 0.5, 0.5]; // out-of-range R and G
         let mut dst = vec![0.0f32; 4];
 
-        levels_row_simd(&mut dst, &src, &lut);
+        levels_row_simd(&mut dst, &src, &lut, [true, true, true]);
 
         // Should clamp to [0, 1] before LUT lookup
         assert!((dst[0] - 0.0).abs() < 1e-4); // -0.5 clamped to 0.0

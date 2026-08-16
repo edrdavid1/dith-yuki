@@ -2,15 +2,16 @@ import { useCallback } from 'react';
 import LayersPanel from '../../components/LayersPanel';
 import { useAppDispatch, useAppSelector } from '../../app/hooks';
 import {
-  removeFilter as removeFilterThunk,
-  reorderFilter as reorderFilterThunk,
-  selectFiltersList,
-} from '../../app/slices/filtersSlice';
-import {
   patchLayerProps,
   refreshLayers,
   toggleLayerVisibility,
 } from '../../app/slices/layersSlice';
+import {
+  removeFilter as removeFilterThunk,
+  reorderFilter as reorderFilterThunk,
+  selectFiltersList,
+  toggleFilterEnabled,
+} from '../../app/slices/filtersSlice';
 import { setSelection } from '../../app/slices/selectionSlice';
 import { useEffectLayer } from '../../hooks/useEffectLayer';
 import { logIpcError } from '../../shared/ipc';
@@ -102,6 +103,15 @@ export default function LayersFeature({
     [dispatch, docId, layers]
   );
 
+  const handleToggleFilterEnabled = useCallback(
+    (filterId: string) => {
+      const targetLayerId = imageSourceLayer?.id;
+      if (targetLayerId == null) return;
+      void dispatch(toggleFilterEnabled({ layerId: targetLayerId, filterId }));
+    },
+    [dispatch, imageSourceLayer]
+  );
+
   const handleBlendModeChange = useCallback(
     (layerId: number, mode: string) => {
       void dispatch(patchLayerProps({ docId, layerId, patch: { blend_mode: mode } }));
@@ -135,6 +145,7 @@ export default function LayersFeature({
       onRemoveFilter={handleRemoveFilter}
       onReorderFilter={handleReorderFilter}
       onToggleVisibility={handleToggleVisibility}
+      onToggleFilterEnabled={handleToggleFilterEnabled}
       onBlendModeChange={handleBlendModeChange}
       onOpacityChange={handleOpacityChange}
       onFilterBlendChange={handleFilterBlendChange}

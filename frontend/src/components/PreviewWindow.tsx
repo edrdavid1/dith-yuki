@@ -3,6 +3,8 @@ import TileCanvas from '../features/preview/TileCanvas';
 import type { ViewportState } from '../features/preview/TileCanvas';
 import type { ZoomMode } from '../features/preview/zoomSnap';
 import WindowTitlebar from '../shared/ui/WindowTitlebar';
+import Icon from '../icons/iconRegistry';
+import Tooltip from '../shared/ui/Tooltip';
 import styles from '../features/preview/PreviewWindow.module.css';
 import previewStyles from '../features/preview/Preview.module.css';
 import { bind } from '../shared/ui/cn';
@@ -196,16 +198,17 @@ export default function PreviewWindow({
           {docWidth} × {docHeight}
         </span>
         <div className={cn('pv-footer-zoom')}>
-          <button
-            className={cn('pv-zoom-btn')}
-            onClick={onZoomOut}
-            disabled={isMinZoom}
-            aria-label="Zoom out"
-            title="Zoom out"
-          >
-            −
-          </button>
-          <label className={cn('pv-zoom-field')} title="Zoom percent">
+          <Tooltip label="Zoom out">
+            <button
+              className={cn('pv-zoom-btn')}
+              onClick={onZoomOut}
+              disabled={isMinZoom}
+              aria-label="Zoom out"
+            >
+              <Icon name="zoom-out" width={12} height={12} />
+            </button>
+          </Tooltip>
+          <label className={cn('pv-zoom-field')}>
             <input
               className={cn('pv-zoom-input')}
               type="text"
@@ -230,34 +233,56 @@ export default function PreviewWindow({
               }}
             />
           </label>
-          <button
-            className={cn('pv-zoom-btn')}
-            onClick={onZoomIn}
-            disabled={isMaxZoom}
-            aria-label="Zoom in"
-            title="Zoom in"
-          >
-            +
-          </button>
+          <Tooltip label="Zoom in">
+            <button
+              className={cn('pv-zoom-btn')}
+              onClick={onZoomIn}
+              disabled={isMaxZoom}
+              aria-label="Zoom in"
+            >
+              <Icon name="zoom-in" width={12} height={12} />
+            </button>
+          </Tooltip>
         </div>
-        <button
-          type="button"
-          className={cn('pv-zoom-mode-btn', zoomMode === 'integer' && 'pv-zoom-mode-btn-active')}
-          aria-label="Integer zoom"
-          aria-pressed={zoomMode === 'integer'}
-          title={zoomMode === 'integer' ? 'Integer zoom (on)' : 'Integer zoom (off)'}
-          onClick={() => onZoomModeChange(zoomMode === 'integer' ? 'free' : 'integer')}
-        >
-          1×
-        </button>
-        <button
-          className={cn('pv-fit-btn')}
-          onClick={onFit}
-          aria-label="Fit to view"
-          title="Fit to view"
-        >
-          Fit
-        </button>
+        <div className={cn('pv-footer-actions')}>
+          <Tooltip label="Actual size — 1 document pixel = 1 screen pixel (100%)">
+            <button
+              type="button"
+              className={cn('pv-zoom-mode-btn', Math.abs(zoom - 1) < 1e-6 && 'pv-zoom-mode-btn-active')}
+              aria-label="Actual size"
+              aria-pressed={Math.abs(zoom - 1) < 1e-6}
+              onClick={() => onSetZoom(1)}
+            >
+              <Icon name="zoom-1x" width={14} height={14} />
+            </button>
+          </Tooltip>
+          <Tooltip
+            label={
+              zoomMode === 'integer'
+                ? 'Integer zoom on — snap to 1×, 2×, 50%, 25% so pixels stay sharp'
+                : 'Integer zoom — snap to 1×, 2×, 50%, 25% so pixels stay sharp'
+            }
+          >
+            <button
+              type="button"
+              className={cn('pv-zoom-mode-btn', zoomMode === 'integer' && 'pv-zoom-mode-btn-active')}
+              aria-label="Integer zoom"
+              aria-pressed={zoomMode === 'integer'}
+              onClick={() => onZoomModeChange(zoomMode === 'integer' ? 'free' : 'integer')}
+            >
+              <Icon name="zoom-integer" width={14} height={14} />
+            </button>
+          </Tooltip>
+          <Tooltip label="Fit to view">
+            <button
+              className={cn('pv-fit-btn')}
+              onClick={onFit}
+              aria-label="Fit to view"
+            >
+              <Icon name="zoom-fit" width={14} height={14} />
+            </button>
+          </Tooltip>
+        </div>
       </div>
     </div>
   );

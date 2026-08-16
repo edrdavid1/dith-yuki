@@ -119,6 +119,7 @@ fn min_version_for_kind(kind: FilterKind) -> Option<&'static str> {
         | FilterKind::Placeholder
         | FilterKind::Glow
         | FilterKind::Crt => Some("0.1.0"),
+        FilterKind::Adjust => Some("0.2.0"),
     }
 }
 

@@ -29,3 +29,14 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+.color-lab-button :global(svg) {
+  display: block;
+  flex-shrink: 0;
+  image-rendering: pixelated;
+}
+
+.color-lab-button-icon {
+  min-width: 0;
+  padding: 0 8px;
+}

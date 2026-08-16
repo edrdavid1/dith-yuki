@@ -4,10 +4,12 @@
   "windows": ["main", "panel-effect", "panel-layers", "panel-colorlab", "panel-preview", "panel-preferences"],
   "permissions": [
     "core:default",
+    "core:app:allow-version",
     "core:window:allow-start-dragging",
     "core:window:allow-minimize",
     "core:window:allow-close",
     "core:window:allow-set-focus",
+    "core:window:allow-set-title",
     "core:window:allow-outer-position",
     "core:window:allow-outer-size",
     "core:window:allow-inner-position",
@@ -18,6 +20,8 @@
     "core:window:allow-destroy",
     "core:window:allow-scale-factor",
     "dialog:default",
-    "os:default"
+    "os:default",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

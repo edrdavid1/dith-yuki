@@ -13,8 +13,10 @@ mod tile_protocol;
 mod undo;
 mod viewport;
 mod worker;
+#[cfg(test)]
+mod preview_latency_diag;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use engine_project::document::DocumentHandle;
@@ -86,6 +88,9 @@ fn main() {
         project_path: Mutex::new(None),
         undo_manager: Mutex::new(crate::undo::UndoManager::new()),
         saved_snapshot: Mutex::new(None),
+        preview_pass_inflight: AtomicUsize::new(0),
+        pending_preview_refresh: Mutex::new(None),
+        ed_prefix_lock: Mutex::new(()),
     };
 
     // Wrap in Arc for sharing between Tauri state and worker threads
@@ -94,6 +99,8 @@ fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(state.clone())
         .on_window_event(|window, event| {
             let label = window.label().to_string();
@@ -261,6 +268,8 @@ fn main() {
                                 .decorations(false)
                                 .title_bar_style(tauri::TitleBarStyle::Overlay)
                                 .min_inner_size(280.0, 200.0);
+                        let (max_w, max_h) = panel_commands::panel_max_inner_size(&panel.id);
+                        let builder = builder.max_inner_size(max_w, max_h);
 
                         if let Err(e) = builder.build() {
                             log::warn!(
@@ -310,6 +319,7 @@ fn main() {
             // Image / document commands
             commands::load_image,
             commands::create_document,
+            commands::import_image_layer,
             commands::export_image,
             commands::save_project,
             commands::save_project_as,
@@ -320,6 +330,7 @@ fn main() {
             crate::undo::undo,
             crate::undo::redo,
             crate::undo::is_document_dirty,
+            commands::is_release_build,
             
             // Palette commands
             commands::list_palettes,
@@ -394,13 +405,22 @@ fn main() {
 /// Build an HTTP response with CORS headers allowing any origin.
 /// Required because in dev mode the webview origin is http://localhost:5173
 /// and the browser enforces CORS on custom protocol fetches.
-fn tile_response(status: u16, content_type: &str, body: Vec<u8>) -> http::Response<Vec<u8>> {
-    http::Response::builder()
+fn tile_response(
+    status: u16,
+    content_type: &str,
+    body: Vec<u8>,
+    generation: Option<u64>,
+) -> http::Response<Vec<u8>> {
+    let mut builder = http::Response::builder()
         .status(status)
         .header(http::header::CONTENT_TYPE, content_type)
         .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-        .body(body)
-        .unwrap()
+        .header(http::header::CACHE_CONTROL, "no-store, no-cache, must-revalidate")
+        .header(http::header::PRAGMA, "no-cache");
+    if let Some(gen) = generation {
+        builder = builder.header("X-Tile-Generation", gen.to_string());
+    }
+    builder.body(body).unwrap()
 }
 
 /// Handle a tile:// protocol request.
@@ -420,7 +440,7 @@ fn handle_tile_request(
         Ok(p) => p,
         Err(e) => {
             let msg = format!("400 Bad Request: {}", e);
-            return tile_response(400, "text/plain", msg.into_bytes());
+            return tile_response(400, "text/plain", msg.into_bytes(), None);
         }
     };
 
@@ -428,7 +448,7 @@ fn handle_tile_request(
     let snapshot = state.document_handle.snapshot();
     if snapshot.id.0 != parsed.doc_id {
         let msg = format!("404 Not Found: document {} not found", parsed.doc_id);
-        return tile_response(404, "text/plain", msg.into_bytes());
+        return tile_response(404, "text/plain", msg.into_bytes(), None);
     }
 
     // 3. Validate layer
@@ -436,7 +456,7 @@ fn handle_tile_request(
         LayerTarget::Id(id) => {
             if !layer_exists(&snapshot.root, id) {
                 let msg = format!("404 Not Found: layer {} not found", id);
-                return tile_response(404, "text/plain", msg.into_bytes());
+                return tile_response(404, "text/plain", msg.into_bytes(), None);
             }
             id
         }
@@ -459,10 +479,10 @@ fn handle_tile_request(
             "404 Not Found: tile coordinate ({}, {}) out of bounds for grid {}x{} at level {}",
             parsed.x, parsed.y, grid_cols, grid_rows, parsed.level
         );
-        return tile_response(404, "text/plain", msg.into_bytes());
+        return tile_response(404, "text/plain", msg.into_bytes(), None);
     }
 
-    // 5. Build TileKey and check cache
+    // 5. Build TileKey and check cache. Ready = !dirty && generation >= doc_gen.
     let key = TileKey {
         layer: layer_id,
         coord: TileCoord {
@@ -473,17 +493,17 @@ fn handle_tile_request(
         stage: parsed.stage,
     };
 
-    // Check cache: if entry exists and is not dirty, serve it
+    let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
     if let Some(entry) = state.tile_cache.entries.get(&key) {
-        if !entry.dirty.load(Ordering::Acquire) {
+        let dirty = entry.dirty.load(Ordering::Acquire);
+        if TileCache::tile_entry_is_ready(dirty, entry.generation, doc_gen) {
+            let gen = entry.generation;
             let rgba8 = f32_tile_to_rgba8(&entry.tile);
-            return tile_response(200, "application/octet-stream", rgba8);
+            return tile_response(200, "application/octet-stream", rgba8, Some(gen));
         }
     }
 
-    // 6. Cache miss or dirty: schedule Immediate task and return 202
-    // Use the current generation values so the worker doesn't discard the task as stale.
-    let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
+    // 6. Cache miss, dirty, or behind doc_gen: schedule Immediate and return 202.
     let layer_gen = snapshot.generations.get_layer_gen(layer_id);
     let task = RecomputeTask {
         key,
@@ -491,10 +511,10 @@ fn handle_tile_request(
         layer_generation: layer_gen,
         priority: Priority::Immediate,
     };
-    state.scheduler.enqueue(task);
+    state.scheduler.enqueue_dedup(task);
     state.worker_wake.notify_one();
 
-    tile_response(202, "application/octet-stream", Vec::new())
+    tile_response(202, "application/octet-stream", Vec::new(), None)
 }
 
 /// Check if a layer with the given ID exists in the document tree.

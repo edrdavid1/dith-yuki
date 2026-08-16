@@ -1,0 +1,13 @@
+{
+  "bundle": {
+    "resources": {
+      "icons/proj-icon.ico": "proj-icon.ico",
+      "icons/pattern-icon.ico": "pattern-icon.ico"
+    },
+    "windows": {
+      "nsis": {
+        "installerHooks": "nsis/hooks.nsh"
+      }
+    }
+  }
+}

@@ -6,9 +6,10 @@ import { applyRemote, fetchSelection } from './slices/selectionSlice';
 import { applyPanelEvent, fetchPanels } from './slices/panelsSlice';
 import { applyRemoteDraft, hydrateFromStorage } from './slices/colorLabSlice';
 import { applyUndoState } from './slices/undoSlice';
-import { bumpVersion } from './slices/palettesSlice';
+import { bumpVersion, applyRemoteBinding, loadPersistedLastCreatedId } from './slices/palettesSlice';
 import {
   onColorLabDraftChanged,
+  onPaletteBindingChanged,
   onDirtyChanged,
   onDocumentChanged,
   onPanelStateChanged,
@@ -33,6 +34,10 @@ export function startEngineEventBridge(store: AppStore): EngineBridgeCleanup {
   void dispatch(fetchPanels());
   void dispatch(fetchSelection());
   dispatch(hydrateFromStorage());
+  const persistedPalette = loadPersistedLastCreatedId();
+  if (persistedPalette != null) {
+    dispatch(applyRemoteBinding(persistedPalette));
+  }
   void dispatch(refreshDocument()).then(() => {
     const docId = store.getState().document.docId;
     if (docId !== null) {
@@ -128,6 +133,14 @@ export function startEngineEventBridge(store: AppStore): EngineBridgeCleanup {
   onColorLabDraftChanged((event) => {
     if (cancelled) return;
     dispatch(applyRemoteDraft(event.payload));
+  }).then((fn) => {
+    if (cancelled) fn();
+    else unsubscribers.push(fn);
+  });
+
+  onPaletteBindingChanged((event) => {
+    if (cancelled) return;
+    dispatch(applyRemoteBinding(event.payload.lastCreatedId));
   }).then((fn) => {
     if (cancelled) fn();
     else unsubscribers.push(fn);

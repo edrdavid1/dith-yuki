@@ -5,7 +5,7 @@ import type { FilterKind } from './index';
 // =============================================================================
 
 /** Effect types available in the new design */
-export type EffectType = 'Dithering' | 'Glitching' | 'Curves' | 'RGBChannels' | 'Glow' | 'CRT';
+export type EffectType = 'Dithering' | 'Glitching' | 'Curves' | 'RGBChannels' | 'Glow' | 'CRT' | 'Adjust';
 
 /** Maps EffectType to the corresponding FilterKind used in IPC */
 export const EFFECT_TO_FILTER_KIND: Record<EffectType, FilterKind> = {
@@ -15,6 +15,7 @@ export const EFFECT_TO_FILTER_KIND: Record<EffectType, FilterKind> = {
   RGBChannels: 'Levels',
   Glow: 'Glow',
   CRT: 'Crt',
+  Adjust: 'Adjust',
 };
 
 /** Default params for each effect type on creation */
@@ -26,6 +27,7 @@ export const EFFECT_DEFAULTS: Record<EffectType, Record<string, unknown>> = {
     pixel_size: 1,
     color_mode: 'rgb',
     palette_id: null,
+    palette_dither_mode: 'strict',
     halftone_cell_size: 8,
     wave_wavelength: 8,
     wave_amplitude: 1,
@@ -34,6 +36,7 @@ export const EFFECT_DEFAULTS: Record<EffectType, Record<string, unknown>> = {
     threshold_bias: 0,
     pattern_angle: 0,
     serpentine: false,
+    dither_alpha: true,
   },
   Glitching: {
     glitch_type: 'RGBShift',
@@ -50,6 +53,9 @@ export const EFFECT_DEFAULTS: Record<EffectType, Record<string, unknown>> = {
     gamma: 1.0,
     output_black: 0.0,
     output_white: 1.0,
+    channel_r: true,
+    channel_g: true,
+    channel_b: true,
   },
   Glow: {
     radius: 2.0,
@@ -60,6 +66,14 @@ export const EFFECT_DEFAULTS: Record<EffectType, Record<string, unknown>> = {
     period: 2,
     strength: 0.5,
     mask_strength: 0.0,
+  },
+  Adjust: {
+    contrast: 0,
+    brightness: 0,
+    saturation: 0,
+    blur: 0,
+    sharpness: 0,
+    noise: 0,
   },
 };
 

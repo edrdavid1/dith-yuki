@@ -12,6 +12,7 @@ use std::sync::Arc;
 use crate::kdtree::KdTree;
 use crate::oklab::Oklab;
 use crate::palette::{Palette, PaletteError, PaletteId};
+use crate::palette_guided::{palette_channel_ranges, ChannelRange, PaletteChannelRangeCache};
 use crate::palette_cache::PaletteKdCache;
 
 /// Default grid resolution (frozen by Track B §1.5 bench, 2026-08-11).
@@ -137,12 +138,14 @@ impl PaletteLut3D {
 /// Concurrent cache: PaletteId → (revision, Arc<PaletteLut3D>).
 pub struct PaletteLutCache {
     entries: DashMap<PaletteId, (u64, Arc<PaletteLut3D>)>,
+    channel_ranges: PaletteChannelRangeCache,
 }
 
 impl PaletteLutCache {
     pub fn new() -> Self {
         Self {
             entries: DashMap::new(),
+            channel_ranges: PaletteChannelRangeCache::new(),
         }
     }
 
@@ -178,6 +181,17 @@ impl PaletteLutCache {
     /// Evict the cached entry for the given palette ID.
     pub fn evict(&self, palette_id: PaletteId) {
         self.entries.remove(&palette_id);
+        self.channel_ranges.evict(palette_id);
+    }
+
+    /// Revision-keyed channel min/max (Track Q Guided). Not recomputed per pixel.
+    pub fn channel_ranges(&self, palette: &Palette) -> [ChannelRange; 3] {
+        self.channel_ranges.get_or_compute(palette)
+    }
+
+    /// Same as [`palette_channel_ranges`] without going through the cache (tests).
+    pub fn compute_channel_ranges(palette: &Palette) -> [ChannelRange; 3] {
+        palette_channel_ranges(palette)
     }
 
     /// Palette ids currently resident in the LUT cache.
@@ -403,6 +417,73 @@ mod tests {
             b: 0.9,
         });
         assert_eq!(lut2.nearest_index(query), 0);
+    }
+
+    #[test]
+    fn builtin_lut_keeps_every_unique_color() {
+        use crate::palette::{srgb_to_linear, BUILTIN_PRESETS};
+
+        for preset in BUILTIN_PRESETS {
+            let colors: Vec<LinearColor> = preset
+                .colors_srgb
+                .iter()
+                .map(|&(r, g, b)| LinearColor {
+                    r: srgb_to_linear(r),
+                    g: srgb_to_linear(g),
+                    b: srgb_to_linear(b),
+                })
+                .collect();
+            let palette = make_palette(1, 1, colors);
+            let kd = PaletteKdCache::new();
+            let tree = kd.get_or_build(&palette).unwrap();
+            let lut = PaletteLut3D::build(&palette, DEFAULT_LUT_SIZE, &tree).unwrap();
+
+            let mut identity_misses = Vec::new();
+            for (i, c) in palette.colors.iter().enumerate() {
+                let lab = linear_to_oklab(LinRgb {
+                    r: c.r,
+                    g: c.g,
+                    b: c.b,
+                });
+                let got = lut.nearest_index(lab) as usize;
+                if got != i && palette.colors[got] != *c {
+                    identity_misses.push((i, got, preset.colors_srgb[i], preset.colors_srgb[got]));
+                }
+            }
+
+            let mut used = std::collections::BTreeSet::new();
+            for idx in &lut.grid {
+                used.insert(*idx);
+            }
+            let unique_palette: std::collections::BTreeSet<_> = palette
+                .colors
+                .iter()
+                .map(|c| (c.r.to_bits(), c.g.to_bits(), c.b.to_bits()))
+                .collect();
+
+            eprintln!(
+                "{}: palette_len={} unique={} lut_cells_used={} identity_misses={:?}",
+                preset.id,
+                palette.colors.len(),
+                unique_palette.len(),
+                used.len(),
+                identity_misses
+            );
+
+            assert!(
+                used.len() >= unique_palette.len(),
+                "{} LUT only uses {} indices of {} unique colors",
+                preset.id,
+                used.len(),
+                unique_palette.len()
+            );
+            assert!(
+                identity_misses.is_empty(),
+                "{} LUT identity misses: {:?}",
+                preset.id,
+                identity_misses
+            );
+        }
     }
 
     #[test]

@@ -11,6 +11,7 @@ import DockedPanelContent from './DockedPanelContent';
 import styles from '../../app/AppLayout.module.css';
 import resizeStyles from '../../shared/ui/ResizeHandle.module.css';
 import { bind } from '../../shared/ui/cn';
+import Icon from '../../icons/iconRegistry';
 
 const cn = bind({ ...styles, ...resizeStyles });
 
@@ -241,17 +242,16 @@ export default function DockedSidebar({
               title={PANEL_DISPLAY_NAMES[panelId] ?? panelId}
             >
               <span className={cn('sidebar-collapsed-btn-icon')}>
-                <img
-                  src={
+                <Icon
+                  name={
                     panelId === 'effect'
-                      ? '/icons/effect-window-icon.svg'
+                      ? 'effect.dithering'
                       : panelId === 'layers'
-                        ? '/icons/layer-window-icon.svg'
-                        : '/icons/colorlab-window-icon.svg'
+                        ? 'layers'
+                        : 'color-lab'
                   }
-                  width="20"
-                  height="20"
-                  alt=""
+                  width={20}
+                  height={20}
                 />
               </span>
             </button>

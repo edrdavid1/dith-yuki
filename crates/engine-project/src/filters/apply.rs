@@ -2,6 +2,7 @@
 //!
 //! Main entry point for applying filters to tiles.
 
+use super::adjust::apply_adjust;
 use super::crt::apply_crt;
 use super::curves::CurvesFilter;
 use super::dither_diffusion::apply_error_diffusion_with_cache;
@@ -98,16 +99,24 @@ pub fn apply_filter_to_tile_with_caches(
     // Bulk copy source tile to result
     result.data.copy_from_slice(&tile.data);
 
-    // Apply each filter in the layer's filter stack
-    for filter in &layer.filters {
+    // Layers panel is top-to-bottom = `filters[0]` … `filters[n-1]` (Image Source
+    // under the last row). Apply bottom-up: last vec entry first, so the top row
+    // is the final look and sees the output of everything below — not Raw.
+    // Mega-pixel dither may sample BlockRepresentativeCache (document Raw).
+    // After any earlier stack filter, that cache is the wrong source.
+    let mut applied_any = false;
+    for filter in layer.filters.iter().rev() {
         if !filter.enabled {
             continue; // Skip disabled filters
         }
 
-        result = apply_filter_with_blend(
-            &result, filter, coord, palette_cache, lut_cache, threshold_cache, document,
-            residuals_store, block_cache, layer.id, gpu,
-        )?;
+        result = engine_tiles::with_raw_block_sampling(!applied_any, || {
+            apply_filter_with_blend(
+                &result, filter, coord, palette_cache, lut_cache, threshold_cache, document,
+                residuals_store, block_cache, layer.id, gpu,
+            )
+        })?;
+        applied_any = true;
     }
 
     Ok(result)
@@ -169,8 +178,19 @@ fn apply_single_filter(
             gamma,
             output_black,
             output_white,
+            channel_r,
+            channel_g,
+            channel_b,
         } => {
-            apply_levels_filter(tile, *input_black, *input_white, *gamma, *output_black, *output_white)
+            apply_levels_filter(
+                tile,
+                *input_black,
+                *input_white,
+                *gamma,
+                *output_black,
+                *output_white,
+                [*channel_r, *channel_g, *channel_b],
+            )
         }
         FilterParams::Dither { mode, color_depth } => {
             // Legacy dither: auto-migrate to V2 via From<(DitherMode, u8)> and dispatch
@@ -214,6 +234,23 @@ fn apply_single_filter(
                 Ok(apply_crt(tile, coord, *period, *strength, *mask_strength))
             }
         }
+        FilterParams::Adjust {
+            contrast,
+            brightness,
+            saturation,
+            blur,
+            sharpness,
+            noise,
+        } => Ok(apply_adjust(
+            tile,
+            coord,
+            *contrast,
+            *brightness,
+            *saturation,
+            *blur,
+            *sharpness,
+            *noise,
+        )),
         FilterParams::Placeholder(_) => {
             // Placeholder: return unchanged tile
             let mut result = PixelTile::new();
@@ -227,6 +264,57 @@ fn apply_single_filter(
 ///
 /// ED (FS/Atkinson) is never GpuEligible. Bayer/Halftone may use GPU when enabled.
 fn dispatch_dither_v2(
+    tile: &PixelTile,
+    coord: TileCoord,
+    params: &DitherParamsV2,
+    threshold_cache: &ThresholdMapCache,
+    palette_cache: &PaletteKdCache,
+    lut_cache: &PaletteLutCache,
+    document: &Document,
+    residuals_store: &ErrorResidualsStore,
+    block_cache: &BlockRepresentativeCache,
+    layer_id: LayerId,
+    gpu: Option<&GpuContext>,
+) -> Result<PixelTile, EngineError> {
+    let result = dispatch_dither_v2_inner(
+        tile,
+        coord,
+        params,
+        threshold_cache,
+        palette_cache,
+        lut_cache,
+        document,
+        residuals_store,
+        block_cache,
+        layer_id,
+        gpu,
+    );
+    // Slider/Color Lab can stamp a stale lastCreatedId onto DitherV2. A hard
+    // PaletteNotFound aborts the tile → 202 forever → empty preview. Retry
+    // without palette so ordered/ED still paint.
+    if let Err(EngineError::PaletteNotFound { .. }) = &result {
+        if params.palette_id.is_some() {
+            let mut fallback = params.clone();
+            fallback.palette_id = None;
+            return dispatch_dither_v2_inner(
+                tile,
+                coord,
+                &fallback,
+                threshold_cache,
+                palette_cache,
+                lut_cache,
+                document,
+                residuals_store,
+                block_cache,
+                layer_id,
+                gpu,
+            );
+        }
+    }
+    result
+}
+
+fn dispatch_dither_v2_inner(
     tile: &PixelTile,
     coord: TileCoord,
     params: &DitherParamsV2,
@@ -297,6 +385,7 @@ fn apply_levels_filter(
     gamma: f32,
     output_black: f32,
     output_white: f32,
+    channels: [bool; 3],
 ) -> Result<PixelTile, EngineError> {
     let mut filter = LevelsFilter::new();
     filter.input_black = input_black;
@@ -304,6 +393,10 @@ fn apply_levels_filter(
     filter.gamma = gamma;
     filter.output_black = output_black;
     filter.output_white = output_white;
+    filter.channel_r = channels[0];
+    filter.channel_g = channels[1];
+    filter.channel_b = channels[2];
+    filter.rebuild_lut();
     filter.apply_to_tile(tile)
 }
 
@@ -363,6 +456,9 @@ mod tests {
                 gamma: 1.0,
                 output_black: 0.0,
                 output_white: 1.0,
+                channel_r: true,
+                channel_g: true,
+                channel_b: true,
             },
         );
         let coord = TileCoord { level: 0, x: 0, y: 0 };
@@ -371,6 +467,77 @@ mod tests {
 
         let result = apply_single_filter(&tile, &filter, coord, &pc, &lc, &tc, &doc, &rs, &BlockRepresentativeCache::new(), layer_id, None);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn apply_levels_gamma_changes_midtone() {
+        let mut tile = PixelTile::new();
+        tile.set(8, 8, 0, 0.5);
+        tile.set(8, 8, 1, 0.5);
+        tile.set(8, 8, 2, 0.5);
+        let identity = FilterInstance::new(
+            FilterKind::Levels,
+            FilterParams::Levels {
+                input_black: 0.0,
+                input_white: 1.0,
+                gamma: 1.0,
+                output_black: 0.0,
+                output_white: 1.0,
+                channel_r: true,
+                channel_g: true,
+                channel_b: true,
+            },
+        );
+        let bright = FilterInstance::new(
+            FilterKind::Levels,
+            FilterParams::Levels {
+                input_black: 0.0,
+                input_white: 1.0,
+                gamma: 2.0,
+                output_black: 0.0,
+                output_white: 1.0,
+                channel_r: true,
+                channel_g: true,
+                channel_b: true,
+            },
+        );
+        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let (pc, lc, tc, doc, rs) = make_caches_and_doc();
+        let layer_id = LayerId::new(1);
+        let a = apply_single_filter(
+            &tile,
+            &identity,
+            coord,
+            &pc,
+            &lc,
+            &tc,
+            &doc,
+            &rs,
+            &BlockRepresentativeCache::new(),
+            layer_id,
+            None,
+        )
+        .unwrap();
+        let b = apply_single_filter(
+            &tile,
+            &bright,
+            coord,
+            &pc,
+            &lc,
+            &tc,
+            &doc,
+            &rs,
+            &BlockRepresentativeCache::new(),
+            layer_id,
+            None,
+        )
+        .unwrap();
+        assert!(
+            b.at(8, 8, 0) > a.at(8, 8, 0) + 0.05,
+            "gamma 2.0 should brighten, identity={}, gamma2={}",
+            a.at(8, 8, 0),
+            b.at(8, 8, 0)
+        );
     }
 
     #[test]
@@ -530,6 +697,9 @@ mod tests {
                 gamma: 1.0,
                 output_black: 0.0,
                 output_white: 1.0,
+                channel_r: true,
+                channel_g: true,
+                channel_b: true,
             },
         );
         layer.filters.push(filter1);
@@ -744,5 +914,66 @@ mod tests {
         let x = engine_tiles::HALO + 8;
         let y = engine_tiles::HALO + 8;
         assert!((blended.at(x, y, 0) - expected.at(x, y, 0)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn later_stack_filter_sees_earlier_filter_output() {
+        use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
+        use crate::layer::Layer;
+        use crate::types::LayerKind;
+
+        let mut tile = PixelTile::new();
+        fill_gray(&mut tile, 0.3);
+
+        let adjust = FilterInstance::new(
+            FilterKind::Adjust,
+            FilterParams::Adjust {
+                contrast: 0.0,
+                brightness: 0.4,
+                saturation: 0.0,
+                blur: 0.0,
+                sharpness: 0.0,
+                noise: 0.0,
+            },
+        );
+        let dither = FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::Bayer4x4,
+                levels: 2,
+                threshold_scale: 1.0,
+                pixel_size: 1,
+                color_mode: DitherColorMode::Rgb,
+                palette_id: None,
+                ..Default::default()
+            }),
+        );
+
+        let mut stacked = Layer::new(LayerId::new(1), LayerKind::Raster, 256, 256);
+        // UI / storage: top row first. Apply walks `.rev()` so Adjust runs first.
+        stacked.filters.push(dither.clone());
+        stacked.filters.push(adjust);
+
+        let mut dither_only = Layer::new(LayerId::new(1), LayerKind::Raster, 256, 256);
+        dither_only.filters.push(dither);
+
+        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let (pc, lc, tc, doc, rs) = make_caches_and_doc();
+        let blocks = BlockRepresentativeCache::new();
+
+        let stacked_out = apply_filter_to_tile_with_caches(
+            &tile, &stacked, coord, &pc, &lc, &tc, &doc, &rs, &blocks, None,
+        )
+        .unwrap();
+        let dither_out = apply_filter_to_tile_with_caches(
+            &tile, &dither_only, coord, &pc, &lc, &tc, &doc, &rs, &blocks, None,
+        )
+        .unwrap();
+
+        assert_ne!(
+            stacked_out.data.as_ref(),
+            dither_out.data.as_ref(),
+            "dither after brightness must not equal dither on the raw tile"
+        );
     }
 }

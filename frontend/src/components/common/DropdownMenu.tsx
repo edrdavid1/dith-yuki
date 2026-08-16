@@ -18,6 +18,8 @@ export interface DropdownOption {
   value: string;
   label: string;
   disabled?: boolean;
+  /** Consecutive options with the same group get a non-selectable header. */
+  group?: string;
 }
 
 interface DropdownMenuProps {
@@ -116,21 +118,31 @@ export default function DropdownMenu({
       >
         <SimpleBar style={{ maxHeight: '220px' }}>
           <ul role="listbox" aria-label="Options list" style={{ margin: 0, padding: '2px 0', listStyle: 'none' }}>
-            {options.map((option) => (
-              <li
-                key={option.value}
-                className={cn(
-                  'lp-dropdown-menu-item',
-                  option.value === value && 'active',
-                  option.disabled && 'disabled'
-                )}
-                role="option"
-                aria-selected={option.value === value}
-                onClick={() => !option.disabled && handleSelect(option.value)}
-              >
-                {renderOption ? renderOption(option) : option.label}
-              </li>
-            ))}
+            {options.map((option, index) => {
+              const prev = options[index - 1];
+              const showGroup = Boolean(option.group) && option.group !== prev?.group;
+              return (
+                <li key={option.value}>
+                  {showGroup && (
+                    <div className={cn('lp-dropdown-group')} role="presentation">
+                      {option.group}
+                    </div>
+                  )}
+                  <div
+                    className={cn(
+                      'lp-dropdown-menu-item',
+                      option.value === value && 'active',
+                      option.disabled && 'disabled'
+                    )}
+                    role="option"
+                    aria-selected={option.value === value}
+                    onClick={() => !option.disabled && handleSelect(option.value)}
+                  >
+                    {renderOption ? renderOption(option) : option.label}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </SimpleBar>
       </div>

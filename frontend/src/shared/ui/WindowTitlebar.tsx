@@ -16,6 +16,35 @@ type WindowTitlebarProps = {
   onMoveToSide?: (side: DockSide) => void;
 };
 
+export function DialogTitlebar({
+  title,
+  titleId,
+  onClose,
+}: {
+  title: string;
+  titleId?: string;
+  onClose: () => void;
+}) {
+  return (
+    <div className={cn('window-titlebar')}>
+      <button
+        type="button"
+        className={cn('window-titlebar-close')}
+        onClick={onClose}
+        aria-label="Close"
+      >
+        <img src="/icons/clouse-window-icon.svg" width="14" height="14" alt="" />
+      </button>
+      <div className={cn('window-titlebar-lines')} />
+      <span className={cn('window-title')} id={titleId}>
+        {title}
+      </span>
+      <div className={cn('window-titlebar-lines')} />
+      <div className={cn('window-titlebar-square')} />
+    </div>
+  );
+}
+
 type MenuPos = { x: number; y: number };
 
 /** Shared retro window titlebar chrome (square + lines + title). */

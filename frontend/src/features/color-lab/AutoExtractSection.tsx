@@ -1,6 +1,7 @@
 import DropdownMenu from '../../components/common/DropdownMenu';
 import Slider from '../../components/common/Slider';
 import Icon from '../../icons/iconRegistry';
+import Tooltip from '../../shared/ui/Tooltip';
 import type { ExtractMethod } from './types';
 import styles from './ColorLabWindow.module.css';
 import buttonStyles from './ColorLabButtons.module.css';
@@ -67,12 +68,26 @@ export default function AutoExtractSection({
         />
 
         <div className={cn('color-lab-buttons', 'color-lab-buttons-row')}>
-          <button type="button" onClick={onExtractRaw} className={cn('color-lab-button')}>
-            Extract from row
-          </button>
-          <button type="button" onClick={onExtractActual} className={cn('color-lab-button')}>
-            Extract from actual
-          </button>
+          <Tooltip label="Extract from raw frame">
+            <button
+              type="button"
+              onClick={onExtractRaw}
+              className={cn('color-lab-button', 'color-lab-button-icon')}
+              aria-label="Extract from raw frame"
+            >
+              <Icon name="row-img" width={16} height={16} />
+            </button>
+          </Tooltip>
+          <Tooltip label="Extract from actual frame">
+            <button
+              type="button"
+              onClick={onExtractActual}
+              className={cn('color-lab-button', 'color-lab-button-icon')}
+              aria-label="Extract from actual frame"
+            >
+              <Icon name="image-actual" width={16} height={16} />
+            </button>
+          </Tooltip>
         </div>
       </div>
     );
@@ -120,15 +135,27 @@ export default function AutoExtractSection({
       />
 
       <div className={cn('color-lab-buttons')}>
-        <button type="button" onClick={onExtractRaw} className={cn('color-lab-button')}>
-          <Icon name="row-img" width={16} height={16} />
-          Extract from raw frame
-        </button>
+        <Tooltip label="Extract from raw frame">
+          <button
+            type="button"
+            onClick={onExtractRaw}
+            className={cn('color-lab-button')}
+            aria-label="Extract from raw frame"
+          >
+            <Icon name="row-img" width={16} height={16} />
+          </button>
+        </Tooltip>
 
-        <button type="button" onClick={onExtractActual} className={cn('color-lab-button')}>
-          <Icon name="row-img" width={16} height={16} />
-          Extract from actual frame
-        </button>
+        <Tooltip label="Extract from actual frame">
+          <button
+            type="button"
+            onClick={onExtractActual}
+            className={cn('color-lab-button')}
+            aria-label="Extract from actual frame"
+          >
+            <Icon name="image-actual" width={16} height={16} />
+          </button>
+        </Tooltip>
       </div>
     </div>
   );

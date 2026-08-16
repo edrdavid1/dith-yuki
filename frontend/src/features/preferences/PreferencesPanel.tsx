@@ -15,7 +15,7 @@ import { bind } from '../../shared/ui/cn';
 const cn = bind({ ...styles, ...paramStyles });
 
 /**
- * Application preferences body (chrome comes from PanelWindow when floating).
+ * Application preferences body (chrome comes from PreferencesDialog).
  */
 export default function PreferencesPanel() {
   const {
@@ -225,13 +225,6 @@ export default function PreferencesPanel() {
             <span>Automatically extract palette when adding an image</span>
           </label>
         </div>
-      </section>
-
-      <section className={cn('preferences-section')} aria-labelledby="prefs-about-heading">
-        <h2 id="prefs-about-heading" className={cn('preferences-section-title')}>
-          About
-        </h2>
-        <p className={cn('preferences-about')}>Dither — pixel art / dithering workspace.</p>
       </section>
     </div>
   );

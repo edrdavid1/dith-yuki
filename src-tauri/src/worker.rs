@@ -12,7 +12,8 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::Emitter;
 
-use engine_tiles::{CacheStage, PixelTile, TileKey};
+use engine_project::Document;
+use engine_tiles::{CacheStage, PixelTile, RecomputeTask, TileKey};
 
 use crate::commands::AppState;
 
@@ -105,24 +106,23 @@ pub struct TileReadyPayload {
 pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
     loop {
         if let Some(task) = state.scheduler.dequeue() {
-            // Staleness check (requirement 10.5):
-            // For per-layer tasks (Processed/Raw), compare generation values against
-            // the current document state. Stale tasks are discarded.
-            // For Composite tasks (layer 0), skip the staleness check because:
-            // 1. The composite always reflects the latest document state (reads fresh snapshot)
-            // 2. During rapid slider changes, we always want the latest composite computed
-            // 3. ensure_processed_tiles_fresh handles getting fresh Processed tiles
+            state
+                .preview_pass_inflight
+                .fetch_add(1, Ordering::AcqRel);
+
+            // Staleness check (requirement 10.5), including Composite layer 0.
+            // Skipping Composite used to reuse in-flight work during slider
+            // changes, but insert_fresh then overwrote a newer result with a
+            // slower older one. Discard stale tasks; schedule_dirty_viewport_tiles
+            // already enqueued the current generation.
             let snapshot = state.document_handle.snapshot();
 
-            if task.key.stage != CacheStage::Composite || task.key.layer != 0 {
-                let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
-                let layer_gen = snapshot.generations.get_layer_gen(task.key.layer);
-
-                if task.generation != doc_gen || task.layer_generation != layer_gen {
-                    // Task is stale — the user changed parameters since this task was created.
-                    // Discard it to avoid overwriting newer results.
-                    continue;
-                }
+            if task_is_stale(&task, &snapshot) {
+                state
+                    .preview_pass_inflight
+                    .fetch_sub(1, Ordering::AcqRel);
+                crate::commands::on_preview_task_finished(&state);
+                continue;
             }
 
             // Execute task based on stage
@@ -133,56 +133,98 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
             };
 
             if let Ok(tile) = result {
-                state.tile_cache.insert_fresh(task.key, Arc::new(tile));
-
-                // Track A: wake Processed tiles that computed with zero-seed
-                // because this raw neighbor was missing.
-                if task.key.stage == CacheStage::Raw {
-                    let waiters = state.pending_diffusion_waiters.wake(&task.key);
-                    if !waiters.is_empty() {
-                        let snapshot = state.document_handle.snapshot();
-                        let doc_gen =
-                            snapshot.generations.document_gen.load(Ordering::Acquire);
-                        for processed_key in waiters {
-                            state.tile_cache.mark_dirty(processed_key);
-                            let layer_gen =
-                                snapshot.generations.get_layer_gen(processed_key.layer);
-                            state.scheduler.enqueue(engine_tiles::RecomputeTask {
-                                key: processed_key,
-                                generation: doc_gen,
-                                layer_generation: layer_gen,
-                                priority: engine_tiles::Priority::Immediate,
-                            });
-                            state.worker_wake.notify_one();
+                // Re-check after compute: gen may have advanced while we worked.
+                let snapshot = state.document_handle.snapshot();
+                if task_is_stale(&task, &snapshot) {
+                    // Discarded; current gen should already be queued or pending refresh.
+                } else {
+                    let inserted = state.tile_cache.insert_fresh_gen(
+                        task.key,
+                        Arc::new(tile),
+                        task.generation,
+                    );
+                    if inserted {
+                    // Track A: wake Processed tiles that computed with zero-seed
+                    // because this raw neighbor was missing.
+                    if task.key.stage == CacheStage::Raw {
+                        let waiters = state.pending_diffusion_waiters.wake(&task.key);
+                        if !waiters.is_empty() {
+                            let doc_gen =
+                                snapshot.generations.document_gen.load(Ordering::Acquire);
+                            for processed_key in waiters {
+                                state.tile_cache.mark_dirty(processed_key);
+                                let layer_gen =
+                                    snapshot.generations.get_layer_gen(processed_key.layer);
+                                state.scheduler.enqueue(engine_tiles::RecomputeTask {
+                                    key: processed_key,
+                                    generation: doc_gen,
+                                    layer_generation: layer_gen,
+                                    priority: engine_tiles::Priority::Immediate,
+                                });
+                                state.worker_wake.notify_one();
+                            }
                         }
                     }
+
+                    // Only push tiles the canvas will actually blit (current pyramid level).
+                    // Intermediate L0 children of a zoom-out display tile stay in cache.
+                    let viewport_level = state.viewport.lock().unwrap().level;
+                    if task.key.stage == CacheStage::Composite
+                        && task.key.coord.level == viewport_level
+                    {
+                        let payload = TileReadyPayload {
+                            doc_id: snapshot.id.0,
+                            layer_id: task.key.layer,
+                            stage: "composite".to_string(),
+                            level: task.key.coord.level,
+                            x: task.key.coord.x,
+                            y: task.key.coord.y,
+                        };
+                        let _ = app_handle.emit_to(
+                            tauri::EventTarget::Any,
+                            "tile-ready",
+                            payload,
+                        );
+                    }
+                    } else {
+                        crate::tile_pipeline::reschedule_if_insert_rejected(
+                            &state,
+                            task.key,
+                            false,
+                        );
+                    }
                 }
-
-                // Emit tile-ready event (requirements 2.4, 10.4, 10.6)
-                let stage_str = match task.key.stage {
-                    CacheStage::Raw => "raw",
-                    CacheStage::Processed => "processed",
-                    CacheStage::Composite => "composite",
-                };
-
-                let payload = TileReadyPayload {
-                    doc_id: snapshot.id.0,
-                    layer_id: task.key.layer,
-                    stage: stage_str.to_string(),
-                    level: task.key.coord.level,
-                    x: task.key.coord.x,
-                    y: task.key.coord.y,
-                };
-
-                // .ok() ignores emit errors (e.g., if no listeners are connected)
-                let _ = app_handle.emit("tile-ready", payload);
+            } else if let Err(err) = result {
+                let msg = err.to_string();
+                if !msg.contains("Pyramid children not yet computed") {
+                    eprintln!(
+                        "tile compute failed layer={} stage={:?} l={}/{}/{}: {msg}",
+                        task.key.layer,
+                        task.key.stage,
+                        task.key.coord.level,
+                        task.key.coord.x,
+                        task.key.coord.y
+                    );
+                }
             }
+
+            state
+                .preview_pass_inflight
+                .fetch_sub(1, Ordering::AcqRel);
+            crate::commands::on_preview_task_finished(&state);
         } else {
             // No tasks available — wait on Condvar for immediate wake when work arrives.
             // Falls back to park_timeout(1ms) if the mutex is poisoned (degraded mode).
             state.worker_wake.wait();
         }
     }
+}
+
+/// True when the task's recorded generations no longer match the live document.
+pub(crate) fn task_is_stale(task: &RecomputeTask, snapshot: &Document) -> bool {
+    let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
+    let layer_gen = snapshot.generations.get_layer_gen(task.key.layer);
+    task.generation != doc_gen || task.layer_generation != layer_gen
 }
 
 /// Load a Raw-stage tile from the cache.
@@ -219,4 +261,50 @@ fn compute_processed_tile(key: TileKey, state: &AppState) -> Result<PixelTile, S
 fn compute_composite_tile(key: TileKey, state: &AppState) -> Result<PixelTile, String> {
     crate::tile_pipeline::compute_composite_tile(key, state)
         .map_err(|e| format!("{}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use engine_project::Document;
+    use engine_project::types::DocumentId;
+    use engine_tiles::{Priority, TileCoord};
+
+    fn composite_task(generation: u64) -> RecomputeTask {
+        RecomputeTask {
+            key: TileKey {
+                layer: 0,
+                coord: TileCoord {
+                    level: 0,
+                    x: 0,
+                    y: 0,
+                },
+                stage: CacheStage::Composite,
+            },
+            generation,
+            layer_generation: 0,
+            priority: Priority::Immediate,
+        }
+    }
+
+    #[test]
+    fn composite_layer0_is_stale_when_document_gen_advances() {
+        let doc = Document::new(DocumentId::new(1), 64, 64);
+        assert_eq!(
+            doc.generations
+                .document_gen
+                .load(std::sync::atomic::Ordering::Acquire),
+            0
+        );
+        assert!(
+            task_is_stale(&composite_task(1), &doc),
+            "Composite layer 0 must not skip the generation check"
+        );
+
+        doc.generations.increment_document_gen();
+        assert!(!task_is_stale(&composite_task(1), &doc));
+
+        doc.generations.increment_document_gen();
+        assert!(task_is_stale(&composite_task(1), &doc));
+    }
 }

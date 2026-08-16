@@ -1,10 +1,10 @@
 import { useCallback, useState } from 'react';
 import { createPortal } from 'react-dom';
 import styles from '../features/document/NewProjectDialog.module.css';
-import titlebarStyles from '../shared/ui/WindowTitlebar.module.css';
 import { bind } from '../shared/ui/cn';
+import { DialogTitlebar } from '../shared/ui/WindowTitlebar';
 
-const cn = bind({ ...styles, ...titlebarStyles });
+const cn = bind(styles);
 
 export type SvgExportAlgorithm = 'greedy_meshing' | 'contour_tracing';
 
@@ -29,10 +29,7 @@ export default function SvgExportDialog({ isOpen, onExport, onClose }: SvgExport
   return createPortal(
     <div className={cn('new-project-overlay')} onClick={handleOverlayClick} data-testid="svg-export-overlay">
       <div className={cn('new-project-dialog')} role="dialog" aria-modal="true" aria-label="SVG export">
-        <div className={cn('window-titlebar')}>
-          <button className={cn('window-titlebar-btn')} onClick={onClose} aria-label="Close" type="button" />
-          <span className={cn('window-title')}>Export SVG</span>
-        </div>
+        <DialogTitlebar title="Export SVG" onClose={onClose} />
         <form
           className={cn('new-project-body')}
           onSubmit={(e) => {

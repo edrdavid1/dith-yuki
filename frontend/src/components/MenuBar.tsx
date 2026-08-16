@@ -12,6 +12,7 @@ interface MenuBarProps {
   recentEntries?: RecentFileEntry[];
   onNewProject?: () => void;
   onOpenImage: () => void;
+  onImportImageLayer?: () => void;
   onSaveImage: () => void;
   onOpenProject: () => void;
   onOpenRecent?: (entry: RecentFileEntry) => void;
@@ -21,6 +22,7 @@ interface MenuBarProps {
   onImportPattern: () => void;
   onOpenColorLab: () => void;
   onOpenPreferences: () => void;
+  onOpenHelp: () => void;
   onUndo?: () => void;
   onRedo?: () => void;
 }
@@ -42,7 +44,7 @@ const MENU_ITEMS: MenuItem[] = [
 ];
 
 /** Top-level items that open a window directly (no dropdown). */
-const DIRECT_OPEN_MENUS: ReadonlySet<MenuId> = new Set(['colorlab', 'preferences']);
+const DIRECT_OPEN_MENUS: ReadonlySet<MenuId> = new Set(['colorlab', 'preferences', 'help']);
 
 function MenuBar({
   hasDocument,
@@ -51,6 +53,7 @@ function MenuBar({
   recentEntries = [],
   onNewProject,
   onOpenImage,
+  onImportImageLayer,
   onSaveImage,
   onOpenProject,
   onOpenRecent,
@@ -60,6 +63,7 @@ function MenuBar({
   onImportPattern,
   onOpenColorLab,
   onOpenPreferences,
+  onOpenHelp,
   onUndo,
   onRedo,
 }: MenuBarProps) {
@@ -101,8 +105,13 @@ function MenuBar({
       setOpenMenu(null);
       return;
     }
+    if (id === 'help') {
+      onOpenHelp();
+      setOpenMenu(null);
+      return;
+    }
     setOpenMenu(prev => (prev === id ? null : id));
-  }, [onOpenColorLab, onOpenPreferences]);
+  }, [onOpenColorLab, onOpenPreferences, onOpenHelp]);
 
   const handleMenuHover = useCallback((id: MenuId) => {
     // Only switch on hover if a dropdown is already open
@@ -140,6 +149,14 @@ function MenuBar({
               onClick={() => handleAction(onOpenImage)}
             >
               Open Image
+            </button>
+            <button
+              className={cn("menubar-dropdown-item")}
+              role="menuitem"
+              onClick={() => handleAction(onImportImageLayer ?? (() => {}))}
+              disabled={!hasDocument}
+            >
+              Import Image as Layer…
             </button>
             <button
               className={cn("menubar-dropdown-item")}
@@ -244,12 +261,6 @@ function MenuBar({
             >
               Import Pattern…
             </button>
-          </div>
-        );
-      case 'help':
-        return (
-          <div className={cn("menubar-dropdown")} role="menu">
-            {/* Placeholder — empty for now */}
           </div>
         );
       default:

@@ -6,7 +6,9 @@
 //! - Dither: Color reduction (Bayer, ThresholdMap, ErrorDiffusion)
 //! - PaletteQuantize: Oklab-based palette quantization
 //! - Glitch: Creative effects (RGB shift, block displacement)
+//! - Adjust: Contrast / brightness / saturation / blur / sharpness / noise
 
+pub mod adjust;
 pub mod curves;
 pub mod crt;
 pub mod dither;

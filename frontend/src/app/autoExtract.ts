@@ -1,5 +1,5 @@
 import { createAsyncThunk } from '@reduxjs/toolkit';
-import { bumpVersion } from './slices/palettesSlice';
+import { bumpVersion, publishPaletteBinding } from './slices/palettesSlice';
 import { setColors, setError, setName, setSelectedPaletteId } from './slices/colorLabSlice';
 import { getAutoExtractPalettesPref } from './shell/ShellContext';
 import {
@@ -42,6 +42,7 @@ export const extractPalette = createAsyncThunk<
     dispatch(setName(dto.name || 'Untitled Palette'));
     dispatch(setColors(dto.colors.map(([r, g, b]) => createColorEntry(toHex(r, g, b)))));
     dispatch(bumpVersion({ lastCreatedId: dto.id }));
+    publishPaletteBinding(dto.id);
     dispatch(setSelectedPaletteId(dto.id));
     return dto;
   } catch (err: unknown) {

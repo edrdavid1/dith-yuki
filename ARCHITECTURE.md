@@ -1,15 +1,21 @@
 # Архитектура Dither Yuki 2
 
-> Комплексный архитектурный документ.
-> Последнее обновление: август 2026.
+> Комплексный архитектурный документ. As-built **0.2.0**.
+> Последнее обновление: 14 августа 2026.
+>
+> Оптимизация: начинать с **§13** (стоимость тайла / где теряется время) и
+> [TILE_PIPELINE.md](./TILE_PIPELINE.md) §11. Не трогать фильтры, пока не ясно,
+> какой участок реально в профиле.
 >
 > **См. также:**
-> - [TILE_PIPELINE.md](./TILE_PIPELINE.md) — тайловый pipeline, глобальные координаты, cross-tile зависимости, GPU path (§10)
-> - [COLOR_AND_COLOR_LAB.md](./COLOR_AND_COLOR_LAB.md) — as-built цвет, палитры, Color Lab, auto-extract, generators
-> - [.cursor-spec/track-d-gpu/](./.cursor-spec/track-d-gpu/) — Track D: requirements / design / tasks для `engine-gpu`
-> - [.cursor-spec/track-e-dyproj/](./.cursor-spec/track-e-dyproj/) — Track E: `.dyproj` persistence + shared zip/asset embed (`engine-project::serialize`)
-> - [.cursor-spec/track-f-dyuki/](./.cursor-spec/track-f-dyuki/) — Track F: `.dyuki` sharable patterns (`serialize::pattern`, `export_pattern` / `import_pattern`)
-> - [.cursor-spec/track-g-welcome/](./.cursor-spec/track-g-welcome/) — Track G: Welcome screen, `create_document`, Recent Files
+> - [TILE_PIPELINE.md](./TILE_PIPELINE.md) — тайловый pipeline, координаты, ED, GPU, стоимость тайла
+> - [COLOR_AND_COLOR_LAB.md](./COLOR_AND_COLOR_LAB.md) — цвет, палитры, Color Lab
+> - [.cursor-spec/track-d-gpu/](./.cursor-spec/track-d-gpu/) — `engine-gpu`
+> - [.cursor-spec/track-e-dyproj/](./.cursor-spec/track-e-dyproj/) — `.dyproj` (`engine-project::serialize`)
+> - [.cursor-spec/track-f-dyuki/](./.cursor-spec/track-f-dyuki/) — `.dyuki`
+> - [.cursor-spec/track-g-welcome/](./.cursor-spec/track-g-welcome/) — Welcome / Recent
+> - [.cursor-spec/track-o-updates/](./.cursor-spec/track-o-updates/) — in-app updates
+> - [.cursor-spec/track-p-beta/](./.cursor-spec/track-p-beta/) — dirty / Guard / Import Layer
 
 ---
 
@@ -29,13 +35,15 @@
 |------|-----------|--------|
 | Desktop runtime | Tauri 2 | ^2.11 |
 | Backend language | Rust (edition 2021) | stable |
-| Frontend framework | React | ^18.2 |
+| Frontend framework | React + Redux Toolkit | ^18.2 / ^2.12 |
 | Frontend language | TypeScript | ^5.0 |
 | Build tool | Vite | ^4.4 |
 | Test (frontend) | Vitest + fast-check | ^4.1 / ^4.9 |
 | Test (backend) | proptest + criterion + built-in #[test] | 1.4 / 0.5 |
 | Color dialogs | react-colorful | ^5.8 |
 | Custom scrollbars | simplebar-react | ^3.3 |
+| Oklab volume (Color Lab) | three | ^0.185 |
+| In-app updates | tauri-plugin-updater + process | 2 |
 
 ### 1.2 Структура репозитория
 
@@ -43,129 +51,49 @@
 dither-yuki-2/
 ├── Cargo.toml                  # Workspace root (resolver = "2")
 ├── src-tauri/                  # Tauri backend (IPC, workers, panels, tile protocol)
-│   ├── Cargo.toml
+│   ├── tauri.conf.json         # version 0.2.0, updater pubkey, icons, file assoc
 │   └── src/
-│       ├── main.rs             # Точка входа, tile:// protocol, worker spawn
-│       ├── commands.rs         # AppState + IPC-команды
-│       ├── tile_protocol.rs    # URL parser для tile:// протокола
-│       ├── tile_pipeline.rs    # compute_processed_tile, compute_composite_tile
-│       ├── viewport.rs         # set_viewport, compute_visible_tiles
-│       ├── worker.rs           # Background worker loop, tile-ready events
-│       ├── panel_manager.rs    # PanelManager: panel state machine
-│       ├── panel_commands.rs   # IPC для dock/undock/hide/show/reorder
-│       ├── panel_persistence.rs # JSON disk persistence для panel layout
-│       └── recent_files.rs      # Recent Files JSON (Welcome / File → Open Recent)
+│       ├── main.rs             # Entry, tile://, GpuContext, worker spawn
+│       ├── commands.rs         # AppState + IPC (document / filters / palettes / dirty)
+│       ├── tile_protocol.rs    # tile:// URL → RGBA8
+│       ├── tile_pipeline.rs    # compute_processed_tile / compute_composite_tile
+│       ├── viewport.rs         # set_viewport, visible + prefetch
+│       ├── worker.rs           # WorkerWake (Condvar) + tile_worker_loop
+│       ├── undo.rs             # UndoManager (Arc<Document> stacks)
+│       ├── diffusion_waiters.rs
+│       ├── dock_affinity.rs / global_mouseup.rs
+│       ├── panel_*.rs          # dock/undock/persist
+│       └── recent_files.rs
 ├── crates/
-│   ├── engine-core/            # Базовые типы (Phase 0 stub)
-│   ├── engine-tiles/           # Тайловый кэш, scheduler, decompose, pyramid
+│   ├── engine-core/            # Phase 0 stub (не используется)
+│   ├── engine-tiles/           # PixelTile, cache, scheduler, coords, pyramid, BRC
+│   ├── engine-project/         # Document, layers, filters, compositor, serialize
 │   │   └── src/
-│   │       ├── tile.rs         # PixelTile (260²×4 f32)
-│   │       ├── cache.rs        # DashMap TileCache + LRU eviction
-│   │       ├── coords.rs       # GlobalCoord / GlobalCoordSigned (seamless tile coords)
-│   │       ├── scheduler.rs    # 4-priority SegQueue scheduler
-│   │       ├── generation.rs   # GenerationTracker (AtomicU64 + DashMap)
-│   │       ├── invalidation.rs # Cache invalidation cascades
-│   │       ├── decompose.rs    # Image → tile decomposition
-│   │       ├── pyramid.rs      # Box-filter downsampling
-│   │       └── types.rs        # TileCoord, TileKey, CacheStage, TILE_SIZE, HALO
-│   ├── engine-project/         # Document model, layers, filters, compositor
-│   │   └── src/
-│   │       ├── document.rs     # Document + DocumentHandle (ArcSwap)
-│   │       ├── layer.rs        # Layer, LayerGroup, LayerNode
-│   │       ├── filter.rs       # FilterInstance, FilterKind, FilterParams, DitherV2
-│   │       ├── compositor.rs   # composite_tile, blend_tile (12 blend modes)
-│   │       ├── commands.rs     # add_layer, remove_layer, set_layer_props, reorder_layer
-│   │       ├── invalidation.rs # LayerFilterChanged / PropsChanged / RawChanged cascades
-│   │       ├── mask.rs         # MaskRef, apply_mask (luminance-based)
-│   │       ├── palette_gen.rs  # generate_palette_from_layer (median cut)
-│   │       ├── simd.rs         # SIMD-accelerated blend/levels/f32→rgba8 (wide crate)
-│   │       ├── dto.rs          # LayerNodeDto, serialization helpers
-│   │       ├── types.rs        # DocumentId, LayerId, FilterInstanceId, PaletteId, etc.
+│   │       ├── filter.rs       # DitherParamsV2 (bias/angle/serpentine/dither_alpha)
+│   │       ├── compositor.rs / simd.rs
+│   │       ├── serialize/      # .dyproj / .dyuki (zip + assets + migrate)
 │   │       └── filters/
-│   │           ├── apply.rs            # apply_filter_to_tile dispatcher (+ optional GPU)
-│   │           ├── gpu_bridge.rs       # PixelTile core ↔ RGBA32 GPU; GpuEligible gating
-│   │           ├── curves.rs           # Catmull-Rom spline tone curves
-│   │           ├── levels.rs           # Input/output levels + gamma
-│   │           ├── dither.rs           # Dither V1 + V2 (Bayer/ThresholdMap/ErrorDiffusion)
-│   │           ├── dither_ordered.rs   # Ordered dither (Bayer, Custom PNG, CMYK Halftone, Wave)
-│   │           ├── dither_diffusion.rs # Error diffusion engine (F-S, Atkinson, JJN, Stucki)
-│   │           ├── dither_residuals.rs # ErrorResiduals store (DashMap per TileCoord)
-│   │           ├── crt.rs              # CRT scanlines + RGB mask (GlobalCoord)
-│   │           ├── glow.rs             # Soft glow / bloom (radius ≤ HALO) — CPU-only
-│   │           ├── palette_quantize.rs # Oklab KD-tree palette quantization
-│   │           └── glitch.rs           # RGBShift, BlockDisplace
-│   ├── engine-gpu/             # Optional wgpu compute (Bayer / Halftone / CRT)
-│   │   └── src/
-│   │       ├── context.rs      # GpuContext (device, queue, map_timeout_counter)
-│   │       ├── dispatch.rs     # Shared RGBA32 float upload / map_async / download
-│   │       ├── bayer.rs / halftone.rs / crt.rs
-│   │       ├── prefer.rs       # DITHER_GPU / DITHER_FORCE_CPU
-│   │       └── shaders/*.wgsl  # Compute shaders (tile_offset uniforms)
-│   ├── engine-color/           # Цвет, палитры, KD-tree, threshold maps, generators
-│   │   └── src/
-│   │       ├── oklab.rs           # linear RGB ↔ Oklab (без повторной линеаризации!)
-│   │       ├── oklch.rs           # OkLCH + sRGB gamut clip
-│   │       ├── ramps.rs           # Oklab ramps (draft generators)
-│   │       ├── harmony.rs         # hue/chroma harmony rules
-│   │       ├── kdtree.rs          # 3D KD-tree nearest-neighbor search
-│   │       ├── palette_cache.rs   # PaletteKdCache (DashMap, Arc<KdTree>)
-│   │       ├── threshold_map.rs   # PNG threshold map loading + sampling
-│   │       └── palette/
-│   │           ├── mod.rs         # Palette, LinearColor, PaletteFormat, sRGB↔linear
-│   │           ├── generate.rs    # Median cut / K-means (+ subsample ≤200k)
-│   │           ├── presets.rs     # Builtin retro palettes (gameboy, apple2, …)
-│   │           └── formats/       # Парсеры: aco.rs, ase.rs, gpl.rs, pal.rs, csv_json.rs
-│   └── engine-io/             # Sandbox path validation
-│       └── src/
-│           ├── lib.rs
-│           └── sandbox.rs      # resolve_user_path (canonicalize + HOME fence)
-├── frontend/                   # React + TypeScript UI
-│   ├── package.json
+│   │           ├── apply.rs            # stack + Full_Then_Blend + GPU try
+│   │           ├── gpu_bridge.rs       # extract_core / write_core / eligibility
+│   │           ├── dither_ordered.rs   # Bayer, CustomPng, Halftone, Wave
+│   │           ├── dither_diffusion.rs # FS, Atkinson, JJN, Stucki, Burkes, Sierra
+│   │           ├── dither_residuals.rs
+│   │           ├── palette_quantize.rs # LUT nearest (не KD на hot path)
+│   │           └── curves / levels / glow / crt / glitch
+│   ├── engine-gpu/             # wgpu compute (Bayer / Halftone / CRT), opt-in
+│   │   └── src/dispatch.rs     # upload → dispatch → map; submit_lock; no buffer pool
+│   ├── engine-color/           # Oklab, KdTree (build LUT), PaletteLut3D 64³
+│   └── engine-io/              # sandbox + svg_export (meshing / contour)
+├── frontend/
 │   └── src/
-│       ├── main.tsx            # Entry point (App vs PanelWindow routing)
-│       ├── App.tsx             # Main window layout + hooks orchestration
-│       ├── components/
-│       │   ├── TileCanvas.tsx        # HTML5 Canvas + Web Worker tile rendering
-│       │   ├── PreviewWindow.tsx     # Preview viewport container
-│       │   ├── EffectSettingsPanel.tsx # Filter parameters UI
-│       │   ├── LayersPanel.tsx       # Layer tree + drag-and-drop
-│       │   ├── ColorLabWindow.tsx    # Legacy/shell entry (см. features/color-lab)
-│       │   ├── PalettePanel.tsx      # Palette list + CRUD (не основной Color Lab path)
-│       │   ├── PaletteSelector.tsx   # Palette dropdown; defaults to lastCreatedId
-│       │   ├── SwatchGrid.tsx        # Color swatch grid display
-│       │   ├── ColorPicker.tsx       # HSL/RGB color picker
-│       ├── features/color-lab/        # Color Lab UI (draft, extract, builtins, ramps, harmony)
-│       ├── app/autoExtract.ts        # Open-image auto-extract → generate_palette
-│       │   ├── MenuBar.tsx           # Application menu bar
-│       │   ├── PanelWindow.tsx       # Floating panel window shell
-│       │   ├── WindowShell.tsx       # Window chrome wrapper
-│       │   ├── WindowControls.tsx    # Close/minimize/maximize buttons
-│       │   ├── AppTitlebar.tsx       # Custom cross-platform titlebar
-│       │   ├── EffectChooserDialog.tsx # Add-effect modal
-│       │   ├── NewProjectDialog.tsx  # Blank document size/background
-│       │   ├── EmptyState.tsx        # Welcome (no-document slot in PreviewFeature)
-│       │   ├── common/              # Slider, DropdownMenu, ResizeHandle, Notification
-│       │   └── filters/             # Per-filter parameter editors
-│       ├── hooks/
-│       │   ├── useDocument.ts        # Open/save/export/create document
-│       │   ├── useRecentFiles.ts     # get_recent_files (lifted via useWelcomeScreen)
-│       │   ├── useWelcomeScreen.ts   # One Recent source + New Project dialog per window
-│       │   ├── useViewport.ts        # Zoom/pan + set_viewport IPC
-│       │   ├── usePan.ts             # Middle-mouse / Space+click panning
-│       │   ├── useLayers.ts          # Layer CRUD + selection
-│       │   ├── useEffectLayer.ts     # Filter CRUD + active filter
-│       │   ├── usePanels.ts          # Panel dock/undock/visibility state
-│       │   ├── usePanelDrag.ts       # Panel drag reorder
-│       │   ├── useSelectionState.ts  # Layer/filter selection coordination
-│       │   └── useCloseRequested.ts  # Window close handling
-│       ├── workers/tileWorker.ts     # Web Worker: fetch tile:// → ImageBitmap
-│       ├── shared/ipc/               # Canonical IPC (document, project, recent, …)
-│       ├── ipc/                      # Compat barrels → shared/ipc
-│       ├── types/                    # TypeScript interfaces (effects, panels, index)
-│       ├── utils/                    # viewport.ts, tileRetry, tileFallback, hexConvert
-│       ├── lib/platform.ts           # OS detection (macOS/Windows/Linux)
-│       └── styles/titlebar.css       # Platform-specific titlebar styles
-└── docs/                       # Legacy documentation
+│       ├── main.tsx / App.tsx
+│       ├── app/                # AppLayout, RTK store, slices
+│       ├── features/           # preview, effects, layers, color-lab, panels, document
+│       ├── components/         # MenuBar, dialogs, shared widgets
+│       ├── hooks/              # useDocument, useViewport, useAppUpdates, …
+│       ├── workers/tileWorker.ts
+│       └── shared/ipc/         # canonical invoke wrappers
+└── .cursor-spec/               # tracks A–P
 ```
 
 ### 1.3 Workspace members
@@ -219,13 +147,13 @@ graph LR
 
 ```mermaid
 graph TB
-    subgraph Frontend ["Frontend (React/TypeScript)"]
-        MenuBar[MenuBar: New / Open / Recent / Save]
+    subgraph Frontend ["Frontend (React + RTK)"]
+        AppLayout[AppLayout: dual sidebar + preview]
+        MenuBar[MenuBar: File / Edit / Help]
         TileCanvas[TileCanvas: canvas + Web Worker]
-        EffectPanel[EffectSettingsPanel: filter params]
-        LayerPanel[LayersPanel: tree + drag-and-drop]
-        ColorLab[ColorLabWindow: palette editing]
-        PalettePanel[PalettePanel: palette CRUD]
+        EffectPanel[EffectsFeature]
+        LayerPanel[LayersFeature]
+        ColorLab[ColorLabFeature]
         TileWorker[tileWorker.ts: fetch tile:// → ImageBitmap]
     end
 
@@ -252,6 +180,7 @@ graph TB
         PalCache[PaletteKdCache — DashMap]
         GpuCtx[GpuContext — Option Arc]
         PanelMgr[PanelManager — Mutex]
+        WorkerWake[WorkerWake — Condvar]
         WorkerPool[Worker Pool — N threads]
     end
 
@@ -352,6 +281,7 @@ pub struct AppState {
     pub panel_manager: Mutex<PanelManager>,  // Multi-window panel state
     pub undo_manager: Mutex<UndoManager>,    // Track N: snapshot Arc<Document> stacks, max_depth=50
     pub saved_snapshot: Mutex<Option<Arc<Document>>>, // Track P: Saved_Mark; dirty = !ptr_eq(live, mark)
+    pub worker_wake: WorkerWake,             // Condvar; notify_one on enqueue
     // … selection, dock_affinity, float-drag hooks …
 }
 ```
@@ -366,6 +296,7 @@ pub struct AppState {
 - `PanelManager` — загрузка persisted state или defaults
 - State оборачивается в `Arc<AppState>` для sharing с worker threads
 - Worker pool spawn: N = `available_parallelism` или 4
+- `WorkerWake` Condvar: enqueue → `notify_one`; idle worker → `wait()` (не sleep 1ms)
 - Workers call `apply_filter_to_tile_with_caches(..., state.gpu.as_deref())`
 
 ### 3.2 DocumentHandle
@@ -400,7 +331,7 @@ pub struct DocumentHandle {
 
 ### 3.2.2 Dirty flag (Track P)
 
-`saved_snapshot` is the live `Arc<Document>` at the last clean point (successful save, or `clear_history` after open / load / create). Dirty is `!Arc::ptr_eq(live, saved_mark)` — not `Document.revision`. Empty / welcome (no layers) is not dirty. Frontend title: `{• }{basename | Untitled} — Dither Engine`. One Unsaved_Guard (Save / Don’t Save / Cancel) on main-window close and File New/Open. GPU filters stay opt-in (`DITHER_GPU=1`); `0.1.0` has no in-app updater (Track O / `0.2.0`).
+`saved_snapshot` is the live `Arc<Document>` at the last clean point (successful save, or `clear_history` after open / load / create). Dirty is `!Arc::ptr_eq(live, saved_mark)` — not `Document.revision`. Empty / welcome (no layers) is not dirty. Frontend title: `{• }{basename | Untitled} — Dither Engine`. One Unsaved_Guard (Save / Don’t Save / Cancel) on main-window close and File New/Open. GPU filters stay opt-in (`DITHER_GPU=1`). In-app updates start at **0.2.0** (`tauri-plugin-updater` + GitHub `latest.json`); **0.1.0 cannot self-update** — install the 0.2.0 DMG once. Minisign pubkey is in `tauri.conf.json`; the private key is a CI secret, never git. Apple notarization is optional (Gatekeeper warning on first DMG open is a known beta limit). File → Import Image as Layer places at origin, clips, no scale.
 
 ### 3.3 Tile Protocol Handler (tile://)
 
@@ -451,11 +382,15 @@ N потоков (= `available_parallelism`), каждый выполняет `t
 ```
 loop {
     1. Dequeue task by priority (Immediate > ViewportCenter > ViewportEdge > Prefetch)
-    2. Staleness check: task.generation vs current gen → discard if stale
+    2. Staleness:
+       - Processed/Raw: task.generation vs current gen → discard if stale
+       - Composite (layer 0): **не** discard — всегда считает свежий snapshot
+         (слайдер: Processed-задачи отбрасываются, Composite догоняет последний кадр)
     3. Execute: Composite → composite_tile / Processed → apply_filter_to_tile
     4. Insert result в TileCache
-    5. Emit tile-ready event
-    6. No tasks → sleep(1ms)
+    5. Raw insert → wake pending_diffusion_waiters (Track A)
+    6. Emit tile-ready event
+    7. No tasks → WorkerWake.wait() (Condvar; poisoned mutex → park 1ms)
 }
 ```
 
@@ -512,6 +447,10 @@ pub struct PanelManager {
 | `add_layer` / `remove_layer` / `reorder_layer` | Layer CRUD + invalidation |
 | `set_layer_props` | Opacity/blend/visibility/name patch |
 | `add_filter` / `update_filter` / `remove_filter` / `reorder_filter` | Filter stack CRUD |
+| `undo` / `redo` | Snapshot restore + invalidate + schedule |
+| `is_document_dirty` | Track P: `!ptr_eq(live, saved_mark)` |
+| `import_image_layer` | Decode → raster leaf at origin, clip, no scale |
+| `replace_palette` | Color Lab Apply (mutate existing PaletteId) |
 | `add_palette` / `remove_palette` / `import_palette` / `export_palette` | Palette CRUD |
 | `generate_palette` | Async MedianCut/KMeans from layer tiles → new Palette |
 | `list_builtin_palettes` / `import_builtin_palette` | Built-in retro presets → Document palette |
@@ -562,7 +501,10 @@ pub struct PixelTile {
 | Память | 270,400 × 4 bytes ≈ **1.03 MB** на тайл |
 | Порядок | Row-major, индексация: `(y * 260 + x) * 4 + channel` |
 
-Halo region (2px) необходим для фильтров с error diffusion, чтобы границы тайлов не создавали артефакты.
+Halo region (2px) нужен error diffusion и Glow. Это **главный множитель памяти**:
+каждый тайл ≈ **1.03 MB** f32. Один `PixelTile::new()` + `copy_from_slice` — это уже
+мегабайт. Стек из N фильтров без in-place apply делает N таких аллокаций.
+См. §13.
 
 #### GlobalCoord / GlobalCoordSigned (coords.rs)
 
@@ -642,7 +584,12 @@ Lazy пирамида для zoom-out: 2×2 box filter downsample.
 - Level 0: full resolution (256×256 main)
 - Level 1: 1:2 (128×128), Level 2: 1:4 (64×64), ...
 
-> **Текущее ограничение:** pyramid pipeline не интегрирован; frontend принудительно использует level 0.
+> **Текущее поведение:** preview выбирает pyramid level по zoom
+> (`floor(log2(1/zoom))`). Level>0 — **только** 2×2 box-filter уже посчитанных
+> Composite L0 (тот же дизер, меньше тайлов на canvas). Фильтры всегда на L0.
+> После insert L0/L1 worker будит родителя (`level+1`), иначе zoom-out display
+> tile может остаться на старом эффекте. Canvas меняет кадр атомарно, когда
+> все видимые тайлы новой генерации готовы. Export всегда L0.
 
 ---
 
@@ -723,7 +670,9 @@ pub struct FilterInstance {
     pub kind: FilterKind,         // Curves | Levels | Dither | PaletteQuantize | Glitch | Glow | Crt | Placeholder
     pub params: FilterParams,
     pub enabled: bool,
-    pub requires_full_row: bool,  // Если true — нельзя обрабатывать по тайлам
+    pub requires_full_row: bool,  // ED → row-major dependency enforcement
+    pub opacity: f32,             // Track I: default 1.0; Full_Then_Blend
+    pub blend_mode: BlendMode,    // Track I: default Normal
 }
 ```
 
@@ -732,24 +681,34 @@ pub struct FilterInstance {
 ```rust
 pub enum FilterParams {
     Curves { curve: Vec<(f32, f32)>, channel: CurveChannel },
-    Levels { input_black: f32, input_white: f32, gamma: f32, output_black: f32, output_white: f32 },
-    Dither { mode: DitherMode, color_depth: u8 },           // Legacy V1
-    DitherV2(DitherParamsV2),                                // Redesigned (preferred)
+    Levels { input_black, input_white, gamma, output_black, output_white },
+    Dither { mode: DitherMode, color_depth: u8 },           // Legacy V1 → From into V2
+    DitherV2(DitherParamsV2),
     PaletteQuantize { palette_id: PaletteId, diffusion: Option<DiffusionKernel> },
     Glitch { glitch_type: GlitchType, intensity: f32, seed: u64 },
+    Glow { radius: f32, intensity: f32, threshold: f32 },
+    Crt { period: f32, strength: f32, mask_strength: f32 },
     Placeholder(String),
 }
 ```
 
-**DitherParamsV2** (redesign):
+**DitherParamsV2** (as-built):
 ```rust
 pub struct DitherParamsV2 {
-    pub mode: DitherModeV2,      // Bayer*, CustomPng, FloydSteinberg, Atkinson, CmykHalftone, Wave
-    pub levels: u16,             // 2–256
-    pub threshold_scale: f32,    // 0.1–4.0 (default 1.0)
-    pub pixel_size: u8,          // 1–32 (retro pixel blocks)
+    pub mode: DitherModeV2,
+    // Bayer2/4/8 | CustomPng | FloydSteinberg | Atkinson |
+    // JarvisJudiceNinke | Stucki | Burkes | Sierra | CmykHalftone | Wave
+    pub levels: u16,                 // 2–256
+    pub threshold_scale: f32,        // 0.1–4.0
+    pub pixel_size: u8,              // 1–32
     pub color_mode: DitherColorMode, // Rgb | Grayscale
-    pub palette_id: Option<PaletteId>,  // Optional palette-constrained quantization
+    pub palette_id: Option<PaletteId>,
+    pub halftone_cell_size: u8,      // CmykHalftone
+    pub wave_wavelength / amplitude / phase / angle,
+    pub threshold_bias: f32,         // Track H, ordered only; GPU skip if ≠ 0
+    pub pattern_angle: f32,          // Track H, Bayer/CustomPng; Block_Then_Rotate
+    pub serpentine: bool,            // Track M, ED odd global rows R→L
+    pub dither_alpha: bool,          // default true: alpha → 0/1 per pixel_size block
 }
 ```
 
@@ -893,11 +852,22 @@ pub struct GpuContext {
 | Timeout | inc `map_timeout_counter` → caller CPU-fallback |
 | Env | `DITHER_FORCE_CPU=1` skip/force CPU; `DITHER_GPU=1` prefer GPU when available |
 
-**GpuEligible (v1):** Bayer2/4/8 and CMYK Halftone with `pixel_size==1`, no palette; CRT.  
-**Never GPU:** Error Diffusion (FS/Atkinson).  
-**Deferred CPU:** Glow (halo/neighbors), CustomPng, Wave, `pixel_size>1`, palette (CPU post-pass later).
+**GpuEligible (v1, CPU = source of truth):**
+- Bayer2/4/8: `pixel_size==1`, no palette, `threshold_bias==0`, `pattern_angle==0`
+- CMYK Halftone: `pixel_size==1`, no palette, `threshold_bias==0`
+- CRT (period / strength / mask)
+- `dither_alpha` **не** снимает eligibility: шейдер кодирует mode 0–3 (rgb/gray ± alpha)
 
-Bridge: `engine-project/filters/gpu_bridge.rs` extracts/writes core; `apply.rs` tries GPU then falls back to CPU. Shared staging lives only in `engine-gpu::dispatch` (Halftone/CRT reuse Bayer infra).
+**Never GPU:** Error Diffusion (все ядра Track M), CustomPng, Wave, Glow, `pixel_size>1`, palette.
+
+**Стоимость GPU-пути (важно для оптимизации):**
+`dispatch_rgba32` держит `submit_lock` на весь encode/submit/`map_async`. Нет пула буферов —
+каждый тайл создаёт input/output/uniform/staging. `extract_core` / `write_core` — скалярные
+`at()`/`set()` по 256², не memcpy. Итог: GPU часто **не** быстрее CPU на одном Bayer-тайле;
+N воркеров сериализуются в одну очередь. По умолчанию GPU **выключен** (`DITHER_GPU` не задан).
+Подробности — §13.4 и TILE_PIPELINE.md §10–11.
+
+Bridge: `filters/gpu_bridge.rs` extracts/writes core; `apply.rs` tries GPU then CPU.
 
 **Parity:** Bayer exact (`f32 ==`); Halftone/CRT max abs ≤ `1/255` per channel.  
 Full contract: [TILE_PIPELINE.md](./TILE_PIPELINE.md) §10 · [.cursor-spec/track-d-gpu/](./.cursor-spec/track-d-gpu/).
@@ -917,11 +887,12 @@ pub fn apply_filter_to_tile(tile: &PixelTile, layer: &Layer, coord: TileCoord)
     -> Result<PixelTile, EngineError>
 ```
 
-1. Копирует source tile → result
+1. Копирует source tile → result (`PixelTile::new` + `copy_from_slice`, ~1.03 MB)
 2. Итерирует `layer.filters` в порядке добавления
-3. Для каждого enabled: `result = apply_single_filter(&result, filter, coord, …, gpu)?`
+3. Для каждого enabled: `apply_filter_with_blend` → `apply_single_filter` на 100%, затем
+   если `opacity < 1` или `blend_mode != Normal` — ещё один тайл + `blend_tile`
 4. Disabled пропускаются
-5. Optional `gpu: Option<&GpuContext>` — Bayer/Halftone/CRT may use GPU when `DITHER_GPU=1`
+5. Optional `gpu` — Bayer/Halftone/CRT when `DITHER_GPU=1` **и** eligibility
 
 Вызывается из: `compute_processed_tile` (worker, passes `state.gpu`) и export paths (`gpu = None` OK).
 
@@ -962,31 +933,35 @@ SIMD-ускорение: `levels_row_simd` (wide f32x4) для batch processing 
 - `pixel_size > 1` → mega-pixel blocks через global coordinate alignment
 - **Не имеет зависимостей между тайлами** — можно обрабатывать параллельно
 
-**Error diffusion (Floyd-Steinberg, Atkinson):**
-- Processing L→R, T→B internal to tile
-- `ErrorResidualsStore` (DashMap per LayerId+TileCoord) для cross-tile propagation:
-  - После обработки тайла: store right-edge и bottom-edge residuals
-  - Перед обработкой: seed error buffer от left/top neighbors
-- **Row-major dependency enforcement:** `compute_processed_tile` рекурсивно вычисляет
-  left/top соседей если они dirty/missing (гарантирует доступность residuals)
-- `requires_full_row = true` — сигнал pipeline для dependency enforcement
-- При изменении параметров: `error_residuals.clear()` сбрасывает все хранимые residuals
+**Error diffusion (FS, Atkinson, JJN, Stucki, Burkes, Sierra):**
+- Processing L→R, T→B internal to tile; `serpentine` → odd **global** Y rows R→L, kernel mirrored X
+- `ErrorResidualsStore` (DashMap per LayerId+TileCoord) для cross-tile:
+  - После тайла: store right-edge, bottom-edge, **corner** (IncomingErrorBuffer)
+  - Перед: seed от left/top/diag neighbors
+- **Row-major dependency:** `compute_processed_tile` рекурсивно считает left/top/diag
+  если dirty/missing (на всех pyramid levels)
+- `requires_full_row = true`
+- При смене params: `error_residuals.clear()`
+- **Не GPU.** Wavefront сериализует тайлы — главный анти-параллелизм viewport'а
 
-**Color modes:**
-- RGB: каждый канал квантуется независимо
-- Grayscale: luminance квантуется, затем mapped back to RGB
+**Color modes:** RGB per-channel / Grayscale luminance.
 
 **Palette-constrained dithering:**
-- `palette_id: Some(id)` → nearest-color через PaletteKdCache в Oklab space
-- Без палитры → uniform quantization к `levels` уровням на канал
+- `palette_id: Some(id)` → `PaletteLut3D::nearest_index` в Oklab (не `KdTree::nearest` на пикселе)
+- Без палитры → uniform quantize к `levels`
+- Palette + Bayer → GPU skip, CPU path
+
+**dither_alpha (default true):** альфа квантуется в 0/1 по тому же `pixel_size` блоку.
+`false` — исходная альфа копируется (гладкий край PNG).
 
 ### 5.5 PaletteQuantize
 
-- Конвертация pixel → Oklab (temporary, не хранится)
-- Nearest-color через `PaletteKdCache::get_or_build(palette)` → `Arc<KdTree>`
-- Optional error diffusion (diffusion kernel)
-- Результат → linear RGB (из palette.colors[index])
-- Clamp Oklab-координат для защиты от drift/backtracking
+- Pixel → Oklab (временно, на каждый пиксель — это **оставшийся** CPU cost после LUT)
+- Nearest: `PaletteLutCache::get_or_build` → `PaletteLut3D::nearest_index` (O(1))
+- `KdTree` строится один раз при miss LUT и **не** ходит на пиксель в production
+- Optional error diffusion kernel
+- Результат = `palette.colors[index]` (linear RGB)
+- Alpha копируется как есть (не `dither_alpha`; это параметр DitherV2)
 
 ### 5.6 Glitch
 
@@ -1010,7 +985,8 @@ Portable SIMD через `wide` crate (stable Rust):
 
 ### 5.9 GPU path (optional)
 
-See §4.5 `engine-gpu`. Pattern filters only; same cache keys / generations as CPU. Default routing remains CPU until `DITHER_GPU=1`.
+See §4.5 `engine-gpu`. Pattern filters only; same cache keys / generations as CPU.
+**Default routing is CPU.** GPU is opt-in (`DITHER_GPU=1`) and serialized (`submit_lock`).
 
 ---
 
@@ -1085,65 +1061,67 @@ const isPanel = panelId !== null && KNOWN_PANELS.includes(panelId)
 
 ```mermaid
 graph TD
-    App --> MenuBar
-    App --> PreviewWindow
-    App --> EffectSettingsPanel
-    App --> LayersPanel
-    App --> ColorLabWindow
+    App --> AppLayout
+    AppLayout --> MenuBar
+    AppLayout --> PreviewSlot
+    AppLayout --> DockedSidebar
 
-    PreviewWindow --> TileCanvas
+    PreviewSlot --> PreviewFeature
+    PreviewFeature --> TileCanvas
     TileCanvas --> tileWorker["tileWorker.ts (Web Worker)"]
 
-    EffectSettingsPanel --> DitherParams
-    EffectSettingsPanel --> CurvesParams
-    EffectSettingsPanel --> LevelsParams
-    EffectSettingsPanel --> GlitchParams
-    EffectSettingsPanel --> PaletteQuantizeParams
+    DockedSidebar --> EffectsFeature
+    DockedSidebar --> LayersFeature
+    DockedSidebar --> ColorLabFeature
 
-    ColorLabWindow --> PalettePanel
-    ColorLabWindow --> PaletteSelector
-    ColorLabWindow --> SwatchGrid
-    ColorLabWindow --> ColorPicker
+    EffectsFeature --> DitherSettings
+    EffectsFeature --> CurvesSettings
+    EffectsFeature --> LevelsSettings
+
+    ColorLabFeature --> PaletteManualEditor
+    ColorLabFeature --> PaletteVolumeViewer
+    ColorLabFeature --> BuiltinPresetsSection
+
+    subgraph Store["RTK store (app/store.ts)"]
+        documentSlice
+        layersSlice
+        filtersSlice
+        palettesSlice
+        colorLabSlice
+        undoSlice
+        panelsSlice
+    end
 
     subgraph Hooks
         useDocument
         useWelcomeScreen
-        useRecentFiles
         useViewport
-        usePan
-        useLayers
         useEffectLayer
+        useAppUpdates
+        useUnsavedGuard
+        useUndoShortcuts
         usePanels
-        usePanelDrag
-        useSelectionState
     end
 
-    App --> Hooks
+    AppLayout --> Hooks
+    AppLayout --> Store
 ```
 
 ### 7.3 Компоненты
 
 | Компонент | Ответственность |
 |-----------|----------------|
-| `App` | Root layout, hooks orchestration, panel visibility logic |
-| `MenuBar` | File: New Project… / Open Image / Open Project… / Open Recent / Save; app-level actions |
-| `PreviewWindow` | Preview viewport wrapper + zoom controls |
+| `App` / `AppLayout` | Root: dual sidebars, preview slot, title dirty-dot, Guard, updates |
+| `MenuBar` | File / Edit / Help: New, Open, Recent, Save, Import Layer, Undo, Check for Updates |
+| `PreviewSlot` / `PreviewFeature` | Viewport wrapper + zoom (integer/free) |
 | `TileCanvas` | HTML5 `<canvas>` + Web Worker, tile fetch/decode/render |
-| `EffectSettingsPanel` | Switch по filter.kind → parameter editor |
-| `LayersPanel` | Layer tree + drag-and-drop reorder + visibility/opacity |
-| `ColorLabWindow` | Color Lab: palette editing, color picker, swatch grid |
-| `PalettePanel` | Palette list, add/remove/import/export |
-| `PaletteSelector` | Dropdown для выбора palette_id в filter params |
-| `SwatchGrid` | Grid display для palette colors |
-| `ColorPicker` | HSL/RGB color picker (react-colorful) |
-| `PanelWindow` | Shell для floating panel windows |
-| `WindowShell` | Window chrome wrapper (custom titlebar) |
-| `AppTitlebar` | Cross-platform titlebar (macOS/Windows/Linux) |
-| `WindowControls` | Close/minimize/maximize buttons |
-| `EffectChooserDialog` | Modal для выбора типа нового фильтра |
-| `NewProjectDialog` | Modal: width / height / Transparent\|White → `create_document` |
-| `EmptyState` | Welcome screen при отсутствии документа (PreviewFeature empty + fill) |
-| `common/*` | Slider, DropdownMenu, ResizeHandle, Notification |
+| `EffectsFeature` | Filter stack UI; editors в `features/effects/editors/` |
+| `LayersFeature` | Layer tree + DnD + visibility/opacity |
+| `ColorLabFeature` | Draft palette, extract, builtins, ramps, volume viewer |
+| `UnsavedGuardDialog` | Save / Don’t Save / Cancel |
+| `UpdateAvailableDialog` / `FileTooNewDialog` | Track O |
+| `EmptyState` | Welcome при отсутствии документа |
+| `common/*` | Slider, NumberInput, DropdownMenu, ResizeHandle, Notification |
 
 ### 7.4 TileCanvas + Web Worker
 
@@ -1175,7 +1153,10 @@ graph TD
 | `usePanels` | Panel state subscription (panel-state-changed event) |
 | `usePanelDrag` | Panel header drag → reorder in sidebar |
 | `useSelectionState` | Layer/filter selection coordination |
-| `useCloseRequested` | Window close handling (for floating panels) |
+| `useAppUpdates` | Track O: launch check, Help/About, download+relaunch + Restart_Guard |
+| `useUnsavedGuard` | Track P: one modal for close / New / Open / updates |
+| `useUndoShortcuts` | ⌘Z / Ctrl+Z → undo/redo IPC |
+| `useCloseRequested` | Window close handling (floating panels) |
 
 ### 7.6 Multi-Window Panel System
 
@@ -1219,8 +1200,10 @@ graph TD
 │  Worker Thread Pool (N = available_parallelism)  │
 │  ├── tile_worker_loop per thread                 │
 │  ├── Dequeue tasks from Scheduler by priority    │
+│  ├── Idle: WorkerWake Condvar (not 1ms sleep)    │
 │  ├── compute_processed_tile / composite_tile     │
-│  ├── PaletteKdCache lookups (lock-free)          │
+│  ├── PaletteLutCache lookups (lock-free)         │
+│  ├── GPU: serialized on GpuContext.submit_lock   │
 │  └── Emit tile-ready events to frontend          │
 ├──────────────────────────────────────────────────┤
 │  Blocking Thread Pool (tokio)                    │
@@ -1239,8 +1222,11 @@ graph TD
 | ViewportState | `Mutex<ViewportState>` | Short lock (update viewport params) |
 | TileCache entries | `DashMap<TileKey, CacheEntry>` | Sharded lock-free concurrent map |
 | Scheduler queues | `SegQueue<RecomputeTask>` × 4 | Lock-free concurrent FIFO |
-| PaletteKdCache | `DashMap<PaletteId, (u64, Arc<KdTree>)>` | Lock-free, Arc sharing |
-| ErrorResiduals | `DashMap<TileCoord, ErrorResiduals>` | Per-tile error buffers |
+| PaletteLutCache | `DashMap<PaletteId, (u64, Arc<PaletteLut3D>)>` | Lock-free, 64³ grid |
+| PaletteKdCache | `DashMap<PaletteId, (u64, Arc<KdTree>)>` | Build LUT + tests |
+| GpuContext.submit_lock | `Mutex<()>` | Serializes all GPU tiles across workers |
+| WorkerWake | `Mutex<bool> + Condvar` | Idle wait / enqueue notify |
+| ErrorResiduals | `DashMap<(LayerId, TileCoord), ErrorResiduals>` | Per-tile error buffers |
 | Generation counters | `AtomicU64` / `AtomicBool` | Lock-free increments/flags |
 | PanelManager | `Mutex<PanelManager>` | Short lock (panel state updates) |
 | AppState sharing | `Arc<AppState>` | Shared between main + N workers |
@@ -1266,16 +1252,19 @@ Document.palettes  ←─references─  FilterParams::PaletteQuantize { palette_
                    ←─references─  DitherParamsV2 { palette_id: Some(id) }
 ```
 
-### 9.2 KD-tree lifecycle
+### 9.2 LUT lifecycle (hot path) + KD-tree (build only)
 
 ```
 1. Palette added/updated → Document.palettes[i].revision++
-2. Worker processes tile with PaletteQuantize filter
-3. Worker calls PaletteKdCache::get_or_build(&palette)
-4. Cache hit (revision match) → Arc<KdTree> (lock-free)
-5. Cache miss → convert colors to Oklab → build KdTree → insert → return Arc
-6. Worker uses Arc<KdTree> for nearest-color lookups (no lock held)
+2. Worker processes tile with PaletteQuantize / Dither+palette
+3. PaletteLutCache::get_or_build(palette, kd_cache, 64)
+4. Hit (revision match) → Arc<PaletteLut3D>
+5. Miss → KdTree::build → fill 64³ → insert LUT
+6. Per pixel: linear RGB → Oklab → lut.nearest_index (O(1), no tree walk)
 ```
+
+KdTree остаётся в `PaletteKdCache` для построения LUT и тестов. Production hot path
+не вызывает `KdTree::nearest`.
 
 ### 9.3 Import flow
 
@@ -1356,6 +1345,7 @@ GPU adapter tests: `cargo test -p engine-gpu -- --ignored` (Metal/Vulkan/DX12). 
 | tauri | 2 | Desktop runtime, IPC, custom protocol |
 | tauri-plugin-dialog | 2 | File open/save dialogs |
 | tauri-plugin-os | 2 | OS detection |
+| tauri-plugin-updater / process | 2 | In-app updates (Track O) |
 | tokio | 1 (full) | Async runtime, spawn_blocking |
 | image | 0.25 | PNG/JPEG/WebP decode/encode |
 | arc-swap | 1.6 | Lock-free Document access |
@@ -1380,9 +1370,12 @@ GPU adapter tests: `cargo test -p engine-gpu -- --ignored` (Metal/Vulkan/DX12). 
 | Package | Версия | Назначение |
 |---------|--------|-----------|
 | react / react-dom | ^18.2 | UI framework |
+| @reduxjs/toolkit / react-redux | ^2.12 / ^9.3 | App store (slices) |
 | @tauri-apps/api | ^2.11 | Tauri IPC invoke + event listen |
 | @tauri-apps/plugin-dialog | ^2.7 | File dialogs |
 | @tauri-apps/plugin-os | ^2.2 | OS detection |
+| @tauri-apps/plugin-updater / process | ^2.10 / ^2.3 | Check / download / relaunch |
+| three | ^0.185 | Color Lab Oklab volume |
 | react-colorful | ^5.8 | Color picker |
 | simplebar-react | ^3.3 | Custom scrollbars |
 | typescript | ^5.0 | Type checking |
@@ -1500,71 +1493,182 @@ sequenceDiagram
     participant Worker
     participant FilterDispatch as apply_filter_to_tile
     participant PalQuantize as PaletteQuantizeFilter
-    participant PalCache as PaletteKdCache
-    participant KdTree as Arc<KdTree>
+    participant LutCache as PaletteLutCache
+    participant Lut as Arc PaletteLut3D
 
     Worker->>FilterDispatch: apply_filter_to_tile(tile, layer, coord)
-    FilterDispatch->>PalQuantize: apply(tile, palette_id, diffusion)
-    PalQuantize->>PalQuantize: lookup palette from Document snapshot
-    PalQuantize->>PalCache: get_or_build(&palette)
+    FilterDispatch->>PalQuantize: apply(tile, palette, lut, diffusion)
+    PalQuantize->>LutCache: get_or_build(palette, kd_cache, 64)
     alt Cache hit (revision match)
-        PalCache-->>PalQuantize: Arc<KdTree> (lock-free)
+        LutCache-->>PalQuantize: Arc PaletteLut3D
     else Cache miss
-        PalCache->>PalCache: Convert colors → Oklab, build KdTree
-        PalCache-->>PalQuantize: Arc<KdTree> (new)
+        LutCache->>LutCache: KdTree::build once, fill 64³ grid
+        LutCache-->>PalQuantize: Arc PaletteLut3D (new)
     end
     loop For each pixel
-        PalQuantize->>PalQuantize: pixel linear RGB → Oklab
-        PalQuantize->>KdTree: nearest(oklab_pixel)
-        KdTree-->>PalQuantize: (index, distance)
-        PalQuantize->>PalQuantize: palette.colors[index] → output pixel
+        PalQuantize->>PalQuantize: linear RGB → Oklab
+        PalQuantize->>Lut: nearest_index(lab) O(1)
+        Lut-->>PalQuantize: palette index
+        PalQuantize->>PalQuantize: palette.colors[index]
     end
     PalQuantize-->>Worker: Processed PixelTile
 ```
 
 ---
 
-## 13. Performance Architecture
+## 13. Performance Architecture (стоимость тайла)
 
-### 13.1 SIMD (wide crate, stable Rust)
+Это карта **где реально уходит время**, а не список «хотелок». Любая оптимизация
+должна сначала попасть в профиль на этом пути. Пиксельная идентичность RGBA8
+(для CPU path) — инвариант: ускорение, которое меняет швы ED / Bayer, не принимается.
 
-| Function | Speedup target | Used in |
-|----------|---------------|---------|
-| `blend_row_simd` | 2–4× vs scalar | compositor (Porter-Duff over) |
-| `levels_row_simd` | 2–4× vs scalar | levels filter |
-| `f32_to_rgba8_row_simd` | 2–4× vs scalar | tile protocol (f32→u8 conversion) |
+Деталь по координатам и ED: [TILE_PIPELINE.md](./TILE_PIPELINE.md) §11.
 
-Scalar fallback (`_scalar` variants) always available; SIMD dispatched at row level.
+### 13.1 Что происходит при движении слайдера
 
-### 13.2 LRU + Viewport-Aware Caching
-
-- Budget: 256 MB (~250 tiles at full resolution)
-- Eviction: approximate LRU via SegQueue
-- Protection: `evict_preserving_viewport` keeps visible tiles in cache
-- Dirty tiles remain available (stale-while-revalidate pattern)
-
-### 13.3 Scheduler Priorities
-
-Workers dequeue from highest non-empty queue:
 ```
-Immediate (tile:// miss) > ViewportCenter > ViewportEdge > Prefetch
+UI slider  ──100ms debounce──►  update_filter IPC
+                                    │
+                                    ├─ DocumentHandle.mutate (clone Document)
+                                    ├─ mark ALL Processed dirty (layer)
+                                    ├─ mark ALL Composite dirty
+                                    ├─ error_residuals.clear()   (если DitherV2 ED)
+                                    └─ schedule_dirty_viewport_tiles
+                                         │
+                                         └─ только Composite-задачи в Scheduler
+                                              │
+Worker ── dequeue Composite ──► compute_composite_tile
+                                    │
+                                    ├─ ensure_processed_tiles_fresh
+                                    │     (inline: Raw → filter stack → Processed)
+                                    └─ composite_tile (blend visible layers)
+                                              │
+                                    insert Composite + emit tile-ready
+                                              │
+Frontend Web Worker ── fetch tile:// ──► f32→RGBA8 256² ──► ImageBitmap ──► canvas
 ```
 
-On viewport change: `clear_all()` discards stale prefetch tasks.
+На 1920×1080 при zoom 100% это **~8×5 = 40** visible тайлов + prefetch-кольцо.
+На 3000×3000 fit-to-view (~25%) canvas запрашивает **9** display-тайлов level 2;
+воркеры всё равно считают **144 L0** (корректный дизер), затем box-filter.
+Каждый dirty Composite = полный filter stack слоя + blend. 100ms debounce режет
+IPC flood, но **не** режет работу: после отпускания слайдера очередь — весь viewport.
 
-### 13.4 Tile Independence
+Composite-задачи **не** stale-discard (см. §3.5). Processed-задачи discard'атся.
+При быстром drag воркеры могут досчитать устаревший Composite; следующий кадр
+перекроет. Это сознательный trade-off «последний кадр важнее, чем не считать лишнее».
 
-Most filters are embarrassingly parallel (per-tile, no dependencies):
-- Curves, Levels, Glitch, Ordered Dither, PaletteQuantize
+### 13.2 Память и копии одного тайла
 
-Error diffusion has intra-tile dependency (L→R, T→B) but each tile is independent (halo truncation compromise). Cross-tile residuals via `ErrorResidualsStore` enable optional sequential row-major scheduling.
+| Буфер | Размер | Когда |
+|-------|--------|--------|
+| `PixelTile` (260²×4 f32) | **1.03 MB** | Raw / Processed / Composite в кэше |
+| GPU core (256²×4 f32) | 1.00 MB | `extract_core` / `write_core` |
+| Protocol RGBA8 (256²×4 u8) | 256 KB | `tile://` 200 |
 
-### 13.5 Optional GPU compute (`engine-gpu`)
+Кэш 256 MB ≈ **~250 тайлов** всех стадий. Viewport 40 Composite + 40 Processed + 40 Raw
+уже ~120 MB на один слой без пирамиды.
 
-- Bayer / Halftone / CRT may run on wgpu when `DITHER_GPU=1` and `AppState.gpu` is `Some`
-- Same Processed cache as CPU; failure/timeout → CPU (counter bumped)
-- Bench note (debug, Metal, Bayer8 core 256²): GPU ~1.5–2× faster wall time vs scalar CPU loop — see Track D tasks §2.5
-- ED and Glow stay CPU; no WebGPU Canvas rewrite
+**Аллокации на один Processed (один Dither, opacity=1, Normal, CPU):**
+
+1. `get_entry` Raw → часто `copy_tile` (~1.03 MB)
+2. `apply_filter_to_tile_with_caches`: `PixelTile::new` + `copy_from_slice`
+3. `apply_ordered` / `apply_error_diffusion`: ещё один `PixelTile::new` + запись пикселей
+4. `insert_fresh(Arc::new(tile))` — move, без лишней копии если единственный owner
+5. Composite: пустой тайл + `blend_tile` (SIMD over)
+6. Protocol: SIMD `f32_to_rgba8` core 256² (halo отбрасывается)
+
+Каждый extra filter в стеке = ещё один полный тайл, если apply не in-place.
+`opacity < 1` или `blend_mode != Normal` (Track I) = **ещё** тайл + `blend_tile`.
+
+`PixelTile::at` / `set` — индексная арифметика на каждый канал. GPU bridge
+(`extract_core` / `write_core`) делает это скалярно по 256²×4 — отдельный CPU
+tax **до и после** шейдера.
+
+### 13.3 Где CPU (типичный preview)
+
+Порядок по ожидаемому весу, не по микробенчу (профилировать `criterion` + Instruments):
+
+| Участок | Почему дорого | Уже сделано | Рычаг |
+|---------|---------------|-------------|--------|
+| **Error diffusion** | Последовательный L→R T→B; cross-tile wavefront (left/top/diag recurse); не SIMD | IncomingErrorBuffer, LUT nearest | Не GPU. Можно: меньше работы на halo, block `pixel_size`, не считать за viewport |
+| **Oklab на пиксель** | `linear_to_oklab` до LUT, даже когда nearest O(1) | LUT 64³ (~23× vs KD) | Квантовать в linear RGB без Oklab, когда палитра маленькая; SIMD Oklab |
+| **Ordered dither 260²** | Полный halo, per-pixel GlobalCoord + threshold | GlobalCoord helpers | SIMD Bayer; не ходить halo если фильтр его не читает |
+| **Копии PixelTile** | 1.03 MB × (1 + N filters + blend) | `copy_from_slice` (не поэлементно) | In-place apply; ping-pong двух буферов на воркер |
+| **Composite blend** | Все видимые слои × 260² | `blend_row_simd` | Пропускать fully-transparent; не blend'ить halo для preview |
+| **Protocol f32→u8** | Каждый tile-ready | `f32_to_rgba8_row_simd` | Кэшировать RGBA8 рядом с f32 (память ×) |
+| **Frontend decode** | Web Worker: ArrayBuffer → ImageData → ImageBitmap | parallel fetch (не sequential await) | SharedArrayBuffer / skip ImageBitmap |
+| **Pyramid display** | Zoom-out: box-filter L0 Composite; фильтры всегда L0 | 9 canvas-тайлов вместо 144 fetch | Не считать фильтры на downsampled Raw |
+| **Worker idle** | — | **Condvar `WorkerWake`** (не 1ms sleep) | Готово |
+
+**Что уже не является главным bottleneck'ом:** KD-tree на пиксель (заменён LUT);
+busy-wait воркеров; отсутствие SIMD на blend/levels/u8.
+
+### 13.4 GPU path: почему «включить GPU» ≠ быстрее
+
+GPU **opt-in** (`DITHER_GPU=1`). Eligible: Bayer ps=1 без палитры/bias/angle;
+Halftone ps=1 без bias; CRT. ED / Wave / CustomPng / Glow / `pixel_size>1` / palette — CPU.
+
+`engine-gpu::dispatch_rgba32` на **каждый** тайл:
+
+1. Берёт `submit_lock` (все воркеры стоят в одной очереди)
+2. Создаёт 4 буфера (input, output, uniform, staging) — **нет пула**
+3. Upload 1 MB RGBA32 → compute 16×16 → copy → `map_async` + poll (timeout 2s)
+4. Download 1 MB
+5. `write_core` скалярно обратно в PixelTile; halo = копия source
+
+Track D bench (debug, Metal, Bayer8, один core 256²): GPU **~1.5–2×** vs скалярный
+CPU-loop. Это **не** сравнимо с preview: preview гоняет N тайлов параллельно на CPU,
+а GPU сериализует их. На viewport из 40 тайлов CPU-пул часто выигрывает.
+
+Имеет смысл трогать GPU, только если менять контракт v1: persistent buffers,
+убрать lock или batched dispatch нескольких тайлов, memcpy core вместо `at()`/`set()`,
+и/или считать на GPU весь стек, а не один Bayer. Иначе рычаг — CPU (§13.3).
+
+### 13.5 Параллелизм и что его ломает
+
+```
+Immediate > ViewportCenter > ViewportEdge > Prefetch
+```
+
+- Ordered / Curves / Levels / Glitch / PaletteQuantize без diffusion: тайлы независимы,
+  N воркеров = почти линейный speedup.
+- **ED (`requires_full_row`):** тайл (x,y) ждёт (x-1,y), (x,y-1), (x-1,y-1).
+  Рекурсия в `compute_processed_tile` на одном воркере. Соседние воркеры могут
+  дублировать работу или стоять. Viewport «заливается» с угла, не от центра.
+- GPU `submit_lock`: тот же эффект даже для Bayer.
+- `scheduler.clear_all()` на `set_viewport` выкидывает prefetch; pan/zoom дешёвый
+  только пока тайлы ещё в кэше (dirty=false).
+
+### 13.6 Кэш
+
+- Budget 256 MB, approximate LRU (`SegQueue`), `evict_preserving_viewport`
+- Dirty = mark, не delete (stale-while-revalidate → instant 200 на `tile://`)
+- `schedule_dirty_viewport_tiles` ставит **только Composite**; Processed — inline
+- Orphan GC: `evict_layer` при undo/redo для LayerId, которых нет ни в live, ни в стеках
+
+### 13.7 SIMD (wide, stable)
+
+| Function | Где |
+|----------|-----|
+| `blend_row_simd` | compositor + filter opacity/blend |
+| `levels_row_simd` | Levels |
+| `f32_to_rgba8_row_simd` | tile protocol |
+
+Нет SIMD на: Bayer/threshold, Oklab, ED distribute, `extract_core`.
+
+### 13.8 Как профилировать, прежде чем менять код
+
+1. Один слой, один Bayer, ps=1, без палитры, zoom 100% — baseline ordered.
+2. Тот же кадр + `DITHER_GPU=1` — сравнить wall-clock viewport, не один тайл.
+3. Переключить на FS — увидеть wavefront (это не «медленный CPU», это зависимость).
+4. `cargo bench -p engine-project` (`filter_bench`, `compositor_bench`) + Instruments
+   time profiler на `tile_worker_loop`.
+5. Не оптимизировать Color Lab / IPC / React, пока профиль не сидит во фронте.
+
+Инварианты, которые нельзя ломать ради скорости: `GlobalCoord` / `rem_euclid`,
+ED residuals+corner, LUT vs KD только на границах ячеек, GPU parity (Bayer exact;
+Halftone/CRT ≤ 1/255), debounce undo = 100ms в `useEffectLayer`.
 
 ---
 
@@ -1574,29 +1678,30 @@ Error diffusion has intra-tile dependency (L→R, T→B) but each tile is indepe
 
 | Ограничение | Описание |
 |-------------|---------|
-| Single document | Одновременно один документ (doc_id=1) |
-| Max 8192×8192 | Изображения > 8192px отклоняются |
-| No undo/redo | ~~revision++ есть, undo stack нет~~ **Track N:** snapshot `Arc<Document>`, `max_depth=50` |
-| Pyramid forced level 0 | Frontend всегда level 0, zoom-out масштабирует на canvas |
-| Oklab = sRGB primaries only | Матрица RGB→LMS для Rec.709; не-sRGB рабочие пространства нуждаются в промежуточной конвертации |
-| Error diffusion cross-tile | Halo truncation (ошибка обрезается на границе тайла); `ErrorResiduals` store спроектирован, но row-major scheduler для sequential processing — TODO |
-| No mask editing UI | MaskRef + apply_mask работают, UI не реализован |
-| Luminance = simplified | CurveChannel::Luminance simplified (not proper Lab L*) |
+| Single document | Один документ (doc_id=1) |
+| Max 8192×8192 | Больше — reject |
+| GPU opt-in + serialized | `DITHER_GPU=1`; `submit_lock`; нет buffer pool. Default = CPU |
+| ED wavefront | Рекурсия left/top/diag на воркере; нет отдельного row-major scheduler |
+| Oklab = sRGB primaries | RGB→LMS под Rec.709 |
+| No mask editing UI | `MaskRef` + `apply_mask` есть, UI нет |
+| Luminance simplified | `CurveChannel::Luminance` ≠ Oklab L* |
+| Paint-aware undo | Snapshot структуры; пиксельный paint в модели нет |
+| Apple notarization | Optional; Gatekeeper warning на первом DMG — известный beta limit |
 
 ### 14.2 Будущие улучшения
 
-- [ ] Pyramid downsample pipeline integration (level > 0)
-- [x] Undo/redo snapshot stack (Track N: `UndoManager` + `with_document_undo`; paint-aware undo still out of scope)
-- [ ] Row-major scheduler for cross-tile error diffusion
-- [ ] Proper Luminance via Oklab L* channel
-- [ ] Mask editing tools UI
-- [ ] Video frame support (FFmpeg integration в engine-io)
-- [ ] ICC color profile management
-- [ ] Batch export
-- [x] WebGPU-accelerated filters (Track D: `engine-gpu` Bayer/Halftone/CRT; ED CPU-only)
-- [ ] Multi-document support
-- [ ] Condvar-based worker wake (replace sleep(1ms))
-- [ ] LUT pre-computation for filter acceleration
+- [x] Pyramid display (level > 0) — box-filter of L0 Composite; filters always L0
+- [ ] In-place / ping-pong `PixelTile` в filter stack (убрать N×1.03 MB alloc)
+- [ ] GPU v2: buffer pool, batched tiles, без глобального `submit_lock`, memcpy core
+- [ ] SIMD Bayer / Oklab; LUT для Curves
+- [ ] Не blend'ить halo в preview composite
+- [x] Undo/redo snapshot (Track N); paint-aware out of scope
+- [x] WorkerWake Condvar (не sleep 1ms)
+- [x] PaletteLut3D 64³ (Track B1)
+- [x] `engine-gpu` Bayer/Halftone/CRT (Track D); ED CPU-only
+- [ ] Mask editing UI
+- [ ] Video / ICC / batch export / multi-document
+- [ ] Proper Luminance via Oklab L*
 
 ---
 
@@ -1621,6 +1726,8 @@ export interface FilterInfo {
   kind: FilterKind;
   params: FilterParams;
   enabled: boolean;
+  opacity: number;           // Track I, default 1
+  blend_mode: string;
 }
 export type FilterKind = 'Dither' | 'DitherV2' | 'Curves' | 'Levels' | 'Glitch' | 'PaletteQuantize' | 'Glow' | 'Crt';
 
@@ -1703,5 +1810,5 @@ cargo bench -p engine-project
 
 ---
 
-**Last Updated:** August 2026
-**Version:** 0.1.0
+**Last Updated:** 14 August 2026
+**Version:** 0.2.0
