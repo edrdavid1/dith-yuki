@@ -1,4 +1,5 @@
 import Icon from '../../icons/iconRegistry';
+import Tooltip from '../../shared/ui/Tooltip';
 import styles from './ColorLabWindow.module.css';
 import buttonStyles from './ColorLabButtons.module.css';
 import { bind } from '../../shared/ui/cn';
@@ -20,26 +21,30 @@ export default function ImportExportSection({
     <div className={cn("color-lab-column")}>
       <div style={{ height: '15px' }} />
 
-      <button
-        type="button"
-        onClick={onImport}
-        className={cn("color-lab-button")}
-        style={{ height: '36px' }}
-      >
-        <Icon name="import" width={16} height={16} />
-        Import palette file
-      </button>
+      <Tooltip label="Import palette file">
+        <button
+          type="button"
+          onClick={onImport}
+          className={cn("color-lab-button")}
+          style={{ height: '36px' }}
+          aria-label="Import palette file"
+        >
+          <Icon name="import" width={16} height={16} />
+        </button>
+      </Tooltip>
 
-      <button
-        type="button"
-        onClick={() => onExport('gpl')}
-        disabled={!canExport}
-        className={cn("color-lab-button")}
-        style={{ height: '36px' }}
-      >
-        <Icon name="export" width={16} height={16} />
-        Export palette file
-      </button>
+      <Tooltip label="Export palette file">
+        <button
+          type="button"
+          onClick={() => onExport('gpl')}
+          disabled={!canExport}
+          className={cn("color-lab-button")}
+          style={{ height: '36px' }}
+          aria-label="Export palette file"
+        >
+          <Icon name="export" width={16} height={16} />
+        </button>
+      </Tooltip>
 
       <div className={cn("color-lab-hint")}>formats: ASE, GPL, HEH/TXT, JSON</div>
     </div>

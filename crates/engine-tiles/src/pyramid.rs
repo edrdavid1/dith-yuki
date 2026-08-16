@@ -22,6 +22,56 @@
 //! - Deterministic and reproducible
 
 use crate::{CacheStage, PixelTile, TileCache, TileCoord, TileKey, HALO, TILE_SIZE};
+use std::sync::Arc;
+
+/// Maximum pyramid level for a document: `floor(log2(max_dim / TILE_SIZE))`.
+///
+/// Level 0 is full resolution. At level L each tile covers `TILE_SIZE * 2^L`
+/// document pixels. Returns 0 when the image fits in a single tile.
+pub fn max_pyramid_level(doc_width: u32, doc_height: u32) -> u8 {
+    let max_dim = doc_width.max(doc_height);
+    if max_dim <= TILE_SIZE {
+        return 0;
+    }
+    let ratio = max_dim as f64 / TILE_SIZE as f64;
+    ratio.log2().floor().max(0.0) as u8
+}
+
+/// Tile grid size (columns, rows) at a pyramid level.
+pub fn tile_grid_at_level(doc_width: u32, doc_height: u32, level: u8) -> (u32, u32) {
+    let scale = 1u32 << level;
+    let tile_px = TILE_SIZE * scale;
+    let cols = (doc_width + tile_px - 1) / tile_px;
+    let rows = (doc_height + tile_px - 1) / tile_px;
+    (cols, rows)
+}
+
+/// Build Raw-stage pyramid levels 1..=max from already-cached level-0 Raw tiles.
+///
+/// Used by tests and optional callers. Production preview does **not** filter
+/// these tiles — zoom-out display downsamples Composite L0 instead.
+pub fn build_raw_pyramid(layer_id: u32, width: u32, height: u32, cache: &TileCache) {
+    let max_level = max_pyramid_level(width, height);
+    for level in 1..=max_level {
+        let (cols, rows) = tile_grid_at_level(width, height, level);
+        for y in 0..rows {
+            for x in 0..cols {
+                let coord = TileCoord { level, x, y };
+                if let Some(tile) = generate_pyramid_tile(level, coord, layer_id, CacheStage::Raw, cache)
+                {
+                    cache.insert_fresh(
+                        TileKey {
+                            layer: layer_id,
+                            coord,
+                            stage: CacheStage::Raw,
+                        },
+                        Arc::new(tile),
+                    );
+                }
+            }
+        }
+    }
+}
 
 /// Downsample a tile by 1:2 using box filtering.
 ///
@@ -451,6 +501,46 @@ mod tests {
         // Pixel at (HALO + 128, HALO + 128) should read from bottom-right (uniform 0.4)
         let val = tile.at(HALO + 128, HALO + 128, 0);
         assert!((val - 0.4).abs() < 1e-6, "Expected 0.4, got {}", val);
+    }
+
+    #[test]
+    fn max_pyramid_level_matches_document_size() {
+        assert_eq!(max_pyramid_level(256, 256), 0);
+        assert_eq!(max_pyramid_level(300, 300), 0);
+        assert_eq!(max_pyramid_level(512, 512), 1);
+        assert_eq!(max_pyramid_level(1024, 1024), 2);
+        assert_eq!(max_pyramid_level(3000, 3000), 3);
+        assert_eq!(max_pyramid_level(8192, 8192), 5);
+    }
+
+    #[test]
+    fn tile_grid_at_level_3000() {
+        assert_eq!(tile_grid_at_level(3000, 3000, 0), (12, 12));
+        assert_eq!(tile_grid_at_level(3000, 3000, 1), (6, 6));
+        assert_eq!(tile_grid_at_level(3000, 3000, 2), (3, 3));
+        assert_eq!(tile_grid_at_level(3000, 3000, 3), (2, 2));
+    }
+
+    #[test]
+    fn build_raw_pyramid_inserts_coarser_levels() {
+        use crate::decompose::decompose_image_to_tiles;
+
+        let width = 512u32;
+        let height = 512u32;
+        let buffer = vec![0.4f32; (width * height * 4) as usize];
+        let cache = TileCache::new(100_000_000);
+        decompose_image_to_tiles(&buffer, width, height, 7, &cache).unwrap();
+        crate::pyramid::build_raw_pyramid(7, width, height, &cache);
+
+        let l1 = cache.get_entry(TileKey {
+            layer: 7,
+            coord: TileCoord { level: 1, x: 0, y: 0 },
+            stage: CacheStage::Raw,
+        });
+        assert!(l1.is_some(), "level-1 raw must exist after decompose");
+        let tile = l1.unwrap();
+        assert!((tile.at(HALO, HALO, 0) - 0.4).abs() < 1e-5);
+        assert_eq!(cache.entry_count(), 5);
     }
 }
 

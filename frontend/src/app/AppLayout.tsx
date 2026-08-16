@@ -3,13 +3,17 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import MenuBar from '../components/MenuBar';
 import Notification from '../components/common/Notification';
 import NewProjectDialog from '../components/NewProjectDialog';
+import HelpDialog from '../components/HelpDialog';
+import PreferencesDialog from '../features/preferences/PreferencesDialog';
 import { useWelcomeScreen } from '../hooks/useWelcomeScreen';
 import { usePanels } from '../hooks/usePanels';
 import { useUndoShortcuts } from '../hooks/useUndoShortcuts';
+import { useAppUpdates } from '../hooks/useAppUpdates';
 import { useAppDispatch, useAppSelector } from './hooks';
 import { refreshFilters } from './slices/filtersSlice';
 import { refreshLayers } from './slices/layersSlice';
 import { redo as redoDocument, undo as undoDocument } from './slices/undoSlice';
+import { setDocumentMeta } from './slices/documentSlice';
 import { useShell } from './shell/ShellContext';
 import {
   onDockAffinity,
@@ -26,6 +30,7 @@ import styles from './AppLayout.module.css';
 import menuStyles from '../features/document/MenuBar.module.css';
 import previewStyles from '../features/preview/Preview.module.css';
 import { projectBasename } from '../shared/unsavedGuard';
+import { isTooNewFileError } from '../shared/appUpdates';
 import { bind } from '../shared/ui/cn';
 
 const cn = bind({ ...styles, ...menuStyles, ...previewStyles });
@@ -56,6 +61,22 @@ export default function AppLayout() {
   const canRedo = useAppSelector((s) => s.undo.canRedo);
   useUndoShortcuts();
 
+  const updates = useAppUpdates({
+    autoCheckOnLaunch: true,
+    confirmRestart: confirmReplace,
+    fileError: doc.error,
+    onStatus: (message, kind) => {
+      dispatch(
+        setDocumentMeta(
+          kind === 'error'
+            ? { error: message }
+            : { notification: message, error: null }
+        )
+      );
+    },
+    clearFileError: () => dispatch(setDocumentMeta({ error: null })),
+  });
+
   const allowCloseRef = useRef(false);
   const confirmReplaceRef = useRef(confirmReplace);
   confirmReplaceRef.current = confirmReplace;
@@ -63,7 +84,11 @@ export default function AppLayout() {
   useEffect(() => {
     const bullet = doc.hasDocument && doc.dirty ? '• ' : '';
     const name = doc.hasDocument ? projectBasename(doc.projectPath) : 'Untitled';
-    void getCurrentWindow().setTitle(`${bullet}${name} — Dither Engine`);
+    void getCurrentWindow()
+      .setTitle(`${bullet}${name} — Dither Engine`)
+      .catch(() => {
+        /* panel webviews may lack set-title; main title is enough */
+      });
   }, [doc.dirty, doc.hasDocument, doc.projectPath]);
 
   useEffect(() => {
@@ -100,6 +125,8 @@ export default function AppLayout() {
 
   const [dismissedError, setDismissedError] = useState<string | null>(null);
   const [dismissedPanelError, setDismissedPanelError] = useState<string | null>(null);
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [affinity, setAffinity] = useState<DockAffinityEvent | null>(null);
   const prevDockedRef = useRef<Record<string, boolean>>({});
   const prevSideRef = useRef<Record<string, string | null | undefined>>({});
@@ -195,12 +222,12 @@ export default function AppLayout() {
     }
   }, []);
 
-  const handleOpenPreferences = useCallback(async () => {
-    try {
-      await undockPanel('preferences');
-    } catch (err) {
-      console.error('Open Preferences failed:', err);
-    }
+  const handleOpenPreferences = useCallback(() => {
+    setPreferencesOpen(true);
+  }, []);
+
+  const handleOpenHelp = useCallback(() => {
+    setHelpOpen(true);
   }, []);
 
   /** Drag Preview titlebar past threshold → floating window (preview is floating-only). */
@@ -253,7 +280,9 @@ export default function AppLayout() {
   }, []);
 
   const currentError = doc.error || layersError || filtersError;
-  const displayError = currentError && currentError !== dismissedError ? currentError : null;
+  const toastError =
+    currentError && !isTooNewFileError(currentError) ? currentError : null;
+  const displayError = toastError && toastError !== dismissedError ? toastError : null;
   const displayPanelError = panelError && panelError !== dismissedPanelError ? panelError : null;
 
   const gridTemplateColumns = `${leftW}px 1fr ${rightW}px`;
@@ -268,6 +297,7 @@ export default function AppLayout() {
           recentEntries={welcome.recentEntries}
           onNewProject={welcome.onNewProject}
           onOpenImage={welcome.onOpenImage}
+          onImportImageLayer={() => void doc.importImageLayer()}
           onSaveImage={onSaveImage}
           onOpenProject={welcome.onOpenProject}
           onOpenRecent={welcome.onOpenRecent}
@@ -277,6 +307,7 @@ export default function AppLayout() {
           onImportPattern={() => void doc.importPattern()}
           onOpenColorLab={handleOpenColorLab}
           onOpenPreferences={handleOpenPreferences}
+          onOpenHelp={handleOpenHelp}
           onUndo={() => void dispatch(undoDocument())}
           onRedo={() => void dispatch(redoDocument())}
         />
@@ -353,7 +384,16 @@ export default function AppLayout() {
         onClose={closeNewProject}
         onCreate={handleCreate}
       />
+      <PreferencesDialog isOpen={preferencesOpen} onClose={() => setPreferencesOpen(false)} />
+      <HelpDialog
+        isOpen={helpOpen}
+        version={updates.version}
+        checking={updates.checking}
+        onClose={() => setHelpOpen(false)}
+        onCheckForUpdates={() => void updates.checkForUpdates()}
+      />
       {unsavedDialog}
+      {updates.dialogs}
       {doc.svgDialog}
     </div>
   );

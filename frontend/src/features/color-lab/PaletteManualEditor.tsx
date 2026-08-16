@@ -1,4 +1,6 @@
 import SimpleBar from 'simplebar-react';
+import Icon from '../../icons/iconRegistry';
+import Tooltip from '../../shared/ui/Tooltip';
 import type { ColorEntry } from './types';
 import styles from './ColorLabWindow.module.css';
 import buttonStyles from './ColorLabButtons.module.css';
@@ -68,17 +70,19 @@ export default function PaletteManualEditor({
             maxLength={7}
           />
 
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(idx);
-            }}
-            className={cn('color-lab-button', 'color-lab-delete-btn')}
-            title="Remove color"
-          >
-            <img src="/icons/delete-con.svg" style={{ width: '14px', height: '14px' }} alt="" />
-          </button>
+          <Tooltip label="Remove color">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(idx);
+              }}
+              className={cn('color-lab-button', 'color-lab-delete-btn')}
+              aria-label="Remove color"
+            >
+              <Icon name="delete-con" width={14} height={14} />
+            </button>
+          </Tooltip>
         </div>
       ))}
 
@@ -111,7 +115,7 @@ export default function PaletteManualEditor({
         {colors.map((c, idx) =>
           c.valid ? (
             <div
-              key={idx}
+              key={`${idx}-${c.hex}`}
               role="button"
               tabIndex={0}
               className={cn(

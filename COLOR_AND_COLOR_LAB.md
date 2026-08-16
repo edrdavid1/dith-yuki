@@ -1,6 +1,6 @@
 # Как сейчас работают цвет и Color Lab
 
-Актуальное as-built описание (не план и не ТЗ). Плановый/миграционный материал — в `color-and-palette-architecture.md` и `.cursor-spec/` (requirements / design / tasks). Общая карта системы — в `ARCHITECTURE.md`.
+Актуальное as-built описание (не план и не ТЗ). Плановый/миграционный материал — в `color-and-palette-architecture.md` и `.cursor-spec/` (requirements / design / tasks). Общая карта системы — в `ARCHITECTURE.md`. Режимы палитрового дизера (Strict / Guided / Mixed / Simple) — в **[PALETTE_DITHER.md](./PALETTE_DITHER.md)**.
 
 ---
 

@@ -20,14 +20,17 @@ describe('EffectChooserDialog', () => {
     expect(container.innerHTML).toBe('');
   });
 
-  it('renders 4 effect items when isOpen=true', () => {
+  it('renders 7 effect items when isOpen=true', () => {
     renderDialog();
     const items = screen.getAllByRole('option');
-    expect(items).toHaveLength(4);
+    expect(items).toHaveLength(7);
     expect(screen.getByText('Dithering')).toBeInTheDocument();
     expect(screen.getByText('Glitching')).toBeInTheDocument();
     expect(screen.getByText('Curves')).toBeInTheDocument();
     expect(screen.getByText('RGB Channels')).toBeInTheDocument();
+    expect(screen.getByText('Glow')).toBeInTheDocument();
+    expect(screen.getByText('CRT')).toBeInTheDocument();
+    expect(screen.getByText('Adjust')).toBeInTheDocument();
   });
 
   it('calls onSelect with "Dithering" when first item is clicked', () => {
@@ -127,12 +130,12 @@ describe('EffectChooserDialog', () => {
     const dialog = screen.getByRole('dialog');
     const items = screen.getAllByRole('option');
 
-    // Press arrow down 10 times (more than 4 items)
-    for (let i = 0; i < 10; i++) {
+    // Press arrow down 20 times (more than the list)
+    for (let i = 0; i < 20; i++) {
       fireEvent.keyDown(dialog, { key: 'ArrowDown' });
     }
-    // Should stay on last item (index 3)
-    expect(items[3]).toHaveAttribute('aria-selected', 'true');
+    // Should stay on last item
+    expect(items[items.length - 1]).toHaveAttribute('aria-selected', 'true');
   });
 
   it('arrow up does not go before first item', () => {

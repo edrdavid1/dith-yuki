@@ -134,9 +134,12 @@ const jobs = [
   },
   {
     file: 'features/effects/editors/RGBSettings.tsx',
-    importPath: '../EffectSettingsPanel.module.css',
+    importPath: './RGBSettings.module.css',
     bindPath: '../../../shared/ui/cn',
-    mergeModules: [{ name: 'slider', path: '../../../shared/ui/Slider.module.css' }],
+    mergeModules: [
+      { name: 'panel', path: '../EffectSettingsPanel.module.css' },
+      { name: 'slider', path: '../../../shared/ui/Slider.module.css' },
+    ],
   },
   {
     file: 'components/PreviewWindow.tsx',

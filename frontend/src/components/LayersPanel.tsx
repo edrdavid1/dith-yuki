@@ -8,10 +8,15 @@ import DropdownMenu from './common/DropdownMenu';
 import SimpleBar from 'simplebar-react';
 import WindowTitlebar from '../shared/ui/WindowTitlebar';
 import Icon from '../icons/iconRegistry';
+import Tooltip from '../shared/ui/Tooltip';
 import styles from '../features/layers/LayersPanel.module.css';
 import retroSlider from '../shared/ui/RetroSlider.module.css';
 import layerControls from '../features/layers/layerControls.module.css';
 import { bind } from '../shared/ui/cn';
+import {
+  displayFilterOrder,
+  stackIndexAfterDisplayReorder,
+} from '../features/layers/filterDisplayOrder';
 const cn = bind({ ...styles, ...retroSlider, ...layerControls });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -29,6 +34,7 @@ export interface LayersPanelProps {
   onRemoveFilter: (filterId: string) => void;
   onReorderFilter: (filterId: string, newIndex: number) => void;
   onToggleVisibility: (id: number) => void;
+  onToggleFilterEnabled: (filterId: string) => void;
   onBlendModeChange: (layerId: number, mode: string) => void;
   onOpacityChange: (layerId: number, opacity: number) => void;
   /** Per-filter opacity/blend when a filter row is selected. */
@@ -51,6 +57,7 @@ function filterKindToName(kind: string): string {
     case 'Levels': return 'RGB Channels';
     case 'Glow': return 'Glow';
     case 'Crt': return 'CRT';
+    case 'Adjust': return 'Adjust';
     default: return kind;
   }
 }
@@ -61,8 +68,9 @@ function filterKindToIconType(kind: string): string {
     case 'Glitch': return 'glitching';
     case 'Curves': return 'curves';
     case 'Levels': return 'rgb';
-    case 'Glow': return 'glitching';
-    case 'Crt': return 'dithering';
+    case 'Glow': return 'glow';
+    case 'Crt': return 'crt';
+    case 'Adjust': return 'adjust';
     default: return 'dithering';
   }
 }
@@ -80,6 +88,7 @@ export default function LayersPanel({
   onRemoveFilter,
   onReorderFilter,
   onToggleVisibility,
+  onToggleFilterEnabled,
   onBlendModeChange,
   onOpacityChange,
   onFilterBlendChange,
@@ -92,6 +101,7 @@ export default function LayersPanel({
     : null;
 
   const imageSourceLayer = layers.length > 0 ? layers[0] : null;
+  const displayFilters = displayFilterOrder(filters);
   const selectedFilter =
     selectedFilterId !== null
       ? filters.find((filter) => filter.id === selectedFilterId) ?? null
@@ -217,14 +227,17 @@ export default function LayersPanel({
       const currentDropIdx = dropTargetIndexRef.current;
 
       if (isDragging.current && currentDragId !== null && currentDropIdx !== null) {
-        const currentIdx = filters.findIndex(f => f.id === currentDragId);
-        // Adjust target: if dragging down, account for removal shifting indices
-        let finalIdx = currentDropIdx;
-        if (currentIdx < finalIdx) {
-          finalIdx = finalIdx - 1;
-        }
-        if (currentIdx !== finalIdx && finalIdx >= 0) {
-          onReorderFilter(currentDragId, finalIdx);
+        const currentIdx = displayFilters.findIndex(f => f.id === currentDragId);
+        if (currentIdx >= 0) {
+          const stackIdx = stackIndexAfterDisplayReorder(
+            filters.length,
+            currentIdx,
+            currentDropIdx,
+          );
+          const currentStackIdx = filters.findIndex((f) => f.id === currentDragId);
+          if (currentStackIdx !== stackIdx && stackIdx >= 0) {
+            onReorderFilter(currentDragId, stackIdx);
+          }
         }
       }
 
@@ -237,7 +250,7 @@ export default function LayersPanel({
 
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
-  }, [filters, onReorderFilter]);
+  }, [displayFilters, filters, onReorderFilter]);
 
   useEffect(() => {
     if (!opacityEditing) {
@@ -404,7 +417,7 @@ export default function LayersPanel({
         <SimpleBar style={{ height: '100%' }}>
         <div className={cn("lp-layers-list")} ref={layerListRef}>
           {/* Virtual effect layers (filters displayed as rows) */}
-          {filters.map((filter, idx) => {
+          {displayFilters.map((filter, idx) => {
             const isSelected = filter.id === selectedFilterId;
             const stableNumber = filterNumbers[filter.id] ?? '?';
             const displayName = filterNames[filter.id] ?? filterKindToName(filter.kind);
@@ -430,13 +443,19 @@ export default function LayersPanel({
                   aria-selected={isSelected}
                   style={{ cursor: dragFilterId ? 'grabbing' : 'grab' }}
                 >
-                  <button
-                    className={cn("lp-eye-btn")}
-                    onClick={(e) => { e.stopPropagation(); }}
-                    title={filter.enabled ? 'Enabled' : 'Disabled'}
-                  >
-                    <Icon name="open-eye" width={18} height={18} style={{ opacity: filter.enabled ? 1 : 0.3 }} />
-                  </button>
+                  <Tooltip label={filter.enabled ? 'Hide' : 'Show'}>
+                    <button
+                      className={cn("lp-eye-btn")}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onToggleFilterEnabled(filter.id);
+                      }}
+                      aria-label={filter.enabled ? 'Hide effect' : 'Show effect'}
+                    >
+                      <Icon name="open-eye" width={18} height={18} style={{ opacity: filter.enabled ? 1 : 0.3 }} />
+                    </button>
+                  </Tooltip>
 
                   <div className={cn("lp-layer-name")}>
                     {isEditing ? (
@@ -487,30 +506,21 @@ export default function LayersPanel({
               onClick={() => { onSelect(imageSourceLayer.id); }}
               role="treeitem"
             >
-              <button
-                className={cn("lp-eye-btn")}
-                onClick={(e) => { e.stopPropagation(); onToggleVisibility(imageSourceLayer.id); }}
-                title={imageSourceLayer.visible ? 'Hide' : 'Show'}
-              >
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" style={{ opacity: imageSourceLayer.visible ? 1 : 0.3 }}>
-                  <path d="M4 12C4 12 7 7 12 7C17 7 20 12 20 12C20 12 17 17 12 17C7 17 4 12 4 12Z" stroke="black" strokeWidth="2"/>
-                  <circle cx="12" cy="12" r="3" fill="black"/>
-                </svg>
-              </button>
+              <Tooltip label={imageSourceLayer.visible ? 'Hide' : 'Show'}>
+                <button
+                  className={cn("lp-eye-btn")}
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onToggleVisibility(imageSourceLayer.id); }}
+                  aria-label={imageSourceLayer.visible ? 'Hide layer' : 'Show layer'}
+                >
+                  <Icon name="open-eye" width={18} height={18} style={{ opacity: imageSourceLayer.visible ? 1 : 0.3 }} />
+                </button>
+              </Tooltip>
               <div className={cn("lp-layer-name")}>
                 <span>Image Source</span>
               </div>
               <div className={cn("lp-layer-icon")}>
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                  <rect x="2" y="2" width="20" height="2" fill="black"/>
-                  <rect x="2" y="20" width="20" height="2" fill="black"/>
-                  <rect x="2" y="4" width="2" height="16" fill="black"/>
-                  <rect x="20" y="4" width="2" height="16" fill="black"/>
-                  <rect x="8" y="6" width="4" height="4" fill="black"/>
-                  <rect x="14" y="14" width="2" height="2" fill="black"/>
-                  <rect x="16" y="12" width="2" height="2" fill="black"/>
-                  <rect x="12" y="16" width="2" height="2" fill="black"/>
-                </svg>
+                <Icon name="image.source" width={18} height={18} />
               </div>
             </div>
           )}
@@ -527,12 +537,16 @@ export default function LayersPanel({
 
       {/* Footer */}
       <div className={cn("lp-footer")}>
-        <button className={cn("lp-footer-btn")} onClick={onAddLayer} title="Add effect" aria-label="Add effect">
-          <Icon name="plus" width={14} height={14} />
-        </button>
-        <button className={cn("lp-footer-btn")} onClick={handleTrashClick} disabled={trashDisabled} title="Delete effect" aria-label="Delete effect">
-          <Icon name="trash" width={14} height={14} />
-        </button>
+        <Tooltip label="Add effect">
+          <button className={cn("lp-footer-btn")} onClick={onAddLayer} aria-label="Add effect">
+            <Icon name="plus" width={14} height={14} />
+          </button>
+        </Tooltip>
+        <Tooltip label="Delete effect">
+          <button className={cn("lp-footer-btn")} onClick={handleTrashClick} disabled={trashDisabled} aria-label="Delete effect">
+            <Icon name="trash" width={14} height={14} />
+          </button>
+        </Tooltip>
       </div>
     </div>
   );
@@ -543,14 +557,20 @@ export default function LayersPanel({
 function EffectIconSvg({ type }: { type: string }) {
   switch (type) {
     case 'dithering':
-      return <Icon name="effect.dithering" width={20} height={20} />;
+      return <Icon name="effect.dithering" width={18} height={18} />;
     case 'glitching':
-      return <Icon name="effect.glitching" width={20} height={20} />;
+      return <Icon name="effect.glitching" width={18} height={18} />;
     case 'curves':
-      return <Icon name="effect.curves" width={20} height={20} />;
+      return <Icon name="effect.curves" width={18} height={18} />;
     case 'rgb':
-      return <Icon name="effect.rgb" width={20} height={20} />;
+      return <Icon name="effect.rgb" width={18} height={18} />;
+    case 'glow':
+      return <Icon name="effect.glow" width={18} height={18} />;
+    case 'crt':
+      return <Icon name="effect.crt" width={18} height={18} />;
+    case 'adjust':
+      return <Icon name="effect.adjust" width={18} height={18} />;
     default:
-      return null;
+      return <Icon name="effect.dithering" width={18} height={18} />;
   }
 }

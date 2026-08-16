@@ -79,6 +79,29 @@ impl Layer {
     ) -> Option<&mut FilterInstance> {
         self.filters.iter_mut().find(|f| f.id == filter_id)
     }
+
+    /// Add a filter using Layers-panel conventions (`filters[0]` = top row).
+    /// Adjust/Curves/Levels go at the bottom (just above Image Source) so they
+    /// run first. Dither/Glitch/… go on top and see the tone-corrected pixels.
+    pub fn add_filter_instance(&mut self, filter: FilterInstance) {
+        if filter.kind.inserts_under_stylize() {
+            self.filters.push(filter);
+        } else {
+            self.filters.insert(0, filter);
+        }
+    }
+
+    /// First enabled filter in apply order (bottom of the Layers list).
+    /// Mega-pixel dither may sample document Raw only in this case.
+    pub fn dither_is_first_applied(&self) -> bool {
+        match self.filters.iter().rev().find(|f| f.enabled) {
+            Some(f) => matches!(
+                f.params,
+                crate::filter::FilterParams::DitherV2(_) | crate::filter::FilterParams::Dither { .. }
+            ),
+            None => false,
+        }
+    }
 }
 
 /// A group of layers with its own blend mode and opacity.
@@ -273,5 +296,39 @@ mod tests {
 
         assert!(layer.find_filter(filter_id).is_some());
         assert!(layer.find_filter(crate::types::FilterInstanceId::new()).is_none());
+    }
+
+    #[test]
+    fn add_filter_instance_puts_adjust_under_dither() {
+        use crate::filter::{
+            DitherColorMode, DitherModeV2, DitherParamsV2, FilterInstance, FilterKind, FilterParams,
+        };
+
+        let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, 256, 256);
+        layer.add_filter_instance(FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::Bayer4x4,
+                levels: 4,
+                threshold_scale: 1.0,
+                pixel_size: 1,
+                color_mode: DitherColorMode::Rgb,
+                palette_id: None,
+                ..Default::default()
+            }),
+        ));
+        layer.add_filter_instance(FilterInstance::new(
+            FilterKind::Adjust,
+            FilterParams::Adjust {
+                contrast: 0.0,
+                brightness: 0.2,
+                saturation: 0.0,
+                blur: 0.0,
+                sharpness: 0.0,
+                noise: 0.0,
+            },
+        ));
+        assert_eq!(layer.filters[0].kind, FilterKind::Dither);
+        assert_eq!(layer.filters[1].kind, FilterKind::Adjust);
     }
 }

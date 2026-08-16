@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { EffectType } from '../types/effects';
 import styles from '../features/effects/EffectChooserDialog.module.css';
-import titlebarStyles from '../shared/ui/WindowTitlebar.module.css';
 import { bind } from '../shared/ui/cn';
-const cn = bind({ ...styles, ...titlebarStyles });
+import { DialogTitlebar } from '../shared/ui/WindowTitlebar';
+const cn = bind(styles);
 
 interface EffectChooserDialogProps {
   isOpen: boolean;
@@ -24,6 +24,7 @@ const EFFECT_OPTIONS: EffectOption[] = [
   { type: 'RGBChannels', icon: '🔴', label: 'RGB Channels' },
   { type: 'Glow', icon: '✨', label: 'Glow' },
   { type: 'CRT', icon: '📺', label: 'CRT' },
+  { type: 'Adjust', icon: '🎚️', label: 'Adjust' },
 ];
 
 function EffectChooserDialog({ isOpen, onSelect, onClose }: EffectChooserDialogProps) {
@@ -98,16 +99,7 @@ function EffectChooserDialog({ isOpen, onSelect, onClose }: EffectChooserDialogP
         aria-label="Effect"
         onKeyDown={handleKeyDown}
       >
-        {/* Title bar */}
-        <div className={cn("window-titlebar")}>
-          <button
-            className={cn("window-titlebar-btn")}
-            onClick={onClose}
-            aria-label="Close"
-            type="button"
-          />
-          <span className={cn("window-title")}>Effect</span>
-        </div>
+        <DialogTitlebar title="Effect" onClose={onClose} />
 
         {/* Effect list */}
         <div className={cn("effect-chooser-body")} ref={listRef} role="listbox" aria-label="Effect types">

@@ -22,7 +22,8 @@ export type FilterKind =
   | 'Glitch'
   | 'PaletteQuantize'
   | 'Glow'
-  | 'Crt';
+  | 'Crt'
+  | 'Adjust';
 
 export type FilterParams =
   | DitherParams
@@ -32,7 +33,8 @@ export type FilterParams =
   | GlitchParams
   | PaletteQuantizeParams
   | GlowParams
-  | CrtParams;
+  | CrtParams
+  | AdjustParams;
 
 export interface DitherParams {
   type: 'Dither';
@@ -67,6 +69,13 @@ export type DitherModeV2 =
 /** Color processing mode for dithering. */
 export type DitherColorMode = 'rgb' | 'grayscale';
 
+/** Strict = Oklab two-nearest; Guided = per-channel range; Mixed = Guided then Strict; Simple = sRGB Euclidean. */
+export type PaletteDitherMode =
+  | 'strict'
+  | 'simple'
+  | { guided: { channel_levels: number | null } }
+  | { mixed: { channel_levels: number | null } };
+
 /** Full dither filter parameters (V2 redesign). */
 export interface DitherParamsV2 {
   type: 'DitherV2';
@@ -76,6 +85,8 @@ export interface DitherParamsV2 {
   pixel_size: number;         // 1–32, default 1
   color_mode: DitherColorMode;
   palette_id: number | null;
+  /** Default `'strict'`. Ignored when palette_id is null. */
+  palette_dither_mode?: PaletteDitherMode;
   /** CMYK halftone cell size (2–64), default 8 */
   halftone_cell_size?: number;
   /** Wave wavelength in px (2–256), default 8 */
@@ -92,6 +103,8 @@ export interface DitherParamsV2 {
   pattern_angle?: number;
   /** ED serpentine scan (odd global rows R→L). Default false. */
   serpentine?: boolean;
+  /** Pixelate transparency: dither alpha to 0/1 with pixel_size blocks. Default true. */
+  dither_alpha?: boolean;
 }
 
 export interface CurvesParams {
@@ -107,6 +120,9 @@ export interface LevelsParams {
   gamma: number;
   output_black: number;
   output_white: number;
+  channel_r?: boolean;
+  channel_g?: boolean;
+  channel_b?: boolean;
 }
 
 export interface GlitchParams {
@@ -134,6 +150,16 @@ export interface CrtParams {
   period: number;        // 2–8
   strength: number;      // 0–1
   mask_strength: number; // 0–1
+}
+
+export interface AdjustParams {
+  type: 'Adjust';
+  contrast: number;    // −1–1
+  brightness: number;  // −1–1
+  saturation: number;  // −1–1
+  blur: number;        // 0–2
+  sharpness: number;   // 0–2
+  noise: number;       // 0–1
 }
 
 export type DitherAlgorithm = 'FloydSteinberg' | 'Ordered' | 'Threshold';

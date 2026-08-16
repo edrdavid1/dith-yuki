@@ -9,13 +9,14 @@
 //! Both are called by the worker pool when a tile is needed (cache miss or dirty).
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use engine_project::composite_tile;
 use engine_project::error::EngineError;
 use engine_project::filters::apply::apply_filter_to_tile_with_caches;
 use engine_project::filter::{DitherParamsV2, FilterParams};
 use engine_project::layer::LayerNode;
-use engine_tiles::{CacheStage, PixelTile, TileKey};
+use engine_tiles::{CacheStage, PixelTile, Priority, RecomputeTask, TileKey};
 
 use crate::commands::AppState;
 
@@ -95,6 +96,28 @@ fn compute_processed_tile_inner(
     //     available. Runs on all pyramid levels. On-demand row-major without a
     //     global sequential pass.
     let has_error_diffusion = layer.filters.iter().any(|f| f.enabled && f.requires_full_row);
+
+    // 2a. Depth-first recursion below walks the prefix on this one thread, so a
+    //     far-from-origin viewport paid the whole prefix serially. Build it by
+    //     anti-diagonals instead: tiles with equal `x + y` depend only on tiles
+    //     with a smaller sum, so each diagonal runs in parallel while the
+    //     diagonals stay ordered. Same tile set, same topological order
+    //     guarantees, so the result is byte-identical.
+    if has_error_diffusion && !is_dependency && !ed_serial_prefix() {
+        // A tile worker waits: duplicating the prefix by depth-first recursion
+        // while another worker already builds it costs more than idling, and it
+        // oversubscribes the rayon pool the builder needs. A rayon thread must
+        // never wait, or the builder deadlocks behind its own diagonal tasks.
+        let guard = if rayon::current_thread_index().is_some() {
+            state.ed_prefix_lock.try_lock().ok()
+        } else {
+            state.ed_prefix_lock.lock().ok()
+        };
+        if let Some(_guard) = guard {
+            prefill_ed_prefix_diagonals(key, state);
+        }
+    }
+
     if has_error_diffusion {
         let processed_key_for_waiters = TileKey {
             layer: key.layer,
@@ -216,24 +239,27 @@ fn compute_processed_tile_inner(
         // No filters — copy raw tile data directly
         copy_tile(&raw_tile)
     } else {
-        // Lazy-populate block representatives for any dither pixel_size > 1.
-        for filter in &layer.filters {
-            if !filter.enabled {
-                continue;
-            }
-            let ps = match &filter.params {
-                FilterParams::DitherV2(DitherParamsV2 { pixel_size, .. }) => *pixel_size,
-                FilterParams::Dither { .. } => 1,
-                _ => continue,
-            };
-            if ps > 1 {
-                state.block_representatives.ensure_populated_from_tiles(
-                    &state.tile_cache,
-                    key.layer,
-                    ps as u32,
-                    snapshot.width,
-                    snapshot.height,
-                );
+        // Lazy-populate block representatives for mega-pixel dither only when
+        // dither is the first applied filter (otherwise Raw samples skip Adjust).
+        if layer.dither_is_first_applied() {
+            for filter in &layer.filters {
+                if !filter.enabled {
+                    continue;
+                }
+                let ps = match &filter.params {
+                    FilterParams::DitherV2(DitherParamsV2 { pixel_size, .. }) => *pixel_size,
+                    FilterParams::Dither { .. } => 1,
+                    _ => continue,
+                };
+                if ps > 1 {
+                    state.block_representatives.ensure_populated_from_tiles(
+                        &state.tile_cache,
+                        key.layer,
+                        ps as u32,
+                        snapshot.width,
+                        snapshot.height,
+                    );
+                }
             }
         }
 
@@ -255,9 +281,24 @@ fn compute_processed_tile_inner(
     //    We copy the tile for the return value and wrap the original in Arc for storage.
     //    insert_fresh always overwrites any existing (possibly dirty) entry.
     let return_tile = copy_tile(&processed);
-    state
-        .tile_cache
-        .insert_fresh(processed_key, Arc::new(processed));
+    let compute_gen = snapshot
+        .generations
+        .document_gen
+        .load(Ordering::Acquire);
+    let now_gen = state
+        .document_handle
+        .snapshot()
+        .generations
+        .document_gen
+        .load(Ordering::Acquire);
+    if now_gen == compute_gen {
+        let inserted = state.tile_cache.insert_fresh_gen(
+            processed_key,
+            Arc::new(processed),
+            compute_gen,
+        );
+        reschedule_if_insert_rejected(state, processed_key, inserted);
+    }
 
     // 5. Return the processed tile
     Ok(return_tile)
@@ -282,22 +323,13 @@ pub fn compute_composite_tile(
     key: TileKey,
     state: &AppState,
 ) -> Result<PixelTile, EngineError> {
-    // If requesting a pyramid level > 0, try to generate from cached children
+    // 1. Get document snapshot for the layer tree
+    let snapshot = state.document_handle.snapshot();
+
+    // Display pyramid only: zoom-out tiles are a 2×2 box-filter of *full-res*
+    // Composite children. Filters always run at level 0 so Bayer/ED/pixel_size
+    // match export. Never apply the stack on downsampled Raw.
     if key.coord.level > 0 {
-        if let Some(pyramid_tile) = engine_tiles::generate_pyramid_tile(
-            key.coord.level,
-            key.coord,
-            key.layer,
-            key.stage,
-            &state.tile_cache,
-        ) {
-            // Store in cache and return
-            let return_tile = copy_tile(&pyramid_tile);
-            state.tile_cache.insert_fresh(key, Arc::new(pyramid_tile));
-            return Ok(return_tile);
-        }
-        // Children not in cache yet — schedule level 0 composite computation for
-        // all children, then return error so this task will be retried via tile-ready.
         let child_level = key.coord.level - 1;
         let children = [
             engine_tiles::TileCoord { level: child_level, x: key.coord.x * 2,     y: key.coord.y * 2 },
@@ -305,43 +337,70 @@ pub fn compute_composite_tile(
             engine_tiles::TileCoord { level: child_level, x: key.coord.x * 2,     y: key.coord.y * 2 + 1 },
             engine_tiles::TileCoord { level: child_level, x: key.coord.x * 2 + 1, y: key.coord.y * 2 + 1 },
         ];
-        let snapshot = state.document_handle.snapshot();
         let doc_gen = snapshot.generations.document_gen.load(std::sync::atomic::Ordering::Acquire);
+        let mut waiting = false;
         for child_coord in &children {
+            if !coord_in_document(*child_coord, snapshot.width, snapshot.height) {
+                continue;
+            }
             let child_key = TileKey {
                 layer: key.layer,
                 coord: *child_coord,
                 stage: CacheStage::Composite,
             };
-            // Only schedule if not already cached
-            if state.tile_cache.entries.get(&child_key).is_none() {
-                let task = engine_tiles::RecomputeTask {
-                    key: child_key,
-                    generation: doc_gen,
-                    layer_generation: 0,
-                    priority: engine_tiles::Priority::Immediate,
-                };
-                state.scheduler.enqueue(task);
-                state.worker_wake.notify_one();
+            if composite_needs_compute(state, &child_key) {
+                waiting = true;
+                enqueue_composite_dedup(
+                    state,
+                    child_key,
+                    doc_gen,
+                    engine_tiles::Priority::Immediate,
+                );
             }
         }
-        // Also re-enqueue this same level > 0 tile with lower priority so it runs after children
-        let retry_task = engine_tiles::RecomputeTask {
-            key,
-            generation: doc_gen,
-            layer_generation: 0,
-            priority: engine_tiles::Priority::ViewportCenter, // Lower than Immediate children
-        };
-        state.scheduler.enqueue(retry_task);
-        state.worker_wake.notify_one();
-
+        if waiting {
+            enqueue_composite_dedup(
+                state,
+                key,
+                doc_gen,
+                engine_tiles::Priority::ViewportCenter,
+            );
+            return Err(EngineError::invalid_state(
+                "Pyramid children not yet computed; scheduled for computation".to_string(),
+            ));
+        }
+        if let Some(pyramid_tile) = engine_tiles::generate_pyramid_tile(
+            key.coord.level,
+            key.coord,
+            key.layer,
+            key.stage,
+            &state.tile_cache,
+        ) {
+            let return_tile = copy_tile(&pyramid_tile);
+            let now_gen = state
+                .document_handle
+                .snapshot()
+                .generations
+                .document_gen
+                .load(Ordering::Acquire);
+            if now_gen == doc_gen {
+                let inserted = state.tile_cache.insert_fresh_gen(
+                    key,
+                    Arc::new(pyramid_tile),
+                    doc_gen,
+                );
+                if inserted {
+                    enqueue_coarser_parent(state, key);
+                } else {
+                    reschedule_if_insert_rejected(state, key, false);
+                }
+            }
+            return Ok(return_tile);
+        }
         return Err(EngineError::invalid_state(
-            "Pyramid children not yet computed; scheduled for computation".to_string()
+            "Pyramid children missing after wait".to_string(),
         ));
     }
-
-    // 1. Get document snapshot for the layer tree
-    let snapshot = state.document_handle.snapshot();
 
     // 2. Ensure all visible layers have fresh Processed tiles at this coordinate.
     //    This handles the case where a filter was changed and the Processed tile
@@ -358,12 +417,185 @@ pub fn compute_composite_tile(
         coord: key.coord,
         stage: CacheStage::Composite,
     };
-    state
-        .tile_cache
-        .insert_fresh(composite_key, Arc::new(composited));
+    let compute_gen = snapshot
+        .generations
+        .document_gen
+        .load(Ordering::Acquire);
+    let now_gen = state
+        .document_handle
+        .snapshot()
+        .generations
+        .document_gen
+        .load(Ordering::Acquire);
+    if now_gen == compute_gen {
+        let inserted = state.tile_cache.insert_fresh_gen(
+            composite_key,
+            Arc::new(composited),
+            compute_gen,
+        );
+        if inserted {
+            enqueue_coarser_parent(state, composite_key);
+        } else {
+            reschedule_if_insert_rejected(state, composite_key, false);
+        }
+    }
 
     // 5. Return the composite tile
     Ok(return_tile)
+}
+
+/// After `insert_fresh_gen` refuses a stale write, if live doc_gen is ahead of
+/// the cached entry, mark dirty and enqueue the current generation.
+pub(crate) fn reschedule_if_insert_rejected(state: &AppState, key: TileKey, inserted: bool) {
+    if inserted {
+        return;
+    }
+    let snapshot = state.document_handle.snapshot();
+    let live = snapshot.generations.document_gen.load(Ordering::Acquire);
+    if !state.tile_cache.mark_dirty_if_generation_behind(key, live) {
+        return;
+    }
+    let layer_gen = snapshot.generations.get_layer_gen(key.layer);
+    state.scheduler.enqueue_dedup(RecomputeTask {
+        key,
+        generation: live,
+        layer_generation: layer_gen,
+        priority: Priority::Immediate,
+    });
+    state.worker_wake.notify_one();
+}
+
+/// After an L0/L1 Composite lands, wake the coarser display parent.
+///
+/// Zoom-out schedules the visible L2 first; that task only *retries* itself if
+/// it already ran while children were missing. If that retry is lost or ran
+/// too early, the canvas keeps an old-effect tile. Waking `level+1` here
+/// closes the chain: L0 → L1 → L2 → tile-ready.
+fn enqueue_coarser_parent(state: &AppState, child: TileKey) {
+    if child.stage != CacheStage::Composite || child.layer != 0 {
+        return;
+    }
+    let viewport_level = state.viewport.lock().unwrap().level;
+    if child.coord.level >= viewport_level {
+        return;
+    }
+    let parent_key = TileKey {
+        layer: 0,
+        coord: engine_tiles::TileCoord {
+            level: child.coord.level + 1,
+            x: child.coord.x / 2,
+            y: child.coord.y / 2,
+        },
+        stage: CacheStage::Composite,
+    };
+    if !composite_needs_compute(state, &parent_key) {
+        return;
+    }
+    let snapshot = state.document_handle.snapshot();
+    let doc_gen = snapshot
+        .generations
+        .document_gen
+        .load(Ordering::Acquire);
+    enqueue_composite_dedup(state, parent_key, doc_gen, engine_tiles::Priority::Immediate);
+}
+
+fn enqueue_composite_dedup(
+    state: &AppState,
+    key: TileKey,
+    generation: u64,
+    priority: engine_tiles::Priority,
+) {
+    let enqueued = state.scheduler.enqueue_dedup(engine_tiles::RecomputeTask {
+        key,
+        generation,
+        layer_generation: 0,
+        priority,
+    });
+    if enqueued {
+        state.worker_wake.notify_one();
+    }
+}
+
+/// Below this many stale prefix tiles the depth-first recursion is cheaper than
+/// the rayon barriers, so the prefill stays out of the way.
+const ED_PARALLEL_PREFIX_MIN: usize = 8;
+
+/// `DITHER_ED_SERIAL_PREFIX=1` restores the depth-first prefix walk. Kill switch,
+/// and the only way to A/B the two orders inside one process.
+fn ed_serial_prefix() -> bool {
+    matches!(
+        std::env::var("DITHER_ED_SERIAL_PREFIX").ok().as_deref(),
+        Some("1") | Some("true")
+    )
+}
+
+/// Compute the stale error-diffusion prefix of `key` diagonal by diagonal,
+/// parallel within each diagonal. Returns how many tiles were scheduled.
+///
+/// Tiles whose Raw stage is absent are left out: the existing waiter path owns
+/// that case and registering waiters from here would double-register.
+fn prefill_ed_prefix_diagonals(key: TileKey, state: &AppState) -> usize {
+    use rayon::prelude::*;
+
+    if key.coord.x == 0 && key.coord.y == 0 {
+        return 0;
+    }
+
+    let mut pending: Vec<TileKey> = Vec::new();
+    for y in 0..=key.coord.y {
+        for x in 0..=key.coord.x {
+            if x == key.coord.x && y == key.coord.y {
+                continue;
+            }
+            let coord = engine_tiles::TileCoord {
+                level: key.coord.level,
+                x,
+                y,
+            };
+            let processed = TileKey {
+                layer: key.layer,
+                coord,
+                stage: CacheStage::Processed,
+            };
+            let stale = match state.tile_cache.entries.get(&processed) {
+                None => true,
+                Some(entry) => entry.dirty.load(Ordering::Acquire),
+            };
+            if !stale {
+                continue;
+            }
+            let raw = TileKey {
+                layer: key.layer,
+                coord,
+                stage: CacheStage::Raw,
+            };
+            if state.tile_cache.entries.contains_key(&raw) {
+                pending.push(processed);
+            }
+        }
+    }
+
+    if pending.len() < ED_PARALLEL_PREFIX_MIN {
+        return 0;
+    }
+
+    pending.sort_by_key(|k| (k.coord.x + k.coord.y, k.coord.y));
+    let total = pending.len();
+
+    let mut start = 0;
+    while start < pending.len() {
+        let sum = pending[start].coord.x + pending[start].coord.y;
+        let mut end = start;
+        while end < pending.len() && pending[end].coord.x + pending[end].coord.y == sum {
+            end += 1;
+        }
+        pending[start..end].par_iter().for_each(|pk| {
+            let _ = compute_processed_tile_inner(*pk, state, true);
+        });
+        start = end;
+    }
+
+    total
 }
 
 /// Ensure all visible layers have fresh (non-dirty) Processed tiles at the given coord.
@@ -445,6 +677,19 @@ fn collect_dirty_recursive(
             }
         }
     }
+}
+
+fn composite_needs_compute(state: &AppState, key: &TileKey) -> bool {
+    use std::sync::atomic::Ordering;
+    match state.tile_cache.entries.get(key) {
+        None => true,
+        Some(entry) => entry.dirty.load(Ordering::Acquire),
+    }
+}
+
+fn coord_in_document(coord: engine_tiles::TileCoord, doc_w: u32, doc_h: u32) -> bool {
+    let (cols, rows) = engine_tiles::tile_grid_at_level(doc_w, doc_h, coord.level);
+    coord.x < cols && coord.y < rows
 }
 
 /// Find a layer by its numeric ID in the document tree (recursive).
@@ -545,7 +790,148 @@ mod tests {
             project_path: Mutex::new(None),
             undo_manager: Mutex::new(crate::undo::UndoManager::new()),
             saved_snapshot: Mutex::new(None),
+            preview_pass_inflight: std::sync::atomic::AtomicUsize::new(0),
+            pending_preview_refresh: Mutex::new(None),
+            ed_prefix_lock: Mutex::new(()),
         }
+    }
+
+    const ED_DOC: u32 = 1024;
+    const ED_LAYER: u32 = 1;
+
+    /// 4x4 L0 grid with an enabled Floyd-Steinberg layer and every Raw tile
+    /// filled, so the prefix of (3,3) is 15 tiles — above `ED_PARALLEL_PREFIX_MIN`.
+    fn make_ed_state() -> AppState {
+        use engine_project::filter::{DitherModeV2, DitherParamsV2};
+
+        let mut doc = Document::new(DocumentId::new(1), ED_DOC, ED_DOC);
+        let mut layer = Layer::new(LayerId::new(ED_LAYER), LayerKind::Raster, ED_DOC, ED_DOC);
+        layer.filters.push(FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::FloydSteinberg,
+                levels: 4,
+                pixel_size: 1,
+                palette_id: None,
+                ..DitherParamsV2::default()
+            }),
+        ));
+        doc.root.push(LayerNode::Leaf(layer));
+
+        let state = make_app_state_with_layer(ED_LAYER, false);
+        state.document_handle.mutate(|d| *d = doc.clone());
+
+        let full = engine_tiles::TILE_SIZE + 2 * engine_tiles::HALO;
+        for cy in 0..4u32 {
+            for cx in 0..4u32 {
+                let coord = TileCoord { level: 0, x: cx, y: cy };
+                let mut tile = PixelTile::new();
+                for y in 0..full {
+                    for x in 0..full {
+                        let gx = cx as i32 * engine_tiles::TILE_SIZE as i32 + x as i32
+                            - engine_tiles::HALO as i32;
+                        let gy = cy as i32 * engine_tiles::TILE_SIZE as i32 + y as i32
+                            - engine_tiles::HALO as i32;
+                        tile.set(x, y, 0, gx.max(0) as f32 / ED_DOC as f32);
+                        tile.set(x, y, 1, gy.max(0) as f32 / ED_DOC as f32);
+                        tile.set(x, y, 2, 0.5);
+                        tile.set(x, y, 3, 1.0);
+                    }
+                }
+                state.tile_cache.insert_fresh(
+                    TileKey { layer: ED_LAYER, coord, stage: CacheStage::Raw },
+                    Arc::new(tile),
+                );
+            }
+        }
+        state
+    }
+
+    fn ed_key(x: u32, y: u32) -> TileKey {
+        TileKey {
+            layer: ED_LAYER,
+            coord: TileCoord { level: 0, x, y },
+            stage: CacheStage::Processed,
+        }
+    }
+
+    fn reset_ed_processed(state: &AppState) {
+        state.error_residuals.clear();
+        engine_tiles::invalidation::invalidate(
+            &state.tile_cache,
+            engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { layer: ED_LAYER },
+        );
+    }
+
+    /// Row-major is a valid topological order for the left/top/diagonal
+    /// dependency, so a strictly sequential pass is the exactness reference.
+    fn ed_reference_tile(state: &AppState, target: TileKey) -> PixelTile {
+        for y in 0..=target.coord.y {
+            for x in 0..=target.coord.x {
+                compute_processed_tile(ed_key(x, y), state).expect("reference tile");
+            }
+        }
+        copy_tile(&state.tile_cache.get_entry(target).expect("reference cached"))
+    }
+
+    #[test]
+    fn ed_diagonal_prefill_matches_row_major_reference() {
+        let target = ed_key(3, 3);
+
+        let reference = {
+            let state = make_ed_state();
+            ed_reference_tile(&state, target)
+        };
+
+        let state = make_ed_state();
+        reset_ed_processed(&state);
+        let via_prefill = compute_processed_tile(target, &state).expect("prefill tile");
+
+        assert_eq!(
+            via_prefill.data, reference.data,
+            "anti-diagonal prefill must be byte-identical to the sequential row-major pass"
+        );
+    }
+
+    #[test]
+    fn ed_diagonal_prefill_is_exact_under_concurrent_coordinators() {
+        let target = ed_key(3, 3);
+
+        let reference = {
+            let state = make_ed_state();
+            ed_reference_tile(&state, target)
+        };
+
+        // Only one thread wins `try_lock`; the rest fall back to depth-first
+        // recursion over the same prefix. Both paths must land on the same bytes.
+        let state = Arc::new(make_ed_state());
+        reset_ed_processed(&state);
+        let mut handles = Vec::new();
+        for coord in [(3u32, 3u32), (3, 2), (2, 3), (3, 3)] {
+            let state = Arc::clone(&state);
+            handles.push(std::thread::spawn(move || {
+                compute_processed_tile(ed_key(coord.0, coord.1), &state).expect("concurrent tile");
+            }));
+        }
+        for h in handles {
+            h.join().expect("worker thread");
+        }
+
+        let got = copy_tile(&state.tile_cache.get_entry(target).expect("cached target"));
+        assert_eq!(
+            got.data, reference.data,
+            "concurrent prefill/recursion mix must stay byte-identical to the reference"
+        );
+    }
+
+    #[test]
+    fn ed_prefill_skips_small_prefixes() {
+        let state = make_ed_state();
+        reset_ed_processed(&state);
+        // Prefix of (1,1) is 3 tiles, under ED_PARALLEL_PREFIX_MIN.
+        assert_eq!(prefill_ed_prefix_diagonals(ed_key(1, 1), &state), 0);
+        // Prefix of (3,3) is 15 tiles.
+        assert_eq!(prefill_ed_prefix_diagonals(ed_key(3, 3), &state), 15);
     }
 
     #[test]
@@ -735,6 +1121,205 @@ mod tests {
             state.diffusion_skip_counter.get(),
             0,
             "Orphan_GC-style whole-layer eviction errors before neighbor skip"
+        );
+    }
+
+    #[test]
+    fn composite_at_level_1_downsamples_full_res_children() {
+        use engine_tiles::decompose::decompose_image_to_tiles;
+
+        let mut doc = Document::new(DocumentId::new(1), 512, 512);
+        let layer = Layer::new(LayerId::new(1), LayerKind::Raster, 512, 512);
+        doc.root.push(LayerNode::Leaf(layer));
+        let mut state = make_app_state_with_layer(1, false);
+        state.document_handle = DocumentHandle::new(doc);
+
+        let mut buffer = vec![0.0f32; (512 * 512 * 4) as usize];
+        for px in buffer.chunks_exact_mut(4) {
+            px[0] = 0.6;
+            px[1] = 0.6;
+            px[2] = 0.6;
+            px[3] = 1.0;
+        }
+        decompose_image_to_tiles(&buffer, 512, 512, 1, &state.tile_cache).unwrap();
+
+        let l1_key = TileKey {
+            layer: 0,
+            coord: TileCoord { level: 1, x: 0, y: 0 },
+            stage: CacheStage::Composite,
+        };
+        assert!(
+            compute_composite_tile(l1_key, &state).is_err(),
+            "L1 must wait for full-res children, not filter downsampled raw"
+        );
+
+        let mut l0_computed = 0usize;
+        while let Some(task) = state.scheduler.dequeue() {
+            if task.key.coord.level == 0 && task.key.stage == CacheStage::Composite {
+                compute_composite_tile(task.key, &state).unwrap();
+                l0_computed += 1;
+            }
+        }
+        assert_eq!(l0_computed, 4, "512×512 → four L0 children");
+
+        let tile = compute_composite_tile(l1_key, &state).unwrap();
+        assert!((tile.at(engine_tiles::HALO, engine_tiles::HALO, 0) - 0.6).abs() < 1e-4);
+    }
+
+    #[test]
+    fn composite_wakes_coarser_parent_when_viewport_is_zoomed_out() {
+        use engine_tiles::decompose::decompose_image_to_tiles;
+
+        let mut doc = Document::new(DocumentId::new(1), 512, 512);
+        let layer = Layer::new(LayerId::new(1), LayerKind::Raster, 512, 512);
+        doc.root.push(LayerNode::Leaf(layer));
+        let mut state = make_app_state_with_layer(1, false);
+        state.document_handle = DocumentHandle::new(doc);
+        state.viewport.lock().unwrap().level = 1;
+
+        let mut buffer = vec![0.0f32; (512 * 512 * 4) as usize];
+        for px in buffer.chunks_exact_mut(4) {
+            px[0] = 0.6;
+            px[1] = 0.6;
+            px[2] = 0.6;
+            px[3] = 1.0;
+        }
+        decompose_image_to_tiles(&buffer, 512, 512, 1, &state.tile_cache).unwrap();
+
+        let l0_key = TileKey {
+            layer: 0,
+            coord: TileCoord { level: 0, x: 0, y: 0 },
+            stage: CacheStage::Composite,
+        };
+        compute_composite_tile(l0_key, &state).unwrap();
+
+        let mut found_parent = false;
+        while let Some(task) = state.scheduler.dequeue() {
+            if task.key.stage == CacheStage::Composite
+                && task.key.coord.level == 1
+                && task.key.coord.x == 0
+                && task.key.coord.y == 0
+            {
+                found_parent = true;
+                break;
+            }
+        }
+        assert!(found_parent, "L0 Composite must enqueue its L1 display parent");
+    }
+
+    #[test]
+    fn composite_layer0_cache_keeps_latest_generation() {
+        use engine_tiles::decompose::decompose_image_to_tiles;
+        use std::sync::atomic::Ordering;
+
+        let state = make_app_state_with_layer(1, false);
+        let mut buffer = vec![0.0f32; (512 * 512 * 4) as usize];
+        for px in buffer.chunks_exact_mut(4) {
+            px[0] = 0.4;
+            px[1] = 0.4;
+            px[2] = 0.4;
+            px[3] = 1.0;
+        }
+        decompose_image_to_tiles(&buffer, 512, 512, 1, &state.tile_cache).unwrap();
+
+        let key = TileKey {
+            layer: 0,
+            coord: TileCoord { level: 0, x: 0, y: 0 },
+            stage: CacheStage::Composite,
+        };
+
+        state.document_handle.mutate(|doc| {
+            doc.increment_generation();
+        });
+        let gen1 = state
+            .document_handle
+            .snapshot()
+            .generations
+            .document_gen
+            .load(Ordering::Acquire);
+        compute_composite_tile(key, &state).unwrap();
+        assert_eq!(state.tile_cache.entries.get(&key).unwrap().generation, gen1);
+
+        state.document_handle.mutate(|doc| {
+            doc.increment_generation();
+        });
+        let gen2 = state
+            .document_handle
+            .snapshot()
+            .generations
+            .document_gen
+            .load(Ordering::Acquire);
+        compute_composite_tile(key, &state).unwrap();
+        assert_eq!(state.tile_cache.entries.get(&key).unwrap().generation, gen2);
+
+        let mut stale = PixelTile::new();
+        stale.set(0, 0, 0, 0.99);
+        assert!(
+            !state
+                .tile_cache
+                .insert_fresh_gen(key, Arc::new(stale), gen1),
+            "older generation must not overwrite the latest Composite"
+        );
+        let entry = state.tile_cache.entries.get(&key).unwrap();
+        assert_eq!(entry.generation, gen2);
+        assert!((entry.tile.at(0, 0, 0) - 0.99).abs() > 0.5);
+        drop(entry);
+
+        state.document_handle.mutate(|doc| {
+            doc.increment_generation();
+        });
+        let gen3 = state
+            .document_handle
+            .snapshot()
+            .generations
+            .document_gen
+            .load(Ordering::Acquire);
+        reschedule_if_insert_rejected(&state, key, false);
+        assert!(state.tile_cache.entries.get(&key).unwrap().dirty.load(Ordering::Acquire));
+        assert!(state.scheduler.contains_key(&key));
+        assert!(gen3 > gen2);
+    }
+
+    #[test]
+    fn enqueue_coarser_parent_dedups_same_generation() {
+        use engine_tiles::decompose::decompose_image_to_tiles;
+
+        let mut doc = Document::new(DocumentId::new(1), 512, 512);
+        let layer = Layer::new(LayerId::new(1), LayerKind::Raster, 512, 512);
+        doc.root.push(LayerNode::Leaf(layer));
+        let mut state = make_app_state_with_layer(1, false);
+        state.document_handle = DocumentHandle::new(doc);
+        state.viewport.lock().unwrap().level = 1;
+
+        let mut buffer = vec![0.0f32; (512 * 512 * 4) as usize];
+        for px in buffer.chunks_exact_mut(4) {
+            px[3] = 1.0;
+        }
+        decompose_image_to_tiles(&buffer, 512, 512, 1, &state.tile_cache).unwrap();
+
+        for (x, y) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            let l0 = TileKey {
+                layer: 0,
+                coord: TileCoord { level: 0, x, y },
+                stage: CacheStage::Composite,
+            };
+            compute_composite_tile(l0, &state).unwrap();
+        }
+
+        let parent = TileKey {
+            layer: 0,
+            coord: TileCoord { level: 1, x: 0, y: 0 },
+            stage: CacheStage::Composite,
+        };
+        let mut parent_tasks = 0u32;
+        while let Some(task) = state.scheduler.dequeue() {
+            if task.key == parent {
+                parent_tasks += 1;
+            }
+        }
+        assert_eq!(
+            parent_tasks, 1,
+            "four L0 children must enqueue the L1 parent once"
         );
     }
 }

@@ -116,6 +116,9 @@ pub fn parse_tile_url(uri: &str) -> Result<ParsedTileUrl, TileProtocolError> {
             ))
         })?;
 
+    // Cache-bust query (`?g=`) must not count as extra path segments.
+    let path = path.split(['?', '#']).next().unwrap_or(path);
+
     // Split path into segments, filtering out empty segments from leading/trailing slashes
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
@@ -335,6 +338,16 @@ mod tests {
         assert_eq!(parsed.level, 0);
         assert_eq!(parsed.x, 5);
         assert_eq!(parsed.y, 6);
+    }
+
+    #[test]
+    fn accepts_cache_bust_query() {
+        let url = "tile://localhost/doc/1/layer/composite/stage/composite/l/0/3/4?g=99";
+        let parsed = parse_tile_url(url).unwrap();
+        assert_eq!(parsed.doc_id, 1);
+        assert_eq!(parsed.layer, LayerTarget::Composite);
+        assert_eq!(parsed.x, 3);
+        assert_eq!(parsed.y, 4);
     }
 
     #[test]

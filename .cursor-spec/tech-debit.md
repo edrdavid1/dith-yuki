@@ -16,6 +16,10 @@
 
 Production-release хвост (H–P, C4.1, Color Lab §6): [RELEASE_TRACKS.md](./RELEASE_TRACKS.md).
 Бета-гейт: [track-p-beta/](./track-p-beta/).
+Palette Strict/Guided: [track-q-palette-dither-modes/](./track-q-palette-dither-modes/)
+([requirements](./track-q-palette-dither-modes/requirements.md) ·
+[design](./track-q-palette-dither-modes/design.md) ·
+[tasks](./track-q-palette-dither-modes/tasks.md)).
 
 ---
 
@@ -334,6 +338,7 @@ Halftone/CRT/Glow.
 11. **P** — бета-гейт (dirty / Guard / Apply-replace / QA). P1 до O3.
     [track-p-beta/](./track-p-beta/). C4.1 и Color Lab §6 параллельно.
 12. **O** — in-app updates; Beta 1. Dirty из P смягчает Restart_Guard.
+    In tree 2026-08-13 (`0.2.0`); live GitHub check = O5.3.
 
 ---
 
@@ -431,7 +436,7 @@ updater-билд = `0.2.0` (0.1.0 ставится DMG один раз). Apple n
 
 Не новый движок: Dirty_Flag (`Arc::ptr_eq` Saved_Mark), один Unsaved_Guard
 на close / New / Open / O3, Color Lab Apply = replace выбранной палитры,
-ручной QA A §6.2 / D §5.3. Import Image as Layer — P3, только Beta 1
-(после P2). C4.1 и Color Lab §6 остаются своими папками.
+ручной QA A §6.2 / D §5.3. Import Image as Layer (P3) in tree 2026-08-13.
+C4.1 и Color Lab §6 остаются своими папками.
 
 Beta 0 = P1+P2+P4 + C4.1 + §6. Beta 1 = Beta 0 + P3 + O.

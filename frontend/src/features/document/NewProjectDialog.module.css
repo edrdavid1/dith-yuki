@@ -17,6 +17,16 @@
   box-shadow: 2px 2px 0px rgba(0, 0, 0, 0.3);
 }
 
+.new-project-dialog-wide {
+  width: 420px;
+  max-height: min(80vh, 640px);
+}
+
+.new-project-dialog-wide .new-project-body {
+  overflow: auto;
+  min-height: 0;
+}
+
 .new-project-body {
   display: flex;
   flex-direction: column;
@@ -106,4 +116,24 @@
 .new-project-btn-primary:hover:not(:disabled) {
   background: var(--bg-hover-accent);
   color: var(--color-hover);
+}
+
+.new-project-notes {
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 11px;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.new-project-progress-track {
+  height: 8px;
+  border: var(--border);
+  background: var(--bg-input);
+}
+
+.new-project-progress-fill {
+  height: 100%;
+  background: var(--color-black);
 }

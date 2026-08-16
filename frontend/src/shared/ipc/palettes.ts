@@ -44,8 +44,8 @@ export async function generateRampPalette(
   steps: number
 ): Promise<GeneratedColorDto[]> {
   return invoke<GeneratedColorDto[]>('generate_ramp_palette', {
-    from_hex: fromHex,
-    to_hex: toHex,
+    fromHex,
+    toHex,
     steps,
   });
 }
@@ -81,10 +81,10 @@ export async function generateHarmonyPalette(
   analogousSpread?: number
 ): Promise<GeneratedColorDto[]> {
   return invoke<GeneratedColorDto[]>('generate_harmony_palette', {
-    base_hex: baseHex,
+    baseHex,
     rule,
     count,
-    analogous_spread: analogousSpread ?? null,
+    analogousSpread: analogousSpread ?? null,
   });
 }
 

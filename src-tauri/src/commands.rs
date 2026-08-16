@@ -4,6 +4,7 @@
 //! Each command acquires the DocumentHandle and TileCache from app state,
 //! delegates to engine-project for mutations, and returns DTOs for serialization.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -108,6 +109,12 @@ pub struct SelectionChangedPayload {
     pub selected_filter_id: Option<String>,
 }
 
+/// Coalesced preview refresh requested while a tile pass is still in-flight.
+pub(crate) struct PendingPreviewRefresh {
+    pub layer_id: u32,
+    pub clear_residuals: bool,
+}
+
 /// Shared application state for Tauri commands.
 pub struct AppState {
     pub document_handle: DocumentHandle,
@@ -139,6 +146,15 @@ pub struct AppState {
     pub undo_manager: Mutex<crate::undo::UndoManager>,
     /// Track P: live Arc at last clean point (save / replace). Dirty = !ptr_eq.
     pub saved_snapshot: Mutex<Option<std::sync::Arc<engine_project::Document>>>,
+    /// Workers currently executing a dequeued task (including stale discards).
+    pub preview_pass_inflight: AtomicUsize,
+    /// Latest filter-driven preview refresh to run once the current pass drains.
+    pub pending_preview_refresh: Mutex<Option<PendingPreviewRefresh>>,
+    /// Held by the worker currently building an error-diffusion prefix by
+    /// anti-diagonals. `try_lock` only: losers fall back to depth-first
+    /// recursion instead of blocking a worker (and, under nested rayon, the
+    /// pool thread the diagonal work needs).
+    pub ed_prefix_lock: Mutex<()>,
 }
 
 // ============================================================================
@@ -152,12 +168,13 @@ pub struct DocumentChangedPayload {
     pub layer_id: Option<u32>,
 }
 
-/// Helper to emit document-changed to all windows.
+/// Helper to emit document-changed to all windows (including floating panels).
 pub(crate) fn emit_document_changed(app_handle: &AppHandle, kind: &str, layer_id: Option<u32>) {
-    let _ = app_handle.emit("document-changed", DocumentChangedPayload {
+    let payload = DocumentChangedPayload {
         kind: kind.to_string(),
         layer_id,
-    });
+    };
+    let _ = app_handle.emit_to(tauri::EventTarget::Any, "document-changed", payload);
 }
 
 /// Parse a 6-character hex string to LinearColor.
@@ -510,6 +527,36 @@ pub struct AddFilterRequest {
     pub params: serde_json::Value,
 }
 
+fn json_f32_adjust(params: &serde_json::Value, key: &str, default: f32) -> f32 {
+    let slot = params
+        .get("Adjust")
+        .filter(|v| v.is_object())
+        .unwrap_or(params);
+    slot.get(key)
+        .and_then(|v| v.as_f64())
+        .map(|v| v as f32)
+        .unwrap_or(default)
+}
+
+fn parse_adjust_params(
+    params: &serde_json::Value,
+    contrast: f32,
+    brightness: f32,
+    saturation: f32,
+    blur: f32,
+    sharpness: f32,
+    noise: f32,
+) -> engine_project::FilterParams {
+    engine_project::FilterParams::Adjust {
+        contrast: json_f32_adjust(params, "contrast", contrast),
+        brightness: json_f32_adjust(params, "brightness", brightness),
+        saturation: json_f32_adjust(params, "saturation", saturation),
+        blur: json_f32_adjust(params, "blur", blur),
+        sharpness: json_f32_adjust(params, "sharpness", sharpness),
+        noise: json_f32_adjust(params, "noise", noise),
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateFilterRequest {
     pub layer_id: u32,
@@ -519,6 +566,8 @@ pub struct UpdateFilterRequest {
     pub opacity: Option<f32>,
     #[serde(default)]
     pub blend_mode: Option<String>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -553,6 +602,7 @@ pub fn add_filter(
         "Glitch" => FilterKind::Glitch,
         "Glow" => FilterKind::Glow,
         "Crt" => FilterKind::Crt,
+        "Adjust" => FilterKind::Adjust,
         _ => return Err("Invalid filter kind".to_string()),
     };
 
@@ -600,12 +650,18 @@ pub fn add_filter(
             let gamma = req.params.get("gamma").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
             let output_black = req.params.get("output_black").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
             let output_white = req.params.get("output_white").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+            let channel_r = req.params.get("channel_r").and_then(|v| v.as_bool()).unwrap_or(true);
+            let channel_g = req.params.get("channel_g").and_then(|v| v.as_bool()).unwrap_or(true);
+            let channel_b = req.params.get("channel_b").and_then(|v| v.as_bool()).unwrap_or(true);
             FilterParams::Levels {
                 input_black,
                 input_white,
                 gamma,
                 output_black,
                 output_white,
+                channel_r,
+                channel_g,
+                channel_b,
             }
         }
         FilterKind::Dither => {
@@ -662,6 +718,7 @@ pub fn add_filter(
             let mask_strength = req.params.get("mask_strength").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
             FilterParams::Crt { period, strength, mask_strength }
         }
+        FilterKind::Adjust => parse_adjust_params(&req.params, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
         FilterKind::Placeholder => FilterParams::Placeholder("unknown".to_string()),
     } }; // closes inner `match kind` and outer `match req.kind.as_str()`
 
@@ -691,7 +748,7 @@ pub fn add_filter(
                     match node {
                         engine_project::LayerNode::Leaf(layer) => {
                             if layer.id.0 == layer_id {
-                                layer.filters.push(filter);
+                                layer.add_filter_instance(filter);
                                 return true;
                             }
                         }
@@ -745,8 +802,6 @@ pub fn remove_filter(
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
-    use engine_tiles::{invalidate, InvalidationEvent};
-
     crate::undo::with_document_undo(&state, Some(&app_handle), || {
         let mut found = false;
 
@@ -787,14 +842,11 @@ pub fn remove_filter(
         ));
     }
 
-    // Invalidate tile cache for the affected layer
-    invalidate(
-        &state.tile_cache,
-        InvalidationEvent::LayerFilterChanged { layer: req.layer_id },
+    request_preview_refresh(
+        &state,
+        req.layer_id,
+        layer_needs_dither_cache_reset(&state.document_handle.snapshot().root, req.layer_id),
     );
-
-    // Schedule viewport-visible dirty tiles for immediate recomputation
-    schedule_dirty_viewport_tiles(&state);
 
     emit_document_changed(&app_handle, "filter_removed", Some(req.layer_id));
 
@@ -820,8 +872,6 @@ pub fn reorder_filter(
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
-    use engine_tiles::{invalidate, InvalidationEvent};
-
     crate::undo::with_document_undo(&state, Some(&app_handle), || {
         let mut success = false;
 
@@ -867,11 +917,11 @@ pub fn reorder_filter(
     }
 
     // Invalidate and schedule recomputation since filter order affects output
-    invalidate(
-        &state.tile_cache,
-        InvalidationEvent::LayerFilterChanged { layer: req.layer_id },
+    request_preview_refresh(
+        &state,
+        req.layer_id,
+        layer_needs_dither_cache_reset(&state.document_handle.snapshot().root, req.layer_id),
     );
-    schedule_dirty_viewport_tiles(&state);
 
     emit_document_changed(&app_handle, "filter_reordered", Some(req.layer_id));
 
@@ -903,19 +953,19 @@ pub fn update_filter(
 
     // First, get the filter's kind so we know how to parse params
     let snapshot = state.document_handle.snapshot();
-    let (filter_kind, is_dither_v2) = {
+    let (filter_kind, is_dither_v2, existing_params) = {
         fn find_filter_kind(
             nodes: &[engine_project::LayerNode],
             layer_id: u32,
             filter_id: FilterInstanceId,
-        ) -> Option<(FilterKind, bool)> {
+        ) -> Option<(FilterKind, bool, FilterParams)> {
             for node in nodes.iter() {
                 match node {
                     engine_project::LayerNode::Leaf(layer) => {
                         if layer.id.0 == layer_id {
                             if let Some(filter) = layer.find_filter(filter_id) {
                                 let is_dither_v2 = matches!(&filter.params, FilterParams::DitherV2(_));
-                                return Some((filter.kind, is_dither_v2));
+                                return Some((filter.kind, is_dither_v2, filter.params.clone()));
                             }
                         }
                     }
@@ -928,17 +978,21 @@ pub fn update_filter(
             }
             None
         }
-        let (kind, is_dither_v2) = find_filter_kind(&snapshot.root, req.layer_id, filter_id)
+        let (kind, is_dither_v2, params) = find_filter_kind(&snapshot.root, req.layer_id, filter_id)
             .ok_or_else(|| format!(
                 "Filter {} not found on layer {}",
                 req.filter_id, req.layer_id
             ))?;
-        (kind, is_dither_v2)
+        (kind, is_dither_v2, params)
     };
     drop(snapshot);
 
+    let params_empty = req.params.as_object().map(|o| o.is_empty()).unwrap_or(false);
+
     // Parse new params based on the filter's kind
-    let new_params = if is_dither_v2 || (filter_kind == FilterKind::Dither && req.params.get("levels").is_some()) {
+    let new_params = if params_empty {
+        existing_params
+    } else if is_dither_v2 || (filter_kind == FilterKind::Dither && req.params.get("levels").is_some()) {
         // DitherV2 params: parse from JSON directly
         let dither_params: engine_project::filter::DitherParamsV2 =
             serde_json::from_value(req.params.clone())
@@ -980,12 +1034,18 @@ pub fn update_filter(
             let gamma = req.params.get("gamma").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
             let output_black = req.params.get("output_black").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
             let output_white = req.params.get("output_white").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+            let channel_r = req.params.get("channel_r").and_then(|v| v.as_bool()).unwrap_or(true);
+            let channel_g = req.params.get("channel_g").and_then(|v| v.as_bool()).unwrap_or(true);
+            let channel_b = req.params.get("channel_b").and_then(|v| v.as_bool()).unwrap_or(true);
             FilterParams::Levels {
                 input_black,
                 input_white,
                 gamma,
                 output_black,
                 output_white,
+                channel_r,
+                channel_g,
+                channel_b,
             }
         }
         FilterKind::Dither => {
@@ -1038,6 +1098,20 @@ pub fn update_filter(
             let mask_strength = req.params.get("mask_strength").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
             FilterParams::Crt { period, strength, mask_strength }
         }
+        FilterKind::Adjust => {
+            let (ec, eb, es, ebl, esh, en) = match existing_params {
+                FilterParams::Adjust {
+                    contrast,
+                    brightness,
+                    saturation,
+                    blur,
+                    sharpness,
+                    noise,
+                } => (contrast, brightness, saturation, blur, sharpness, noise),
+                _ => (0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+            };
+            parse_adjust_params(&req.params, ec, eb, es, ebl, esh, en)
+        }
         FilterKind::Placeholder => FilterParams::Placeholder("unknown".to_string()),
     } }; // closes inner `match filter_kind` and outer `if is_dither_v2 ... else`
 
@@ -1058,12 +1132,6 @@ pub fn update_filter(
     temp_filter.validate().map_err(|e| format!("Invalid parameters: {}", e))?;
 
     crate::undo::with_document_undo(&state, Some(&app_handle), || {
-        // Clear error residuals on DitherV2 parameter change (Req 10.4)
-        if matches!(&new_params, FilterParams::DitherV2(_)) {
-            state.error_residuals.clear();
-            state.block_representatives.clear_dithered();
-        }
-
         // Apply the update within a document mutation
         let layer_id = req.layer_id;
         let mut found = false;
@@ -1075,6 +1143,7 @@ pub fn update_filter(
             new_params: FilterParams,
             opacity: Option<f32>,
             blend_mode: Option<engine_project::BlendMode>,
+            enabled: Option<bool>,
         ) -> bool {
             for node in nodes.iter_mut() {
                 match node {
@@ -1093,6 +1162,9 @@ pub fn update_filter(
                                 if let Some(blend_mode) = blend_mode {
                                     filter.blend_mode = blend_mode;
                                 }
+                                if let Some(enabled) = enabled {
+                                    filter.enabled = enabled;
+                                }
                                 return true;
                             }
                         }
@@ -1105,6 +1177,7 @@ pub fn update_filter(
                             new_params.clone(),
                             opacity,
                             blend_mode,
+                            enabled,
                         ) {
                             return true;
                         }
@@ -1121,6 +1194,7 @@ pub fn update_filter(
             new_params.clone(),
             req.opacity,
             parsed_blend,
+            req.enabled,
         );
         if found {
             doc.increment_generation();
@@ -1140,16 +1214,12 @@ pub fn update_filter(
         snapshot.generations.increment_layer_gen(layer_id);
     }
 
-    // Invalidate tile cache for the affected layer (Processed + Composite cascade)
-    engine_tiles::invalidation::invalidate(
-        &state.tile_cache,
-        engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
-            layer: req.layer_id,
-        },
+    // Coalesce full invalidate/clear while a previous tile pass is still running.
+    request_preview_refresh(
+        &state,
+        layer_id,
+        layer_needs_dither_cache_reset(&state.document_handle.snapshot().root, layer_id),
     );
-
-    // Schedule viewport-visible dirty tiles for immediate recomputation (requirement 4.4)
-    schedule_dirty_viewport_tiles(&state);
 
     emit_document_changed(&app_handle, "filter_updated", Some(layer_id));
 
@@ -1163,6 +1233,9 @@ pub fn update_filter(
 
 /// Shared dimension cap for `load_image` and `create_document` (inclusive).
 pub const MAX_DOCUMENT_DIMENSION: u32 = 8192;
+
+/// Same raster types as Open Image (`load_image`).
+pub const IMAGE_IMPORT_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp"];
 
 /// Background fill for a blank document (`create_document`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -1193,6 +1266,47 @@ pub fn validate_document_dimensions(width: u32, height: u32) -> Result<(), Strin
         ));
     }
     Ok(())
+}
+
+/// Decode a raster file to RGBA f32 (`u8 as f32 / 255.0`), same path as `load_image`.
+fn decode_image_to_rgba_f32(path: &str) -> Result<(u32, u32, Vec<f32>), String> {
+    let img = image::open(path).map_err(|e| format!("IO error: {e}"))?;
+    let img_rgba = img.to_rgba8();
+    let width = img_rgba.width();
+    let height = img_rgba.height();
+    validate_document_dimensions(width, height)?;
+
+    let pixel_count = (width as usize) * (height as usize);
+    let mut rgba_f32 = Vec::with_capacity(pixel_count * 4);
+    for pixel in img_rgba.pixels() {
+        rgba_f32.push(pixel[0] as f32 / 255.0);
+        rgba_f32.push(pixel[1] as f32 / 255.0);
+        rgba_f32.push(pixel[2] as f32 / 255.0);
+        rgba_f32.push(pixel[3] as f32 / 255.0);
+    }
+    Ok((width, height, rgba_f32))
+}
+
+/// Place `src` at the document origin. Clip if larger; transparent remainder if smaller. No scale.
+pub fn place_image_at_origin(
+    src: &[f32],
+    src_w: u32,
+    src_h: u32,
+    dst_w: u32,
+    dst_h: u32,
+) -> Vec<f32> {
+    let mut dst = vec![0.0; (dst_w as usize) * (dst_h as usize) * 4];
+    let copy_w = src_w.min(dst_w) as usize;
+    let copy_h = src_h.min(dst_h) as usize;
+    let src_stride = src_w as usize * 4;
+    let dst_stride = dst_w as usize * 4;
+    let row_bytes = copy_w * 4;
+    for y in 0..copy_h {
+        let src_row = y * src_stride;
+        let dst_row = y * dst_stride;
+        dst[dst_row..dst_row + row_bytes].copy_from_slice(&src[src_row..src_row + row_bytes]);
+    }
+    dst
 }
 
 /// RGBA f32 buffer in the same numeric space as `load_image` (`u8 as f32 / 255.0`).
@@ -1262,24 +1376,7 @@ pub async fn load_image(
 
     // Do heavy I/O and CPU work in a blocking thread
     let (width, height, rgba_f32) = tauri::async_runtime::spawn_blocking(move || {
-        let img = image::open(&path).map_err(|e| format!("IO error: {}", e))?;
-
-        let img_rgba = img.to_rgba8();
-        let width = img_rgba.width();
-        let height = img_rgba.height();
-
-        validate_document_dimensions(width, height)?;
-
-        let pixel_count = (width as usize) * (height as usize);
-        let mut rgba_f32: Vec<f32> = Vec::with_capacity(pixel_count * 4);
-        for pixel in img_rgba.pixels() {
-            rgba_f32.push(pixel[0] as f32 / 255.0);
-            rgba_f32.push(pixel[1] as f32 / 255.0);
-            rgba_f32.push(pixel[2] as f32 / 255.0);
-            rgba_f32.push(pixel[3] as f32 / 255.0);
-        }
-
-        Ok::<_, String>((width, height, rgba_f32))
+        decode_image_to_rgba_f32(&path)
     })
     .await
     .map_err(|e| format!("Load error: {}", e))??;
@@ -1316,6 +1413,79 @@ pub async fn create_document(
     let response = install_raster_document(&state, width, height, &rgba_f32, Some(&app_handle))?;
     emit_document_changed(&app_handle, "document_created", None);
     Ok(response)
+}
+
+/// Add a decoded raster as a new layer at the document origin (clip, no scale).
+fn import_raster_layer(
+    state: &AppState,
+    src_w: u32,
+    src_h: u32,
+    src_rgba: &[f32],
+    app: Option<&AppHandle>,
+) -> Result<LayerIdResponse, String> {
+    use engine_tiles::decompose::decompose_image_to_tiles;
+
+    let snapshot = state.document_handle.snapshot();
+    if snapshot.root.is_empty() {
+        return Err("No document open".to_string());
+    }
+    let dst_w = snapshot.width;
+    let dst_h = snapshot.height;
+    let doc_id = snapshot.id;
+    let insert_index = snapshot.root.len();
+    drop(snapshot);
+
+    let placed = place_image_at_origin(src_rgba, src_w, src_h, dst_w, dst_h);
+
+    crate::undo::with_document_undo(state, app, || {
+        let args = AddLayerArgs {
+            kind: LayerKind::Raster,
+            parent_group: None,
+            index: insert_index,
+            width: dst_w,
+            height: dst_h,
+        };
+        let layer_id = engine_commands::add_layer(
+            &state.document_handle,
+            &state.tile_cache,
+            doc_id,
+            args,
+        )
+        .map_err(|e| format!("Failed to add layer: {e:?}"))?;
+
+        decompose_image_to_tiles(&placed, dst_w, dst_h, layer_id.0, &state.tile_cache)
+            .map_err(|e| format!("Tile decomposition error: {e}"))?;
+
+        if let Some(handle) = app {
+            emit_document_changed(handle, "layer_added", Some(layer_id.0));
+        }
+        schedule_dirty_viewport_tiles(state);
+        Ok(LayerIdResponse {
+            layer_id: layer_id.0,
+        })
+    })
+}
+
+/// Import an image as a new raster layer without replacing the document.
+#[tauri::command]
+pub async fn import_image_layer(
+    path: String,
+    app_handle: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<LayerIdResponse, String> {
+    use engine_io::sandbox;
+
+    let resolved = sandbox::resolve_user_path(&path, IMAGE_IMPORT_EXTENSIONS)
+        .map_err(|e| format!("Path error: {e}"))?;
+    let resolved_str = resolved.to_string_lossy().into_owned();
+
+    let (width, height, rgba_f32) = tauri::async_runtime::spawn_blocking(move || {
+        decode_image_to_rgba_f32(&resolved_str)
+    })
+    .await
+    .map_err(|e| format!("Load error: {e}"))??;
+
+    import_raster_layer(&state, width, height, &rgba_f32, Some(&app_handle))
 }
 
 // ============================================================================
@@ -1717,9 +1887,84 @@ pub(crate) fn schedule_dirty_viewport_tiles(state: &AppState) {
                 layer_generation: 0,
                 priority: Priority::Immediate,
             };
-            state.scheduler.enqueue(task);
+            state.scheduler.enqueue_dedup(task);
             state.worker_wake.notify_one();
         }
+    }
+}
+
+fn preview_pass_busy(state: &AppState) -> bool {
+    state.preview_pass_inflight.load(Ordering::Acquire) > 0
+        || state.scheduler.queued_len() > 0
+}
+
+/// True if this layer still has an enabled dither filter (ordered or ED).
+/// Changing an earlier filter (Adjust/Curves/…) must drop residuals / mega-pixel
+/// block cache so later dithering is recomputed from the new input.
+fn layer_needs_dither_cache_reset(nodes: &[engine_project::LayerNode], layer_id: u32) -> bool {
+    use engine_project::filter::FilterParams;
+    for node in nodes {
+        match node {
+            engine_project::LayerNode::Leaf(layer) if layer.id.0 == layer_id => {
+                return layer.filters.iter().any(|f| {
+                    f.enabled
+                        && matches!(
+                            f.params,
+                            FilterParams::DitherV2(_) | FilterParams::Dither { .. }
+                        )
+                });
+            }
+            engine_project::LayerNode::Group(group) => {
+                if layer_needs_dither_cache_reset(&group.children, layer_id) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Run (or coalesce) the expensive filter preview pass: residuals clear +
+/// layer invalidate + viewport schedule.
+pub(crate) fn request_preview_refresh(state: &AppState, layer_id: u32, clear_residuals: bool) {
+    if preview_pass_busy(state) {
+        let mut pending = state.pending_preview_refresh.lock().unwrap();
+        let clear = clear_residuals
+            || pending
+                .as_ref()
+                .map(|p| p.clear_residuals)
+                .unwrap_or(false);
+        *pending = Some(PendingPreviewRefresh {
+            layer_id,
+            clear_residuals: clear,
+        });
+        return;
+    }
+    run_preview_refresh(state, layer_id, clear_residuals);
+}
+
+fn run_preview_refresh(state: &AppState, layer_id: u32, clear_residuals: bool) {
+    if clear_residuals {
+        state.error_residuals.clear();
+        state.block_representatives.evict_layer(layer_id);
+    }
+    engine_tiles::invalidation::invalidate(
+        &state.tile_cache,
+        engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { layer: layer_id },
+    );
+    schedule_dirty_viewport_tiles(state);
+}
+
+/// After a worker finishes (or discards) a task, flush a coalesced preview
+/// refresh if the queues are idle.
+pub(crate) fn on_preview_task_finished(state: &AppState) {
+    if preview_pass_busy(state) {
+        return;
+    }
+    let pending = state.pending_preview_refresh.lock().unwrap().take();
+    if let Some(p) = pending {
+        run_preview_refresh(state, p.layer_id, p.clear_residuals);
     }
 }
 
@@ -3132,10 +3377,14 @@ pub fn set_selection(
     sel.selected_filter_id = filter_id.clone();
     drop(sel);
 
-    let _ = app_handle.emit("selection-changed", SelectionChangedPayload {
-        selected_layer_id: layer_id,
-        selected_filter_id: filter_id,
-    });
+    let _ = app_handle.emit_to(
+        tauri::EventTarget::Any,
+        "selection-changed",
+        SelectionChangedPayload {
+            selected_layer_id: layer_id,
+            selected_filter_id: filter_id,
+        },
+    );
 
     Ok(())
 }
@@ -3145,6 +3394,12 @@ pub fn set_selection(
 pub fn get_selection(state: State<'_, Arc<AppState>>) -> Result<SelectionState, String> {
     let sel = state.selection.lock().map_err(|e| e.to_string())?;
     Ok(sel.clone())
+}
+
+/// Track O: launch auto-check is release-only (`cfg!(debug_assertions)` skip).
+#[tauri::command]
+pub fn is_release_build() -> bool {
+    !cfg!(debug_assertions)
 }
 
 /// Minimal AppState for unit/integration tests (commands + undo).
@@ -3181,6 +3436,9 @@ pub(crate) fn make_test_app_state() -> Arc<AppState> {
         project_path: Mutex::new(None),
         undo_manager: Mutex::new(crate::undo::UndoManager::new()),
         saved_snapshot: Mutex::new(None),
+        preview_pass_inflight: AtomicUsize::new(0),
+        pending_preview_refresh: Mutex::new(None),
+        ed_prefix_lock: Mutex::new(()),
     })
 }
 
@@ -4397,5 +4655,202 @@ mod tests {
         let dto = state.undo_manager.lock().unwrap().state_dto();
         assert!(!dto.can_undo);
         assert!(!dto.can_redo);
+    }
+
+    // ========================================================================
+    // Track P3: Import Image as Layer
+    // ========================================================================
+
+    #[test]
+    fn is_release_build_false_under_debug_assertions() {
+        assert!(
+            !is_release_build(),
+            "unit tests compile with debug_assertions; launch auto-check must stay off"
+        );
+    }
+
+    fn raw_pixel_at(state: &AppState, layer: u32, x: u32, y: u32) -> [f32; 4] {
+        use engine_tiles::{HALO, TILE_SIZE, TileCoord};
+        let key = TileKey {
+            layer,
+            coord: TileCoord {
+                level: 0,
+                x: x / TILE_SIZE,
+                y: y / TILE_SIZE,
+            },
+            stage: CacheStage::Raw,
+        };
+        let entry = state
+            .tile_cache
+            .entries
+            .get(&key)
+            .unwrap_or_else(|| panic!("missing raw tile for layer {layer} at ({x},{y})"));
+        let lx = (x % TILE_SIZE) + HALO;
+        let ly = (y % TILE_SIZE) + HALO;
+        [
+            entry.tile.at(lx, ly, 0),
+            entry.tile.at(lx, ly, 1),
+            entry.tile.at(lx, ly, 2),
+            entry.tile.at(lx, ly, 3),
+        ]
+    }
+
+    fn solid_rgba(w: u32, h: u32, r: f32, g: f32, b: f32, a: f32) -> Vec<f32> {
+        let mut buf = Vec::with_capacity((w * h * 4) as usize);
+        for _ in 0..(w * h) {
+            buf.extend_from_slice(&[r, g, b, a]);
+        }
+        buf
+    }
+
+    #[test]
+    fn place_image_at_origin_pads_smaller_and_clips_larger() {
+        let src = vec![1.0, 0.0, 0.0, 1.0];
+        let padded = place_image_at_origin(&src, 1, 1, 2, 1);
+        assert_eq!(padded, vec![1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]);
+
+        let wide = vec![
+            1.0, 0.0, 0.0, 1.0, // x=0
+            0.0, 1.0, 0.0, 1.0, // x=1 discarded
+        ];
+        let clipped = place_image_at_origin(&wide, 2, 1, 1, 1);
+        assert_eq!(clipped, vec![1.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn import_raster_layer_requires_open_document() {
+        let state = make_test_app_state();
+        let src = solid_rgba(2, 2, 1.0, 0.0, 0.0, 1.0);
+        let err = import_raster_layer(&state, 2, 2, &src, None).unwrap_err();
+        assert!(err.contains("No document open"));
+    }
+
+    #[test]
+    fn import_smaller_image_leaves_transparent_remainder() {
+        let state = make_test_app_state();
+        let bg = blank_rgba_f32(16, 16, BlankBackground::White);
+        install_raster_document(&state, 16, 16, &bg, None).unwrap();
+
+        let src = solid_rgba(4, 4, 1.0, 0.0, 0.0, 1.0);
+        let resp = import_raster_layer(&state, 4, 4, &src, None).unwrap();
+        assert_eq!(resp.layer_id, 2);
+
+        let snap = state.document_handle.snapshot();
+        assert_eq!(snap.root.len(), 2);
+        assert_eq!(snap.width, 16);
+        assert_eq!(snap.height, 16);
+
+        let origin = raw_pixel_at(&state, 2, 0, 0);
+        assert!((origin[0] - 1.0).abs() < 1e-5 && origin[3] > 0.9);
+        let remainder = raw_pixel_at(&state, 2, 8, 0);
+        assert!(remainder[3].abs() < 1e-5, "outside source must stay transparent");
+        let base = raw_pixel_at(&state, 1, 0, 0);
+        assert!((base[0] - 1.0).abs() < 1e-5 && (base[3] - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn import_larger_image_clips_to_document() {
+        let state = make_test_app_state();
+        let bg = blank_rgba_f32(8, 8, BlankBackground::Transparent);
+        install_raster_document(&state, 8, 8, &bg, None).unwrap();
+
+        // 12×8: unique colors at (0,0) red, (7,0) blue, (11,0) green (green must be dropped).
+        let mut src = vec![0.0; 12 * 8 * 4];
+        src[0..4].copy_from_slice(&[1.0, 0.0, 0.0, 1.0]);
+        let i7 = 7 * 4;
+        src[i7..i7 + 4].copy_from_slice(&[0.0, 0.0, 1.0, 1.0]);
+        let i11 = 11 * 4;
+        src[i11..i11 + 4].copy_from_slice(&[0.0, 1.0, 0.0, 1.0]);
+
+        let resp = import_raster_layer(&state, 12, 8, &src, None).unwrap();
+        let red = raw_pixel_at(&state, resp.layer_id, 0, 0);
+        let blue = raw_pixel_at(&state, resp.layer_id, 7, 0);
+        assert!((red[0] - 1.0).abs() < 1e-5);
+        assert!((blue[2] - 1.0).abs() < 1e-5);
+        let snap = state.document_handle.snapshot();
+        assert_eq!(snap.width, 8);
+        assert_eq!(snap.height, 8);
+    }
+
+    #[test]
+    fn import_raster_layer_does_not_rewrite_existing_filter_palette_id() {
+        use engine_project::filter::{
+            DitherColorMode, DitherModeV2, DitherParamsV2, FilterInstance, FilterKind, FilterParams,
+        };
+        use engine_project::types::PaletteId;
+
+        let state = make_test_app_state();
+        let bg = blank_rgba_f32(8, 8, BlankBackground::White);
+        install_raster_document(&state, 8, 8, &bg, None).unwrap();
+
+        state.document_handle.mutate(|doc| {
+            if let engine_project::layer::LayerNode::Leaf(layer) = &mut doc.root[0] {
+                layer.filters.push(FilterInstance::new(
+                    FilterKind::Dither,
+                    FilterParams::DitherV2(DitherParamsV2 {
+                        mode: DitherModeV2::Bayer4x4,
+                        levels: 4,
+                        threshold_scale: 1.0,
+                        pixel_size: 1,
+                        color_mode: DitherColorMode::Rgb,
+                        palette_id: Some(PaletteId::new(7)),
+                        ..Default::default()
+                    }),
+                ));
+            }
+        });
+
+        let src = solid_rgba(2, 2, 0.0, 1.0, 0.0, 1.0);
+        import_raster_layer(&state, 2, 2, &src, None).unwrap();
+
+        let snap = state.document_handle.snapshot();
+        match &snap.root[0] {
+            engine_project::layer::LayerNode::Leaf(layer) => match &layer.filters[0].params {
+                FilterParams::DitherV2(p) => {
+                    assert_eq!(p.palette_id, Some(PaletteId::new(7)));
+                }
+                other => panic!("expected DitherV2, got {other:?}"),
+            },
+            _ => panic!("expected leaf"),
+        }
+        assert_eq!(snap.root.len(), 2);
+    }
+
+    #[test]
+    fn preview_refresh_coalesces_while_pass_in_flight() {
+        let state = make_test_app_state();
+        assert_eq!(state.error_residuals.clear_count(), 0);
+
+        state
+            .preview_pass_inflight
+            .store(1, std::sync::atomic::Ordering::Release);
+        for _ in 0..4 {
+            request_preview_refresh(&state, 1, true);
+        }
+        assert_eq!(
+            state.error_residuals.clear_count(),
+            0,
+            "in-flight pass must stash instead of clearing residuals four times"
+        );
+        assert!(state.pending_preview_refresh.lock().unwrap().is_some());
+
+        state
+            .preview_pass_inflight
+            .store(0, std::sync::atomic::Ordering::Release);
+        on_preview_task_finished(&state);
+        assert_eq!(
+            state.error_residuals.clear_count(),
+            1,
+            "idle flush applies the latest coalesced refresh once"
+        );
+        assert!(state.pending_preview_refresh.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn preview_refresh_runs_immediately_when_idle() {
+        let state = make_test_app_state();
+        request_preview_refresh(&state, 1, true);
+        request_preview_refresh(&state, 1, true);
+        assert_eq!(state.error_residuals.clear_count(), 2);
     }
 }

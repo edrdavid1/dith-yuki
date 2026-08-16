@@ -269,6 +269,7 @@ fn halftone_parity_within_eps() {
             threshold_scale: 1.0,
             tile_x: 0,
             tile_y: 0,
+            dither_alpha: false,
         },
     )
     .unwrap();
@@ -289,6 +290,7 @@ fn halftone_seam_tile_offset() {
             threshold_scale: 1.0,
             tile_x: 0,
             tile_y: 0,
+            dither_alpha: false,
         },
     )
     .unwrap();
@@ -300,6 +302,7 @@ fn halftone_seam_tile_offset() {
             threshold_scale: 1.0,
             tile_x: 1,
             tile_y: 0,
+            dither_alpha: false,
         },
     )
     .unwrap();

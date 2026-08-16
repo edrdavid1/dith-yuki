@@ -57,6 +57,8 @@ export function useEffectLayer(
   const layerIdRef = useRef<number | null>(layerId);
   const paramsRef = useRef<FilterParams | null>(null);
   const filterIdRef = useRef<string | null>(null);
+  const inflightRef = useRef(false);
+  const queuedPatchRef = useRef<Record<string, unknown> | null>(null);
 
   layerIdRef.current = layerId;
 
@@ -111,12 +113,10 @@ export function useEffectLayer(
     dispatch(patchFilter({ id: filterIdRef.current, ...patch }));
     setError(null);
 
-    const currentParams = paramsRef.current as unknown as Record<string, unknown>;
-    const { type: _type, ...params } = currentParams;
-
     blendDebounceRef.current = setTimeout(async () => {
       try {
-        await updateFilter(layerIdRef.current!, filterIdRef.current!, params, patch);
+        // Empty params: opacity/blend only — do not zero the rest of the filter.
+        await updateFilter(layerIdRef.current!, filterIdRef.current!, {}, patch);
       } catch (err) {
         logIpcError('useEffectLayer.updateFilterBlend', err);
         setOptimisticOpacity(null);
@@ -145,13 +145,36 @@ export function useEffectLayer(
     setError(null);
 
     debounceRef.current = setTimeout(async () => {
-      try {
-        await updateFilter(layerIdRef.current!, filterIdRef.current!, params);
-      } catch (err) {
-        logIpcError('useEffectLayer.updateFilter', err);
-        setOptimisticParams(prevParams);
-        setError(formatIpcError(err));
+      const fullParams = (): Record<string, unknown> => {
+        const current = paramsRef.current as unknown as Record<string, unknown> | null;
+        if (!current) return params;
+        const { type: _type, ...rest } = current;
+        return rest;
+      };
+
+      const flush = async (patch: Record<string, unknown>) => {
+        inflightRef.current = true;
+        try {
+          await updateFilter(layerIdRef.current!, filterIdRef.current!, patch);
+        } catch (err) {
+          logIpcError('useEffectLayer.updateFilter', err);
+          setOptimisticParams(prevParams);
+          setError(formatIpcError(err));
+        } finally {
+          inflightRef.current = false;
+        }
+        const queued = queuedPatchRef.current;
+        queuedPatchRef.current = null;
+        if (queued) {
+          await flush(fullParams());
+        }
+      };
+
+      if (inflightRef.current) {
+        queuedPatchRef.current = { ...queuedPatchRef.current, ...params };
+        return;
       }
+      await flush(fullParams());
     }, DEBOUNCE_MS);
   }, []);
 

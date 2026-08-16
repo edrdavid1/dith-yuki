@@ -1,0 +1,43 @@
+.channel-toggles {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.channel-btn {
+  flex: 1;
+  height: 28px;
+  border: var(--border);
+  border-radius: 0;
+  background: var(--bg-window);
+  color: var(--text-color);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: var(--font-family);
+  font-weight: 600;
+  box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+}
+
+.channel-btn:hover {
+  background: var(--bg-hover);
+}
+
+.channel-btn:active {
+  box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light);
+}
+
+.channel-btn.off {
+  opacity: 0.35;
+}
+
+.channel-btn.r.on {
+  color: #e24b4b;
+}
+
+.channel-btn.g.on {
+  color: #3cb86a;
+}
+
+.channel-btn.b.on {
+  color: #4b7fe2;
+}

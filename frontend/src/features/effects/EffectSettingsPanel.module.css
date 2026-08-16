@@ -50,6 +50,7 @@
   background: var(--bg-window);
   position: relative;
   box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+  color: var(--text-color);
 }
 
 .effect-chooser-row-label {
@@ -113,22 +114,24 @@
 
 .pattern-actions {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 6px;
   padding: 10px 10px 12px;
 }
 
 .pattern-action-btn {
   height: 28px;
-  padding: 0 10px;
+  width: 36px;
+  padding: 0;
   border: none;
   background: var(--bg-window);
   color: var(--text-color);
   font-family: var(--font-family);
-  font-size: 13px;
   cursor: pointer;
   box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
-  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .pattern-action-btn:hover:not(:disabled) {

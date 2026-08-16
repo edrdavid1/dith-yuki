@@ -14,7 +14,7 @@ export async function updateFilter(
   layerId: number,
   filterId: string,
   params: Record<string, unknown>,
-  extras?: { opacity?: number; blend_mode?: string }
+  extras?: { opacity?: number; blend_mode?: string; enabled?: boolean }
 ): Promise<void> {
   return invoke<void>('update_filter', {
     req: {
@@ -23,6 +23,7 @@ export async function updateFilter(
       params,
       opacity: extras?.opacity ?? null,
       blend_mode: extras?.blend_mode ?? null,
+      enabled: extras?.enabled ?? null,
     },
   });
 }

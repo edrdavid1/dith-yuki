@@ -155,7 +155,8 @@
   border: none;
   cursor: pointer;
   position: relative;
-  padding: 8px;
+  padding: 0;
+  color: var(--text-color);
   box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
 }
 
@@ -212,6 +213,7 @@
   align-items: center;
   justify-content: center;
   background: var(--bg-window);
+  color: var(--text-color);
   position: relative;
   box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
 }

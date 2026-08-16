@@ -65,6 +65,7 @@ fn arb_valid_params() -> impl Strategy<Value = DitherParamsV2> {
                 threshold_bias: ((levels as i32 % 11) - 5) as f32 / 10.0,
                 pattern_angle: (pixel_size as f32) * 15.0,
                 serpentine: levels % 2 == 0,
+                dither_alpha: pixel_size % 2 == 0,
                 ..Default::default()
             }
         })

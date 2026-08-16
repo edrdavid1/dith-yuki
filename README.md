@@ -74,10 +74,18 @@ The application window will open with:
 npm run tauri:build
 
 # Find the binary in:
-# macOS: target/release/bundle/dmg/Dither.app
+# macOS: target/release/bundle/dmg/Dither.dmg
 # Linux: target/release/bundle/deb/dither_*.deb
 # Windows: target/release/bundle/msi/Dither_*.msi
 ```
+
+### Beta updates (0.2.0+)
+
+The first updater-capable build is **0.2.0**. Copies of 0.1.0 must install a DMG once; after that, Help → Check for Updates (and a launch prompt in release builds) pulls `latest.json` from GitHub Releases.
+
+Updates are Minisign-verified (`plugins.updater.pubkey` in `src-tauri/tauri.conf.json`). Tag `v*` runs `.github/workflows/release.yml`, which fails closed without `TAURI_SIGNING_PRIVATE_KEY`. Apple code signing / notarization is optional; Gatekeeper may warn on the first unsigned DMG open.
+
+GPU filters stay opt-in: `DITHER_GPU=1`.
 
 ## Project Structure
 
@@ -149,64 +157,29 @@ dither-yuki-2/
 
 ## Architecture
 
+As-built (0.2.0): **[ARCHITECTURE.md](./ARCHITECTURE.md)**. Tile math and ED/GPU:
+**[TILE_PIPELINE.md](./TILE_PIPELINE.md)**. Палитровый дизер (Strict / Guided / Mixed / Simple):
+**[PALETTE_DITHER.md](./PALETTE_DITHER.md)**. Оптимизация — ARCHITECTURE §13.
+
+Preview is Canvas2D + `tile://` push. GPU (`engine-gpu`) is optional wgpu compute
+for Bayer/Halftone/CRT (`DITHER_GPU=1`), not the display path.
+
 ### High-Level Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    Dither Application                   │
 ├─────────────────────────────────────────────────────────┤
-│                                                          │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │         React Frontend (TypeScript)             │   │
-│  │  ├─ Canvas Component (Web Worker integration)   │   │
-│  │  ├─ Layers Panel                               │   │
-│  │  ├─ Effects Panel                              │   │
-│  │  └─ Project Browser                            │   │
-│  └─────────────────────────────────────────────────┘   │
-│                       ↕                                  │
-│           (Tauri Commands + Message Events)             │
-│                       ↕                                  │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │        Rust Backend (Tauri Runtime)             │   │
-│  │  ├─ Custom Protocol Handler                     │   │
-│  │  ├─ Async Command Executor                      │   │
-│  │  └─ Event Emitter                               │   │
-│  └─────────────────────────────────────────────────┘   │
-│                       ↕                                  │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │         Engine Modules (Rust Crates)            │   │
-│  │  ├─ engine-tiles   (Tile cache, pyramid)        │   │
-│  │  ├─ engine-core    (Data model, filters)        │   │
-│  │  ├─ engine-color   (Color processing)           │   │
-│  │  ├─ engine-io      (Image/video codecs)         │   │
-│  │  └─ engine-project (Storage, project format)    │   │
-│  └─────────────────────────────────────────────────┘   │
-│                       ↕                                  │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │         System Resources (OS Integration)        │   │
-│  │  ├─ GPU (WebGL rendering)                       │   │
-│  │  ├─ File System (image I/O)                     │   │
-│  │  ├─ Memory (tile cache)                         │   │
-│  │  └─ CPU (tile processing)                       │   │
-│  └─────────────────────────────────────────────────┘   │
-│                                                          │
+│  React (RTK)  AppLayout / TileCanvas / Color Lab        │
+│       ↕  Tauri IPC + tile:// + tile-ready events        │
+│  src-tauri    AppState, workers, protocol, undo         │
+│       ↕                                                 │
+│  engine-project / tiles / color / gpu / io              │
 └─────────────────────────────────────────────────────────┘
 ```
 
-### Development Phases
-
-| Phase | Focus | Status | Artifacts |
-|-------|-------|--------|-----------|
-| **0** | Skeleton | ✅ Complete | Workspace, Tauri + React scaffold, build pipeline |
-| **1** | Tile Engine | 🔄 Next | TileCache, pyramid downsampling, scheduler, invalidation |
-| **2** | Document Model | 📋 Planned | Layer, Document, Filter, BlendMode implementations |
-| **3** | Tauri API | 📋 Planned | Custom commands, async processing, events |
-| **4** | UI Canvas | 📋 Planned | Web Worker integration, tile-based rendering, zoom/pan |
-| **5** | Color Pipeline | 📋 Planned | ICC profiles, LUT, color space conversions |
-| **6** | Project Format | 📋 Planned | SQLite schema, undo/redo, project I/O |
-| **7+** | Effects | 📋 Future | Dithering, glitch, video, batch processing |
-
-See **[agent-kickoff-plan.md](./agent-kickoff-plan.md)** for detailed phase descriptions.
+Старый phase-план (0–7) выполнен треками A–P. Не использовать таблицу
+«Phase 1 Next» как статус.
 
 ## Development Workflow
 
@@ -261,36 +234,12 @@ RUST_LOG=debug npm run tauri:dev
 
 ## Architecture Documentation
 
-This project is documented across several files:
-
-1. **[tile-engine-architecture.md](./tile-engine-architecture.md)**
-   - Tile caching strategy
-   - Pyramid downsampling
-   - Scheduler and invalidation
-   - Memory management
-
-2. **[tauri-api-document-model.md](./tauri-api-document-model.md)**
-   - Document model (Layer, Filter, BlendMode)
-   - Tauri command interface
-   - Custom protocol specification
-   - Message event system
-
-3. **[agent-kickoff-plan.md](./agent-kickoff-plan.md)**
-   - Phase-by-phase breakdown
-   - Implementation milestones
-   - Dependency graph
-   - Effort estimates
-
-4. **[TAURI_INTEGRATION.md](./docs/TAURI_INTEGRATION.md)** (this project)
-   - Frontend-backend integration
-   - Build configuration
-   - Development workflow
-   - Common troubleshooting
-
-5. **[CONTRIBUTING.md](./docs/CONTRIBUTING.md)**
-   - Development setup
-   - Code style guidelines
-   - Testing requirements
+1. **[ARCHITECTURE.md](./ARCHITECTURE.md)** — as-built система. **§13 = стоимость тайла / рычаги оптимизации.**
+2. **[TILE_PIPELINE.md](./TILE_PIPELINE.md)** — координаты, ED wavefront, GPU contract, **§11 cost model.**
+3. **[PALETTE_DITHER.md](./PALETTE_DITHER.md)** — Strict / Guided / Mixed / Simple и цвет на дизере.
+4. **[COLOR_AND_COLOR_LAB.md](./COLOR_AND_COLOR_LAB.md)** — палитры и Color Lab.
+5. **[.cursor-spec/](./.cursor-spec/)** — треки A–P (requirements / design / tasks).
+6. **[docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md)** — setup / style / tests.
 
 ## System Requirements
 
@@ -339,18 +288,14 @@ This project is documented across several files:
 
 ## Performance Notes
 
-### Current (Phase 0)
+Карта bottleneck'ов (не Phase-0 цифры): **[ARCHITECTURE.md §13](./ARCHITECTURE.md)**.
 
-- **Startup time**: ~2-3 seconds (includes Tauri initialization)
-- **Bundle size**: ~150 MB (includes all dependencies)
-- **Memory usage**: ~80-120 MB idle
-
-### Optimization Roadmap
-
-- Phase 1: Tile caching reduces memory by 70%+
-- Phase 3: Async commands prevent UI blocking
-- Phase 4: Web Worker offloads rendering
-- Phase 5+: SIMD operations for color processing
+Кратко:
+- Тайл = **1.03 MB** f32; стек фильтров копирует его целиком.
+- GPU opt-in и сериализован (`submit_lock`) — часто не быстрее CPU-пула на viewport.
+- Error diffusion ломает параллелизм (wavefront left/top/diag).
+- Zoom-out всё ещё level 0 (крупнейший будущий win).
+- Уже сделано: PaletteLut3D, SIMD blend/levels/u8, WorkerWake Condvar.
 
 ## Troubleshooting
 
@@ -404,17 +349,10 @@ See **[CONTRIBUTING.md](./docs/CONTRIBUTING.md)** for:
 
 ## Status
 
-**Phase 0**: ✅ Complete
-- ✅ Workspace initialized
-- ✅ All 6 Rust crates created and compiling
-- ✅ React + TypeScript frontend set up
-- ✅ Tauri integration working
-- ✅ Build pipeline verified
-
-**Next**: Phase 1 — Tile Engine Implementation
+As-built **0.2.0** (Beta 1 in tree). Треки A–N в коде; O/P — updates + dirty/Guard.
+Пиксельный paint / pyramid level>0 / GPU v2 — открытый долг, см. ARCHITECTURE §14.
 
 ---
 
-**Last Updated**: July 27, 2024
-**Phase**: 0 (Skeleton)
-**Version**: 0.1.0
+**Last Updated**: 14 August 2026
+**Version**: 0.2.0

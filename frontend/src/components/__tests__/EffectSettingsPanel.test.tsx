@@ -4,7 +4,7 @@ import type { ReactElement } from 'react';
 import EffectSettingsPanel from '../EffectSettingsPanel';
 import type { LayerWithFilters } from '../EffectSettingsPanel';
 import type { FilterInfo } from '../../types';
-import { StoreProvider } from '../../app/__tests__/testStore';
+import { StoreProvider, createTestStore } from '../../app/__tests__/testStore';
 
 // Mock listPalettes IPC call
 vi.mock('../../ipc/commands', () => ({
@@ -128,11 +128,12 @@ describe('EffectSettingsPanel', () => {
     it('shows effect chooser when no layer selected', () => {
       render(<EffectSettingsPanel selectedLayer={null} onUpdateParams={onUpdateParams} />);
       expect(screen.getByText('Effect')).toBeInTheDocument();
-      // Should show the 4 effect type options
+      // Should show the effect type options
       expect(screen.getByText('Dithering')).toBeInTheDocument();
       expect(screen.getByText('Glitching')).toBeInTheDocument();
       expect(screen.getByText('Curves')).toBeInTheDocument();
       expect(screen.getByText('RGB channels')).toBeInTheDocument();
+      expect(screen.getByText('Adjust')).toBeInTheDocument();
       // Should not have any sliders
       expect(screen.queryByRole('slider')).not.toBeInTheDocument();
     });
@@ -181,12 +182,85 @@ describe('EffectSettingsPanel', () => {
       expect(sliderValueInput('Levels').value).toBe('4');
     });
 
+    it('notes that levels is ignored when a Color Lab palette is bound', () => {
+      const store = createTestStore({
+        palettes: { version: 1, lastCreatedId: 12, error: null },
+      });
+      render(
+        <StoreProvider store={store}>
+          <EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />
+        </StoreProvider>,
+      );
+      expect(screen.getByText(/Levels is ignored/)).toBeInTheDocument();
+      expect(sliderValueInput('Levels').value).toBe('4');
+    });
+
     it('calls onUpdateParams with clamped pixel size', () => {
       renderPanel(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
       const input = sliderValueInput('Pixel Size');
       fireEvent.change(input, { target: { value: '16' } });
       fireEvent.blur(input);
       expect(onUpdateParams).toHaveBeenCalledWith(1, 'filter-1', expect.objectContaining({ pixel_size: 16 }));
+    });
+
+    it('hides palette dither controls without a palette', () => {
+      renderPanel(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
+      expect(screen.queryByText('Palette dither')).not.toBeInTheDocument();
+      expect(screen.queryByText('Levels per channel')).not.toBeInTheDocument();
+    });
+
+    it('shows palette dither controls when palette_id is set', () => {
+      renderPanel(
+        <EffectSettingsPanel
+          selectedLayer={makeDitherLayer({ palette_id: 1 })}
+          onUpdateParams={onUpdateParams}
+        />
+      );
+      expect(screen.getByText('Palette dither')).toBeInTheDocument();
+      expect(screen.getByText('Strict — exact palette colors')).toBeInTheDocument();
+      expect(screen.queryByText('Levels per channel')).not.toBeInTheDocument();
+    });
+
+    it('shows Simple palette dither without levels slider', () => {
+      renderPanel(
+        <EffectSettingsPanel
+          selectedLayer={makeDitherLayer({
+            palette_id: 1,
+            palette_dither_mode: 'simple',
+          })}
+          onUpdateParams={onUpdateParams}
+        />
+      );
+      expect(screen.getByText('Simple — sRGB Euclidean (classic)')).toBeInTheDocument();
+      expect(screen.queryByText('Levels per channel')).not.toBeInTheDocument();
+    });
+
+    it('shows levels per channel slider for Mixed palette dither', () => {
+      renderPanel(
+        <EffectSettingsPanel
+          selectedLayer={makeDitherLayer({
+            palette_id: 1,
+            palette_dither_mode: { mixed: { channel_levels: 5 } },
+          })}
+          onUpdateParams={onUpdateParams}
+        />
+      );
+      expect(screen.getByText('Mixed — Guided then palette dither')).toBeInTheDocument();
+      expect(screen.getByText('Levels per channel')).toBeInTheDocument();
+    });
+
+    it('shows levels per channel slider for Guided palette dither', () => {
+      renderPanel(
+        <EffectSettingsPanel
+          selectedLayer={makeDitherLayer({
+            palette_id: 1,
+            palette_dither_mode: { guided: { channel_levels: 4 } },
+          })}
+          onUpdateParams={onUpdateParams}
+        />
+      );
+      expect(screen.getByText('Guided — palette-derived range (richer)')).toBeInTheDocument();
+      expect(screen.getByText('Levels per channel')).toBeInTheDocument();
     });
 
     it('calls onUpdateParams when algorithm changes', () => {
@@ -222,6 +296,18 @@ describe('EffectSettingsPanel', () => {
         />
       );
       expect(screen.queryByRole('checkbox', { name: 'Serpentine' })).not.toBeInTheDocument();
+    });
+
+    it('shows pixelate alpha checked by default', () => {
+      renderPanel(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
+      const box = screen.getByRole('checkbox', { name: 'Pixelate Alpha' });
+      expect(box).toBeChecked();
+      fireEvent.click(box);
+      expect(onUpdateParams).toHaveBeenCalledWith(
+        1,
+        'filter-1',
+        expect.objectContaining({ dither_alpha: false }),
+      );
     });
 
     it('shows threshold bias and pattern angle for Bayer', () => {
@@ -317,6 +403,52 @@ describe('EffectSettingsPanel', () => {
       fireEvent.blur(input);
       expect(onUpdateParams).toHaveBeenCalledWith(4, 'filter-4', expect.objectContaining({ gamma: 2.5 }));
     });
+
+    it('toggles RGB channels off', () => {
+      render(<EffectSettingsPanel selectedLayer={makeRGBLayer()} onUpdateParams={onUpdateParams} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Red channel' }));
+      expect(onUpdateParams).toHaveBeenCalledWith(
+        4,
+        'filter-4',
+        expect.objectContaining({ channel_r: false, channel_g: true, channel_b: true }),
+      );
+    });
+  });
+
+  describe('Adjust settings', () => {
+    it('renders contrast brightness saturation blur sharpness noise', () => {
+      render(
+        <EffectSettingsPanel
+          selectedLayer={{
+            id: 9,
+            name: 'Adjust',
+            filters: [{
+              id: 'filter-9',
+              kind: 'Adjust',
+              params: {
+                type: 'Adjust',
+                contrast: 0,
+                brightness: 0,
+                saturation: 0,
+                blur: 0,
+                sharpness: 0,
+                noise: 0,
+              },
+              enabled: true,
+              opacity: 1,
+              blend_mode: 'Normal',
+            } as FilterInfo],
+          }}
+          onUpdateParams={onUpdateParams}
+        />
+      );
+      expect(screen.getByText('Contrast')).toBeInTheDocument();
+      expect(screen.getByText('Brightness')).toBeInTheDocument();
+      expect(screen.getByText('Saturation')).toBeInTheDocument();
+      expect(screen.getByText('Blur')).toBeInTheDocument();
+      expect(screen.getByText('Sharpness')).toBeInTheDocument();
+      expect(screen.getByText('Noise')).toBeInTheDocument();
+    });
   });
 
   describe('per-filter blend', () => {
@@ -330,8 +462,8 @@ describe('EffectSettingsPanel', () => {
   describe('pattern export/import', () => {
     it('disables pattern actions when no target layer', () => {
       render(<EffectSettingsPanel selectedLayer={null} onUpdateParams={onUpdateParams} />);
-      expect(screen.getByText('Export as pattern…')).toBeDisabled();
-      expect(screen.getByText('Import pattern…')).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Export as pattern' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Import pattern' })).toBeDisabled();
     });
 
     it('enables pattern actions when a layer is targeted', () => {
@@ -359,8 +491,8 @@ describe('EffectSettingsPanel', () => {
           onImportPattern={onImportPattern}
         />
       );
-      const exp = screen.getByText('Export as pattern…');
-      const imp = screen.getByText('Import pattern…');
+      const exp = screen.getByRole('button', { name: 'Export as pattern' });
+      const imp = screen.getByRole('button', { name: 'Import pattern' });
       expect(exp).not.toBeDisabled();
       expect(imp).not.toBeDisabled();
       fireEvent.click(exp);

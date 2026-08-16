@@ -218,6 +218,7 @@ impl Document {
             | FilterParams::Glitch { .. }
             | FilterParams::Glow { .. }
             | FilterParams::Crt { .. }
+            | FilterParams::Adjust { .. }
             | FilterParams::Placeholder(_) => false,
         }
     }

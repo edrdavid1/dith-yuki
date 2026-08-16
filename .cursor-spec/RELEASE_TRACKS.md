@@ -1,4 +1,4 @@
-# Production-release tracks H–P + C4.1
+# Production-release tracks H–P + C4.1 + Q
 
 Раскладка [ROADMAP_production_release.md](./ROADMAP_production_release.md) и
 [ADDENDUM_release_plan_L_C4.md](./ADDENDUM_release_plan_L_C4.md) на спеки в
@@ -26,8 +26,9 @@
 | **I** | [track-i-filter-blend/](./track-i-filter-blend/) | ROADMAP I | A1 закрыт (уже) | `FilterInstance.opacity` + `blend_mode`; wrapper `apply_filter_with_blend` + `blend_tile`; UI на EffectSettingsPanel; DnD = `reorder_filter` |
 | Color Lab §6 | [color-lab.md](./color-lab.md) | ROADMAP (не трек) | нет | закрыто 2026-08-13: `GenerateWeights` systematic resample; chroma/contrast sliders; 0/0 bit-identical |
 | **N** | [track-n-undo-redo/](./track-n-undo-redo/) | [TASK_track_n_undo_redo.md](./TASK_track_n_undo_redo.md) | K закрыт (debounce) | snapshot `Arc<Document>` depth 50; wrapper; orphan `evict_layer`; Edit + ⌘Z |
-| **O** | [track-o-updates/](./track-o-updates/) | бета: in-app updates | нет (dirty-flag смягчает Restart_Guard, не блокирует) | нет плагина; Help пустой; `0.1.0`; GitHub `edrdavid1/dith-yuki` |
-| **P** | [track-p-beta/](./track-p-beta/) | бета: dirty, Guard, Apply-replace, QA | N закрыт (уже) | P1+P2 in tree 2026-08-13: Saved_Mark `ptr_eq`; Unsaved_Guard; Apply = `replace_palette`; P4 QA pending; P3/O = Beta 1 |
+| **O** | [track-o-updates/](./track-o-updates/) | бета: in-app updates | нет (dirty-flag смягчает Restart_Guard, не блокирует) | in tree 2026-08-13: plugin + GitHub `latest.json`; Help/About; Guard via `confirmUnsavedIfNeeded`; Too_New_File; tag `v*` → artifacts; **0.2.0** |
+| **P** | [track-p-beta/](./track-p-beta/) | бета: dirty, Guard, Apply-replace, QA | N закрыт (уже) | P1+P2+P3 in tree 2026-08-13: Saved_Mark `ptr_eq`; Unsaved_Guard; Apply = `replace_palette`; Import Image as Layer; P4 QA pending |
+| **Q** | [track-q-palette-dither-modes/](./track-q-palette-dither-modes/) | [SPEC_palette_dither_modes.md](./SPEC_palette_dither_modes.md) | нет | не начато: Strict default + Guided per-channel range; GPU skip |
 
 ## Параллельность (из аддендума, буквы актуальные)
 

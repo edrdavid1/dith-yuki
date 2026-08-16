@@ -69,6 +69,9 @@ fn filter_instance_levels_with_document() {
                 gamma: 1.0,
                 output_black: 0.0,
                 output_white: 1.0,
+                channel_r: true,
+                channel_g: true,
+                channel_b: true,
             },
         );
         layer.filters.push(filter);
@@ -123,6 +126,9 @@ fn multiple_filters_in_layer_stack() {
                 gamma: 1.0,
                 output_black: 0.0,
                 output_white: 1.0,
+                channel_r: true,
+                channel_g: true,
+                channel_b: true,
             },
         );
         layer.filters.push(levels_filter);
@@ -256,6 +262,9 @@ fn filter_stack_traversal() {
                         gamma: 1.0,
                         output_black: 0.0,
                         output_white: 1.0,
+                        channel_r: true,
+                        channel_g: true,
+                        channel_b: true,
                     },
                 )
             } else {
@@ -320,6 +329,9 @@ fn filter_validation() {
             gamma: 1.0,
             output_black: 0.0,
             output_white: 1.0,
+            channel_r: true,
+            channel_g: true,
+            channel_b: true,
         },
     );
     assert!(valid_levels.validate().is_ok());
@@ -333,6 +345,9 @@ fn filter_validation() {
             gamma: 1.0,
             output_black: 0.0,
             output_white: 1.0,
+            channel_r: true,
+            channel_g: true,
+            channel_b: true,
         },
     );
     assert!(invalid_levels.validate().is_err());

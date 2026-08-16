@@ -1,4 +1,4 @@
-import { listen, emit, type UnlistenFn, type Event } from '@tauri-apps/api/event';
+import { listen, emit, emitTo, type UnlistenFn, type Event } from '@tauri-apps/api/event';
 import type { SelectionDto } from './selection';
 import type { PanelInfo, PanelStateSnapshot } from '../../types/panels';
 import type { ColorLabDraftSnapshot } from '../../features/color-lab/types';
@@ -45,11 +45,29 @@ export async function onColorLabDraftChanged(
 export async function emitColorLabDraftChanged(
   draft: ColorLabDraftChangedPayload
 ): Promise<void> {
-  return emit('color-lab-draft-changed', draft);
+  // `emit` is webview-local in Tauri 2; floating Color Lab / Effects / Preview
+  // each have their own store and must all receive the draft.
+  return emitTo('any', 'color-lab-draft-changed', draft);
+}
+
+export interface PaletteBindingPayload {
+  lastCreatedId: number | null;
+}
+
+export async function onPaletteBindingChanged(
+  handler: (event: Event<PaletteBindingPayload>) => void
+): Promise<UnlistenFn> {
+  return listen<PaletteBindingPayload>('palette-binding-changed', handler);
+}
+
+export async function emitPaletteBindingChanged(
+  lastCreatedId: number | null
+): Promise<void> {
+  return emitTo('any', 'palette-binding-changed', { lastCreatedId });
 }
 
 export async function emitPaletteChanged(): Promise<void> {
-  return emit('palette-changed', {});
+  return emitTo('any', 'palette-changed', {});
 }
 
 export interface DockAffinityEvent {

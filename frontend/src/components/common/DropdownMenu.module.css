@@ -84,6 +84,16 @@
   z-index: 20;
 }
 
+.lp-dropdown-group {
+  padding: 6px 8px 2px;
+  font-family: var(--font-family);
+  font-size: 10px;
+  font-weight: bold;
+  color: var(--color-dark-gray);
+  text-transform: lowercase;
+  pointer-events: none;
+}
+
 .lp-dropdown-menu-item {
   padding: 4px 8px;
   font-family: var(--font-family);

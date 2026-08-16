@@ -43,4 +43,34 @@ describe('PaletteManualEditor selection', () => {
     fireEvent.click(screen.getByTitle('#9bbc0f'));
     expect(onSelect).toHaveBeenCalledWith(1);
   });
+
+  it('updates the preview bar when a color hex changes', () => {
+    const { rerender } = render(
+      <PaletteManualEditor
+        colors={colors}
+        canAddColor
+        selectedIndex={null}
+        onSelect={vi.fn()}
+        onChange={vi.fn()}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+        onOpenPicker={vi.fn()}
+      />
+    );
+    expect(screen.getByTitle('#9bbc0f')).toHaveStyle({ backgroundColor: '#9bbc0f' });
+    rerender(
+      <PaletteManualEditor
+        colors={[createColorEntry('#0f380f'), createColorEntry('#ff004d')]}
+        canAddColor
+        selectedIndex={null}
+        onSelect={vi.fn()}
+        onChange={vi.fn()}
+        onDelete={vi.fn()}
+        onAdd={vi.fn()}
+        onOpenPicker={vi.fn()}
+      />
+    );
+    expect(screen.getByTitle('#ff004d')).toHaveStyle({ backgroundColor: '#ff004d' });
+    expect(screen.queryByTitle('#9bbc0f')).not.toBeInTheDocument();
+  });
 });

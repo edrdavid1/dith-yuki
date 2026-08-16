@@ -111,12 +111,30 @@ pub fn get_monitor_rects(app_handle: &AppHandle) -> (Vec<MonitorRect>, Option<Mo
 fn panel_default_size(id: &str) -> (u32, u32) {
     match id {
         "preferences" => (420, 360),
-        "colorlab" => (450, 700),
+        "colorlab" => (560, 640),
         "preview" => (800, 600),
         "layers" => (350, 500),
         "effect" => (400, 600),
         _ => (332, 400),
     }
+}
+
+/// Hard cap so a bad saved/maximized size cannot open a panel at monitor size.
+fn panel_max_size(id: &str) -> (u32, u32) {
+    match id {
+        "colorlab" => (640, 760),
+        "preferences" => (560, 520),
+        "layers" => (480, 800),
+        "effect" => (520, 800),
+        "preview" => (1600, 1200),
+        _ => (900, 900),
+    }
+}
+
+/// Max inner size for the OS window (logical px).
+pub fn panel_max_inner_size(id: &str) -> (f64, f64) {
+    let (w, h) = panel_max_size(id);
+    (w as f64, h as f64)
 }
 
 /// Center a window of the given size on the primary (or first) monitor.
@@ -149,9 +167,14 @@ fn centered_bounds(
 
 /// Clamp size to the target monitor and ensure the window stays fully visible
 /// when possible (after off-screen correction).
-fn clamp_bounds_to_monitor(bounds: &SavedBounds, monitor: &MonitorRect) -> SavedBounds {
-    let max_w = monitor.width.saturating_sub(20).max(280);
-    let max_h = monitor.height.saturating_sub(20).max(200);
+fn clamp_bounds_to_monitor(
+    panel_id: &str,
+    bounds: &SavedBounds,
+    monitor: &MonitorRect,
+) -> SavedBounds {
+    let (cap_w, cap_h) = panel_max_size(panel_id);
+    let max_w = monitor.width.saturating_sub(40).max(280).min(cap_w);
+    let max_h = monitor.height.saturating_sub(80).max(200).min(cap_h);
     let width = bounds.width.min(max_w).max(280);
     let height = bounds.height.min(max_h).max(200);
     let max_x = monitor.x + monitor.width as i32 - width as i32;
@@ -217,8 +240,16 @@ pub fn resolve_undock_bounds(
     };
 
     match target {
-        Some(m) => clamp_bounds_to_monitor(&raw, m),
-        None => raw,
+        Some(m) => clamp_bounds_to_monitor(panel_id, &raw, m),
+        None => {
+            let (cap_w, cap_h) = panel_max_size(panel_id);
+            SavedBounds {
+                x: raw.x,
+                y: raw.y,
+                width: raw.width.min(cap_w).max(280),
+                height: raw.height.min(cap_h).max(200),
+            }
+        }
     }
 }
 
@@ -314,6 +345,8 @@ pub fn undock_panel(
         .decorations(false)
         .title_bar_style(tauri::TitleBarStyle::Overlay)
         .min_inner_size(280.0, 200.0);
+    let (max_w, max_h) = panel_max_inner_size(&panel_id);
+    let builder = builder.max_inner_size(max_w, max_h);
 
     let revert_side = result.previous_dock_side.unwrap_or(DockSide::Right);
     builder.build().map_err(|e| {
@@ -527,6 +560,8 @@ pub fn undock_panel_with_size(
         .decorations(false)
         .title_bar_style(tauri::TitleBarStyle::Overlay)
         .min_inner_size(280.0, 200.0);
+    let (max_w, max_h) = panel_max_inner_size(&panel_id);
+    let builder = builder.max_inner_size(max_w, max_h);
 
     let revert_side = result.previous_dock_side.unwrap_or(DockSide::Right);
     builder.build().map_err(|e| {
@@ -1150,6 +1185,21 @@ mod tests {
         // Not intersecting (just touching edge), so it gets corrected
         assert_eq!(result.x, 760);
         assert_eq!(result.y, 240);
+    }
+
+    #[test]
+    fn colorlab_huge_saved_bounds_are_capped() {
+        let bounds = SavedBounds {
+            x: 0,
+            y: 0,
+            width: 2560,
+            height: 1440,
+        };
+        let monitors = vec![make_monitor(0, 0, 2560, 1440)];
+        let primary = monitors[0].clone();
+        let result = resolve_undock_bounds("colorlab", Some(bounds), &monitors, Some(&primary));
+        assert!(result.width <= 640, "width {}", result.width);
+        assert!(result.height <= 760, "height {}", result.height);
     }
 
     #[test]

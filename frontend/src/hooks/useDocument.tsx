@@ -10,6 +10,7 @@ import {
   saveProjectAs,
   exportPattern,
   importPattern,
+  importImageLayer,
   setDocumentMeta,
 } from '../app/slices/documentSlice';
 import { refreshLayers } from '../app/slices/layersSlice';
@@ -233,6 +234,25 @@ export function useDocument() {
     [dispatch]
   );
 
+  const importImageLayerFn = useCallback(async () => {
+    if (!state.hasDocument) return;
+    try {
+      const filePath = await openDialog({
+        multiple: false,
+        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+      });
+      if (!filePath) return;
+      const result = await dispatch(importImageLayer(filePath as string));
+      if (importImageLayer.fulfilled.match(result)) {
+        await dispatch(refreshLayers(state.docId));
+        await dispatch(refreshFilters());
+        void maybeAutoExtractPalette(dispatch, result.payload.layerId, autoExtractPalettes);
+      }
+    } catch {
+      // Dialog cancel / IPC errors handled in thunk
+    }
+  }, [autoExtractPalettes, dispatch, state.docId, state.hasDocument]);
+
   const clearNotificationFn = useCallback(() => {
     dispatch(clearNotification());
   }, [dispatch]);
@@ -256,6 +276,7 @@ export function useDocument() {
     saveProject: saveProjectFn,
     saveProjectAs: saveProjectAsFn,
     createDocument: createDocumentFn,
+    importImageLayer: importImageLayerFn,
     exportPattern: exportPatternFn,
     importPattern: importPatternFn,
     clearNotification: clearNotificationFn,

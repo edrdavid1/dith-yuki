@@ -1,6 +1,6 @@
 # Design: Track O — In-app updates
 
-> **Status:** spec only. Checklist: [tasks.md](./tasks.md).
+> **Status:** in tree (0.2.0). Live GitHub check = O5.3. Checklist: [tasks.md](./tasks.md).
 > Requirements: [requirements.md](./requirements.md).
 
 ## Overview

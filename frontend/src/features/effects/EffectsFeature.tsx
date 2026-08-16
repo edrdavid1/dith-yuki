@@ -99,11 +99,14 @@ export default function EffectsFeature({
 
   // Keep selected Dither filter's palette_id in sync with Color Lab.
   // Send only DitherV2 fields (never the UI `type` tag) so serde accepts the payload.
+  // Do not write `palette_id: null` just because this window's store has not
+  // received lastCreatedId yet (floating Color Lab vs Effects).
   const lastSyncedKeyRef = useRef<string>('');
   useEffect(() => {
     if (effectLayer.effectType !== 'Dithering') return;
     if (effectLayer.effectParams == null || effectLayer.filterId == null) return;
-    const syncKey = `${effectLayer.filterId}:${lastCreatedId ?? 'none'}`;
+    if (lastCreatedId == null) return;
+    const syncKey = `${effectLayer.filterId}:${lastCreatedId}`;
     if (lastSyncedKeyRef.current === syncKey) return;
 
     const params = effectLayer.effectParams as unknown as Record<string, unknown>;
@@ -128,6 +131,8 @@ export default function EffectsFeature({
       wave_angle,
       threshold_bias,
       pattern_angle,
+      serpentine,
+      dither_alpha,
     } = params;
     effectLayer.updateParams({
       mode,
@@ -143,6 +148,8 @@ export default function EffectsFeature({
       wave_angle: wave_angle ?? 0,
       threshold_bias: threshold_bias ?? 0,
       pattern_angle: pattern_angle ?? 0,
+      serpentine: serpentine ?? false,
+      dither_alpha: dither_alpha !== false,
     });
   }, [
     lastCreatedId,

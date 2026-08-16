@@ -42,6 +42,10 @@ export async function createDocument(
   return invoke<LoadImageResponse>('create_document', { width, height, background });
 }
 
+export async function importImageLayer(path: string): Promise<{ layer_id: number }> {
+  return invoke<{ layer_id: number }>('import_image_layer', { path });
+}
+
 export async function exportImage(req: ExportImageRequest): Promise<void> {
   return invoke<void>('export_image', { req });
 }

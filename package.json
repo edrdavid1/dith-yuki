@@ -1,6 +1,6 @@
 {
   "name": "dither",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Tile-based image processing engine with desktop UI",
   "type": "module",
   "scripts": {

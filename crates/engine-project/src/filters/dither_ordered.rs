@@ -9,10 +9,12 @@
 
 use crate::document::Document;
 use crate::error::EngineError;
-use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
+use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2, PaletteDitherMode};
 use crate::types::LayerId;
-use engine_color::oklab::{linear_to_oklab, LinRgb};
+use engine_color::oklab::{linear_to_oklab, oklab_dist_sq, LinRgb, Oklab};
+use engine_color::palette::{linear_to_srgb, Palette};
 use engine_color::palette_cache::PaletteKdCache;
+use engine_color::palette_guided::{default_channel_levels, quantize_channel_guided, ChannelRange};
 use engine_color::palette_lut::{PaletteLutCache, DEFAULT_LUT_SIZE};
 use engine_color::threshold_map::ThresholdMapCache;
 use engine_tiles::block_cache::{BlockCoord, BlockRepresentativeCache};
@@ -148,6 +150,37 @@ fn samples_rotated_pattern(mode: &DitherModeV2) -> bool {
     )
 }
 
+/// After Block_Then_Rotate (pixel-space align, optional rotate), index Bayer /
+/// CustomPng in **block** units: `(pat_gx.div_euclid(ps), pat_gy.div_euclid(ps))`.
+///
+/// Threshold maps are `rem_euclid(matrix)` of these coords. Using the pixel
+/// origin `(k·ps)` makes `pixel_size % matrix == 0` hit a single cell (all
+/// blocks sample `[0][0]`). Block index `k` walks the full period; the visible
+/// Bayer cell is one mega-pixel, so the pattern period is `matrix × pixel_size`
+/// document pixels. `pixel_size == 1` is a no-op (bit-identical to pixel coords).
+/// Wave / Halftone keep pixel-space origins — they are not matrix-indexed.
+#[inline]
+fn pattern_index_coord(pat_gx: i32, pat_gy: i32, pixel_size: u32) -> (i32, i32) {
+    if pixel_size <= 1 {
+        return (pat_gx, pat_gy);
+    }
+    let ps = pixel_size as i32;
+    (pat_gx.div_euclid(ps), pat_gy.div_euclid(ps))
+}
+
+/// Block_Then_Rotate sample point for Bayer / CustomPng: align already applied
+/// by the caller; rotate in pixel space, then convert to block index.
+#[inline]
+fn ordered_pattern_coord(
+    block_gx: i32,
+    block_gy: i32,
+    pixel_size: u32,
+    pattern_angle: f32,
+) -> (i32, i32) {
+    let (pat_gx, pat_gy) = rotate_pattern_coord(block_gx, block_gy, pattern_angle);
+    pattern_index_coord(pat_gx, pat_gy, pixel_size)
+}
+
 /// Block_Then_Rotate: rotate aligned `(gx, gy)` around the origin, then **floor**.
 ///
 /// Angle is degrees; wrapped with `rem_euclid(360)` so sampling is periodic.
@@ -253,6 +286,137 @@ fn to_luminance(r: f32, g: f32, b: f32) -> f32 {
     0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
+/// Two-nearest ordered palette dither (Yliluoma-style).
+///
+/// Offsetting linear RGB by ±0.5 then snapping via the LUT jumps toward
+/// black/white and underuses mid-palette hues. Mixing the two closest Oklab
+/// neighbors uses the colors that actually belong to the source pixel.
+pub(crate) struct OrderedPalettePicker<'a> {
+    palette: &'a Palette,
+    labs: Vec<Oklab>,
+}
+
+impl<'a> OrderedPalettePicker<'a> {
+    pub(crate) fn new(palette: &'a Palette) -> Self {
+        let labs = palette
+            .colors
+            .iter()
+            .map(|c| {
+                linear_to_oklab(LinRgb {
+                    r: c.r,
+                    g: c.g,
+                    b: c.b,
+                })
+            })
+            .collect();
+        Self { palette, labs }
+    }
+
+    pub(crate) fn pick(
+        &self,
+        r: f32,
+        g: f32,
+        b: f32,
+        threshold: f32,
+        threshold_scale: f32,
+    ) -> (f32, f32, f32) {
+        let n = self.labs.len();
+        debug_assert!(n >= 1);
+        let c0 = &self.palette.colors[0];
+        if n == 1 {
+            return (c0.r, c0.g, c0.b);
+        }
+
+        let query = linear_to_oklab(LinRgb { r, g, b });
+        let mut i1 = 0usize;
+        let mut i2 = 1usize;
+        let mut d1 = oklab_dist_sq(query, self.labs[0]);
+        let mut d2 = oklab_dist_sq(query, self.labs[1]);
+        if d2 < d1 {
+            std::mem::swap(&mut i1, &mut i2);
+            std::mem::swap(&mut d1, &mut d2);
+        }
+        for (i, &lab) in self.labs.iter().enumerate().skip(2) {
+            let d = oklab_dist_sq(query, lab);
+            if d < d1 {
+                d2 = d1;
+                i2 = i1;
+                d1 = d;
+                i1 = i;
+            } else if d < d2 {
+                d2 = d;
+                i2 = i;
+            }
+        }
+
+        let mix = if d1 + d2 <= f32::EPSILON {
+            0.0
+        } else {
+            let sd1 = d1.sqrt();
+            let sd2 = d2.sqrt();
+            sd1 / (sd1 + sd2)
+        };
+        let t = 0.5 + (threshold - 0.5) * threshold_scale;
+        let idx = if t < mix { i2 } else { i1 };
+        let c = &self.palette.colors[idx];
+        (c.r, c.g, c.b)
+    }
+}
+
+/// Old Dither Yuki matcher: Euclidean nearest in sRGB 8-bit.
+///
+/// Bayer/ordered: `clamp(srgb + (T - 0.5) * intensity * 64)` then nearest
+/// (`bayerDither` in simple-dith-old-version.ts). `threshold_scale` is intensity
+/// (1.0 = old 100%). Palettes are document linear colors encoded to sRGB u8.
+pub(crate) struct SimpleRgbPicker<'a> {
+    palette: &'a Palette,
+    srgb: Vec<[f32; 3]>,
+}
+
+/// Amplitude from old `bayerDither`: `threshold * 64` in sRGB bytes.
+pub(crate) const SIMPLE_BAYER_SRGB_AMPLITUDE: f32 = 64.0;
+
+impl<'a> SimpleRgbPicker<'a> {
+    pub(crate) fn new(palette: &'a Palette) -> Self {
+        let srgb = palette
+            .colors
+            .iter()
+            .map(|c| {
+                [
+                    linear_to_srgb(c.r) as f32,
+                    linear_to_srgb(c.g) as f32,
+                    linear_to_srgb(c.b) as f32,
+                ]
+            })
+            .collect();
+        Self { palette, srgb }
+    }
+
+    pub(crate) fn pick_srgb(&self, qr: f32, qg: f32, qb: f32) -> ((f32, f32, f32), [f32; 3]) {
+        let mut best = 0usize;
+        let mut best_d = f32::INFINITY;
+        for (i, p) in self.srgb.iter().enumerate() {
+            let dr = qr - p[0];
+            let dg = qg - p[1];
+            let db = qb - p[2];
+            let d = dr * dr + dg * dg + db * db;
+            if d < best_d {
+                best_d = d;
+                best = i;
+            }
+        }
+        let c = &self.palette.colors[best];
+        ((c.r, c.g, c.b), self.srgb[best])
+    }
+
+    pub(crate) fn pick(&self, r: f32, g: f32, b: f32, srgb_offset: f32) -> (f32, f32, f32) {
+        let qr = (linear_to_srgb(r) as f32 + srgb_offset).clamp(0.0, 255.0);
+        let qg = (linear_to_srgb(g) as f32 + srgb_offset).clamp(0.0, 255.0);
+        let qb = (linear_to_srgb(b) as f32 + srgb_offset).clamp(0.0, 255.0);
+        self.pick_srgb(qr, qg, qb).0
+    }
+}
+
 // ─── Main Entry Point ────────────────────────────────────────────────────────
 
 /// Apply ordered dithering to a tile.
@@ -265,7 +429,7 @@ fn to_luminance(r: f32, g: f32, b: f32) -> f32 {
 ///   pixels with the same dithered color (Req 4.1–4.5)
 /// - Color mode handling: RGB (independent channels) and Grayscale (luminance) (Req 5.1, 5.2)
 /// - Quantization dispatch: uniform levels when `palette_id` is None, or
-///   palette-constrained nearest-color via KD-tree in Oklab when set (Req 6.1–6.3, 6.5, 7.1–7.4)
+///   two-nearest Oklab palette dither when set (Req 6.1–6.3, 6.5, 7.1–7.4)
 /// - Alpha channel preservation (Req 5.3)
 /// - `threshold_scale` application: `offset = (threshold - 0.5) * threshold_scale`
 ///
@@ -337,17 +501,51 @@ pub fn apply_ordered_with_cache(
     let levels = params.levels as f32;
     let ps = params.pixel_size as u32;
 
-    // If palette_id is set, resolve O(1) LUT once per apply (outside pixel loop)
-    let palette_lut = if let Some(palette_id) = params.palette_id {
-        let palette = document.get_palette(palette_id).ok_or_else(|| {
+    enum PalettePath<'a> {
+        None,
+        Strict(OrderedPalettePicker<'a>),
+        Guided {
+            ranges: [ChannelRange; 3],
+            levels: u8,
+        },
+        Mixed {
+            ranges: [ChannelRange; 3],
+            levels: u8,
+            picker: OrderedPalettePicker<'a>,
+        },
+        Simple(SimpleRgbPicker<'a>),
+    }
+
+    let palette = if let Some(palette_id) = params.palette_id {
+        Some(document.get_palette(palette_id).ok_or_else(|| {
             EngineError::palette_not_found(palette_id)
-        })?;
-        let lut = lut_cache
-            .get_or_build(palette, palette_cache, DEFAULT_LUT_SIZE)
-            .map_err(|_| EngineError::palette_not_found(palette_id))?;
-        Some((palette, lut))
+        })?)
     } else {
         None
+    };
+    let palette_path = match (palette, params.palette_dither_mode) {
+        (None, _) => PalettePath::None,
+        (Some(p), PaletteDitherMode::Guided { channel_levels }) => {
+            let lv = channel_levels.unwrap_or_else(|| default_channel_levels(p));
+            PalettePath::Guided {
+                ranges: lut_cache.channel_ranges(p),
+                levels: lv,
+            }
+        }
+        (Some(p), PaletteDitherMode::Mixed { channel_levels }) => {
+            let lv = channel_levels.unwrap_or_else(|| default_channel_levels(p));
+            PalettePath::Mixed {
+                ranges: lut_cache.channel_ranges(p),
+                levels: lv,
+                picker: OrderedPalettePicker::new(p),
+            }
+        }
+        (Some(p), PaletteDitherMode::Strict) => {
+            PalettePath::Strict(OrderedPalettePicker::new(p))
+        }
+        (Some(p), PaletteDitherMode::Simple) => {
+            PalettePath::Simple(SimpleRgbPicker::new(p))
+        }
     };
 
     for y in 0..TILE_FULL_SIZE {
@@ -357,23 +555,30 @@ pub fn apply_ordered_with_cache(
             let block_gx = block.x;
             let block_gy = block.y;
 
-            // Block_Then_Rotate (Track H / ROADMAP §2):
+            // Block_Then_Rotate (Track H / ROADMAP §2), then block-index:
             //   global → aligned(pixel_size) → [BRC lookup]
-            //   → rotate(pattern_angle) → get_threshold_i32 → T' = clamp01(T + bias)
+            //   → rotate(pattern_angle) → div_euclid(ps) → get_threshold_i32
+            //   → T' = clamp01(T + bias)
             // Do not rotate before alignment: mega-pixel blocks stay axis-aligned rectangles.
-            let (r, g, b) = if ps > 1 {
+            // Wave is not matrix-indexed; it samples pixel-space block origin.
+            let (r, g, b, block_a) = if ps > 1 {
                 read_block_source(tile, coord, block_gx, block_gy, block_cache, layer_id, ps)
             } else {
-                (tile.at(x, y, 0), tile.at(x, y, 1), tile.at(x, y, 2))
+                (tile.at(x, y, 0), tile.at(x, y, 1), tile.at(x, y, 2), tile.at(x, y, 3))
+            };
+            let src_a = if params.dither_alpha {
+                block_a
+            } else {
+                tile.at(x, y, 3)
             };
 
-            let (pat_gx, pat_gy) = if samples_rotated_pattern(&params.mode) {
-                rotate_pattern_coord(block_gx, block_gy, params.pattern_angle)
+            let (thresh_gx, thresh_gy) = if samples_rotated_pattern(&params.mode) {
+                ordered_pattern_coord(block_gx, block_gy, ps, params.pattern_angle)
             } else {
                 (block_gx, block_gy)
             };
             let threshold = apply_threshold_bias(
-                get_threshold_i32(params, pat_gx, pat_gy, threshold_cache)?,
+                get_threshold_i32(params, thresh_gx, thresh_gy, threshold_cache)?,
                 params.threshold_bias,
             );
 
@@ -382,20 +587,48 @@ pub fn apply_ordered_with_cache(
 
             // Quantize based on color_mode and palette
             match params.color_mode {
-                DitherColorMode::Rgb => {
-                    if let Some((palette, ref lut)) = palette_lut {
-                        // Palette quantization: apply offset then find nearest (Req 6.1, 6.2, 6.3)
-                        let adj_r = (r + offset).clamp(0.0, 1.0);
-                        let adj_g = (g + offset).clamp(0.0, 1.0);
-                        let adj_b = (b + offset).clamp(0.0, 1.0);
-                        let oklab = linear_to_oklab(LinRgb { r: adj_r, g: adj_g, b: adj_b });
-                        let nearest_idx = lut.nearest_index(oklab) as usize;
-                        let palette_color = &palette.colors[nearest_idx];
-                        result.set(x, y, 0, palette_color.r);
-                        result.set(x, y, 1, palette_color.g);
-                        result.set(x, y, 2, palette_color.b);
-                    } else {
-                        // Uniform quantization: each channel independently (Req 7.1, 7.2, 7.3, 7.4)
+                DitherColorMode::Rgb => match &palette_path {
+                    PalettePath::Strict(picker) => {
+                        let (qr, qg, qb) =
+                            picker.pick(r, g, b, threshold, params.threshold_scale);
+                        result.set(x, y, 0, qr);
+                        result.set(x, y, 1, qg);
+                        result.set(x, y, 2, qb);
+                    }
+                    PalettePath::Guided {
+                        ranges,
+                        levels: ch_levels,
+                    } => {
+                        let t = 0.5 + (threshold - 0.5) * params.threshold_scale;
+                        result.set(x, y, 0, quantize_channel_guided(r, ranges[0], *ch_levels, t));
+                        result.set(x, y, 1, quantize_channel_guided(g, ranges[1], *ch_levels, t));
+                        result.set(x, y, 2, quantize_channel_guided(b, ranges[2], *ch_levels, t));
+                    }
+                    PalettePath::Mixed {
+                        ranges,
+                        levels: ch_levels,
+                        picker,
+                    } => {
+                        let t = 0.5 + (threshold - 0.5) * params.threshold_scale;
+                        let qr = quantize_channel_guided(r, ranges[0], *ch_levels, t);
+                        let qg = quantize_channel_guided(g, ranges[1], *ch_levels, t);
+                        let qb = quantize_channel_guided(b, ranges[2], *ch_levels, t);
+                        let (sr, sg, sb) =
+                            picker.pick(qr, qg, qb, threshold, params.threshold_scale);
+                        result.set(x, y, 0, sr);
+                        result.set(x, y, 1, sg);
+                        result.set(x, y, 2, sb);
+                    }
+                    PalettePath::Simple(picker) => {
+                        let srgb_offset = (threshold - 0.5)
+                            * params.threshold_scale
+                            * SIMPLE_BAYER_SRGB_AMPLITUDE;
+                        let (qr, qg, qb) = picker.pick(r, g, b, srgb_offset);
+                        result.set(x, y, 0, qr);
+                        result.set(x, y, 1, qg);
+                        result.set(x, y, 2, qb);
+                    }
+                    PalettePath::None => {
                         let qr = quantize_uniform(r, levels, offset);
                         let qg = quantize_uniform(g, levels, offset);
                         let qb = quantize_uniform(b, levels, offset);
@@ -403,40 +636,79 @@ pub fn apply_ordered_with_cache(
                         result.set(x, y, 1, qg);
                         result.set(x, y, 2, qb);
                     }
-                }
+                },
                 DitherColorMode::Grayscale => {
-                    // Convert to luminance (Req 5.2)
                     let lum = to_luminance(r, g, b);
-
-                    if let Some((palette, ref lut)) = palette_lut {
-                        // Palette quantization in grayscale: apply offset to luminance,
-                        // use as gray RGB for nearest lookup
-                        let adj_lum = (lum + offset).clamp(0.0, 1.0);
-                        let oklab = linear_to_oklab(LinRgb { r: adj_lum, g: adj_lum, b: adj_lum });
-                        let nearest_idx = lut.nearest_index(oklab) as usize;
-                        let palette_color = &palette.colors[nearest_idx];
-                        result.set(x, y, 0, palette_color.r);
-                        result.set(x, y, 1, palette_color.g);
-                        result.set(x, y, 2, palette_color.b);
-                    } else {
-                        // Uniform quantization: dither single channel, write R=G=B (Req 5.2)
-                        let qlum = quantize_uniform(lum, levels, offset);
-                        result.set(x, y, 0, qlum);
-                        result.set(x, y, 1, qlum);
-                        result.set(x, y, 2, qlum);
+                    match &palette_path {
+                        PalettePath::Strict(picker) => {
+                            let (qr, qg, qb) =
+                                picker.pick(lum, lum, lum, threshold, params.threshold_scale);
+                            result.set(x, y, 0, qr);
+                            result.set(x, y, 1, qg);
+                            result.set(x, y, 2, qb);
+                        }
+                        PalettePath::Guided {
+                            ranges,
+                            levels: ch_levels,
+                        } => {
+                            let t = 0.5 + (threshold - 0.5) * params.threshold_scale;
+                            let qr = quantize_channel_guided(lum, ranges[0], *ch_levels, t);
+                            let qg = quantize_channel_guided(lum, ranges[1], *ch_levels, t);
+                            let qb = quantize_channel_guided(lum, ranges[2], *ch_levels, t);
+                            result.set(x, y, 0, qr);
+                            result.set(x, y, 1, qg);
+                            result.set(x, y, 2, qb);
+                        }
+                        PalettePath::Mixed {
+                            ranges,
+                            levels: ch_levels,
+                            picker,
+                        } => {
+                            let t = 0.5 + (threshold - 0.5) * params.threshold_scale;
+                            let qr = quantize_channel_guided(lum, ranges[0], *ch_levels, t);
+                            let qg = quantize_channel_guided(lum, ranges[1], *ch_levels, t);
+                            let qb = quantize_channel_guided(lum, ranges[2], *ch_levels, t);
+                            let (sr, sg, sb) =
+                                picker.pick(qr, qg, qb, threshold, params.threshold_scale);
+                            result.set(x, y, 0, sr);
+                            result.set(x, y, 1, sg);
+                            result.set(x, y, 2, sb);
+                        }
+                        PalettePath::Simple(picker) => {
+                            let srgb_offset = (threshold - 0.5)
+                                * params.threshold_scale
+                                * SIMPLE_BAYER_SRGB_AMPLITUDE;
+                            let (qr, qg, qb) = picker.pick(lum, lum, lum, srgb_offset);
+                            result.set(x, y, 0, qr);
+                            result.set(x, y, 1, qg);
+                            result.set(x, y, 2, qb);
+                        }
+                        PalettePath::None => {
+                            let qlum = quantize_uniform(lum, levels, offset);
+                            result.set(x, y, 0, qlum);
+                            result.set(x, y, 1, qlum);
+                            result.set(x, y, 2, qlum);
+                        }
                     }
                 }
             }
 
-            // Preserve alpha channel unchanged (Req 5.3)
-            result.set(x, y, 3, tile.at(x, y, 3));
+            let a = params.map_alpha(src_a, threshold);
+            if params.dither_alpha && a <= 0.0 {
+                result.set(x, y, 0, 0.0);
+                result.set(x, y, 1, 0.0);
+                result.set(x, y, 2, 0.0);
+                result.set(x, y, 3, 0.0);
+            } else {
+                result.set(x, y, 3, a);
+            }
         }
     }
 
     Ok(result)
 }
 
-/// Read RGB for a block representative: prefer [`BlockRepresentativeCache`], else
+/// Read RGBA for a block representative: prefer [`BlockRepresentativeCache`], else
 /// local tile sample with clamp (legacy fallback when cache is empty).
 fn read_block_source(
     tile: &PixelTile,
@@ -446,11 +718,11 @@ fn read_block_source(
     block_cache: &BlockRepresentativeCache,
     layer_id: LayerId,
     ps: u32,
-) -> (f32, f32, f32) {
+) -> (f32, f32, f32, f32) {
     if block_gx >= 0 && block_gy >= 0 {
         let key = BlockCoord::from_global(layer_id.0, block_gx as u32, block_gy as u32, ps);
         if let Some(px) = block_cache.get_raw(key) {
-            return (px[0], px[1], px[2]);
+            return (px[0], px[1], px[2], px[3]);
         }
     }
 
@@ -462,6 +734,7 @@ fn read_block_source(
         tile.at(clamped_x, clamped_y, 0),
         tile.at(clamped_x, clamped_y, 1),
         tile.at(clamped_x, clamped_y, 2),
+        tile.at(clamped_x, clamped_y, 3),
     )
 }
 
@@ -500,10 +773,15 @@ fn apply_cmyk_halftone(
             let block_gx = block.x;
             let block_gy = block.y;
 
-            let (r, g, b) = if ps > 1 {
+            let (r, g, b, block_a) = if ps > 1 {
                 read_block_source(tile, coord, block_gx, block_gy, block_cache, layer_id, ps)
             } else {
-                (tile.at(x, y, 0), tile.at(x, y, 1), tile.at(x, y, 2))
+                (tile.at(x, y, 0), tile.at(x, y, 1), tile.at(x, y, 2), tile.at(x, y, 3))
+            };
+            let src_a = if params.dither_alpha {
+                block_a
+            } else {
+                tile.at(x, y, 3)
             };
 
             // Pattern coords use the same aligned sample point as Bayer.
@@ -551,7 +829,15 @@ fn apply_cmyk_halftone(
                 result.set(x, y, 1, out_g);
                 result.set(x, y, 2, out_b);
             }
-            result.set(x, y, 3, tile.at(x, y, 3));
+            let a = params.map_alpha(src_a, 0.5);
+            if params.dither_alpha && a <= 0.0 {
+                result.set(x, y, 0, 0.0);
+                result.set(x, y, 1, 0.0);
+                result.set(x, y, 2, 0.0);
+                result.set(x, y, 3, 0.0);
+            } else {
+                result.set(x, y, 3, a);
+            }
         }
     }
 
@@ -563,7 +849,7 @@ fn apply_cmyk_halftone(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
+    use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2, PaletteDitherMode};
 
     fn make_uniform_tile(r: f32, g: f32, b: f32, a: f32) -> PixelTile {
         let mut tile = PixelTile::new();
@@ -670,7 +956,8 @@ mod tests {
     #[test]
     fn alpha_channel_preserved() {
         let tile = make_uniform_tile(0.5, 0.5, 0.5, 0.42);
-        let params = make_params(DitherModeV2::Bayer4x4, 4, 1.0);
+        let mut params = make_params(DitherModeV2::Bayer4x4, 4, 1.0);
+        params.dither_alpha = false;
         let threshold_cache = ThresholdMapCache::new();
         let palette_cache = PaletteKdCache::new();
         let lut_cache = PaletteLutCache::new();
@@ -681,6 +968,89 @@ mod tests {
         for y in 0..TILE_FULL_SIZE {
             for x in 0..TILE_FULL_SIZE {
                 assert_eq!(result.at(x, y, 3), 0.42);
+            }
+        }
+    }
+
+    #[test]
+    fn dither_alpha_binarizes_soft_edge_and_keeps_solid() {
+        let mut tile = make_uniform_tile(0.6, 0.2, 0.1, 1.0);
+        // Soft AA fringe down the middle of the core.
+        for y in 0..TILE_FULL_SIZE {
+            tile.set(8, y, 3, 0.4);
+            tile.set(0, y, 3, 0.0);
+        }
+        let mut params = make_params(DitherModeV2::Bayer4x4, 4, 1.0);
+        params.dither_alpha = true;
+        let threshold_cache = ThresholdMapCache::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+        let result = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+
+        for y in 0..TILE_FULL_SIZE {
+            assert_eq!(result.at(0, y, 3), 0.0, "transparent stays 0 at y={y}");
+            assert_eq!(result.at(0, y, 0), 0.0, "punched alpha must clear RGB");
+            let a = result.at(8, y, 3);
+            assert!(a == 0.0 || a == 1.0, "soft alpha must be 0 or 1, got {a} at y={y}");
+            assert_eq!(result.at(16, y, 3), 1.0, "opaque stays 1 at y={y}");
+        }
+        let mut saw_zero = false;
+        let mut saw_one = false;
+        for y in 0..TILE_FULL_SIZE {
+            match result.at(8, y, 3) {
+                0.0 => saw_zero = true,
+                1.0 => saw_one = true,
+                _ => {}
+            }
+        }
+        assert!(saw_zero && saw_one, "Bayer on 0.4 alpha should mix 0 and 1 along a column");
+    }
+
+    #[test]
+    fn dither_alpha_pixel_size_makes_uniform_alpha_blocks() {
+        let mut tile = PixelTile::new();
+        for y in 0..TILE_FULL_SIZE {
+            for x in 0..TILE_FULL_SIZE {
+                tile.set(x, y, 0, 0.8);
+                tile.set(x, y, 1, 0.2);
+                tile.set(x, y, 2, 0.1);
+                // Per-pixel original alpha — the "hard cut from source" case.
+                tile.set(x, y, 3, if x % 2 == 0 { 1.0 } else { 0.3 });
+            }
+        }
+        let mut params = make_params(DitherModeV2::Bayer8x8, 4, 1.0);
+        params.pixel_size = 2;
+        params.dither_alpha = true;
+        let threshold_cache = ThresholdMapCache::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+        let result = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+
+        let ps = 2u32;
+        for y in (0..TILE_FULL_SIZE).step_by(ps as usize) {
+            for x in (0..TILE_FULL_SIZE).step_by(ps as usize) {
+                let a0 = result.at(x, y, 3);
+                assert!(a0 == 0.0 || a0 == 1.0);
+                for dy in 0..ps {
+                    for dx in 0..ps {
+                        if x + dx < TILE_FULL_SIZE && y + dy < TILE_FULL_SIZE {
+                            assert_eq!(
+                                result.at(x + dx, y + dy, 3),
+                                a0,
+                                "alpha not uniform in {ps}×{ps} block at ({}, {})",
+                                x, y
+                            );
+                        }
+                    }
+                }
             }
         }
     }
@@ -846,6 +1216,7 @@ mod tests {
         let tile = make_uniform_tile(0.5, 0.3, 0.7, 0.42);
         let mut params = make_params(DitherModeV2::CmykHalftone, 4, 1.0);
         params.halftone_cell_size = 8;
+        params.dither_alpha = false;
         let threshold_cache = ThresholdMapCache::new();
         let palette_cache = PaletteKdCache::new();
         let lut_cache = PaletteLutCache::new();
@@ -934,17 +1305,33 @@ mod tests {
         // Process at tile (1, 1) — global offset is (256, 256)
         let result = apply_ordered(&tile, tc(1, 1), &params, &threshold_cache, &palette_cache, &lut_cache, &doc).unwrap();
 
-        // Blocks should still be aligned to 4-pixel boundaries in global coords
-        // At tile (1,1), local (0,0) = global (256,256), which is divisible by 4
+        // Halo shifts local (0,0) off the global ps grid; compare runs that share aligned origin.
         let ps = 4u32;
-        for by in (0..TILE_FULL_SIZE).step_by(ps as usize) {
-            for bx in (0..TILE_FULL_SIZE).step_by(ps as usize) {
-                let r0 = result.at(bx, by, 0);
-                for dy in 0..ps.min(TILE_FULL_SIZE - by) {
-                    for dx in 0..ps.min(TILE_FULL_SIZE - bx) {
+        let coord = tc(1, 1);
+        for y in 0..TILE_FULL_SIZE {
+            for x in 0..TILE_FULL_SIZE {
+                let block = GlobalCoordSigned::from_local_with_halo(coord, x, y, HALO).aligned(ps);
+                if x + 1 < TILE_FULL_SIZE {
+                    let n = GlobalCoordSigned::from_local_with_halo(coord, x + 1, y, HALO).aligned(ps);
+                    if n == block {
                         assert_eq!(
-                            result.at(bx + dx, by + dy, 0), r0,
-                            "Block not uniform at ({}, {})", bx + dx, by + dy
+                            result.at(x, y, 0),
+                            result.at(x + 1, y, 0),
+                            "horizontal block run not uniform at ({}, {})",
+                            x + 1,
+                            y
+                        );
+                    }
+                }
+                if y + 1 < TILE_FULL_SIZE {
+                    let n = GlobalCoordSigned::from_local_with_halo(coord, x, y + 1, HALO).aligned(ps);
+                    if n == block {
+                        assert_eq!(
+                            result.at(x, y, 0),
+                            result.at(x, y + 1, 0),
+                            "vertical block run not uniform at ({}, {})",
+                            x,
+                            y + 1
                         );
                     }
                 }
@@ -1025,6 +1412,761 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn strict_output_always_exact_palette_color() {
+        use engine_color::palette::LinearColor;
+
+        let tile = make_uniform_tile(0.4, 0.5, 0.6, 1.0);
+        let mut params = make_params(DitherModeV2::Bayer4x4, 4, 1.0);
+        params.palette_dither_mode = PaletteDitherMode::Strict;
+        let threshold_cache = ThresholdMapCache::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let mut doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+        let palette_id = doc.add_palette(
+            "S".into(),
+            vec![
+                LinearColor { r: 0.0, g: 0.0, b: 0.0 },
+                LinearColor { r: 1.0, g: 0.0, b: 0.0 },
+                LinearColor { r: 0.0, g: 1.0, b: 0.0 },
+            ],
+        );
+        params.palette_id = Some(palette_id);
+        let result = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        let palette = doc.get_palette(palette_id).unwrap();
+        for y in 0..TILE_FULL_SIZE {
+            for x in 0..TILE_FULL_SIZE {
+                let rgb = [result.at(x, y, 0), result.at(x, y, 1), result.at(x, y, 2)];
+                assert!(palette.colors.iter().any(|c| {
+                    (c.r - rgb[0]).abs() < 1e-6
+                        && (c.g - rgb[1]).abs() < 1e-6
+                        && (c.b - rgb[2]).abs() < 1e-6
+                }));
+            }
+        }
+    }
+
+    #[test]
+    fn guided_output_not_necessarily_in_palette() {
+        use engine_color::palette::LinearColor;
+
+        let mut tile = PixelTile::new();
+        for y in 0..TILE_FULL_SIZE {
+            for x in 0..TILE_FULL_SIZE {
+                let t = x as f32 / (TILE_FULL_SIZE - 1) as f32;
+                tile.set(x, y, 0, t);
+                tile.set(x, y, 1, 0.5);
+                tile.set(x, y, 2, 1.0 - t);
+                tile.set(x, y, 3, 1.0);
+            }
+        }
+        let mut params = make_params(DitherModeV2::Bayer8x8, 4, 1.0);
+        params.palette_dither_mode = PaletteDitherMode::Guided {
+            channel_levels: Some(4),
+        };
+        let threshold_cache = ThresholdMapCache::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let mut doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+        let palette_id = doc.add_palette(
+            "G".into(),
+            vec![
+                LinearColor { r: 0.1, g: 0.2, b: 0.3 },
+                LinearColor { r: 0.9, g: 0.8, b: 0.7 },
+            ],
+        );
+        params.palette_id = Some(palette_id);
+        let result = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        let palette = doc.get_palette(palette_id).unwrap();
+        let mut found_off_palette = false;
+        for y in (0..TILE_FULL_SIZE).step_by(4) {
+            for x in (0..TILE_FULL_SIZE).step_by(4) {
+                let rgb = [result.at(x, y, 0), result.at(x, y, 1), result.at(x, y, 2)];
+                let exact = palette.colors.iter().any(|c| {
+                    (c.r - rgb[0]).abs() < 1e-5
+                        && (c.g - rgb[1]).abs() < 1e-5
+                        && (c.b - rgb[2]).abs() < 1e-5
+                });
+                if !exact {
+                    found_off_palette = true;
+                }
+            }
+        }
+        assert!(found_off_palette, "Guided must produce at least one non-palette RGB");
+    }
+
+    #[test]
+    fn guided_output_within_palette_channel_range() {
+        use engine_color::palette::LinearColor;
+        use engine_color::palette_guided::palette_channel_ranges;
+
+        let tile = make_uniform_tile(0.5, 0.5, 0.5, 1.0);
+        let mut params = make_params(DitherModeV2::Bayer4x4, 4, 1.0);
+        params.palette_dither_mode = PaletteDitherMode::Guided {
+            channel_levels: None,
+        };
+        let threshold_cache = ThresholdMapCache::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let mut doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+        let palette_id = doc.add_palette(
+            "R".into(),
+            vec![
+                LinearColor { r: 0.2, g: 0.1, b: 0.4 },
+                LinearColor { r: 0.8, g: 0.6, b: 0.9 },
+            ],
+        );
+        params.palette_id = Some(palette_id);
+        let result = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        let palette = doc.get_palette(palette_id).unwrap();
+        let ranges = palette_channel_ranges(palette);
+        for y in 0..TILE_FULL_SIZE {
+            for x in 0..TILE_FULL_SIZE {
+                for c in 0..3 {
+                    let v = result.at(x, y, c);
+                    assert!(
+                        v >= ranges[c as usize].min - 1e-5 && v <= ranges[c as usize].max + 1e-5,
+                        "channel {c} value {v} outside range"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mixed_output_always_exact_palette_color() {
+        use engine_color::palette::LinearColor;
+
+        let mut tile = PixelTile::new();
+        for y in 0..TILE_FULL_SIZE {
+            for x in 0..TILE_FULL_SIZE {
+                let t = x as f32 / (TILE_FULL_SIZE - 1) as f32;
+                tile.set(x, y, 0, t);
+                tile.set(x, y, 1, 0.5);
+                tile.set(x, y, 2, 1.0 - t);
+                tile.set(x, y, 3, 1.0);
+            }
+        }
+        let mut params = make_params(DitherModeV2::Bayer8x8, 4, 1.0);
+        params.palette_dither_mode = PaletteDitherMode::Mixed {
+            channel_levels: Some(4),
+        };
+        let threshold_cache = ThresholdMapCache::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let mut doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+        let palette_id = doc.add_palette(
+            "M".into(),
+            vec![
+                LinearColor { r: 0.1, g: 0.2, b: 0.3 },
+                LinearColor { r: 0.9, g: 0.8, b: 0.7 },
+                LinearColor { r: 0.2, g: 0.7, b: 0.4 },
+            ],
+        );
+        params.palette_id = Some(palette_id);
+        let result = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        let palette = doc.get_palette(palette_id).unwrap();
+        for y in 0..TILE_FULL_SIZE {
+            for x in 0..TILE_FULL_SIZE {
+                let rgb = [result.at(x, y, 0), result.at(x, y, 1), result.at(x, y, 2)];
+                assert!(
+                    palette.colors.iter().any(|c| {
+                        (c.r - rgb[0]).abs() < 1e-5
+                            && (c.g - rgb[1]).abs() < 1e-5
+                            && (c.b - rgb[2]).abs() < 1e-5
+                    }),
+                    "Mixed must snap to a palette color at ({x},{y})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mixed_no_longer_collapses_on_wide_voronoi_region() {
+        use engine_color::palette::LinearColor;
+        use std::collections::BTreeSet;
+
+        // Pink owns a large Voronoi cell; white/gray/lavender sit farther in Oklab.
+        // Hard snap mapped every guided sample in that cell to pink. Two-nearest
+        // dither on the guided value must still pick a second neighbor along the ramp.
+        let mut tile = PixelTile::new();
+        for y in 0..TILE_FULL_SIZE {
+            for x in 0..TILE_FULL_SIZE {
+                let t = x as f32 / (TILE_FULL_SIZE - 1) as f32;
+                tile.set(x, y, 0, 0.78 + 0.12 * t);
+                tile.set(x, y, 1, 0.36 + 0.08 * t);
+                tile.set(x, y, 2, 0.46 + 0.06 * t);
+                tile.set(x, y, 3, 1.0);
+            }
+        }
+        let mut params = make_params(DitherModeV2::Bayer8x8, 4, 1.0);
+        params.palette_dither_mode = PaletteDitherMode::Mixed {
+            channel_levels: Some(8),
+        };
+        let threshold_cache = ThresholdMapCache::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let mut doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+        let palette_id = doc.add_palette(
+            "cheek".into(),
+            vec![
+                LinearColor {
+                    r: 0.85,
+                    g: 0.40,
+                    b: 0.50,
+                },
+                LinearColor {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 1.0,
+                },
+                LinearColor {
+                    r: 0.45,
+                    g: 0.45,
+                    b: 0.45,
+                },
+                LinearColor {
+                    r: 0.70,
+                    g: 0.50,
+                    b: 0.80,
+                },
+            ],
+        );
+        params.palette_id = Some(palette_id);
+        let result = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        let mut unique = BTreeSet::new();
+        for y in HALO..(HALO + TILE_SIZE) {
+            for x in HALO..(HALO + TILE_SIZE) {
+                unique.insert((
+                    result.at(x, y, 0).to_bits(),
+                    result.at(x, y, 1).to_bits(),
+                    result.at(x, y, 2).to_bits(),
+                ));
+            }
+        }
+        assert!(
+            unique.len() >= 2,
+            "Mixed must dither two-nearest on guided RGB, not hard-snap a Voronoi cell (got {} unique)",
+            unique.len()
+        );
+    }
+
+    #[test]
+    fn mixed_differs_from_strict_on_ramp() {
+        use engine_color::palette::LinearColor;
+
+        let mut tile = PixelTile::new();
+        for y in 0..TILE_FULL_SIZE {
+            for x in 0..TILE_FULL_SIZE {
+                let t = x as f32 / (TILE_FULL_SIZE - 1) as f32;
+                tile.set(x, y, 0, t);
+                tile.set(x, y, 1, 0.35);
+                tile.set(x, y, 2, 0.65);
+                tile.set(x, y, 3, 1.0);
+            }
+        }
+        let mut strict = make_params(DitherModeV2::Bayer8x8, 4, 1.0);
+        strict.palette_dither_mode = PaletteDitherMode::Strict;
+        let mut mixed = strict.clone();
+        mixed.palette_dither_mode = PaletteDitherMode::Mixed {
+            channel_levels: Some(8),
+        };
+        let threshold_cache = ThresholdMapCache::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let mut doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+        let palette_id = doc.add_palette(
+            "MS".into(),
+            vec![
+                LinearColor { r: 0.0, g: 0.0, b: 0.0 },
+                LinearColor { r: 1.0, g: 0.0, b: 0.0 },
+                LinearColor { r: 0.0, g: 1.0, b: 0.0 },
+                LinearColor { r: 0.0, g: 0.0, b: 1.0 },
+                LinearColor { r: 1.0, g: 1.0, b: 1.0 },
+            ],
+        );
+        strict.palette_id = Some(palette_id);
+        mixed.palette_id = Some(palette_id);
+        let a = apply_ordered(
+            &tile, tc(0, 0), &strict, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        let b = apply_ordered(
+            &tile, tc(0, 0), &mixed, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        assert_ne!(
+            a.data, b.data,
+            "Mixed (Guided then snap) must not be bit-identical to Strict two-nearest"
+        );
+    }
+
+    #[test]
+    fn mixed_bayer4_pixel_size_4_still_walks_matrix() {
+        use engine_color::palette::LinearColor;
+        use std::collections::BTreeSet;
+
+        let mut tile = PixelTile::new();
+        for y in 0..TILE_FULL_SIZE {
+            for x in 0..TILE_FULL_SIZE {
+                let t = x as f32 / (TILE_FULL_SIZE - 1) as f32;
+                tile.set(x, y, 0, t);
+                tile.set(x, y, 1, t);
+                tile.set(x, y, 2, t);
+                tile.set(x, y, 3, 1.0);
+            }
+        }
+        let mut params = make_params(DitherModeV2::Bayer4x4, 4, 1.0);
+        params.pixel_size = 4;
+        params.palette_dither_mode = PaletteDitherMode::Mixed {
+            channel_levels: Some(4),
+        };
+        let threshold_cache = ThresholdMapCache::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let mut doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+        let palette_id = doc.add_palette(
+            "ps4".into(),
+            vec![
+                LinearColor { r: 0.0, g: 0.0, b: 0.0 },
+                LinearColor { r: 0.33, g: 0.33, b: 0.33 },
+                LinearColor { r: 0.66, g: 0.66, b: 0.66 },
+                LinearColor { r: 1.0, g: 1.0, b: 1.0 },
+            ],
+        );
+        params.palette_id = Some(palette_id);
+
+        let unique_t = unique_thresholds_on_tile(DitherModeV2::Bayer4x4, 4);
+        assert!(
+            unique_t >= 16,
+            "Bayer4×4 pixel_size=4 must still visit 16 thresholds (got {unique_t})"
+        );
+
+        let result = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        let mut lums = BTreeSet::new();
+        for y in (HALO..HALO + TILE_SIZE).step_by(4) {
+            for x in (HALO..HALO + TILE_SIZE).step_by(4) {
+                let bits = result.at(x, y, 0).to_bits();
+                lums.insert(bits);
+            }
+        }
+        assert!(
+            lums.len() >= 2,
+            "Mixed + Bayer4 + ps=4 must not collapse to one gray (got {} unique)",
+            lums.len()
+        );
+    }
+
+    #[test]
+    fn simple_output_always_exact_palette_color() {
+        use engine_color::palette::LinearColor;
+
+        let mut tile = PixelTile::new();
+        for y in 0..TILE_FULL_SIZE {
+            for x in 0..TILE_FULL_SIZE {
+                let t = x as f32 / (TILE_FULL_SIZE - 1) as f32;
+                tile.set(x, y, 0, t);
+                tile.set(x, y, 1, 0.4);
+                tile.set(x, y, 2, 1.0 - t);
+                tile.set(x, y, 3, 1.0);
+            }
+        }
+        let mut params = make_params(DitherModeV2::Bayer8x8, 4, 1.0);
+        params.palette_dither_mode = PaletteDitherMode::Simple;
+        let threshold_cache = ThresholdMapCache::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let mut doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+        let palette_id = doc.add_palette(
+            "S".into(),
+            vec![
+                LinearColor { r: 0.1, g: 0.2, b: 0.3 },
+                LinearColor { r: 0.9, g: 0.8, b: 0.7 },
+                LinearColor { r: 0.2, g: 0.7, b: 0.4 },
+            ],
+        );
+        params.palette_id = Some(palette_id);
+        let result = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        let palette = doc.get_palette(palette_id).unwrap();
+        for y in 0..TILE_FULL_SIZE {
+            for x in 0..TILE_FULL_SIZE {
+                let rgb = [result.at(x, y, 0), result.at(x, y, 1), result.at(x, y, 2)];
+                assert!(
+                    palette.colors.iter().any(|c| {
+                        (c.r - rgb[0]).abs() < 1e-5
+                            && (c.g - rgb[1]).abs() < 1e-5
+                            && (c.b - rgb[2]).abs() < 1e-5
+                    }),
+                    "Simple must pick a palette color at ({x},{y})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn simple_matches_srgb_euclidean_not_oklab() {
+        use engine_color::palette::{srgb_to_linear, LinearColor};
+
+        // sRGB (200,40,40) is RGB-closer to red (255,0,0) than to blue (0,0,255).
+        let tile = make_uniform_tile(
+            srgb_to_linear(200),
+            srgb_to_linear(40),
+            srgb_to_linear(40),
+            1.0,
+        );
+        // Avoid Bayer pushing the query across the RGB midline.
+        let mut params = make_params(DitherModeV2::Bayer8x8, 4, 0.1);
+        params.palette_dither_mode = PaletteDitherMode::Simple;
+        let threshold_cache = ThresholdMapCache::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let mut doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+        let palette_id = doc.add_palette(
+            "rb".into(),
+            vec![
+                LinearColor {
+                    r: srgb_to_linear(255),
+                    g: srgb_to_linear(0),
+                    b: srgb_to_linear(0),
+                },
+                LinearColor {
+                    r: srgb_to_linear(0),
+                    g: srgb_to_linear(0),
+                    b: srgb_to_linear(255),
+                },
+            ],
+        );
+        params.palette_id = Some(palette_id);
+        let result = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+        let red_r = srgb_to_linear(255);
+        for y in HALO..(HALO + TILE_SIZE) {
+            for x in HALO..(HALO + TILE_SIZE) {
+                assert!(
+                    (result.at(x, y, 0) - red_r).abs() < 1e-5,
+                    "Simple RGB Euclidean must pick red, not blue, at ({x},{y})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn simple_bayer_offset_matches_old_yuki_amplitude() {
+        use engine_color::palette::{srgb_to_linear, LinearColor};
+
+        let mut doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+        let palette_id = doc.add_palette(
+            "bw".into(),
+            vec![
+                LinearColor {
+                    r: srgb_to_linear(0),
+                    g: srgb_to_linear(0),
+                    b: srgb_to_linear(0),
+                },
+                LinearColor {
+                    r: srgb_to_linear(255),
+                    g: srgb_to_linear(255),
+                    b: srgb_to_linear(255),
+                },
+            ],
+        );
+        let pal = doc.get_palette(palette_id).unwrap();
+        let picker = SimpleRgbPicker::new(pal);
+        let g = srgb_to_linear(128);
+        // Old bayerDither: (T-0.5)*intensity*64. T=0 → −32 → 96, nearer black.
+        let black = picker.pick(g, g, g, -0.5 * SIMPLE_BAYER_SRGB_AMPLITUDE);
+        assert!(black.0 < 0.01, "T=0 offset must pick black, got {}", black.0);
+        // No offset: 128 is 1 closer to 255 than to 0.
+        let white = picker.pick(g, g, g, 0.0);
+        assert!(white.0 > 0.99, "zero offset mid-gray must pick white, got {}", white.0);
+    }
+
+    #[test]
+    fn builtin_apple2_palette_uses_many_colors_on_rgb_ramp() {
+        use engine_color::palette::{srgb_to_linear, LinearColor, BUILTIN_PRESETS};
+        use std::collections::BTreeSet;
+
+        let apple = BUILTIN_PRESETS.iter().find(|p| p.id == "apple2").unwrap();
+        let colors: Vec<LinearColor> = apple
+            .colors_srgb
+            .iter()
+            .map(|&(r, g, b)| LinearColor {
+                r: srgb_to_linear(r),
+                g: srgb_to_linear(g),
+                b: srgb_to_linear(b),
+            })
+            .collect();
+
+        let mut tile = PixelTile::new();
+        for y in 0..TILE_FULL_SIZE {
+            for x in 0..TILE_FULL_SIZE {
+                let fx = x as f32 / (TILE_FULL_SIZE - 1) as f32;
+                let fy = y as f32 / (TILE_FULL_SIZE - 1) as f32;
+                tile.set(x, y, 0, fx);
+                tile.set(x, y, 1, fy);
+                tile.set(x, y, 2, 1.0 - fx);
+                tile.set(x, y, 3, 1.0);
+            }
+        }
+
+        let mut params = make_params(DitherModeV2::Bayer8x8, 4, 1.0);
+        params.dither_alpha = false;
+        let threshold_cache = ThresholdMapCache::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let mut doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+        let palette_id = doc.add_palette("Apple II".into(), colors);
+        params.palette_id = Some(palette_id);
+
+        let result = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+
+        let mut used = BTreeSet::new();
+        for y in HALO..(HALO + engine_tiles::TILE_SIZE) {
+            for x in HALO..(HALO + engine_tiles::TILE_SIZE) {
+                used.insert((
+                    result.at(x, y, 0).to_bits(),
+                    result.at(x, y, 1).to_bits(),
+                    result.at(x, y, 2).to_bits(),
+                ));
+            }
+        }
+        eprintln!("Apple II Bayer unique output colors: {}", used.len());
+        assert!(
+            used.len() >= 10,
+            "expected most of Apple II (15 unique) on an RGB ramp, got {}",
+            used.len()
+        );
+    }
+
+    #[test]
+    fn builtin_gameboy_green_ramp_should_use_all_four() {
+        use engine_color::palette::{srgb_to_linear, LinearColor, BUILTIN_PRESETS};
+        use std::collections::BTreeSet;
+
+        let gb = BUILTIN_PRESETS.iter().find(|p| p.id == "gameboy").unwrap();
+        let colors: Vec<LinearColor> = gb
+            .colors_srgb
+            .iter()
+            .map(|&(r, g, b)| LinearColor {
+                r: srgb_to_linear(r),
+                g: srgb_to_linear(g),
+                b: srgb_to_linear(b),
+            })
+            .collect();
+
+        let mut tile = PixelTile::new();
+        for y in 0..TILE_FULL_SIZE {
+            for x in 0..TILE_FULL_SIZE {
+                let t = x as f32 / (TILE_FULL_SIZE - 1) as f32;
+                // Interpolate from darkest to lightest Game Boy green in sRGB-ish linear.
+                let r = colors[0].r * (1.0 - t) + colors[3].r * t;
+                let g = colors[0].g * (1.0 - t) + colors[3].g * t;
+                let b = colors[0].b * (1.0 - t) + colors[3].b * t;
+                tile.set(x, y, 0, r);
+                tile.set(x, y, 1, g);
+                tile.set(x, y, 2, b);
+                tile.set(x, y, 3, 1.0);
+            }
+        }
+
+        let mut params = make_params(DitherModeV2::Bayer8x8, 4, 1.0);
+        params.dither_alpha = false;
+        let threshold_cache = ThresholdMapCache::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let mut doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+        let palette_id = doc.add_palette("Game Boy".into(), colors.clone());
+        params.palette_id = Some(palette_id);
+
+        let result = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+
+        let mut used = BTreeSet::new();
+        for y in HALO..(HALO + TILE_SIZE) {
+            for x in HALO..(HALO + TILE_SIZE) {
+                used.insert((
+                    result.at(x, y, 0).to_bits(),
+                    result.at(x, y, 1).to_bits(),
+                    result.at(x, y, 2).to_bits(),
+                ));
+            }
+        }
+        eprintln!("Game Boy Bayer unique on GB ramp: {}", used.len());
+        assert_eq!(
+            used.len(),
+            4,
+            "Game Boy ramp should use all 4 palette colors, got {}",
+            used.len()
+        );
+    }
+
+    #[test]
+    fn builtin_apple2_mid_orange_pink_dithers_two() {
+        use engine_color::palette::{srgb_to_linear, LinearColor, BUILTIN_PRESETS};
+        use std::collections::BTreeSet;
+
+        let apple = BUILTIN_PRESETS.iter().find(|p| p.id == "apple2").unwrap();
+        let colors: Vec<LinearColor> = apple
+            .colors_srgb
+            .iter()
+            .map(|&(r, g, b)| LinearColor {
+                r: srgb_to_linear(r),
+                g: srgb_to_linear(g),
+                b: srgb_to_linear(b),
+            })
+            .collect();
+
+        let orange = &colors[9];
+        let pink = &colors[11];
+        let tile = make_uniform_tile(
+            (orange.r + pink.r) * 0.5,
+            (orange.g + pink.g) * 0.5,
+            (orange.b + pink.b) * 0.5,
+            1.0,
+        );
+        let mut params = make_params(DitherModeV2::Bayer8x8, 4, 1.0);
+        params.dither_alpha = false;
+        let threshold_cache = ThresholdMapCache::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let mut doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+        let palette_id = doc.add_palette("Apple II".into(), colors);
+        params.palette_id = Some(palette_id);
+
+        let result = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+
+        let mut used = BTreeSet::new();
+        for y in HALO..(HALO + TILE_SIZE) {
+            for x in HALO..(HALO + TILE_SIZE) {
+                used.insert((
+                    result.at(x, y, 0).to_bits(),
+                    result.at(x, y, 1).to_bits(),
+                    result.at(x, y, 2).to_bits(),
+                ));
+            }
+        }
+        assert!(
+            used.len() >= 2,
+            "a midpoint between two Apple II hues should dither, got {}",
+            used.len()
+        );
+    }
+
+    #[test]
+    fn two_nearest_exact_palette_color_stays_solid() {
+        use engine_color::palette::{LinearColor, Palette};
+
+        let pal = Palette {
+            id: 1,
+            name: "bw".into(),
+            colors: vec![
+                LinearColor {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                },
+                LinearColor {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 1.0,
+                },
+            ],
+            revision: 1,
+        };
+        let picker = OrderedPalettePicker::new(&pal);
+        for t in [0.0, 0.25, 0.5, 0.75, 0.99] {
+            let (r, g, b) = picker.pick(0.0, 0.0, 0.0, t, 1.0);
+            assert_eq!((r, g, b), (0.0, 0.0, 0.0), "threshold {t}");
+            let (r, g, b) = picker.pick(1.0, 1.0, 1.0, t, 1.0);
+            assert_eq!((r, g, b), (1.0, 1.0, 1.0), "threshold {t}");
+        }
+    }
+
+    #[test]
+    fn builtin_apple2_exact_orange_stays_solid() {
+        use engine_color::palette::{srgb_to_linear, LinearColor, BUILTIN_PRESETS};
+        use std::collections::BTreeSet;
+
+        let apple = BUILTIN_PRESETS.iter().find(|p| p.id == "apple2").unwrap();
+        let colors: Vec<LinearColor> = apple
+            .colors_srgb
+            .iter()
+            .map(|&(r, g, b)| LinearColor {
+                r: srgb_to_linear(r),
+                g: srgb_to_linear(g),
+                b: srgb_to_linear(b),
+            })
+            .collect();
+        let orange = apple.colors_srgb[9];
+        let tile = make_uniform_tile(
+            srgb_to_linear(orange.0),
+            srgb_to_linear(orange.1),
+            srgb_to_linear(orange.2),
+            1.0,
+        );
+        let mut params = make_params(DitherModeV2::Bayer8x8, 4, 1.0);
+        params.dither_alpha = false;
+        let threshold_cache = ThresholdMapCache::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let mut doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+        let palette_id = doc.add_palette("Apple II".into(), colors);
+        params.palette_id = Some(palette_id);
+
+        let result = apply_ordered(
+            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+        )
+        .unwrap();
+
+        let mut used = BTreeSet::new();
+        for y in HALO..(HALO + TILE_SIZE) {
+            for x in HALO..(HALO + TILE_SIZE) {
+                used.insert((
+                    result.at(x, y, 0).to_bits(),
+                    result.at(x, y, 1).to_bits(),
+                    result.at(x, y, 2).to_bits(),
+                ));
+            }
+        }
+        assert_eq!(
+            used.len(),
+            1,
+            "an exact Apple II color must not pick extra hues, got {}",
+            used.len()
+        );
     }
 
     #[test]
@@ -1287,5 +2429,160 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn unique_thresholds_on_tile(mode: DitherModeV2, pixel_size: u8) -> usize {
+        let mut params = make_params(mode.clone(), 4, 1.0);
+        params.pixel_size = pixel_size;
+        let cache = ThresholdMapCache::new();
+        let coord = tc(0, 0);
+        let ps = pixel_size as u32;
+        let mut seen = std::collections::HashSet::new();
+        for y in 0..TILE_FULL_SIZE {
+            for x in 0..TILE_FULL_SIZE {
+                let block = GlobalCoordSigned::from_local_with_halo(coord, x, y, HALO).aligned(ps);
+                let (tx, ty) = ordered_pattern_coord(block.x, block.y, ps, 0.0);
+                let t = get_threshold_i32(&params, tx, ty, &cache).unwrap();
+                seen.insert(t.to_bits());
+            }
+        }
+        seen.len()
+    }
+
+    fn bayer_matrix_cells(mode: &DitherModeV2) -> usize {
+        match mode {
+            DitherModeV2::Bayer2x2 => 4,
+            DitherModeV2::Bayer4x4 => 16,
+            DitherModeV2::Bayer8x8 => 64,
+            _ => unreachable!("bayer only"),
+        }
+    }
+
+    #[test]
+    fn bayer_block_index_walks_full_matrix_for_all_pixel_sizes() {
+        for mode in [
+            DitherModeV2::Bayer2x2,
+            DitherModeV2::Bayer4x4,
+            DitherModeV2::Bayer8x8,
+        ] {
+            let cells = bayer_matrix_cells(&mode);
+            for ps in 1u8..=32 {
+                let unique = unique_thresholds_on_tile(mode.clone(), ps);
+                assert!(
+                    unique >= cells,
+                    "{mode:?} pixel_size={ps}: unique thresholds {unique} < matrix cells {cells}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn custom_png_block_index_walks_map_when_pixel_size_divides_dims() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let path = dir.join("target/test_threshold_map_4x4.png");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        {
+            let file = std::fs::File::create(&path).unwrap();
+            let mut encoder = png::Encoder::new(file, 4, 4);
+            encoder.set_color(png::ColorType::Grayscale);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            let mut pixels = [0u8; 16];
+            for i in 0..16u8 {
+                pixels[i as usize] = i * 16;
+            }
+            writer.write_image_data(&pixels).unwrap();
+        }
+
+        let mut params = make_params(
+            DitherModeV2::CustomPng {
+                path: path.to_string_lossy().into_owned(),
+            },
+            4,
+            1.0,
+        );
+        let cache = ThresholdMapCache::new();
+        let coord = tc(0, 0);
+
+        for ps in 1u8..=32 {
+            params.pixel_size = ps;
+            let mut seen = std::collections::HashSet::new();
+            let psu = ps as u32;
+            for y in 0..TILE_FULL_SIZE {
+                for x in 0..TILE_FULL_SIZE {
+                    let block = GlobalCoordSigned::from_local_with_halo(coord, x, y, HALO).aligned(psu);
+                    let (tx, ty) = ordered_pattern_coord(block.x, block.y, psu, 0.0);
+                    let t = get_threshold_i32(&params, tx, ty, &cache).unwrap();
+                    seen.insert(t.to_bits());
+                }
+            }
+            assert!(
+                seen.len() >= 16,
+                "CustomPng 4×4 pixel_size={ps}: unique thresholds {} < 16",
+                seen.len()
+            );
+        }
+    }
+
+    #[test]
+    fn ordered_palette_picker_uses_full_bayer_when_pixel_size_divides_matrix() {
+        use engine_color::palette::LinearColor;
+
+        let tile = make_uniform_tile(0.5, 0.5, 0.5, 1.0);
+        let mut params = make_params(DitherModeV2::Bayer4x4, 4, 1.0);
+        params.pixel_size = 4;
+        params.palette_id = Some(crate::types::PaletteId::new(1));
+
+        let threshold_cache = ThresholdMapCache::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let mut doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+        let palette_id = doc.add_palette(
+            "bw".to_string(),
+            vec![
+                LinearColor {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                },
+                LinearColor {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 1.0,
+                },
+            ],
+        );
+        params.palette_id = Some(palette_id);
+
+        let result = apply_ordered(
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
+
+        let mut saw_black = false;
+        let mut saw_white = false;
+        for y in 0..TILE_FULL_SIZE {
+            for x in 0..TILE_FULL_SIZE {
+                let r = result.at(x, y, 0);
+                if r == 0.0 {
+                    saw_black = true;
+                }
+                if r == 1.0 {
+                    saw_white = true;
+                }
+            }
+        }
+        assert!(
+            saw_black && saw_white,
+            "Bayer4x4 pixel_size=4 + 2-color palette must dither both neighbors, not stick on i2 (black={saw_black} white={saw_white})"
+        );
     }
 }

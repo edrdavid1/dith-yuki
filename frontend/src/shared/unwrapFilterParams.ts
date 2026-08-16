@@ -3,6 +3,7 @@ const TAGGED_KEYS = [
   'DitherV2',
   'Glow',
   'Crt',
+  'Adjust',
   'Curves',
   'Levels',
   'Glitch',

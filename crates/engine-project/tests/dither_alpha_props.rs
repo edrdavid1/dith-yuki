@@ -72,6 +72,7 @@ fn arb_ordered_params() -> impl Strategy<Value = DitherParamsV2> {
                 pixel_size,
                 color_mode,
                 palette_id: None, // skip palette to avoid needing doc setup,
+                dither_alpha: false,
             ..Default::default()
             }
         })

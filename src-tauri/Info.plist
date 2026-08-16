@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	Tauri generates CFBundleDocumentTypes / UTExportedTypeDeclarations from
+	bundle.fileAssociations, but it has no way to express per-type icons.
+	The merge is per top-level key, so both arrays are restated here in full
+	and must be kept in sync with tauri.conf.json.
+	The icns files are copied into Contents/Resources by tauri.macos.conf.json.
+	-->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Dither Project</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>dyproj</string>
+			</array>
+			<key>CFBundleTypeIconFile</key>
+			<string>proj-icon.icns</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.dither.app.project</string>
+			</array>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Dither Pattern</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>dyuki</string>
+			</array>
+			<key>CFBundleTypeIconFile</key>
+			<string>pattern-icon.icns</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.dither.app.pattern</string>
+			</array>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+		</dict>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.dither.app.project</string>
+			<key>UTTypeDescription</key>
+			<string>Dither Yuki project archive</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+				<string>com.pkware.zip-archive</string>
+			</array>
+			<key>UTTypeIconFile</key>
+			<string>proj-icon.icns</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>dyproj</string>
+				</array>
+				<key>public.mime-type</key>
+				<string>application/x-dither-project</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.dither.app.pattern</string>
+			<key>UTTypeDescription</key>
+			<string>Dither Yuki sharable pattern</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+				<string>com.pkware.zip-archive</string>
+			</array>
+			<key>UTTypeIconFile</key>
+			<string>pattern-icon.icns</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>dyuki</string>
+				</array>
+				<key>public.mime-type</key>
+				<string>application/x-dither-pattern</string>
+			</dict>
+		</dict>
+	</array>
+</dict>
+</plist>

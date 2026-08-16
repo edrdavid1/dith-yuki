@@ -7,6 +7,7 @@ function renderMenuBar(overrides?: Partial<React.ComponentProps<typeof MenuBar>>
     hasDocument: true,
     onNewProject: vi.fn(),
     onOpenImage: vi.fn(),
+    onImportImageLayer: vi.fn(),
     onSaveImage: vi.fn(),
     onOpenProject: vi.fn(),
     onOpenRecent: vi.fn(),
@@ -16,6 +17,7 @@ function renderMenuBar(overrides?: Partial<React.ComponentProps<typeof MenuBar>>
     onImportPattern: vi.fn(),
     onOpenColorLab: vi.fn(),
     onOpenPreferences: vi.fn(),
+    onOpenHelp: vi.fn(),
   };
   const props = { ...defaults, ...overrides };
   return { ...render(<MenuBar {...props} />), props };
@@ -40,6 +42,7 @@ describe('MenuBar', () => {
     fireEvent.click(screen.getByText('File'));
     expect(screen.getByText('New Project…')).toBeInTheDocument();
     expect(screen.getByText('Open Image')).toBeInTheDocument();
+    expect(screen.getByText('Import Image as Layer…')).toBeInTheDocument();
     expect(screen.getByText('Open Project…')).toBeInTheDocument();
     expect(screen.getByText('Save Project')).toBeInTheDocument();
     expect(screen.getByText('Save Project As…')).toBeInTheDocument();
@@ -141,6 +144,13 @@ describe('MenuBar', () => {
     expect(props.onOpenImage).toHaveBeenCalledTimes(1);
   });
 
+  it('calls onImportImageLayer when File > Import Image as Layer is clicked', () => {
+    const { props } = renderMenuBar();
+    fireEvent.click(screen.getByText('File'));
+    fireEvent.click(screen.getByText('Import Image as Layer…'));
+    expect(props.onImportImageLayer).toHaveBeenCalledTimes(1);
+  });
+
   it('calls onExportPattern when Presets > Export Pattern is clicked', () => {
     const { props } = renderMenuBar();
     fireEvent.click(screen.getByText('Presets'));
@@ -161,6 +171,7 @@ describe('MenuBar', () => {
     expect(screen.getByText('Save/Export')).toBeDisabled();
     expect(screen.getByText('Save Project')).toBeDisabled();
     expect(screen.getByText('Save Project As…')).toBeDisabled();
+    expect(screen.getByText('Import Image as Layer…')).toBeDisabled();
   });
 
   it('disables pattern actions in Presets when hasDocument is false', () => {
@@ -221,5 +232,21 @@ describe('MenuBar', () => {
     expect(props.onOpenRecent).toHaveBeenCalledWith(
       expect.objectContaining({ path: '/tmp/proj.dyproj', kind: 'project' })
     );
+  });
+
+  it('Help click calls onOpenHelp directly (no dropdown)', () => {
+    const { props } = renderMenuBar();
+    fireEvent.click(screen.getByText('Help'));
+    expect(props.onOpenHelp).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('hovering Help when dropdown is open closes the dropdown', () => {
+    renderMenuBar();
+    fireEvent.click(screen.getByText('File'));
+    expect(screen.getByText('Open Image')).toBeInTheDocument();
+    fireEvent.mouseEnter(screen.getByText('Help'));
+    expect(screen.queryByText('Open Image')).not.toBeInTheDocument();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 });

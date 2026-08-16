@@ -99,15 +99,7 @@ pub fn compute_pyramid_level(zoom: f64, max_level: u8) -> u8 {
 /// The max level is determined by how many times we can halve the tile grid
 /// before it becomes a single tile or smaller.
 pub fn compute_max_level(doc_width: u32, doc_height: u32) -> u8 {
-    let max_dim = doc_width.max(doc_height);
-    if max_dim <= TILE_SIZE {
-        return 0;
-    }
-    // How many times can we divide max_dim by TILE_SIZE and still have meaningful data?
-    // At level L, each tile covers TILE_SIZE * 2^L pixels.
-    // Max level is floor(log2(max_dim / TILE_SIZE))
-    let ratio = max_dim as f64 / TILE_SIZE as f64;
-    ratio.log2().floor().max(0.0) as u8
+    engine_tiles::max_pyramid_level(doc_width, doc_height)
 }
 
 /// Compute visible tile coordinates for a viewport at a given pyramid level.
@@ -350,12 +342,9 @@ pub fn set_viewport(
     let doc_height = snapshot.height;
     drop(snapshot);
 
-    // Compute pyramid level
-    // NOTE: Pyramid level rendering is currently disabled on the frontend
-    // (always requests level 0). Force level 0 here too to avoid scheduling
-    // pyramid tiles that waste worker cycles and compete with real requests.
-    let _max_level = compute_max_level(doc_width, doc_height);
-    let level: u8 = 0;
+    // Compute pyramid level from zoom so zoom-out requests coarse tiles.
+    let max_level = compute_max_level(doc_width, doc_height);
+    let level = compute_pyramid_level(zoom, max_level);
 
     // Compute visible tiles
     let mut visible = compute_visible_tiles(zoom, x, y, width, height, level, doc_width, doc_height);
@@ -825,6 +814,20 @@ mod tests {
         // (0,1) and (4,1) are farthest: dist = 2.5 each
         assert_eq!(distances[8], 2.5);
         assert_eq!(distances[9], 2.5);
+    }
+
+    #[test]
+    fn visible_tiles_3000_at_fit_level_2_is_nine() {
+        // 3000×3000 fit into ~1200×900 at zoom 0.25 → level 2 covers 1024px/tile → 3×3
+        let tiles = compute_visible_tiles(0.25, 0.0, 0.0, 1200.0, 900.0, 2, 3000, 3000);
+        assert_eq!(tiles.len(), 9);
+        assert!(tiles.iter().all(|t| t.level == 2));
+    }
+
+    #[test]
+    fn visible_tiles_3000_at_level_0_is_one_hundred_forty_four() {
+        let tiles = compute_visible_tiles(0.25, 0.0, 0.0, 1200.0, 900.0, 0, 3000, 3000);
+        assert_eq!(tiles.len(), 144);
     }
 
     #[test]

@@ -9,6 +9,7 @@ vi.mock('../../shared/ipc', async () => {
     ...actual,
     generatePalette: vi.fn(),
     logIpcError: vi.fn(),
+    emitPaletteBindingChanged: vi.fn(),
   };
 });
 

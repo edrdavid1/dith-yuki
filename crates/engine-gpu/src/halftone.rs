@@ -20,6 +20,7 @@ pub struct HalftoneGpuParams {
     pub threshold_scale: f32,
     pub tile_x: u32,
     pub tile_y: u32,
+    pub dither_alpha: bool,
 }
 
 pub(crate) struct HalftonePipeline {
@@ -104,7 +105,7 @@ pub fn apply_halftone_gpu(
         params: [
             params.cell_size as f32,
             params.threshold_scale,
-            0.0,
+            if params.dither_alpha { 1.0 } else { 0.0 },
             0.0,
         ],
     };

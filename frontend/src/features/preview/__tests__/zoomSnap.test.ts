@@ -16,10 +16,12 @@ describe('snapIntegerZoom', () => {
     expect(snapIntegerZoom(3)).toBe(3);
   });
 
-  it('snaps <1 to reciprocal ladder', () => {
+  it('snaps <1 to power-of-two so pyramid tiles blit 1:1', () => {
     expect(snapIntegerZoom(0.5)).toBe(0.5);
-    expect(snapIntegerZoom(0.4)).toBeCloseTo(1 / 3, 5);
+    expect(snapIntegerZoom(0.4)).toBe(0.5);
+    expect(snapIntegerZoom(0.3)).toBe(0.25);
     expect(snapIntegerZoom(0.26)).toBe(0.25);
+    expect(snapIntegerZoom(1 / 3)).toBe(0.25);
   });
 
   it('clamps to max', () => {
@@ -31,7 +33,7 @@ describe('snapIntegerZoomFloor', () => {
   it('floors fit zoom so document still fits', () => {
     expect(snapIntegerZoomFloor(2.9)).toBe(2);
     expect(snapIntegerZoomFloor(1.01)).toBe(1);
-    expect(snapIntegerZoomFloor(0.4)).toBeCloseTo(1 / 3, 5);
+    expect(snapIntegerZoomFloor(0.4)).toBe(0.25);
   });
 });
 
@@ -54,5 +56,7 @@ describe('integer zoom ladder', () => {
     expect(prevIntegerZoom(1)).toBe(0.5);
     expect(nextIntegerZoom(0.5)).toBe(1);
     expect(prevIntegerZoom(2)).toBe(1);
+    expect(nextIntegerZoom(0.25)).toBe(0.5);
+    expect(prevIntegerZoom(0.5)).toBe(0.25);
   });
 });

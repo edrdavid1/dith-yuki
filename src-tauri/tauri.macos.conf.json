@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "resources": {
+      "icons/proj-icon.icns": "proj-icon.icns",
+      "icons/pattern-icon.icns": "pattern-icon.icns"
+    }
+  }
+}

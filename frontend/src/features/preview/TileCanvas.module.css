@@ -1,9 +1,7 @@
 .tile-canvas {
   display: block;
-  /* Intrinsic size follows backing-store attributes — never CSS-stretch a
-     stale bitmap while ResizeObserver / React catch up after sidebar resize. */
-  width: auto;
-  height: auto;
+  /* CSS size is set in layout (CSS px). Backing store is CSS×DPR so
+     dest snaps land on integer device pixels and tile edges do not split. */
   image-rendering: pixelated;
   image-rendering: crisp-edges;
   will-change: transform;

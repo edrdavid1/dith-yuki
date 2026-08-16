@@ -6,6 +6,8 @@
 //!
 //! **Requirements:** 3.3, 3.4, 10.4; Track A Req 4
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use dashmap::DashMap;
 use engine_tiles::{TileCoord, TILE_SIZE};
 
@@ -66,6 +68,7 @@ impl Default for ErrorResiduals {
 /// to seed error propagation at boundaries.
 pub struct ErrorResidualsStore {
     entries: DashMap<(LayerId, TileCoord), ErrorResiduals>,
+    clear_count: AtomicU64,
 }
 
 impl ErrorResidualsStore {
@@ -73,6 +76,7 @@ impl ErrorResidualsStore {
     pub fn new() -> Self {
         Self {
             entries: DashMap::new(),
+            clear_count: AtomicU64::new(0),
         }
     }
 
@@ -145,6 +149,12 @@ impl ErrorResidualsStore {
     /// Clear all stored residuals (on document change or invalidation).
     pub fn clear(&self) {
         self.entries.clear();
+        self.clear_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// How many times [`clear`] has been called (tests / diagnostics).
+    pub fn clear_count(&self) -> u64 {
+        self.clear_count.load(Ordering::Relaxed)
     }
 }
 

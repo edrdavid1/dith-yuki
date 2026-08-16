@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import SimpleBar from 'simplebar-react';
 import ColorPicker from '../../components/ColorPicker';
 import WindowTitlebar from '../../shared/ui/WindowTitlebar';
 import { useAppDispatch, useAppSelector } from '../../app/hooks';
-import { bumpVersion } from '../../app/slices/palettesSlice';
+import { bumpVersion, clearLastCreatedId, publishPaletteBinding } from '../../app/slices/palettesSlice';
 import {
   addColor,
   deleteColor,
@@ -28,16 +28,18 @@ import {
   formatIpcError,
   importBuiltinPalette,
   importPalette,
+  listBuiltinPalettes,
   listPalettes,
   logIpcError,
   replacePalette,
+  type BuiltinPaletteDto,
   type PaletteDto,
 } from '../../shared/ipc';
 import { openDialog, saveDialog } from '../../shared/ipc/dialogs';
 import { toHex, sortByBrightness } from '../../types/effects';
 import type { PanelChromeProps } from '../panels/PanelChrome';
 import ColorLabBody, { type ColorLabVariant } from './ColorLabBody';
-import { shouldReplaceSelectedPalette } from './paletteApply';
+import { shouldLiveReplacePalette, shouldReplaceSelectedPalette, draftSignature } from './paletteApply';
 import { createColorEntry, MAX_COLORS } from './types';
 import { useColorLabDraftSync } from './useColorLabDraftSync';
 import styles from './ColorLabWindow.module.css';
@@ -83,8 +85,10 @@ export default function ColorLabFeature({
   useColorLabDraftSync();
 
   const [palettes, setPalettes] = useState<PaletteDto[]>([]);
+  const [builtins, setBuiltins] = useState<BuiltinPaletteDto[]>([]);
   const [colorPickerIndex, setColorPickerIndex] = useState<number | null>(null);
   const [pickerAnchorRect, setPickerAnchorRect] = useState<DOMRect | null>(null);
+  const lastLivePushRef = useRef('');
 
   useEffect(() => {
     let cancelled = false;
@@ -99,6 +103,50 @@ export default function ColorLabFeature({
       cancelled = true;
     };
   }, [palettesVersion]);
+
+  useEffect(() => {
+    let cancelled = false;
+    listBuiltinPalettes()
+      .then((list) => {
+        if (!cancelled) setBuiltins(list);
+      })
+      .catch((err) => {
+        if (!cancelled) logIpcError('ColorLabFeature.listBuiltinPalettes', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Keep the bound document palette in sync with Color Lab edits so the
+  // canvas / LUT preview updates without waiting for Apply.
+  useEffect(() => {
+    if (selectedPaletteId == null) return;
+    const sig = draftSignature(selectedPaletteId, name.trim(), colors);
+    if (!shouldLiveReplacePalette(selectedPaletteId, palettes, name, colors)) {
+      lastLivePushRef.current = sig;
+      return;
+    }
+    if (lastLivePushRef.current === sig) return;
+
+    const timer = window.setTimeout(() => {
+      const rgb = colors
+        .filter((c) => c.valid)
+        .map((c) => [c.r, c.g, c.b] as [number, number, number]);
+      lastLivePushRef.current = sig;
+      void replacePalette(selectedPaletteId, name.trim(), rgb)
+        .then((dto) => {
+          setPalettes((prev) => prev.map((p) => (p.id === dto.id ? dto : p)));
+          void emitPaletteChanged();
+        })
+        .catch((err: unknown) => {
+          lastLivePushRef.current = '';
+          logIpcError('ColorLabFeature.liveReplace', err);
+        });
+    }, 120);
+
+    return () => window.clearTimeout(timer);
+  }, [colors, name, palettes, selectedPaletteId]);
 
   const handleExtract = useCallback(async () => {
     if (!hasDocument || layerId === null) {
@@ -117,6 +165,8 @@ export default function ColorLabFeature({
       const palette = palettes.find((p) => p.id === paletteId);
       if (!palette) return;
       dispatch(setSelectedPaletteId(paletteId));
+      dispatch(bumpVersion({ lastCreatedId: paletteId }));
+      publishPaletteBinding(paletteId);
       dispatch(setName(palette.name));
       dispatch(
         setColors(
@@ -140,6 +190,7 @@ export default function ColorLabFeature({
       if (dto.name) dispatch(setName(dto.name));
       dispatch(setSelectedPaletteId(dto.id ?? null));
       dispatch(bumpVersion({ lastCreatedId: dto.id }));
+      publishPaletteBinding(dto.id ?? null);
       dispatch(setError(null));
     } catch (err: unknown) {
       dispatch(setError(formatIpcError(err)));
@@ -147,14 +198,23 @@ export default function ColorLabFeature({
     }
   }, [dispatch]);
 
-  const handleImportBuiltin = useCallback(
+  const handleSelectBuiltin = useCallback(
     async (id: string) => {
+      const preset = builtins.find((p) => p.id === id);
+      const existing = preset
+        ? palettes.find((p) => p.name.toLowerCase() === preset.name.toLowerCase())
+        : undefined;
+      if (existing) {
+        handleSelectPalette(existing.id);
+        return;
+      }
       try {
         const dto = await importBuiltinPalette(id);
         dispatch(setColors(dto.colors.map(([r, g, b]) => createColorEntry(toHex(r, g, b)))));
         if (dto.name) dispatch(setName(dto.name));
         dispatch(setSelectedPaletteId(dto.id ?? null));
         dispatch(bumpVersion({ lastCreatedId: dto.id }));
+        publishPaletteBinding(dto.id ?? null);
         void emitPaletteChanged();
         dispatch(setError(null));
       } catch (err: unknown) {
@@ -162,8 +222,14 @@ export default function ColorLabFeature({
         logIpcError('ColorLabFeature.importBuiltin', err);
       }
     },
-    [dispatch]
+    [builtins, dispatch, handleSelectPalette, palettes]
   );
+
+  const handleSelectNew = useCallback(() => {
+    dispatch(resetDraft());
+    dispatch(clearLastCreatedId());
+    publishPaletteBinding(null);
+  }, [dispatch]);
 
   const handleInsertGeneratedColors = useCallback(
     (hexColors: string[]) => {
@@ -246,6 +312,7 @@ export default function ColorLabFeature({
           ? await replacePalette(selectedPaletteId, nameTrimmed, rgb)
           : await addPalette(nameTrimmed, rgb);
       dispatch(bumpVersion({ lastCreatedId: dto.id }));
+      publishPaletteBinding(dto.id ?? null);
       dispatch(setSelectedPaletteId(dto.id));
       void emitPaletteChanged();
       dispatch(setError(null));
@@ -284,9 +351,12 @@ export default function ColorLabFeature({
       onNameChange={(v) => {
         dispatch(setName(v));
       }}
-      paletteOptions={palettes.map((p) => ({ id: p.id, name: p.name }))}
+      palettes={palettes}
+      builtins={builtins}
       selectedPaletteId={selectedPaletteId}
       onSelectPalette={handleSelectPalette}
+      onSelectBuiltin={handleSelectBuiltin}
+      onSelectNew={handleSelectNew}
       extractMethod={extractMethod}
       extractCount={extractCount}
       chromaWeight={chromaWeight}
@@ -313,7 +383,6 @@ export default function ColorLabFeature({
       }}
       onApply={handleApply}
       onImport={handleImport}
-      onImportBuiltin={handleImportBuiltin}
       onInsertGeneratedColors={handleInsertGeneratedColors}
       onGeneratorError={handleGeneratorError}
       onExport={handleExport}
@@ -351,7 +420,9 @@ export default function ColorLabFeature({
 
   return (
     <div className={cn('color-lab-floating')}>
-      {body}
+      <div className={cn('color-lab-scroll')}>
+        <SimpleBar style={{ height: '100%' }}>{body}</SimpleBar>
+      </div>
       {picker}
     </div>
   );

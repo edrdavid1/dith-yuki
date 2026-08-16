@@ -103,17 +103,17 @@ Gate: proceed P1
 
 Do not start until 2.3 is green.
 
-- [ ] 3.1 `import_image_layer(path)`
+- [x] 3.1 `import_image_layer(path)`
   - Reuse `load_image` decode; add raster; blit origin; clip; no scale
   - _Requirements: 5.1–5.3_
 
-- [ ] 3.2 UI + auto-extract
+- [x] 3.2 UI + auto-extract
   - File → Import Image as Layer…
   - `maybeAutoExtractPalette(newLayerId)` when pref on
   - Existing filter palette_ids unchanged
   - _Requirements: 5.4–5.6_
 
-- [ ] 3.3 Tests
+- [x] 3.3 Tests
   - Smaller image → transparent remainder
   - Larger → clipped
   - Extract pref off → no extra palette
@@ -173,6 +173,6 @@ Do not start until 2.3 is green.
 ### Beta 1
 
 - [ ] Beta 0
-- [ ] P3 Import Image as Layer
-- [ ] Track O DoD (`0.2.0`)
-- [ ] O3 uses `runUnsavedGuard` (skip if clean)
+- [x] P3 Import Image as Layer
+- [x] Track O DoD (`0.2.0`)
+- [x] O3 uses `runUnsavedGuard` (skip if clean)

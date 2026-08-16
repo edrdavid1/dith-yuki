@@ -1,13 +1,15 @@
-import DropdownMenu from '../../components/common/DropdownMenu';
 import AutoExtractSection from './AutoExtractSection';
-import BuiltinPresetsSection from './BuiltinPresetsSection';
 import HarmonySection from './HarmonySection';
 import ImportExportSection from './ImportExportSection';
 import PaletteManualEditor from './PaletteManualEditor';
+import PaletteManagerSection from './PaletteManagerSection';
 import PaletteVolumeViewer from './PaletteVolumeViewer';
 import RampGeneratorSection from './RampGeneratorSection';
 import ColorLabFooter from './ColorLabFooter';
+import Icon from '../../icons/iconRegistry';
+import Tooltip from '../../shared/ui/Tooltip';
 import type { ColorEntry, ExtractMethod } from './types';
+import type { BuiltinPaletteDto, PaletteDto } from '../../shared/ipc';
 import styles from './ColorLabWindow.module.css';
 import buttonStyles from './ColorLabButtons.module.css';
 import { bind } from '../../shared/ui/cn';
@@ -16,18 +18,16 @@ const cn = bind({ ...styles, ...buttonStyles });
 
 export type ColorLabVariant = 'sidebar' | 'full';
 
-export interface PaletteOption {
-  id: number;
-  name: string;
-}
-
 export interface ColorLabBodyProps {
   variant: ColorLabVariant;
   name: string;
   onNameChange: (name: string) => void;
-  paletteOptions: PaletteOption[];
+  palettes: PaletteDto[];
+  builtins: BuiltinPaletteDto[];
   selectedPaletteId: number | null;
   onSelectPalette: (paletteId: number) => void;
+  onSelectBuiltin: (id: string) => void;
+  onSelectNew: () => void;
   extractMethod: ExtractMethod;
   extractCount: number;
   chromaWeight: number;
@@ -53,7 +53,6 @@ export interface ColorLabBodyProps {
   onApply: () => void;
   onImport: () => void;
   onExport: (format?: string) => void;
-  onImportBuiltin: (id: string) => void;
   onInsertGeneratedColors: (hexColors: string[]) => void;
   onGeneratorError: (message: string | null) => void;
 }
@@ -64,23 +63,20 @@ const PLACEHOLDER = 'name-of-saved-palette';
 export default function ColorLabBody(props: ColorLabBodyProps) {
   const isSidebar = props.variant === 'sidebar';
 
-  const paletteOptions = props.paletteOptions.map((p) => ({
-    value: String(p.id),
-    label: p.name,
-  }));
-
-  const dropdownValue =
-    props.selectedPaletteId !== null ? String(props.selectedPaletteId) : PLACEHOLDER;
-
-  const dropdownOptions =
-    props.selectedPaletteId === null
-      ? [{ value: PLACEHOLDER, label: PLACEHOLDER, disabled: true }, ...paletteOptions]
-      : paletteOptions.length > 0
-        ? paletteOptions
-        : [{ value: PLACEHOLDER, label: PLACEHOLDER, disabled: true }];
-
   return (
     <div className={cn('color-lab-body', isSidebar && 'color-lab-body-sidebar')}>
+      <PaletteManagerSection
+        builtins={props.builtins}
+        saved={props.palettes}
+        selectedPaletteId={props.selectedPaletteId}
+        onSelectNew={props.onSelectNew}
+        onSelectSaved={props.onSelectPalette}
+        onSelectBuiltin={props.onSelectBuiltin}
+        previewColors={props.colors
+          .filter((c) => c.valid)
+          .map((c) => [c.r, c.g, c.b] as [number, number, number])}
+      />
+
       {isSidebar ? (
         <AutoExtractSection
           compact
@@ -117,8 +113,6 @@ export default function ColorLabBody(props: ColorLabBodyProps) {
         </div>
       )}
 
-      <BuiltinPresetsSection onImportBuiltin={props.onImportBuiltin} />
-
       {!isSidebar && (
         <div className={cn('color-lab-grid')}>
           <RampGeneratorSection
@@ -132,27 +126,14 @@ export default function ColorLabBody(props: ColorLabBodyProps) {
         </div>
       )}
 
-      {isSidebar ? (
-        <DropdownMenu
-          value={dropdownValue}
-          options={dropdownOptions}
-          onSelect={(v) => {
-            if (v === PLACEHOLDER) return;
-            const id = Number(v);
-            if (!Number.isFinite(id)) return;
-            props.onSelectPalette(id);
-          }}
-        />
-      ) : (
-        <input
-          type="text"
-          className={cn('color-lab-name-input')}
-          value={props.name}
-          onChange={(e) => props.onNameChange(e.target.value)}
-          placeholder={PLACEHOLDER}
-          aria-label="Palette name"
-        />
-      )}
+      <input
+        type="text"
+        className={cn('color-lab-name-input')}
+        value={props.name}
+        onChange={(e) => props.onNameChange(e.target.value)}
+        placeholder={PLACEHOLDER}
+        aria-label="Palette name"
+      />
 
       <PaletteManualEditor
         colors={props.colors}
@@ -185,14 +166,26 @@ export default function ColorLabBody(props: ColorLabBodyProps) {
 
       {isSidebar ? (
         <div className={cn('color-lab-utility-grid')}>
-          <button type="button" onClick={props.onSort} className={cn('color-lab-button')}>
-            <img src="/icons/sort-icon.svg" width={16} height={16} alt="" />
-            Sort by brightness
-          </button>
-          <button type="button" disabled className={cn('color-lab-button')}>
-            <img src="/icons/auto-interpolate-icon.svg" width={16} height={16} alt="" />
-            Auto interpolate
-          </button>
+          <Tooltip label="Sort by brightness">
+            <button
+              type="button"
+              onClick={props.onSort}
+              className={cn('color-lab-button', 'color-lab-button-icon')}
+              aria-label="Sort by brightness"
+            >
+              <Icon name="sort" width={16} height={16} />
+            </button>
+          </Tooltip>
+          <Tooltip label="Auto interpolate">
+            <button
+              type="button"
+              disabled
+              className={cn('color-lab-button', 'color-lab-button-icon')}
+              aria-label="Auto interpolate"
+            >
+              <Icon name="auto-interpolate" width={16} height={16} />
+            </button>
+          </Tooltip>
         </div>
       ) : (
         <ColorLabFooter

@@ -98,5 +98,24 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     output_px[idx] = rgb.r;
     output_px[idx + 1u] = rgb.g;
     output_px[idx + 2u] = rgb.b;
-    output_px[idx + 3u] = a;
+    let dither_a = u.params.z > 0.5;
+    if (dither_a) {
+        if (a <= 0.0) {
+            output_px[idx + 3u] = 0.0;
+        } else if (a >= 1.0) {
+            output_px[idx + 3u] = 1.0;
+        } else if (a > 0.5) {
+            output_px[idx + 3u] = 1.0;
+        } else {
+            output_px[idx + 3u] = 0.0;
+        }
+    } else {
+        output_px[idx + 3u] = a;
+    }
+    if (dither_a && output_px[idx + 3u] <= 0.0) {
+        output_px[idx] = 0.0;
+        output_px[idx + 1u] = 0.0;
+        output_px[idx + 2u] = 0.0;
+        output_px[idx + 3u] = 0.0;
+    }
 }
