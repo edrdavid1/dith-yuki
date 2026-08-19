@@ -1,6 +1,6 @@
 # Как сейчас работают цвет и Color Lab
 
-Актуальное as-built описание (не план и не ТЗ). Плановый/миграционный материал — в `color-and-palette-architecture.md` и `.cursor-spec/` (requirements / design / tasks). Общая карта системы — в `ARCHITECTURE.md`. Режимы палитрового дизера (Strict / Guided / Mixed / Simple) — в **[PALETTE_DITHER.md](./PALETTE_DITHER.md)**.
+As-built описание Color Lab. Общая карта системы — [architecture.md](./architecture.md). Режимы палитрового дизера (Strict / Guided / Mixed / Simple) — [palette-dither.md](./palette-dither.md).
 
 ---
 
@@ -266,7 +266,6 @@ frontend/src/app/slices/palettesSlice.ts
 frontend/src/shared/ipc/palettes.ts
 frontend/src/components/PaletteSelector.tsx
 frontend/src/features/effects/EffectsFeature.tsx
-.cursor-spec/                        # план расширения (tasks / design / requirements)
 ```
 
 ---

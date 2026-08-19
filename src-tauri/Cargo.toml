@@ -2,6 +2,11 @@
 name = "dither"
 version = "0.2.0"
 edition = "2021"
+description = "Tile-based dithering studio for pixel art, palettes, and layered images"
+authors = ["L'eco non di Bergamo"]
+license = "LicenseRef-FCL-1.0"
+homepage = "https://github.com/edrdavid1/dith-yuki"
+repository = "https://github.com/edrdavid1/dith-yuki"
 
 [dependencies]
 tauri = { version = "2", features = [] }

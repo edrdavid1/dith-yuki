@@ -38,6 +38,7 @@ describe('importImageLayer', () => {
         error: null,
         layerId: 1,
         projectPath: '/tmp/qa.dyproj',
+        sourcePath: null,
         dirty: false,
       },
     });

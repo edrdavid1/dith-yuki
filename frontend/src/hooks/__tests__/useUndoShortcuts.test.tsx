@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import NumberInput from '../../components/common/NumberInput';
-import { useUndoShortcuts } from '../useUndoShortcuts';
+import { useAppShortcuts } from '../../features/shortcuts/useAppShortcuts';
+import { ShortcutsProvider } from '../../features/shortcuts/ShortcutsContext';
 import { StoreProvider, createTestStore } from '../../app/__tests__/testStore';
 import type { ReactNode } from 'react';
 
@@ -20,7 +21,7 @@ const mockUndo = vi.mocked(undoIPC);
 const mockRedo = vi.mocked(redoIPC);
 
 function Harness() {
-  useUndoShortcuts();
+  useAppShortcuts();
   return (
     <NumberInput
       label="Levels"
@@ -45,6 +46,7 @@ function renderHarness(opts: { canUndo?: boolean; canRedo?: boolean; hasDocument
       error: null,
       layerId: 1,
       projectPath: null,
+      sourcePath: null,
       dirty: false,
     },
     undo: {
@@ -53,12 +55,14 @@ function renderHarness(opts: { canUndo?: boolean; canRedo?: boolean; hasDocument
     },
   });
   const wrapper = ({ children }: { children: ReactNode }) => (
-    <StoreProvider store={store}>{children}</StoreProvider>
+    <StoreProvider store={store}>
+      <ShortcutsProvider>{children}</ShortcutsProvider>
+    </StoreProvider>
   );
   return { store, ...render(<Harness />, { wrapper }) };
 }
 
-describe('useUndoShortcuts', () => {
+describe('useAppShortcuts (undo/redo)', () => {
   beforeEach(() => {
     mockUndo.mockReset();
     mockRedo.mockReset();

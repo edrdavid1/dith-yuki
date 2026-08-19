@@ -2,8 +2,11 @@ import styles from '../shared/ui/EmptyState.module.css';
 import { bind } from '../shared/ui/cn';
 import { formatRelativeTime } from '../shared/relativeTime';
 import type { RecentFileEntry } from '../shared/ipc/recent';
+import Icon from '../icons/iconRegistry';
 
 const cn = bind(styles);
+
+const WELCOME_RECENT_LIMIT = 6;
 
 export interface EmptyStateProps {
   className?: string;
@@ -19,37 +22,36 @@ function EmptyState({
   className,
   fill = false,
   recentEntries = [],
-  onNewProject,
   onOpenImage,
   onOpenProject,
   onOpenRecent,
 }: EmptyStateProps) {
+  const visibleRecent = recentEntries.slice(0, WELCOME_RECENT_LIMIT);
+
   return (
     <div className={cn('empty-state', fill && 'empty-state-fill', className)}>
       <div className={cn('welcome-brand')}>
-        <span className={cn('welcome-logo')} aria-hidden>
-          ▦
-        </span>
-        <h1 className={cn('welcome-title')}>Dither</h1>
+        <img
+          className={cn('welcome-hero')}
+          src="/img/dith.png"
+          alt="Dither Yuki"
+        />
       </div>
 
       <div className={cn('welcome-actions')}>
-        <button type="button" className={cn('welcome-action')} onClick={onNewProject}>
-          New Project
-        </button>
         <button type="button" className={cn('welcome-action')} onClick={onOpenImage}>
-          Open Image…
+          Open image
         </button>
         <button type="button" className={cn('welcome-action')} onClick={onOpenProject}>
-          Open Project…
+          Open project
         </button>
       </div>
 
-      {recentEntries.length > 0 && (
+      {visibleRecent.length > 0 && (
         <section className={cn('welcome-recent')} data-testid="welcome-recent" aria-label="Recent files">
           <h2 className={cn('welcome-recent-heading')}>Recent</h2>
           <ul className={cn('welcome-recent-list')}>
-            {recentEntries.map((entry) => (
+            {visibleRecent.map((entry) => (
               <li key={entry.path}>
                 <button
                   type="button"
@@ -57,7 +59,11 @@ function EmptyState({
                   onClick={() => onOpenRecent?.(entry)}
                 >
                   <span className={cn('welcome-recent-icon')} aria-hidden>
-                    {entry.kind === 'image' ? '🖼' : '📦'}
+                    <Icon
+                      name={entry.kind === 'image' ? 'row-img' : 'save'}
+                      width={24}
+                      height={24}
+                    />
                   </span>
                   <span className={cn('welcome-recent-text')}>
                     <span className={cn('welcome-recent-name')}>{entry.display_name}</span>

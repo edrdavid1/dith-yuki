@@ -1,6 +1,8 @@
 {
   "name": "dither-frontend",
   "version": "0.2.0",
+  "description": "Dither Yuki desktop UI",
+  "author": "L'eco non di Bergamo",
   "type": "module",
   "scripts": {
     "dev": "vite",

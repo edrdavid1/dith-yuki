@@ -2,6 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleDisplayName</key>
+	<string>Dither Yuki</string>
+	<key>CFBundleName</key>
+	<string>Dither Yuki</string>
+	<key>CFBundleGetInfoString</key>
+	<string>Dither Yuki, a tile-based dithering studio. Copyright © 2026 L'eco non di Bergamo.</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 L'eco non di Bergamo</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.graphics-design</string>
 	<!--
 	Tauri generates CFBundleDocumentTypes / UTExportedTypeDeclarations from
 	bundle.fileAssociations, but it has no way to express per-type icons.

@@ -3,7 +3,7 @@
 > Техническая документация по тайловой обработке, глобальным координатам,
 > cross-tile зависимостям и порядку вычислений.
 >
-> Стоимость тайла / рычаги оптимизации: **§11** и [ARCHITECTURE.md](./ARCHITECTURE.md) §13.
+> Стоимость тайла / рычаги оптимизации: **§11** и [architecture.md](./architecture.md) §13.
 
 ---
 
@@ -339,13 +339,13 @@ Optional wgpu compute for **pattern** filters. Error Diffusion stays CPU-only.
 - **Bridge tax:** `extract_core` / `write_core` are scalar `at()`/`set()` loops over 256².
 - **Parity:** Bayer exact (`f32 ==`); Halftone/CRT max ‖Δ‖∞ ≤ `1/255`.
 
-See `.cursor-spec/track-d-gpu/` for design and tasks. Cost vs CPU: ARCHITECTURE.md §13.4.
+Cost vs CPU: [architecture.md](./architecture.md) §13.4.
 
 ---
 
 ## 11. Стоимость одного тайла (для оптимизации)
 
-Это as-built cost model. Полная карта preview-latency — ARCHITECTURE.md §13.
+Это as-built cost model. Полная карта preview-latency — [architecture.md](./architecture.md) §13.
 
 ### Размеры
 

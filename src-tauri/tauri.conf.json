@@ -1,5 +1,5 @@
 {
-  "productName": "Dither",
+  "productName": "Dither Yuki",
   "version": "0.2.0",
   "identifier": "com.dither.app",
   "build": {
@@ -12,11 +12,12 @@
     "windows": [
       {
         "label": "main",
-        "title": "Dither Engine",
+        "title": "Dither Yuki",
         "width": 1200,
         "height": 800,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "backgroundColor": "#000000"
       }
     ],
     "security": {
@@ -26,6 +27,13 @@
   "bundle": {
     "active": true,
     "targets": ["app", "dmg"],
+    "publisher": "L'eco non di Bergamo",
+    "copyright": "Copyright © 2026 L'eco non di Bergamo",
+    "homepage": "https://github.com/edrdavid1/dith-yuki",
+    "license": "FCL-1.0",
+    "category": "GraphicsAndDesign",
+    "shortDescription": "Tile-based dithering studio for pixel art, palettes, and layered images.",
+    "longDescription": "Dither Yuki is a desktop image editor for artists and designers. It applies ordered and error-diffusion dithering, palette quantization, and layer compositing with a tile-based preview so large documents stay responsive. Projects use the .dyproj archive; shareable patterns use .dyuki.",
     "icon": [
       "icons/icon.png",
       "icons/app-icon.icns",

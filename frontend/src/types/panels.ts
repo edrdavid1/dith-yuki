@@ -41,7 +41,7 @@ export const PANEL_DEFAULT_BOUNDS: Record<PanelId, { width: number; height: numb
   layers: { width: 350, height: 500 },
   colorlab: { width: 560, height: 640 },
   preview: { width: 800, height: 600 },
-  preferences: { width: 420, height: 360 },
+  preferences: { width: 460, height: 520 },
 };
 
 /** Full dual-sidebar snapshot from Rust (`get_panels_state` / panel-state-changed). */

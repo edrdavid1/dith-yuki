@@ -168,10 +168,10 @@ describe('MenuBar', () => {
   it('disables Save/Export when hasDocument is false', () => {
     renderMenuBar({ hasDocument: false });
     fireEvent.click(screen.getByText('File'));
-    expect(screen.getByText('Save/Export')).toBeDisabled();
-    expect(screen.getByText('Save Project')).toBeDisabled();
-    expect(screen.getByText('Save Project As…')).toBeDisabled();
-    expect(screen.getByText('Import Image as Layer…')).toBeDisabled();
+    expect(screen.getByRole('menuitem', { name: /Save\/Export/ })).toBeDisabled();
+    expect(screen.getByRole('menuitem', { name: /^Save Project\b/ })).toBeDisabled();
+    expect(screen.getByRole('menuitem', { name: /Save Project As/ })).toBeDisabled();
+    expect(screen.getByRole('menuitem', { name: /Import Image as Layer/ })).toBeDisabled();
   });
 
   it('disables pattern actions in Presets when hasDocument is false', () => {

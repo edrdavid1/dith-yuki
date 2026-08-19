@@ -111,19 +111,10 @@
   background: var(--bg-window);
   border: none;
   border-top: var(--border);
-  /* Canvas-facing edge outside the 40px box so buttons don't cover it.
-     z-index keeps the shadow above .app-canvas (grid paint order would
-     otherwise cover the left sidebar's rightward shadow). */
-  box-shadow: calc(-2 * var(--border-width)) 0 0 0 var(--border-color);
   position: relative;
   z-index: 1;
   justify-self: stretch;
   min-height: 0;
-}
-
-.sidebar-collapsed-left {
-  /* Mirror: canvas-facing edge on the right */
-  box-shadow: calc(2 * var(--border-width)) 0 0 0 var(--border-color);
 }
 
 .sidebar-collapsed-decor-panel {
@@ -146,6 +137,7 @@
   border: none;
   border-radius: 0;
   background: transparent;
+  color: var(--text-color);
   cursor: pointer;
   overflow: hidden;
 }

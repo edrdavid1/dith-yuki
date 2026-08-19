@@ -4,18 +4,13 @@
 > Последнее обновление: 14 августа 2026.
 >
 > Оптимизация: начинать с **§13** (стоимость тайла / где теряется время) и
-> [TILE_PIPELINE.md](./TILE_PIPELINE.md) §11. Не трогать фильтры, пока не ясно,
+> [tile-pipeline.md](./tile-pipeline.md) §11. Не трогать фильтры, пока не ясно,
 > какой участок реально в профиле.
 >
 > **См. также:**
-> - [TILE_PIPELINE.md](./TILE_PIPELINE.md) — тайловый pipeline, координаты, ED, GPU, стоимость тайла
-> - [COLOR_AND_COLOR_LAB.md](./COLOR_AND_COLOR_LAB.md) — цвет, палитры, Color Lab
-> - [.cursor-spec/track-d-gpu/](./.cursor-spec/track-d-gpu/) — `engine-gpu`
-> - [.cursor-spec/track-e-dyproj/](./.cursor-spec/track-e-dyproj/) — `.dyproj` (`engine-project::serialize`)
-> - [.cursor-spec/track-f-dyuki/](./.cursor-spec/track-f-dyuki/) — `.dyuki`
-> - [.cursor-spec/track-g-welcome/](./.cursor-spec/track-g-welcome/) — Welcome / Recent
-> - [.cursor-spec/track-o-updates/](./.cursor-spec/track-o-updates/) — in-app updates
-> - [.cursor-spec/track-p-beta/](./.cursor-spec/track-p-beta/) — dirty / Guard / Import Layer
+> - [tile-pipeline.md](./tile-pipeline.md) — тайловый pipeline, координаты, ED, GPU, стоимость тайла
+> - [color-lab.md](./color-lab.md) — цвет, палитры, Color Lab
+> - [palette-dither.md](./palette-dither.md) — Strict / Guided / Mixed / Simple
 
 ---
 
@@ -93,7 +88,6 @@ dither-yuki-2/
 │       ├── hooks/              # useDocument, useViewport, useAppUpdates, …
 │       ├── workers/tileWorker.ts
 │       └── shared/ipc/         # canonical invoke wrappers
-└── .cursor-spec/               # tracks A–P
 ```
 
 ### 1.3 Workspace members
@@ -398,7 +392,7 @@ loop {
 
 ### 3.6 Tile Pipeline
 
-> **Детальное описание:** см. [TILE_PIPELINE.md](./TILE_PIPELINE.md).
+> **Детальное описание:** см. [tile-pipeline.md](./tile-pipeline.md).
 
 **compute_processed_tile:**
 1. Fetch Raw tile из cache
@@ -509,7 +503,7 @@ Halo region (2px) нужен error diffusion и Glow. Это **главный м
 #### GlobalCoord / GlobalCoordSigned (coords.rs)
 
 Единый примитив для перевода локальных координат в глобальные координаты документа.
-Подробное описание — в [TILE_PIPELINE.md](./TILE_PIPELINE.md) §2.
+Подробное описание — в [tile-pipeline.md](./tile-pipeline.md) §2.
 
 ```rust
 pub struct GlobalCoord { pub x: u32, pub y: u32 }        // Core area
@@ -718,7 +712,7 @@ Legacy `(DitherMode, color_depth)` автоматически мигрирует
 
 ### 4.3 engine-color
 
-Цвет, палитры, KD-tree, threshold maps, OkLCH-генераторы. Подробный as-built flow UI — `COLOR_AND_COLOR_LAB.md`.
+Цвет, палитры, KD-tree, threshold maps, OkLCH-генераторы. Подробный as-built flow UI — `color-lab.md`.
 
 #### Oklab (oklab.rs)
 
@@ -865,12 +859,12 @@ pub struct GpuContext {
 каждый тайл создаёт input/output/uniform/staging. `extract_core` / `write_core` — скалярные
 `at()`/`set()` по 256², не memcpy. Итог: GPU часто **не** быстрее CPU на одном Bayer-тайле;
 N воркеров сериализуются в одну очередь. По умолчанию GPU **выключен** (`DITHER_GPU` не задан).
-Подробности — §13.4 и TILE_PIPELINE.md §10–11.
+Подробности — §13.4 и [tile-pipeline.md](./tile-pipeline.md) §10–11.
 
 Bridge: `filters/gpu_bridge.rs` extracts/writes core; `apply.rs` tries GPU then CPU.
 
 **Parity:** Bayer exact (`f32 ==`); Halftone/CRT max abs ≤ `1/255` per channel.  
-Full contract: [TILE_PIPELINE.md](./TILE_PIPELINE.md) §10 · [.cursor-spec/track-d-gpu/](./.cursor-spec/track-d-gpu/).
+Full contract: [tile-pipeline.md](./tile-pipeline.md) §10.
 
 ### 4.6 engine-core (Phase 0 stub)
 
@@ -923,7 +917,7 @@ SIMD-ускорение: `levels_row_simd` (wide f32x4) для batch processing 
 
 ### 5.4 Dither (V2 redesign)
 
-> **Детальное описание:** см. [TILE_PIPELINE.md](./TILE_PIPELINE.md) §5–6.
+> **Детальное описание:** см. [tile-pipeline.md](./tile-pipeline.md) §5–6.
 
 **Ordered dithering (Bayer + Custom PNG):**
 - Глобальные координаты через `GlobalCoordSigned::from_local_with_halo()` — бесшовность между тайлами
@@ -969,7 +963,6 @@ SIMD-ускорение: `levels_row_simd` (wide f32x4) для batch processing 
 - **BlockDisplace:** блочное смещение (16px, origin = `floor(gx/16)*16` в глобальных пикселях)
 - Детерминистический XorShift64; ключ PRNG = `seed XOR f(global_x, global_y, level)` для dest-пикселя (RGB) или dest-block origin (Block Displace) — не `TileCoord`
 - Координаты через `GlobalCoordSigned`; v1 `|offset| ≤ HALO` (как Glow radius)
-- Спека correctness: [track-j-glitch](.cursor-spec/track-j-glitch/)
 
 ### 5.7 CRT / Glow
 
@@ -1287,7 +1280,7 @@ Builtin: `import_builtin_palette(id)` → `find_preset` → тот же sRGB→l
 - Pref `autoExtractPalettes` (default on): после Open Image → `maybeAutoExtractPalette` → тот же `generate_palette`, что ручной Extract.
 - Ramps / harmony: Insert только в драфт.
 
-Полный as-built: `COLOR_AND_COLOR_LAB.md`. План расширений: `.cursor-spec/`.
+Полный as-built: `color-lab.md`.
 
 ---
 
@@ -1522,7 +1515,7 @@ sequenceDiagram
 должна сначала попасть в профиль на этом пути. Пиксельная идентичность RGBA8
 (для CPU path) — инвариант: ускорение, которое меняет швы ED / Bayer, не принимается.
 
-Деталь по координатам и ED: [TILE_PIPELINE.md](./TILE_PIPELINE.md) §11.
+Деталь по координатам и ED: [tile-pipeline.md](./tile-pipeline.md) §11.
 
 ### 13.1 Что происходит при движении слайдера
 

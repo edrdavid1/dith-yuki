@@ -1,8 +1,11 @@
 import { useEffect, useRef } from 'react';
+import { registerPreviewCommands } from '../shortcuts/commandRegistry';
 import { flushSync } from 'react-dom';
 import PreviewWindow from '../../components/PreviewWindow';
 import EmptyState from '../../components/EmptyState';
 import { useAppSelector } from '../../app/hooks';
+import { useShell } from '../../app/shell/ShellContext';
+import { previewBackgroundStyle } from './previewBackground';
 import { useViewport } from '../../hooks/useViewport';
 import { logIpcError, setViewport } from '../../shared/ipc';
 import type { PanelChromeProps } from '../panels/PanelChrome';
@@ -31,6 +34,8 @@ export default function PreviewFeature({
   const docWidth = useAppSelector((s) => s.document.width);
   const docHeight = useAppSelector((s) => s.document.height);
   const hasDocument = useAppSelector((s) => s.document.hasDocument);
+  const hydrated = useAppSelector((s) => s.document.hydrated);
+  const { previewBackground } = useShell();
 
   const {
     viewport,
@@ -44,6 +49,15 @@ export default function PreviewFeature({
     zoomToNextPreset,
     zoomToPrevPreset,
   } = useViewport(docWidth, docHeight);
+
+  useEffect(() => {
+    return registerPreviewCommands({
+      zoomIn: zoomToNextPreset,
+      zoomOut: zoomToPrevPreset,
+      fitToView,
+      actualPixels: () => setZoom(1),
+    });
+  }, [fitToView, setZoom, zoomToNextPreset, zoomToPrevPreset]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef(viewport);
@@ -114,6 +128,18 @@ export default function PreviewFeature({
   }, [docId, docWidth, docHeight, hasDocument]);
 
   if (!hasDocument || !docId) {
+    if (!hydrated) {
+      return (
+        <div
+          aria-hidden
+          style={
+            fill
+              ? { flex: 1, ...previewBackgroundStyle(previewBackground) }
+              : { width: '100%', height: '100%', ...previewBackgroundStyle(previewBackground) }
+          }
+        />
+      );
+    }
     return (
       <EmptyState
         fill={fill}
@@ -131,7 +157,11 @@ export default function PreviewFeature({
   return (
     <div
       ref={containerRef}
-      style={fill ? { flex: 1, display: 'flex', overflow: 'hidden' } : { width: '100%', height: '100%' }}
+      style={
+        fill
+          ? { flex: 1, display: 'flex', overflow: 'hidden', ...previewBackgroundStyle(previewBackground) }
+          : { width: '100%', height: '100%', ...previewBackgroundStyle(previewBackground) }
+      }
     >
       {showCanvas && (
         <PreviewWindow

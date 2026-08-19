@@ -14,5 +14,6 @@ export {
   reorderPanels,
   movePanelToSide,
   moveAllPanelsToSide,
+  swapSidebars,
   dockPanelAt,
 } from '../shared/ipc/panels';

@@ -54,8 +54,8 @@ function dockablePanel(
 export function builtinWorkspacePresets(): WorkspacePreset[] {
   return [
     {
-      id: 'builtin-default',
-      name: 'Default (Layers left)',
+      id: 'builtin-layers-left',
+      name: 'Layers left',
       builtin: true,
       shell: { ...DEFAULT_SHELL },
       layout: {
@@ -69,31 +69,16 @@ export function builtinWorkspacePresets(): WorkspacePreset[] {
       },
     },
     {
-      id: 'builtin-all-left',
-      name: 'All panels left',
+      id: 'builtin-effect-left',
+      name: 'Effect left',
       builtin: true,
       shell: { ...DEFAULT_SHELL },
       layout: {
-        left_order: ['layers', 'effect', 'colorlab'],
-        right_order: [],
-        panels: [
-          dockablePanel('layers', 'left'),
-          dockablePanel('effect', 'left'),
-          dockablePanel('colorlab', 'left'),
-        ],
-      },
-    },
-    {
-      id: 'builtin-all-right',
-      name: 'All panels right',
-      builtin: true,
-      shell: { ...DEFAULT_SHELL },
-      layout: {
-        left_order: [],
-        right_order: ['layers', 'effect', 'colorlab'],
+        left_order: ['effect'],
+        right_order: ['layers', 'colorlab'],
         panels: [
           dockablePanel('layers', 'right'),
-          dockablePanel('effect', 'right'),
+          dockablePanel('effect', 'left'),
           dockablePanel('colorlab', 'right'),
         ],
       },

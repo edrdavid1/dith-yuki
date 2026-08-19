@@ -4,6 +4,8 @@ mod commands;
 mod diffusion_waiters;
 mod dock_affinity;
 mod global_mouseup;
+mod macos_title;
+mod native_menu;
 mod panel_commands;
 mod panel_manager;
 mod panel_persistence;
@@ -102,6 +104,12 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(state.clone())
+        .manage(Arc::new(commands::QuitGuard {
+            allow_exit: AtomicBool::new(false),
+        }))
+        .on_menu_event(|app, event| {
+            native_menu::emit_event(app, &event);
+        })
         .on_window_event(|window, event| {
             let label = window.label().to_string();
             let is_panel = label.starts_with("panel-");
@@ -182,6 +190,7 @@ fn main() {
             }
         })
         .setup(move |app| {
+            native_menu::install(app)?;
             let app_handle = app.handle().clone();
 
             // Set native titlebar color on macOS
@@ -191,6 +200,7 @@ fn main() {
                 use cocoa::base::id;
 
                 let main_window = app.get_webview_window("main").unwrap();
+                macos_title::install_centered_title(&main_window);
                 let ns_window = main_window.ns_window().unwrap() as id;
                 unsafe {
                     // #999999 → RGB (0.6, 0.6, 0.6)
@@ -300,6 +310,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             // Document commands
+            commands::allow_app_exit,
+            commands::confirm_app_quit,
             commands::new_document,
             commands::get_document_snapshot,
             
@@ -372,6 +384,7 @@ fn main() {
             panel_commands::reorder_sidebar,
             panel_commands::move_panel_to_side,
             panel_commands::move_all_panels_to_side,
+            panel_commands::swap_sidebars,
             panel_commands::update_dock_zone,
             panel_commands::begin_float_drag,
             panel_commands::cancel_float_drag,
@@ -382,7 +395,13 @@ fn main() {
 
     // Run the application with event handling for exit/cleanup.
     app.run(|app_handle, event| {
-        if let RunEvent::ExitRequested { .. } = &event {
+        if let RunEvent::ExitRequested { api, .. } = &event {
+            let gate = app_handle.state::<Arc<commands::QuitGuard>>();
+            if !gate.allow_exit.load(Ordering::SeqCst) {
+                api.prevent_exit();
+                let _ = app_handle.emit("app-quit-requested", ());
+                return;
+            }
             // Save full dual-sidebar panel state (panels + side orders) before exit.
             let state = app_handle.state::<Arc<AppState>>();
             let snapshot = {

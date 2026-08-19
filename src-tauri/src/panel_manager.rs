@@ -564,6 +564,23 @@ impl PanelManager {
         Ok(())
     }
 
+    /// Swap left and right docked stacks (orders + dock_side). Floating panels stay put.
+    pub fn swap_sides(&mut self) {
+        std::mem::swap(&mut self.left_order, &mut self.right_order);
+        for id in &self.left_order {
+            if let Some(panel) = self.panels.get_mut(id) {
+                panel.dock_side = Some(DockSide::Left);
+            }
+            self.last_dock_sides.insert(id.clone(), DockSide::Left);
+        }
+        for id in &self.right_order {
+            if let Some(panel) = self.panels.get_mut(id) {
+                panel.dock_side = Some(DockSide::Right);
+            }
+            self.last_dock_sides.insert(id.clone(), DockSide::Right);
+        }
+    }
+
     /// Reorder panels on one side. `order` must be a permutation of that side's
     /// current members only. Empty order is valid when the side is already empty.
     pub fn reorder_side(&mut self, side: DockSide, order: Vec<String>) -> Result<(), PanelError> {
@@ -825,6 +842,24 @@ mod tests {
         pm.move_all_to_side(DockSide::Right).unwrap();
         assert!(pm.get_left_order().is_empty());
         assert_eq!(pm.get_right_order(), &["layers", "effect", "colorlab"]);
+        pm.assert_invariants();
+    }
+
+    #[test]
+    fn swap_sides_exchanges_orders_and_dock_sides() {
+        let mut pm = PanelManager::new();
+        assert_eq!(pm.get_left_order(), &["layers"]);
+        assert_eq!(pm.get_right_order(), &["effect", "colorlab"]);
+        pm.swap_sides();
+        assert_eq!(pm.get_left_order(), &["effect", "colorlab"]);
+        assert_eq!(pm.get_right_order(), &["layers"]);
+        assert_eq!(pm.panels["layers"].dock_side, Some(DockSide::Right));
+        assert_eq!(pm.panels["effect"].dock_side, Some(DockSide::Left));
+        assert_eq!(pm.panels["colorlab"].dock_side, Some(DockSide::Left));
+        pm.assert_invariants();
+        pm.swap_sides();
+        assert_eq!(pm.get_left_order(), &["layers"]);
+        assert_eq!(pm.get_right_order(), &["effect", "colorlab"]);
         pm.assert_invariants();
     }
 

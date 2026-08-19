@@ -2,7 +2,7 @@
 
 Как Dither Yuki 2 обрабатывает цвет на слое с фильтром Dither, когда к нему привязана палитра из Color Lab.
 
-Палитры, пресеты, IPC Color Lab — в [COLOR_AND_COLOR_LAB.md](./COLOR_AND_COLOR_LAB.md). Тайлы и wavefront ED — в [TILE_PIPELINE.md](./TILE_PIPELINE.md). Трек Q (Strict / Guided) — [`.cursor-spec/track-q-palette-dither-modes/`](./.cursor-spec/track-q-palette-dither-modes/).
+Палитры, пресеты, IPC Color Lab — в [color-lab.md](./color-lab.md). Тайлы и wavefront ED — в [tile-pipeline.md](./tile-pipeline.md).
 
 ---
 
@@ -187,4 +187,3 @@ q_err = (old − pal_srgb) × threshold_scale
 | ED, residual, `pixel_size` hop | `crates/engine-project/src/filters/dither_diffusion.rs` |
 | sRGB ↔ linear | `crates/engine-color/src/palette/mod.rs` |
 | UI | `frontend/src/features/effects/editors/DitherSettings.tsx` |
-| Легаси-референс Simple | `.cursor-spec/simple-dith-old-version.ts` |

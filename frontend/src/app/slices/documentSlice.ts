@@ -21,12 +21,16 @@ export interface DocumentState {
   width: number;
   height: number;
   hasDocument: boolean;
+  /** False until the first `refreshDocument` (or open/create) settles. */
+  hydrated: boolean;
   loading: boolean;
   notification: string | null;
   error: string | null;
   layerId: number | null;
   /** Remembered `.dyproj` path after Save As / Open Project (UI hint only). */
   projectPath: string | null;
+  /** Last opened raster path, used in the window title until a project is saved. */
+  sourcePath: string | null;
   /** Track P: diverges from last save / replace. */
   dirty: boolean;
 }
@@ -36,11 +40,13 @@ const initialState: DocumentState = {
   width: 0,
   height: 0,
   hasDocument: false,
+  hydrated: false,
   loading: false,
   notification: null,
   error: null,
   layerId: null,
   projectPath: null,
+  sourcePath: null,
   dirty: false,
 };
 
@@ -237,11 +243,13 @@ const documentSlice = createSlice({
             | 'width'
             | 'height'
             | 'hasDocument'
+            | 'hydrated'
             | 'layerId'
             | 'error'
             | 'notification'
             | 'loading'
             | 'projectPath'
+            | 'sourcePath'
             | 'dirty'
           >
         >
@@ -260,6 +268,7 @@ const documentSlice = createSlice({
         state.width = action.payload.width;
         state.height = action.payload.height;
         state.hasDocument = action.payload.hasDocument;
+        state.hydrated = true;
         state.error = null;
       })
       .addCase(refreshDocument.rejected, (state, action) => {
@@ -267,6 +276,7 @@ const documentSlice = createSlice({
         state.width = 0;
         state.height = 0;
         state.hasDocument = false;
+        state.hydrated = true;
         state.error = (action.payload as string) ?? 'Failed to refresh document';
       })
       .addCase(openImage.pending, (state) => {
@@ -281,7 +291,9 @@ const documentSlice = createSlice({
         state.height = action.payload.height;
         state.layerId = action.payload.layerId;
         state.hasDocument = true;
+        state.hydrated = true;
         state.projectPath = null;
+        state.sourcePath = action.meta.arg;
         state.dirty = false;
         state.error = null;
       })
@@ -301,7 +313,9 @@ const documentSlice = createSlice({
         state.height = action.payload.height;
         state.layerId = action.payload.layerId;
         state.hasDocument = true;
+        state.hydrated = true;
         state.projectPath = null;
+        state.sourcePath = null;
         state.dirty = false;
         state.error = null;
       })
@@ -343,7 +357,9 @@ const documentSlice = createSlice({
         state.height = action.payload.height;
         state.layerId = action.payload.layerId;
         state.hasDocument = true;
+        state.hydrated = true;
         state.projectPath = action.payload.projectPath;
+        state.sourcePath = null;
         state.dirty = false;
         state.error = null;
       })

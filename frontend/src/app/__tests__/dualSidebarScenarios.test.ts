@@ -135,10 +135,13 @@ describe('8.2 dual-sidebar scenarios (automated)', () => {
     expect(migrated.rightSidebar.collapsed).toBe(false);
   });
 
-  it('Builtin default preset matches Layers-left layout', () => {
-    const def = builtinWorkspacePresets().find((p) => p.id === 'builtin-default');
-    expect(def?.layout.left_order).toEqual(['layers']);
-    expect(def?.layout.right_order).toEqual(['effect', 'colorlab']);
+  it('Builtin presets are Layers left and Effect left', () => {
+    const presets = builtinWorkspacePresets();
+    expect(presets.map((p) => p.id)).toEqual(['builtin-layers-left', 'builtin-effect-left']);
+    expect(presets[0]?.layout.left_order).toEqual(['layers']);
+    expect(presets[0]?.layout.right_order).toEqual(['effect', 'colorlab']);
+    expect(presets[1]?.layout.left_order).toEqual(['effect']);
+    expect(presets[1]?.layout.right_order).toEqual(['layers', 'colorlab']);
   });
 });
 
@@ -239,8 +242,9 @@ describe('9.3 workspace presets', () => {
 
   it('lists builtins and can delete only user presets', () => {
     const list = listWorkspacePresets();
-    expect(list.some((p) => p.id === 'builtin-all-left')).toBe(true);
-    expect(deleteWorkspacePreset('builtin-default')).toBe(false);
+    expect(list.some((p) => p.id === 'builtin-layers-left')).toBe(true);
+    expect(list.some((p) => p.id === 'builtin-effect-left')).toBe(true);
+    expect(deleteWorkspacePreset('builtin-layers-left')).toBe(false);
   });
 
   it('snapshotFromPanelState keeps shell + orders', () => {

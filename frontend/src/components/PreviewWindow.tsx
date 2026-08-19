@@ -5,6 +5,8 @@ import type { ZoomMode } from '../features/preview/zoomSnap';
 import WindowTitlebar from '../shared/ui/WindowTitlebar';
 import Icon from '../icons/iconRegistry';
 import Tooltip from '../shared/ui/Tooltip';
+import { useShell } from '../app/shell/ShellContext';
+import { previewBackgroundStyle } from '../features/preview/previewBackground';
 import styles from '../features/preview/PreviewWindow.module.css';
 import previewStyles from '../features/preview/Preview.module.css';
 import { bind } from '../shared/ui/cn';
@@ -53,6 +55,7 @@ export default function PreviewWindow({
   onTitleBarMouseDown,
   hideTitleBar,
 }: PreviewWindowProps) {
+  const { previewBackground } = useShell();
   const containerRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
   const lastPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -176,7 +179,7 @@ export default function PreviewWindow({
       <div
         ref={containerRef}
         className={cn("preview-container")}
-        style={inlineStyles.canvasArea}
+        style={{ ...inlineStyles.canvasArea, ...previewBackgroundStyle(previewBackground) }}
         tabIndex={0}
         onWheel={handleWheel}
         onMouseDown={handleMouseDown}
@@ -303,7 +306,6 @@ const inlineStyles: Record<string, React.CSSProperties> = {
     flex: 1,
     position: 'relative',
     overflow: 'hidden',
-    background: '#666',
     outline: 'none',
     cursor: 'default',
   },

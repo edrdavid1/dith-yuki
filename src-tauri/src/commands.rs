@@ -4,7 +4,7 @@
 //! Each command acquires the DocumentHandle and TileCache from app state,
 //! delegates to engine-project for mutations, and returns DTOs for serialization.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -157,6 +157,11 @@ pub struct AppState {
     pub ed_prefix_lock: Mutex<()>,
 }
 
+/// Cmd+Q / Dock Quit must not terminate until the frontend save dialog finishes.
+pub struct QuitGuard {
+    pub allow_exit: AtomicBool,
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -276,6 +281,17 @@ fn invalidate_palette_changed(palette_id: engine_project::types::PaletteId, stat
 // ============================================================================
 // Tauri Commands
 // ============================================================================
+
+#[tauri::command]
+pub fn allow_app_exit(gate: State<'_, Arc<QuitGuard>>) {
+    gate.allow_exit.store(true, Ordering::SeqCst);
+}
+
+#[tauri::command]
+pub fn confirm_app_quit(app: AppHandle, gate: State<'_, Arc<QuitGuard>>) {
+    gate.allow_exit.store(true, Ordering::SeqCst);
+    app.exit(0);
+}
 
 /// Create a new document.
 #[tauri::command]
