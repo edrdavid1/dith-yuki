@@ -2,7 +2,8 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import styles from '../features/document/MenuBar.module.css';
 import { bind } from '../shared/ui/cn';
 import type { RecentFileEntry } from '../shared/ipc/recent';
-import { isMacOS } from '../lib/platform';
+import { formatChords } from '../features/shortcuts/bindings';
+import { useShortcutBindings } from '../features/shortcuts/ShortcutsContext';
 const cn = bind(styles);
 
 interface MenuBarProps {
@@ -69,6 +70,7 @@ function MenuBar({
 }: MenuBarProps) {
   const [openMenu, setOpenMenu] = useState<MenuId | null>(null);
   const menuBarRef = useRef<HTMLDivElement>(null);
+  const shortcuts = useShortcutBindings();
 
   // Close dropdown on Escape or click-outside
   useEffect(() => {
@@ -141,14 +143,16 @@ function MenuBar({
               role="menuitem"
               onClick={() => handleAction(onNewProject ?? (() => {}))}
             >
-              New Project…
+              <span>New Project…</span>
+              <span className={cn('menubar-shortcut')}>{formatChords(shortcuts.newProject)}</span>
             </button>
             <button
               className={cn("menubar-dropdown-item")}
               role="menuitem"
               onClick={() => handleAction(onOpenImage)}
             >
-              Open Image
+              <span>Open Image</span>
+              <span className={cn('menubar-shortcut')}>{formatChords(shortcuts.openImage)}</span>
             </button>
             <button
               className={cn("menubar-dropdown-item")}
@@ -163,7 +167,8 @@ function MenuBar({
               role="menuitem"
               onClick={() => handleAction(onOpenProject)}
             >
-              Open Project…
+              <span>Open Project…</span>
+              <span className={cn('menubar-shortcut')}>{formatChords(shortcuts.openProject)}</span>
             </button>
             {recentEntries.length > 0 && (
               <div className={cn('menubar-submenu-wrap')}>
@@ -196,7 +201,8 @@ function MenuBar({
               onClick={() => handleAction(onSaveProject)}
               disabled={!hasDocument}
             >
-              Save Project
+              <span>Save Project</span>
+              <span className={cn('menubar-shortcut')}>{formatChords(shortcuts.saveProject)}</span>
             </button>
             <button
               className={cn("menubar-dropdown-item")}
@@ -204,7 +210,8 @@ function MenuBar({
               onClick={() => handleAction(onSaveProjectAs)}
               disabled={!hasDocument}
             >
-              Save Project As…
+              <span>Save Project As…</span>
+              <span className={cn('menubar-shortcut')}>{formatChords(shortcuts.saveProjectAs)}</span>
             </button>
             <button
               className={cn("menubar-dropdown-item")}
@@ -217,8 +224,6 @@ function MenuBar({
           </div>
         );
       case 'edit': {
-        const undoChord = isMacOS() ? '⌘Z' : 'Ctrl+Z';
-        const redoChord = isMacOS() ? '⇧⌘Z' : 'Ctrl+Shift+Z';
         return (
           <div className={cn("menubar-dropdown")} role="menu">
             <button
@@ -228,7 +233,7 @@ function MenuBar({
               onClick={() => canUndo && onUndo && handleAction(onUndo)}
             >
               <span>Undo</span>
-              <span className={cn('menubar-shortcut')}>{undoChord}</span>
+              <span className={cn('menubar-shortcut')}>{formatChords(shortcuts.undo)}</span>
             </button>
             <button
               className={cn("menubar-dropdown-item")}
@@ -237,7 +242,7 @@ function MenuBar({
               onClick={() => canRedo && onRedo && handleAction(onRedo)}
             >
               <span>Redo</span>
-              <span className={cn('menubar-shortcut')}>{redoChord}</span>
+              <span className={cn('menubar-shortcut')}>{formatChords(shortcuts.redo)}</span>
             </button>
           </div>
         );

@@ -1,4 +1,6 @@
 import { useAppSelector } from '../../app/hooks';
+import { useShell } from '../../app/shell/ShellContext';
+import { previewBackgroundStyle } from './previewBackground';
 import PreviewFeature from '../preview/PreviewFeature';
 import type { PanelChromeProps } from '../panels/PanelChrome';
 import type { WelcomeActions } from '../../hooks/useWelcomeScreen';
@@ -16,10 +18,11 @@ export default function PreviewSlot({
   const panels = useAppSelector((s) => s.panels.entities);
   const previewPanel = panels.find((p) => p.id === 'preview');
   const previewDocked = !previewPanel || previewPanel.docked;
+  const { previewBackground } = useShell();
 
   if (!previewDocked) {
     return (
-      <div className={cn("preview-undocked-placeholder")}>
+      <div className={cn("preview-undocked-placeholder")} style={previewBackgroundStyle(previewBackground)}>
         <span>Preview is in a separate window</span>
       </div>
     );

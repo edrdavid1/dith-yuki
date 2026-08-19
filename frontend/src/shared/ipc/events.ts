@@ -70,6 +70,16 @@ export async function emitPaletteChanged(): Promise<void> {
   return emitTo('any', 'palette-changed', {});
 }
 
+export async function onNativeMenu(
+  handler: (id: string) => void
+): Promise<UnlistenFn> {
+  return listen<string>('native-menu', (event) => handler(event.payload));
+}
+
+export async function onAppQuitRequested(handler: () => void): Promise<UnlistenFn> {
+  return listen('app-quit-requested', () => handler());
+}
+
 export interface DockAffinityEvent {
   panelId: string;
   armed: boolean;

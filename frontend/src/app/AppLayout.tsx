@@ -7,7 +7,7 @@ import HelpDialog from '../components/HelpDialog';
 import PreferencesDialog from '../features/preferences/PreferencesDialog';
 import { useWelcomeScreen } from '../hooks/useWelcomeScreen';
 import { usePanels } from '../hooks/usePanels';
-import { useUndoShortcuts } from '../hooks/useUndoShortcuts';
+import { registerDocumentCommands, registerLayoutCommands } from '../features/shortcuts/commandRegistry';
 import { useAppUpdates } from '../hooks/useAppUpdates';
 import { useAppDispatch, useAppSelector } from './hooks';
 import { refreshFilters } from './slices/filtersSlice';
@@ -15,23 +15,28 @@ import { refreshLayers } from './slices/layersSlice';
 import { redo as redoDocument, undo as undoDocument } from './slices/undoSlice';
 import { setDocumentMeta } from './slices/documentSlice';
 import { useShell } from './shell/ShellContext';
+import { previewBackgroundStyle } from '../features/preview/previewBackground';
 import {
   onDockAffinity,
   onPanelStateChanged,
-  moveAllPanelsToSide,
+  onNativeMenu,
+  onAppQuitRequested,
+  allowAppExit,
+  confirmAppQuit,
+  swapSidebars as swapSidebarPanels,
   undockPanel,
   undockPanelWithSize,
   type DockAffinityEvent,
 } from '../shared/ipc';
-import type { DockSide } from '../types/panels';
 import PreviewSlot from '../features/preview/PreviewSlot';
 import DockedSidebar, { sidebarEffectiveWidth } from '../features/panels/DockedSidebar';
 import styles from './AppLayout.module.css';
 import menuStyles from '../features/document/MenuBar.module.css';
 import previewStyles from '../features/preview/Preview.module.css';
-import { projectBasename } from '../shared/unsavedGuard';
+import { windowChromeTitle } from '../shared/windowTitle';
 import { isTooNewFileError } from '../shared/appUpdates';
 import { bind } from '../shared/ui/cn';
+import Icon from '../icons/iconRegistry';
 
 const cn = bind({ ...styles, ...menuStyles, ...previewStyles });
 
@@ -59,7 +64,6 @@ export default function AppLayout() {
   const filtersError = useAppSelector((s) => s.filters.error);
   const canUndo = useAppSelector((s) => s.undo.canUndo);
   const canRedo = useAppSelector((s) => s.undo.canRedo);
-  useUndoShortcuts();
 
   const updates = useAppUpdates({
     autoCheckOnLaunch: true,
@@ -78,18 +82,38 @@ export default function AppLayout() {
   });
 
   const allowCloseRef = useRef(false);
+  const quitInFlightRef = useRef(false);
   const confirmReplaceRef = useRef(confirmReplace);
   confirmReplaceRef.current = confirmReplace;
 
+  const requestQuit = useCallback(async () => {
+    if (quitInFlightRef.current) return;
+    quitInFlightRef.current = true;
+    try {
+      const ok = await confirmReplaceRef.current();
+      if (!ok) return;
+      allowCloseRef.current = true;
+      await confirmAppQuit();
+    } catch (err) {
+      console.error('Quit failed:', err);
+    } finally {
+      quitInFlightRef.current = false;
+    }
+  }, []);
+
   useEffect(() => {
-    const bullet = doc.hasDocument && doc.dirty ? '• ' : '';
-    const name = doc.hasDocument ? projectBasename(doc.projectPath) : 'Untitled';
+    const title = windowChromeTitle({
+      dirty: doc.dirty,
+      hasDocument: doc.hasDocument,
+      projectPath: doc.projectPath,
+      sourcePath: doc.sourcePath,
+    });
     void getCurrentWindow()
-      .setTitle(`${bullet}${name} — Dither Engine`)
+      .setTitle(title)
       .catch(() => {
         /* panel webviews may lack set-title; main title is enough */
       });
-  }, [doc.dirty, doc.hasDocument, doc.projectPath]);
+  }, [doc.dirty, doc.hasDocument, doc.projectPath, doc.sourcePath]);
 
   useEffect(() => {
     let cancelled = false;
@@ -102,6 +126,11 @@ export default function AppLayout() {
         const ok = await confirmReplaceRef.current();
         if (!ok) return;
         allowCloseRef.current = true;
+        try {
+          await allowAppExit();
+        } catch {
+          /* still try to close */
+        }
         await win.destroy();
       })
       .then((fn) => {
@@ -113,6 +142,22 @@ export default function AppLayout() {
       unlisten?.();
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+    void onAppQuitRequested(() => {
+      void requestQuit();
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [requestQuit]);
+
   const {
     leftSidebar,
     rightSidebar,
@@ -121,12 +166,15 @@ export default function AppLayout() {
     setSidebarCollapsed,
     setSidebarWidth,
     setSplitRatio,
+    swapSidebars,
+    previewBackground,
   } = useShell();
 
   const [dismissedError, setDismissedError] = useState<string | null>(null);
   const [dismissedPanelError, setDismissedPanelError] = useState<string | null>(null);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
   const [affinity, setAffinity] = useState<DockAffinityEvent | null>(null);
   const prevDockedRef = useRef<Record<string, boolean>>({});
   const prevSideRef = useRef<Record<string, string | null | undefined>>({});
@@ -136,16 +184,12 @@ export default function AppLayout() {
   const leftPanels = visibleDocked('left');
   const rightPanels = visibleDocked('right');
 
-  const leftW = sidebarEffectiveWidth(
-    leftPanels.length,
-    leftSidebar.collapsed,
-    leftSidebar.width
-  );
-  const rightW = sidebarEffectiveWidth(
-    rightPanels.length,
-    rightSidebar.collapsed,
-    rightSidebar.width
-  );
+  const leftW = focusMode
+    ? 0
+    : sidebarEffectiveWidth(leftPanels.length, leftSidebar.collapsed, leftSidebar.width);
+  const rightW = focusMode
+    ? 0
+    : sidebarEffectiveWidth(rightPanels.length, rightSidebar.collapsed, rightSidebar.width);
 
   useEffect(() => {
     void dispatch(refreshLayers(doc.docId));
@@ -230,6 +274,112 @@ export default function AppLayout() {
     setHelpOpen(true);
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+    void onNativeMenu((id) => {
+      switch (id) {
+        case 'new-project':
+          welcome.onNewProject();
+          break;
+        case 'open-image':
+          welcome.onOpenImage();
+          break;
+        case 'import-image-layer':
+          if (doc.hasDocument) void doc.importImageLayer();
+          break;
+        case 'open-project':
+          welcome.onOpenProject();
+          break;
+        case 'save-project':
+          if (doc.hasDocument) onSaveProject();
+          break;
+        case 'save-project-as':
+          if (doc.hasDocument) onSaveProjectAs();
+          break;
+        case 'save-export':
+          if (doc.hasDocument) onSaveImage();
+          break;
+        case 'undo':
+          if (canUndo) void dispatch(undoDocument());
+          break;
+        case 'redo':
+          if (canRedo) void dispatch(redoDocument());
+          break;
+        case 'export-pattern':
+          if (doc.hasDocument) void doc.exportPattern();
+          break;
+        case 'import-pattern':
+          if (doc.hasDocument) void doc.importPattern();
+          break;
+        case 'color-lab':
+          void handleOpenColorLab();
+          break;
+        case 'preferences':
+          handleOpenPreferences();
+          break;
+        case 'about':
+        case 'help':
+          handleOpenHelp();
+          break;
+        case 'help-check-updates':
+        case 'check-updates':
+          void updates.checkForUpdates();
+          break;
+        case 'quit':
+          void requestQuit();
+          break;
+        default:
+          break;
+      }
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [
+    canRedo,
+    canUndo,
+    dispatch,
+    doc,
+    handleOpenColorLab,
+    handleOpenHelp,
+    handleOpenPreferences,
+    onSaveImage,
+    onSaveProject,
+    onSaveProjectAs,
+    requestQuit,
+    updates,
+    welcome,
+  ]);
+
+  useEffect(() => {
+    return registerDocumentCommands({
+      newProject: welcome.onNewProject,
+      openImage: welcome.onOpenImage,
+      openProject: welcome.onOpenProject,
+      saveProject: onSaveProject,
+      saveProjectAs: onSaveProjectAs,
+      openPreferences: handleOpenPreferences,
+    });
+  }, [
+    welcome.onNewProject,
+    welcome.onOpenImage,
+    welcome.onOpenProject,
+    onSaveProject,
+    onSaveProjectAs,
+    handleOpenPreferences,
+  ]);
+
+  useEffect(() => {
+    return registerLayoutCommands({
+      toggleFocusMode: () => setFocusMode((on) => !on),
+    });
+  }, []);
+
   /** Drag Preview titlebar past threshold → floating window (preview is floating-only). */
   const handlePreviewTitleMouseDown = useCallback((e: ReactMouseEvent) => {
     if (e.button !== 0) return;
@@ -271,13 +421,14 @@ export default function AppLayout() {
     document.addEventListener('mouseup', onUp);
   }, []);
 
-  const handleMoveAllToSide = useCallback(async (side: DockSide) => {
+  const handleSwapSidebars = useCallback(async () => {
     try {
-      await moveAllPanelsToSide(side);
+      await swapSidebarPanels();
+      swapSidebars();
     } catch (err) {
-      console.error(`Move all panels to ${side} failed:`, err);
+      console.error('Swap sidebars failed:', err);
     }
-  }, []);
+  }, [swapSidebars]);
 
   const currentError = doc.error || layersError || filtersError;
   const toastError =
@@ -312,57 +463,71 @@ export default function AppLayout() {
           onRedo={() => void dispatch(redoDocument())}
         />
         <div className={cn('toolbar-spacer')} />
-        <button
-          type="button"
-          className={cn('sidebar-changer-icon-btn')}
-          onClick={() => void handleMoveAllToSide('left')}
-          title="Move all panels to left"
-          aria-label="Move all panels to left"
-        >
-          <span className={cn('icon')}></span>
-        </button>
-        <button
-          type="button"
-          className={cn('sidebar-changer-icon-btn')}
-          onClick={() => void handleMoveAllToSide('right')}
-          title="Move all panels to right"
-          aria-label="Move all panels to right"
-        >
-          <span className={cn('icon', 'icon-move-right')}></span>
-        </button>
+        <div className={cn('toolbar-icon-group')}>
+          <button
+            type="button"
+            className={cn('sidebar-changer-icon-btn')}
+            onClick={() => void handleSwapSidebars()}
+            title="Swap left and right sidebars"
+            aria-label="Swap left and right sidebars"
+          >
+            <Icon name="sidebar-swap" width={16} height={16} />
+          </button>
+          <button
+            type="button"
+            className={cn(
+              'sidebar-changer-icon-btn',
+              focusMode && 'sidebar-changer-icon-btn-active'
+            )}
+            onClick={() => setFocusMode((on) => !on)}
+            title={focusMode ? 'Exit focus mode' : 'Focus mode — hide sidebars'}
+            aria-label={focusMode ? 'Exit focus mode' : 'Focus mode'}
+            aria-pressed={focusMode}
+          >
+            <Icon name="focus-mode" width={16} height={16} />
+          </button>
+        </div>
       </div>
 
-      <DockedSidebar
-        side="left"
-        panelIds={leftPanels}
-        width={leftSidebar.width}
-        collapsed={leftSidebar.collapsed}
-        splitRatio={leftSplitRatio}
-        affinity={affinity}
-        oppositeHitRef={rightHitRef}
-        hitTargetRef={leftHitRef}
-        onCollapsedChange={(c) => setSidebarCollapsed('left', c)}
-        onWidthChange={(w) => setSidebarWidth('left', w)}
-        onSplitRatioChange={(r) => setSplitRatio('left', r)}
-      />
+      {!focusMode && (
+        <DockedSidebar
+          side="left"
+          panelIds={leftPanels}
+          width={leftSidebar.width}
+          collapsed={leftSidebar.collapsed}
+          splitRatio={leftSplitRatio}
+          affinity={affinity}
+          oppositeHitRef={rightHitRef}
+          hitTargetRef={leftHitRef}
+          onCollapsedChange={(c) => setSidebarCollapsed('left', c)}
+          onWidthChange={(w) => setSidebarWidth('left', w)}
+          onSplitRatioChange={(r) => setSplitRatio('left', r)}
+        />
+      )}
 
-      <div className={cn('app-canvas')} data-panel-id="preview">
+      <div
+        className={cn('app-canvas')}
+        data-panel-id="preview"
+        style={previewBackgroundStyle(previewBackground)}
+      >
         <PreviewSlot onTitleBarMouseDown={handlePreviewTitleMouseDown} welcome={welcome} />
       </div>
 
-      <DockedSidebar
-        side="right"
-        panelIds={rightPanels}
-        width={rightSidebar.width}
-        collapsed={rightSidebar.collapsed}
-        splitRatio={rightSplitRatio}
-        affinity={affinity}
-        oppositeHitRef={leftHitRef}
-        hitTargetRef={rightHitRef}
-        onCollapsedChange={(c) => setSidebarCollapsed('right', c)}
-        onWidthChange={(w) => setSidebarWidth('right', w)}
-        onSplitRatioChange={(r) => setSplitRatio('right', r)}
-      />
+      {!focusMode && (
+        <DockedSidebar
+          side="right"
+          panelIds={rightPanels}
+          width={rightSidebar.width}
+          collapsed={rightSidebar.collapsed}
+          splitRatio={rightSplitRatio}
+          affinity={affinity}
+          oppositeHitRef={leftHitRef}
+          hitTargetRef={rightHitRef}
+          onCollapsedChange={(c) => setSidebarCollapsed('right', c)}
+          onWidthChange={(w) => setSidebarWidth('right', w)}
+          onSplitRatioChange={(r) => setSplitRatio('right', r)}
+        />
+      )}
 
       <Notification
         message={displayError}

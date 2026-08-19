@@ -5,61 +5,63 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 20px;
-  color: var(--color-dark-gray);
+  gap: 28px;
+  color: #c8c8c8;
   user-select: none;
   padding: 24px;
   box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  background-color: #000;
+  background-image: url('/img/background-img.png');
+  background-size: cover;
+  background-position: center;
+  image-rendering: pixelated;
 }
 
 .empty-state-fill {
   flex: 1;
-  width: 100%;
-  height: 100%;
 }
 
 .welcome-brand {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
 }
 
-.welcome-logo {
-  font-size: 36px;
-  color: var(--color-black);
-  line-height: 1;
-}
-
-.welcome-title {
-  margin: 0;
-  font-size: 18px;
-  font-family: var(--font-family);
-  font-weight: normal;
-  color: var(--color-black);
+.welcome-hero {
+  display: block;
+  width: min(280px, 42vw);
+  height: auto;
+  image-rendering: pixelated;
 }
 
 .welcome-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 8px;
+  gap: 12px;
 }
 
 .welcome-action {
   font-family: var(--font-family);
   font-size: 12px;
-  color: var(--text-color);
-  background: var(--bg-input);
-  border: var(--border);
-  padding: 8px 14px;
+  font-weight: bold;
+  color: var(--color-black);
+  background: var(--color-gray);
+  border: none;
+  padding: 8px 18px;
+  min-width: 120px;
   cursor: pointer;
-  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
 }
 
 .welcome-action:hover {
-  background: var(--bg-hover-accent);
-  color: var(--color-hover);
+  background: var(--bg-hover-muted);
+}
+
+.welcome-action:active {
+  box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light);
 }
 
 .welcome-recent {
@@ -74,7 +76,7 @@
   font-size: 12px;
   font-family: var(--font-family);
   font-weight: normal;
-  color: var(--color-black);
+  color: #e8e8e8;
 }
 
 .welcome-recent-list {
@@ -89,7 +91,7 @@
 .welcome-recent-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
   padding: 6px 8px;
   border: none;
@@ -97,18 +99,29 @@
   cursor: pointer;
   text-align: left;
   font-family: var(--font-family);
-  color: var(--text-color);
+  color: #e8e8e8;
 }
 
 .welcome-recent-row:hover {
-  background: var(--bg-hover-accent);
+  background: var(--bg-hover-inverted);
+  color: var(--color-hover-inverted);
+}
+
+.welcome-recent-row:hover .welcome-recent-icon,
+.welcome-recent-row:hover .welcome-recent-name,
+.welcome-recent-row:hover .welcome-recent-path,
+.welcome-recent-row:hover .welcome-recent-time {
+  color: var(--color-hover-inverted);
 }
 
 .welcome-recent-icon {
   flex-shrink: 0;
-  width: 20px;
-  text-align: center;
-  font-size: 14px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #f2f2f2;
 }
 
 .welcome-recent-text {
@@ -122,7 +135,7 @@
 .welcome-recent-name {
   font-size: 12px;
   font-weight: bold;
-  color: var(--color-black);
+  color: #f2f2f2;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -130,7 +143,7 @@
 
 .welcome-recent-path {
   font-size: 10px;
-  color: var(--color-dark-gray);
+  color: #a8a8a8;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -139,6 +152,6 @@
 .welcome-recent-time {
   flex-shrink: 0;
   font-size: 10px;
-  color: var(--color-dark-gray);
+  color: #a8a8a8;
   white-space: nowrap;
 }

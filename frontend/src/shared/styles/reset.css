@@ -24,7 +24,7 @@ html, body, #root {
 
 body {
   font-family: 'ChicagoFLF', 'Geneva', 'Chicago', monospace;
-  background: #808080;
+  background: #000;
   color: #000;
   font-size: 12px;
 }

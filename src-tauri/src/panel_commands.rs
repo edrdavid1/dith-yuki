@@ -516,6 +516,22 @@ pub fn move_all_panels_to_side(
     Ok(())
 }
 
+/// Swap left and right docked panel stacks.
+#[tauri::command]
+pub fn swap_sidebars(
+    app_handle: AppHandle,
+    state: State<Arc<AppState>>,
+) -> Result<(), String> {
+    let (panels_snapshot, left_order, right_order) = {
+        let mut pm = state.panel_manager.lock().map_err(|e| e.to_string())?;
+        pm.swap_sides();
+        pm.get_state_with_orders()
+    };
+
+    emit_panel_state(&app_handle, panels_snapshot, left_order, right_order);
+    Ok(())
+}
+
 /// Undock a panel into a floating window with explicit size and position.
 /// Used by drag-to-undock where the frontend provides the measured panel dimensions
 /// and the cursor's screen coordinates at release.

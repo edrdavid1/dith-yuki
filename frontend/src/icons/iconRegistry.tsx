@@ -9,6 +9,7 @@ import { Expand } from 'pixelarticons/react/Expand';
 import { Eye } from 'pixelarticons/react/Eye';
 import { EyeOff } from 'pixelarticons/react/EyeOff';
 import { Files } from 'pixelarticons/react/Files';
+import { FlipHorizontal2 } from 'pixelarticons/react/FlipHorizontal2';
 import { Frame } from 'pixelarticons/react/Frame';
 import { GitMerge } from 'pixelarticons/react/GitMerge';
 import { Grid3x3 } from 'pixelarticons/react/Grid3x3';
@@ -60,6 +61,8 @@ export type IconName =
   | 'help'
   | 'save'
   | 'layers'
+  | 'sidebar-swap'
+  | 'focus-mode'
   ;
 
 type PixelIcon = React.ComponentType<React.SVGProps<SVGSVGElement>>;
@@ -95,6 +98,8 @@ const PIXEL_ICONS: Record<string, PixelIcon> = {
   help: InfoBox,
   save: Save,
   layers: Files,
+  'sidebar-swap': FlipHorizontal2,
+  'focus-mode': Monitor,
 };
 
 export function Icon({

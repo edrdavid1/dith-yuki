@@ -27,9 +27,8 @@ describe('EmptyState (Welcome)', () => {
         onOpenProject={vi.fn()}
       />
     );
-    expect(screen.getByText('New Project')).toBeInTheDocument();
-    expect(screen.getByText('Open Image…')).toBeInTheDocument();
-    expect(screen.getByText('Open Project…')).toBeInTheDocument();
+    expect(screen.getByText('Open image')).toBeInTheDocument();
+    expect(screen.getByText('Open project')).toBeInTheDocument();
     expect(screen.queryByTestId('welcome-recent')).not.toBeInTheDocument();
     expect(screen.queryByText('Recent')).not.toBeInTheDocument();
   });
@@ -64,5 +63,18 @@ describe('EmptyState (Welcome)', () => {
     fireEvent.click(screen.getByText('proj.dyproj'));
     expect(openProjectAt).toHaveBeenCalledWith('/tmp/proj.dyproj');
     expect(openImageAt).not.toHaveBeenCalled();
+  });
+
+  it('shows at most 6 recent entries', () => {
+    const entries: RecentFileEntry[] = Array.from({ length: 8 }, (_, i) => ({
+      path: `/tmp/file-${i}.png`,
+      kind: 'image',
+      display_name: `file-${i}.png`,
+      opened_at: '2026-08-13T00:00:00.000Z',
+    }));
+    render(<EmptyState recentEntries={entries} />);
+    expect(screen.getByText('file-0.png')).toBeInTheDocument();
+    expect(screen.getByText('file-5.png')).toBeInTheDocument();
+    expect(screen.queryByText('file-6.png')).not.toBeInTheDocument();
   });
 });

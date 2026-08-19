@@ -1,7 +1,14 @@
 {
   "name": "dither",
   "version": "0.2.0",
-  "description": "Tile-based image processing engine with desktop UI",
+  "description": "Dither Yuki — tile-based dithering studio for pixel art, palettes, and layered images",
+  "author": "L'eco non di Bergamo",
+  "license": "LicenseRef-FCL-1.0",
+  "homepage": "https://github.com/edrdavid1/dith-yuki",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/edrdavid1/dith-yuki.git"
+  },
   "type": "module",
   "scripts": {
     "setup": "npm install && npm install --prefix frontend",

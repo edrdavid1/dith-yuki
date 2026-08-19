@@ -3,6 +3,11 @@ import { listen } from '@tauri-apps/api/event';
 import { onDocumentChanged } from '../../shared/ipc';
 import styles from './TileCanvas.module.css';
 import { bind } from '../../shared/ui/cn';
+import { useShell } from '../../app/shell/ShellContext';
+import {
+  fillPreviewCanvasBackground,
+  loadHalftoneImage,
+} from './previewBackground';
 import { snapCssPx } from './zoomSnap';
 
 const cn = bind(styles);
@@ -268,6 +273,9 @@ export default function TileCanvas({
   viewport,
   onViewportChange: _onViewportChange,
 }: TileCanvasProps) {
+  const { previewBackground } = useShell();
+  const previewBackgroundRef = useRef(previewBackground);
+  previewBackgroundRef.current = previewBackground;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const workerRef = useRef<Worker | null>(null);
   const tileMapRef = useRef<Map<string, ImageBitmap>>(new Map());
@@ -295,8 +303,13 @@ export default function TileCanvas({
 
     const dpr = devicePixelRatio();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#666666';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    fillPreviewCanvasBackground(
+      ctx,
+      previewBackgroundRef.current,
+      dpr,
+      canvas.width,
+      canvas.height
+    );
     ctx.imageSmoothingEnabled = false;
 
     const currentLevel = computePyramidLevel(vp.zoom, docWidth, docHeight);
@@ -342,6 +355,16 @@ export default function TileCanvas({
       drawTiles();
     });
   }, [drawTiles]);
+
+  useEffect(() => {
+    if (previewBackground === 'pattern') {
+      void loadHalftoneImage().then(() => scheduleRedraw()).catch(() => {
+        scheduleRedraw();
+      });
+      return;
+    }
+    scheduleRedraw();
+  }, [previewBackground, scheduleRedraw]);
 
   const flushPendingCommit = useCallback(() => {
     const displayed = tileMapRef.current;

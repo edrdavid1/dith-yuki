@@ -1,3 +1,4 @@
+export * from './app';
 export * from './document';
 export * from './project';
 export * from './recent';

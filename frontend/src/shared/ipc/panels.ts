@@ -66,6 +66,10 @@ export async function moveAllPanelsToSide(side: DockSide): Promise<void> {
   return invoke<void>('move_all_panels_to_side', { side });
 }
 
+export async function swapSidebars(): Promise<void> {
+  return invoke<void>('swap_sidebars');
+}
+
 export interface DockZoneSlot {
   midY: number;
   /** Top edge of the panel slot in screen logical px (for gap hit-test). */

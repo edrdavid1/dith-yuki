@@ -10,6 +10,11 @@ import {
 } from 'react';
 import type { DockSide } from '../../types/panels';
 import { clampSplitRatio } from '../../features/panels/panelDragMode';
+import {
+  DEFAULT_PREVIEW_BACKGROUND,
+  parsePreviewBackground,
+  type PreviewBackground,
+} from '../../features/preview/previewBackground';
 
 export type SidebarGeom = {
   width: number;
@@ -29,13 +34,18 @@ export type ShellState = {
   effectPanelRatio: number;
   /** When true, extract a palette after open/import of an image (default on). */
   autoExtractPalettes: boolean;
+  /** Canvas fill behind the preview image: gray, black, or pattern. */
+  previewBackground: PreviewBackground;
   setSidebarWidth: (side: DockSide, width: number | ((prev: number) => number)) => void;
   setSidebarCollapsed: (side: DockSide, collapsed: boolean) => void;
   resetSidebarWidths: () => void;
   setSplitRatio: (side: DockSide, ratio: number | ((prev: number) => number)) => void;
   /** @deprecated Sets leftSplitRatio. */
   setEffectPanelRatio: (ratio: number | ((prev: number) => number)) => void;
+  /** Exchange left/right sidebar widths, collapse, and split ratios. */
+  swapSidebars: () => void;
   setAutoExtractPalettes: (enabled: boolean) => void;
+  setPreviewBackground: (kind: PreviewBackground) => void;
 };
 
 /** v2 persisted shape (additive split ratios). */
@@ -48,6 +58,7 @@ export type PersistedShellPrefsV2 = {
   /** Legacy single ratio; still written for older floating windows. */
   effectPanelRatio: number;
   autoExtractPalettes: boolean;
+  previewBackground: PreviewBackground;
 };
 
 /** Legacy v1 keys (exclusive single sidebar). */
@@ -57,6 +68,7 @@ type PersistedShellPrefsV1 = {
   sidebarWidth?: number;
   effectPanelRatio?: number;
   autoExtractPalettes?: boolean;
+  previewBackground?: PreviewBackground | string;
 };
 
 const DEFAULT_AUTO_EXTRACT_PALETTES = true;
@@ -118,6 +130,7 @@ function defaultPrefs(): PersistedShellPrefsV2 {
     rightSplitRatio: DEFAULT_SPLIT_RATIO,
     effectPanelRatio: DEFAULT_SPLIT_RATIO,
     autoExtractPalettes: DEFAULT_AUTO_EXTRACT_PALETTES,
+    previewBackground: DEFAULT_PREVIEW_BACKGROUND,
   };
 }
 
@@ -165,6 +178,7 @@ export function migrateShellPrefs(raw: unknown): PersistedShellPrefsV2 {
         typeof obj.autoExtractPalettes === 'boolean'
           ? obj.autoExtractPalettes
           : DEFAULT_AUTO_EXTRACT_PALETTES,
+      previewBackground: parsePreviewBackground(obj.previewBackground),
     };
   }
 
@@ -188,6 +202,7 @@ export function migrateShellPrefs(raw: unknown): PersistedShellPrefsV2 {
   if (typeof v1.autoExtractPalettes === 'boolean') {
     prefs.autoExtractPalettes = v1.autoExtractPalettes;
   }
+  prefs.previewBackground = parsePreviewBackground(v1.previewBackground);
   return prefs;
 }
 
@@ -233,6 +248,7 @@ function applyPrefsPatch(
     setLeftSplitRatio: (ratio: number) => void;
     setRightSplitRatio: (ratio: number) => void;
     setAutoExtractPalettes: (enabled: boolean) => void;
+    setPreviewBackground: (kind: PreviewBackground) => void;
   }
 ) {
   setters.setLeftSidebar({ ...parsed.leftSidebar });
@@ -240,6 +256,7 @@ function applyPrefsPatch(
   setters.setLeftSplitRatio(parsed.leftSplitRatio);
   setters.setRightSplitRatio(parsed.rightSplitRatio);
   setters.setAutoExtractPalettes(parsed.autoExtractPalettes);
+  setters.setPreviewBackground(parsed.previewBackground);
 }
 
 /**
@@ -257,6 +274,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
   const [autoExtractPalettes, setAutoExtractPalettesState] = useState(
     initial.autoExtractPalettes
   );
+  const [previewBackground, setPreviewBackgroundState] = useState(initial.previewBackground);
 
   const prefsRef = useRef<PersistedShellPrefsV2>({
     version: 2,
@@ -266,6 +284,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     rightSplitRatio,
     effectPanelRatio: leftSplitRatio,
     autoExtractPalettes,
+    previewBackground,
   });
   prefsRef.current = {
     version: 2,
@@ -275,6 +294,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     rightSplitRatio,
     effectPanelRatio: leftSplitRatio,
     autoExtractPalettes,
+    previewBackground,
   };
 
   const persistPrefs = useCallback((prefs: PersistedShellPrefsV2) => {
@@ -297,7 +317,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       persistPrefs(prefsRef.current);
     }, SHELL_PERSIST_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
-  }, [leftSidebar, rightSidebar, leftSplitRatio, rightSplitRatio, autoExtractPalettes, persistPrefs]);
+  }, [leftSidebar, rightSidebar, leftSplitRatio, rightSplitRatio, autoExtractPalettes, previewBackground, persistPrefs]);
 
   // Flush latest prefs if the provider unmounts mid-debounce.
   useEffect(() => {
@@ -315,6 +335,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
         setLeftSplitRatio: setLeftSplitRatioState,
         setRightSplitRatio: setRightSplitRatioState,
         setAutoExtractPalettes: setAutoExtractPalettesState,
+        setPreviewBackground: setPreviewBackgroundState,
       });
     };
 
@@ -397,6 +418,18 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     setAutoExtractPalettesState(enabled);
   }, []);
 
+  const setPreviewBackground = useCallback((kind: PreviewBackground) => {
+    setPreviewBackgroundState(parsePreviewBackground(kind));
+  }, []);
+
+  const swapSidebars = useCallback(() => {
+    const prefs = prefsRef.current;
+    setLeftSidebarState({ ...prefs.rightSidebar });
+    setRightSidebarState({ ...prefs.leftSidebar });
+    setLeftSplitRatioState(prefs.rightSplitRatio);
+    setRightSplitRatioState(prefs.leftSplitRatio);
+  }, []);
+
   const value = useMemo<ShellState>(
     () => ({
       leftSidebar,
@@ -405,12 +438,15 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       rightSplitRatio,
       effectPanelRatio: leftSplitRatio,
       autoExtractPalettes,
+      previewBackground,
       setSidebarWidth,
       setSidebarCollapsed,
       resetSidebarWidths,
       setSplitRatio,
       setEffectPanelRatio,
+      swapSidebars,
       setAutoExtractPalettes,
+      setPreviewBackground,
     }),
     [
       leftSidebar,
@@ -418,12 +454,15 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       leftSplitRatio,
       rightSplitRatio,
       autoExtractPalettes,
+      previewBackground,
       setSidebarWidth,
       setSidebarCollapsed,
       resetSidebarWidths,
       setSplitRatio,
       setEffectPanelRatio,
+      swapSidebars,
       setAutoExtractPalettes,
+      setPreviewBackground,
     ]
   );
 

@@ -3,6 +3,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { check } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { formatIpcError } from './errors';
+import { allowAppExit } from './app';
 
 export type DownloadProgress = {
   contentLength: number | null;
@@ -62,5 +63,6 @@ export async function checkForAppUpdate(): Promise<UpdateCheckResult> {
 }
 
 export async function relaunchApp(): Promise<void> {
+  await allowAppExit();
   await relaunch();
 }

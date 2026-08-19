@@ -1,11 +1,11 @@
 .preferences-panel {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 0;
   padding: 0;
   flex: 1;
   min-height: 0;
-  overflow: visible;
+  overflow: hidden;
   background: var(--bg-window);
   color: var(--text-color);
   font-family: var(--font-family);
@@ -13,12 +13,39 @@
   box-sizing: border-box;
   position: relative;
   z-index: 0;
+  height: 100%;
+}
+
+.preferences-scroll {
+  flex: 1;
+  min-height: 0;
+  max-height: min(calc(80vh - 36px), 684px);
+}
+
+:global([data-floating-panel-content]) .preferences-scroll {
+  max-height: none;
+}
+
+.preferences-scroll :global(.simplebar-scrollable-y .simplebar-content-wrapper) {
+  padding-right: 16px !important;
+}
+
+.preferences-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 16px 18px 20px 16px;
+  box-sizing: border-box;
 }
 
 .preferences-section {
+  display: block;
+}
+
+.preferences-section[open] {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 14px;
 }
 
 .preferences-section-title {
@@ -27,34 +54,64 @@
   font-weight: normal;
   font-family: var(--font-family);
   border-bottom: var(--border);
-  padding-bottom: 4px;
+  padding: 6px 0 8px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.preferences-section-title::-webkit-details-marker {
+  display: none;
+}
+
+.preferences-section-title::before {
+  content: '▸ ';
+}
+
+.preferences-section[open] > .preferences-section-title::before {
+  content: '▾ ';
+}
+
+.preferences-hint {
+  margin: 0 0 4px;
+  opacity: 0.75;
+  line-height: 1.45;
+}
+
+.preferences-hint + .preferences-btn-row,
+.preferences-hint + .preferences-swatch-row,
+.preferences-hint + .preferences-shortcut-list {
+  margin-top: 4px;
 }
 
 .preferences-label {
   display: block;
-  margin-bottom: 2px;
+  margin-bottom: 6px;
 }
 
 .preferences-checkbox-row {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 10px;
   cursor: pointer;
   user-select: none;
+  line-height: 1.4;
+  padding: 2px 0;
 }
 
 .preferences-checkbox-row input {
   width: 14px;
   height: 14px;
-  margin: 0;
+  margin: 2px 0 0;
   accent-color: var(--color-black);
   cursor: pointer;
+  flex-shrink: 0;
 }
 
 .preferences-btn-row {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .preferences-button {
@@ -66,7 +123,7 @@
   color: var(--text-color);
   cursor: pointer;
   box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
-  padding: 0 10px;
+  padding: 0 12px;
   text-align: left;
 }
 
@@ -78,9 +135,13 @@
   box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light);
 }
 
+.preferences-button-active {
+  background: var(--bg-hover);
+}
+
 .preferences-preset-row {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   align-items: stretch;
 }
 
@@ -96,17 +157,76 @@
 
 .preferences-save-row {
   display: flex;
-  gap: 6px;
+  gap: 8px;
 }
 
-.preferences-input {
+.preferences-shortcut-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 2px 0 4px;
+}
+
+.preferences-shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 28px;
+}
+
+.preferences-shortcut-name {
   flex: 1;
-  height: 28px;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.preferences-shortcut-bind {
+  flex: 0 0 148px;
+  height: 26px;
   padding: 0 8px;
   border: var(--border);
-  background: var(--bg-window);
+  background: var(--color-white);
   color: var(--text-color);
   font-family: inherit;
-  font-size: 12px;
-  box-sizing: border-box;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preferences-shortcut-bind:hover {
+  background: var(--bg-hover);
+}
+
+.preferences-shortcut-bind-active {
+  background: var(--bg-hover);
+}
+
+.preferences-swatch-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px 0 4px;
+}
+
+.preferences-swatch {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: var(--border);
+  cursor: pointer;
+  box-shadow: var(--shadow-field);
+}
+
+.preferences-swatch-active {
+  outline: 2px solid var(--color-black);
+  outline-offset: 2px;
+}
+
+.preferences-section .param-group {
+  margin: 0;
 }

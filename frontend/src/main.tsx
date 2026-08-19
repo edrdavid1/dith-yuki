@@ -17,6 +17,13 @@ const KNOWN_PANELS = ['effect', 'layers', 'colorlab', 'preview', 'preferences']
 
 const isPanel = panelId !== null && KNOWN_PANELS.includes(panelId)
 
+function dismissBootScreen() {
+  const boot = document.getElementById('boot-screen')
+  if (!boot) return
+  boot.classList.add('boot-screen-done')
+  window.setTimeout(() => boot.remove(), 240)
+}
+
 ;(async () => {
   await initPlatform()
 
@@ -27,4 +34,12 @@ const isPanel = panelId !== null && KNOWN_PANELS.includes(panelId)
       </Providers>
     </React.StrictMode>,
   )
+
+  if (!isPanel) {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(dismissBootScreen)
+    })
+  } else {
+    document.getElementById('boot-screen')?.remove()
+  }
 })()

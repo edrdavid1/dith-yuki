@@ -17,6 +17,8 @@ import {
   displayFilterOrder,
   stackIndexAfterDisplayReorder,
 } from '../features/layers/filterDisplayOrder';
+import { formatChords } from '../features/shortcuts/bindings';
+import { useShortcutBindings } from '../features/shortcuts/ShortcutsContext';
 const cn = bind({ ...styles, ...retroSlider, ...layerControls });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -101,6 +103,7 @@ export default function LayersPanel({
     : null;
 
   const imageSourceLayer = layers.length > 0 ? layers[0] : null;
+  const shortcuts = useShortcutBindings();
   const displayFilters = displayFilterOrder(filters);
   const selectedFilter =
     selectedFilterId !== null
@@ -537,12 +540,12 @@ export default function LayersPanel({
 
       {/* Footer */}
       <div className={cn("lp-footer")}>
-        <Tooltip label="Add effect">
+        <Tooltip label={`Add effect (${formatChords(shortcuts.newLayer)})`}>
           <button className={cn("lp-footer-btn")} onClick={onAddLayer} aria-label="Add effect">
             <Icon name="plus" width={14} height={14} />
           </button>
         </Tooltip>
-        <Tooltip label="Delete effect">
+        <Tooltip label={`Delete effect (${formatChords(shortcuts.deleteLayer)})`}>
           <button className={cn("lp-footer-btn")} onClick={handleTrashClick} disabled={trashDisabled} aria-label="Delete effect">
             <Icon name="trash" width={14} height={14} />
           </button>

@@ -44,6 +44,7 @@ describe('ShellContext', () => {
     expect(result.current.rightSplitRatio).toBe(0.5);
     expect(result.current.effectPanelRatio).toBe(0.5);
     expect(result.current.autoExtractPalettes).toBe(true);
+    expect(result.current.previewBackground).toBe('gray');
   });
 
   it('updates split ratios independently per side', () => {
@@ -75,6 +76,24 @@ describe('ShellContext', () => {
     expect(result.current.rightSidebar.collapsed).toBe(false);
   });
 
+  it('swaps sidebar geometry and split ratios', () => {
+    const { result } = renderHook(() => useShell(), { wrapper });
+    act(() => {
+      result.current.setSidebarWidth('left', 280);
+      result.current.setSidebarWidth('right', 400);
+      result.current.setSidebarCollapsed('left', true);
+      result.current.setSplitRatio('left', 0.3);
+      result.current.setSplitRatio('right', 0.7);
+    });
+    act(() => {
+      result.current.swapSidebars();
+    });
+    expect(result.current.leftSidebar).toEqual({ width: 400, collapsed: false });
+    expect(result.current.rightSidebar).toEqual({ width: 280, collapsed: true });
+    expect(result.current.leftSplitRatio).toBe(0.7);
+    expect(result.current.rightSplitRatio).toBe(0.3);
+  });
+
   it('persists dual prefs to localStorage', () => {
     vi.useFakeTimers();
     const { result } = renderHook(() => useShell(), { wrapper });
@@ -82,6 +101,7 @@ describe('ShellContext', () => {
       result.current.setSidebarCollapsed('left', true);
       result.current.setSidebarWidth('right', 400);
       result.current.setAutoExtractPalettes(false);
+      result.current.setPreviewBackground('black');
     });
     act(() => {
       vi.advanceTimersByTime(150);
@@ -93,6 +113,7 @@ describe('ShellContext', () => {
     expect(parsed.leftSidebar.collapsed).toBe(true);
     expect(parsed.rightSidebar.width).toBe(400);
     expect(parsed.autoExtractPalettes).toBe(false);
+    expect(parsed.previewBackground).toBe('black');
     expect(parsed.sidebarSide).toBeUndefined();
     vi.useRealTimers();
   });
@@ -131,6 +152,18 @@ describe('ShellContext', () => {
     expect(migrated.leftSplitRatio).toBe(0.4);
     expect(migrated.rightSplitRatio).toBe(0.4);
     expect(migrated.effectPanelRatio).toBe(0.4);
+  });
+
+  it('parses previewBackground ids and maps legacy hex', () => {
+    expect(migrateShellPrefs({ version: 2, previewBackground: 'pattern' }).previewBackground).toBe(
+      'pattern'
+    );
+    expect(migrateShellPrefs({ version: 2, previewBackground: '#000' }).previewBackground).toBe(
+      'black'
+    );
+    expect(migrateShellPrefs({ version: 2, previewBackground: 'red' }).previewBackground).toBe(
+      'gray'
+    );
   });
 
   it('migrates v1 exclusive sidebarSide=right by default', () => {
