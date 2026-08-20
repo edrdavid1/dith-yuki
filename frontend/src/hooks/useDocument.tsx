@@ -267,6 +267,7 @@ export function useDocument() {
     notification: state.notification,
     hasDocument: state.hasDocument,
     projectPath: state.projectPath,
+    sourcePath: state.sourcePath,
     dirty: state.dirty,
     openImage: openImageFn,
     openImageAt: openImageAtFn,

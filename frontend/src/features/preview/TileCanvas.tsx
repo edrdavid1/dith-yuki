@@ -1,6 +1,7 @@
 import { useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { onDocumentChanged } from '../../shared/ipc';
+import { useAppSelector } from '../../app/hooks';
 import styles from './TileCanvas.module.css';
 import { bind } from '../../shared/ui/cn';
 import { useShell } from '../../app/shell/ShellContext';
@@ -150,6 +151,30 @@ export function tileKey(t: TileCoord): string {
   return `${t.level}/${t.x}/${t.y}`;
 }
 
+/** Full document replace / restore — same `docId`, new source pixels. */
+export const DOCUMENT_SOURCE_REPLACE_KINDS = new Set([
+  'image_loaded',
+  'document_created',
+  'project_opened',
+  'document_undone',
+  'document_redone',
+]);
+
+export function isDocumentSourceReplace(kind: string): boolean {
+  return DOCUMENT_SOURCE_REPLACE_KINDS.has(kind);
+}
+
+/** On source replace, refetch every visible tile even if a bitmap is already cached. */
+export function tilesToRequestAfterDocumentChange<T extends TileCoord>(
+  visible: T[],
+  displayedKeys: Iterable<string>,
+  sourceReplace: boolean,
+): T[] {
+  if (sourceReplace) return visible;
+  const displayed = displayedKeys instanceof Set ? displayedKeys : new Set(displayedKeys);
+  return visible.filter((t) => !displayed.has(tileKey(t)));
+}
+
 /**
  * True when every visible tile that is already on screen has a buffered
  * replacement. Used so a filter change paints as one frame, not a mix of
@@ -274,6 +299,7 @@ export default function TileCanvas({
   onViewportChange: _onViewportChange,
 }: TileCanvasProps) {
   const { previewBackground } = useShell();
+  const documentEpoch = useAppSelector((s) => s.document.documentEpoch);
   const previewBackgroundRef = useRef(previewBackground);
   previewBackgroundRef.current = previewBackground;
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -545,7 +571,8 @@ export default function TileCanvas({
   }, [docId, docWidth, docHeight]);
 
   useEffect(() => {
-    const unlisten = onDocumentChanged(() => {
+    const unlisten = onDocumentChanged((event) => {
+      const sourceReplace = isDocumentSourceReplace(event.payload.kind);
       tileRevRef.current += 1;
       if (commitTimerRef.current != null) {
         window.clearTimeout(commitTimerRef.current);
@@ -555,6 +582,12 @@ export default function TileCanvas({
         bitmap.close();
       }
       refreshPendingRef.current.clear();
+      if (sourceReplace) {
+        for (const bitmap of tileMapRef.current.values()) {
+          bitmap.close();
+        }
+        tileMapRef.current.clear();
+      }
       if (!workerRef.current) return;
       const visible = computeVisibleTiles(
         viewportRef.current,
@@ -583,7 +616,7 @@ export default function TileCanvas({
       bitmap.close();
     }
     refreshPendingRef.current.clear();
-  }, [docId]);
+  }, [docId, documentEpoch]);
 
   // ─── Force refetch all visible tiles after docId changes (initial load) ─
 
@@ -604,7 +637,7 @@ export default function TileCanvas({
     }, 300);
     
     return () => clearTimeout(timer);
-  }, [docId, docWidth, docHeight, viewport.canvasWidth, viewport.canvasHeight]);
+  }, [docId, documentEpoch, docWidth, docHeight, viewport.canvasWidth, viewport.canvasHeight]);
 
   // ─── Sync canvas dimensions before paint ────────────────────────────────
   // Setting canvas.width/height clears the bitmap. Do it in useLayoutEffect
