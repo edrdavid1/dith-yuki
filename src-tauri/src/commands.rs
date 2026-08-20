@@ -1344,11 +1344,26 @@ fn install_raster_document(
     app: Option<&AppHandle>,
 ) -> Result<LoadImageResponse, String> {
     use engine_project::types::DocumentId;
-    use engine_tiles::decompose::decompose_image_to_tiles;
+    use engine_tiles::decompose::decompose_image_to_tiles_at_generation;
+
+    let prev_gen = state
+        .document_handle
+        .snapshot()
+        .generations
+        .current_document_gen();
+    reset_tiles_for_new_document(state);
+    let live_gen = prev_gen.saturating_add(1);
 
     let layer_id = 1u32;
-    let grid = decompose_image_to_tiles(rgba_f32, width, height, layer_id, &state.tile_cache)
-        .map_err(|e| format!("Tile decomposition error: {}", e))?;
+    let grid = decompose_image_to_tiles_at_generation(
+        rgba_f32,
+        width,
+        height,
+        layer_id,
+        &state.tile_cache,
+        live_gen,
+    )
+    .map_err(|e| format!("Tile decomposition error: {}", e))?;
 
     if let Ok(mut path) = state.project_path.lock() {
         *path = None;
@@ -1364,13 +1379,13 @@ fn install_raster_document(
     );
     new_doc.root.push(engine_project::layer::LayerNode::Leaf(layer));
     new_doc.increment_generation();
+    new_doc.generations.set_document_gen(live_gen);
 
     state.document_handle.mutate(|doc| {
         *doc = new_doc;
     });
     crate::undo::clear_history(state, app)?;
 
-    invalidate_after_document_replace(state);
     schedule_dirty_viewport_tiles(state);
 
     Ok(LoadImageResponse {
@@ -1439,7 +1454,7 @@ fn import_raster_layer(
     src_rgba: &[f32],
     app: Option<&AppHandle>,
 ) -> Result<LayerIdResponse, String> {
-    use engine_tiles::decompose::decompose_image_to_tiles;
+    use engine_tiles::decompose::decompose_image_to_tiles_at_generation;
 
     let snapshot = state.document_handle.snapshot();
     if snapshot.root.is_empty() {
@@ -1469,7 +1484,19 @@ fn import_raster_layer(
         )
         .map_err(|e| format!("Failed to add layer: {e:?}"))?;
 
-        decompose_image_to_tiles(&placed, dst_w, dst_h, layer_id.0, &state.tile_cache)
+        let live_gen = state
+            .document_handle
+            .snapshot()
+            .generations
+            .current_document_gen();
+        decompose_image_to_tiles_at_generation(
+            &placed,
+            dst_w,
+            dst_h,
+            layer_id.0,
+            &state.tile_cache,
+            live_gen,
+        )
             .map_err(|e| format!("Tile decomposition error: {e}"))?;
 
         if let Some(handle) = app {
@@ -1635,22 +1662,30 @@ pub async fn open_project(
 
     let (opened, staging) = opened;
 
-    // Merge staging Raw tiles into the live cache (overwrite via insert_fresh).
+    let prev_gen = state
+        .document_handle
+        .snapshot()
+        .generations
+        .current_document_gen();
+    reset_tiles_for_new_document(&state);
+    let live_gen = prev_gen.saturating_add(1);
+
     for entry in staging.entries.iter() {
         let key = *entry.key();
         let tile = entry.value().tile.clone();
-        state.tile_cache.insert_fresh(key, tile);
+        let _ = state.tile_cache.insert_fresh_gen(key, tile, live_gen);
     }
 
     let width = opened.document.width;
     let height = opened.document.height;
+    let mut new_doc = opened.document;
+    new_doc.increment_generation();
+    new_doc.generations.set_document_gen(live_gen);
     state.document_handle.mutate(|doc| {
-        *doc = opened.document;
-        doc.increment_generation();
+        *doc = new_doc;
     });
     crate::undo::clear_history(&state, Some(&app_handle))?;
 
-    invalidate_after_document_replace(&state);
     schedule_dirty_viewport_tiles(&state);
 
     if let Ok(mut guard) = state.project_path.lock() {
@@ -1846,8 +1881,21 @@ pub fn import_pattern(
 // Tile Scheduling Helpers
 // ============================================================================
 
-/// Mark all Processed and Composite tiles dirty after a full document replace
-/// (`load_image` / `open_project`). Raw tiles are expected to already be fresh.
+/// Drop all tiles and in-flight work before writing a replacement document's Raw tiles.
+/// Does **not** run on undo/redo — those must keep Raw pixels for restored layers.
+pub(crate) fn reset_tiles_for_new_document(state: &AppState) {
+    state.tile_cache.clear();
+    state.scheduler.clear_all();
+    state.pending_diffusion_waiters.clear();
+    state.block_representatives.invalidate_all();
+    state.error_residuals.clear();
+    if let Ok(mut pending) = state.pending_preview_refresh.lock() {
+        *pending = None;
+    }
+}
+
+/// Mark Processed and Composite dirty after undo/redo restore (Raw stays).
+/// Advances live `document_gen` past any cached generation so worker inserts win.
 pub(crate) fn invalidate_after_document_replace(state: &AppState) {
     use engine_tiles::CacheStage;
 
@@ -4717,6 +4765,90 @@ mod tests {
             buf.extend_from_slice(&[r, g, b, a]);
         }
         buf
+    }
+
+    #[test]
+    fn install_raster_replaces_high_gen_source_tiles() {
+        use engine_tiles::{TileCoord, HALO};
+
+        let state = make_test_app_state();
+        state.document_handle.mutate(|doc| {
+            doc.generations.set_document_gen(40);
+        });
+
+        let leftover = TileKey {
+            layer: 1,
+            coord: TileCoord {
+                level: 0,
+                x: 1,
+                y: 0,
+            },
+            stage: CacheStage::Raw,
+        };
+        let raw00 = TileKey {
+            layer: 1,
+            coord: TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            },
+            stage: CacheStage::Raw,
+        };
+        let composite = TileKey {
+            layer: 0,
+            coord: TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            },
+            stage: CacheStage::Composite,
+        };
+
+        let mut red = PixelTile::new();
+        red.set(HALO, HALO, 0, 1.0);
+        red.set(HALO, HALO, 3, 1.0);
+        assert!(state
+            .tile_cache
+            .insert_fresh_gen(raw00, Arc::new(red), 50));
+        assert!(state.tile_cache.insert_fresh_gen(
+            leftover,
+            Arc::new(PixelTile::new()),
+            50
+        ));
+        assert!(state.tile_cache.insert_fresh_gen(
+            composite,
+            Arc::new(PixelTile::new()),
+            50
+        ));
+
+        let blue = solid_rgba(8, 8, 0.0, 0.0, 1.0, 1.0);
+        install_raster_document(&state, 8, 8, &blue, None).unwrap();
+
+        assert!(
+            state.tile_cache.entries.get(&leftover).is_none(),
+            "tiles outside the new grid must be gone"
+        );
+        let px = raw_pixel_at(&state, 1, 0, 0);
+        assert!(
+            (px[2] - 1.0).abs() < 1e-5 && px[0].abs() < 1e-5,
+            "expected blue Image Source, got {px:?}"
+        );
+
+        let live_gen = state
+            .document_handle
+            .snapshot()
+            .generations
+            .current_document_gen();
+        assert_eq!(live_gen, 41);
+        let raw_entry = state.tile_cache.entries.get(&raw00).unwrap();
+        assert_eq!(raw_entry.generation, 41);
+        drop(raw_entry);
+
+        assert!(state.tile_cache.insert_fresh_gen(
+            composite,
+            Arc::new(PixelTile::new()),
+            live_gen
+        ));
     }
 
     #[test]

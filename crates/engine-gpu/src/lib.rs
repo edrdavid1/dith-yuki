@@ -4,7 +4,7 @@
 //! `tile_offset` so indexing matches CPU `GlobalCoord`. Error Diffusion is
 //! never GpuEligible.
 //!
-//! Force CPU: `DITHER_FORCE_CPU=1`. Prefer GPU (when available): `DITHER_GPU=1`.
+//! Force CPU: `DITHER_FORCE_CPU=1`. Prefer GPU: runtime or compile-time `DITHER_GPU=1`.
 
 mod bayer;
 mod context;

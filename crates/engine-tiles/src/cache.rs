@@ -183,6 +183,24 @@ impl TileCache {
         }
     }
 
+    /// Drop every cache entry. LRU leftovers are ignored on later pop, as with `evict_layer`.
+    pub fn clear(&self) {
+        let n = self.entries.len();
+        self.entries.clear();
+        if n > 0 {
+            self.used_bytes.store(0, Ordering::Relaxed);
+        }
+    }
+
+    /// Highest `generation` among cached entries, or 0 if empty.
+    pub fn max_generation(&self) -> u64 {
+        self.entries
+            .iter()
+            .map(|e| e.generation)
+            .max()
+            .unwrap_or(0)
+    }
+
     /// Remove every cached stage for `layer` (Raw / Processed / Composite).
     ///
     /// Stale LRU-queue entries for the removed keys are ignored on pop,
@@ -828,5 +846,32 @@ mod tests {
         let entry = cache.entries.get(&key).unwrap();
         assert_eq!(entry.generation, 5);
         assert!((entry.tile.at(0, 0, 0) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn insert_fresh_gen_zero_loses_to_high_generation() {
+        let cache = TileCache::new(10_000_000);
+        let key = make_key(1, 0, 0);
+        assert!(cache.insert_fresh_gen(key, marked_tile(0.2), 50));
+        assert!(
+            !cache.insert_fresh_gen(key, marked_tile(0.9), 0),
+            "decompose insert_fresh (gen 0) must not overwrite gen 50"
+        );
+        let entry = cache.entries.get(&key).unwrap();
+        assert_eq!(entry.generation, 50);
+        assert!((entry.tile.at(0, 0, 0) - 0.2).abs() < 1e-6);
+    }
+
+    #[test]
+    fn clear_drops_all_entries_and_used_bytes() {
+        let cache = TileCache::new(10_000_000);
+        cache.insert_fresh_gen(make_key(1, 0, 0), marked_tile(0.1), 50);
+        cache.insert_fresh_gen(composite_key(), marked_tile(0.2), 50);
+        assert!(cache.entry_count() >= 2);
+        cache.clear();
+        assert_eq!(cache.entry_count(), 0);
+        assert_eq!(cache.used_bytes_count(), 0);
+        assert_eq!(cache.max_generation(), 0);
+        assert!(cache.insert_fresh_gen(make_key(1, 0, 0), marked_tile(0.9), 51));
     }
 }

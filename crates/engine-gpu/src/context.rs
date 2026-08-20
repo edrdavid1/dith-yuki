@@ -40,6 +40,11 @@ impl GpuContext {
             .await?;
 
         let info = adapter.get_info();
+        eprintln!(
+            "[engine-gpu] adapter {:?} ({:?})",
+            info.name,
+            info.backend
+        );
         log::info!(
             "engine-gpu: adapter {:?} ({:?})",
             info.name,

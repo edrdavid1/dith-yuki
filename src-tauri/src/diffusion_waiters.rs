@@ -42,6 +42,12 @@ impl PendingDiffusionWaiters {
         map.remove(loaded_raw).unwrap_or_default()
     }
 
+    /// Drop all waiters (full document replace).
+    pub fn clear(&self) {
+        let mut map = self.map.lock().unwrap_or_else(|e| e.into_inner());
+        map.clear();
+    }
+
     /// Number of distinct missing-raw keys with waiters (diagnostics / tests).
     pub fn pending_key_count(&self) -> usize {
         self.map.lock().unwrap_or_else(|e| e.into_inner()).len()

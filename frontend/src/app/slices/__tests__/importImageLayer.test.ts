@@ -33,6 +33,7 @@ describe('importImageLayer', () => {
         width: 512,
         height: 512,
         hasDocument: true,
+        hydrated: true,
         loading: false,
         notification: null,
         error: null,
@@ -40,6 +41,7 @@ describe('importImageLayer', () => {
         projectPath: '/tmp/qa.dyproj',
         sourcePath: null,
         dirty: false,
+        documentEpoch: 0,
       },
     });
 

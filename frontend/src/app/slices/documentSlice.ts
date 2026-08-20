@@ -33,6 +33,8 @@ export interface DocumentState {
   sourcePath: string | null;
   /** Track P: diverges from last save / replace. */
   dirty: boolean;
+  /** Bumps when the raster source is replaced while `docId` stays 1. */
+  documentEpoch: number;
 }
 
 const initialState: DocumentState = {
@@ -48,6 +50,7 @@ const initialState: DocumentState = {
   projectPath: null,
   sourcePath: null,
   dirty: false,
+  documentEpoch: 0,
 };
 
 export const refreshDocument = createAsyncThunk(
@@ -251,6 +254,7 @@ const documentSlice = createSlice({
             | 'projectPath'
             | 'sourcePath'
             | 'dirty'
+            | 'documentEpoch'
           >
         >
       >
@@ -259,6 +263,9 @@ const documentSlice = createSlice({
     },
     setDirty(state, action: PayloadAction<boolean>) {
       state.dirty = action.payload;
+    },
+    bumpDocumentEpoch(state) {
+      state.documentEpoch += 1;
     },
   },
   extraReducers: (builder) => {
@@ -295,6 +302,7 @@ const documentSlice = createSlice({
         state.projectPath = null;
         state.sourcePath = action.meta.arg;
         state.dirty = false;
+        state.documentEpoch += 1;
         state.error = null;
       })
       .addCase(openImage.rejected, (state, action) => {
@@ -317,6 +325,7 @@ const documentSlice = createSlice({
         state.projectPath = null;
         state.sourcePath = null;
         state.dirty = false;
+        state.documentEpoch += 1;
         state.error = null;
       })
       .addCase(createDocument.rejected, (state, action) => {
@@ -361,6 +370,7 @@ const documentSlice = createSlice({
         state.projectPath = action.payload.projectPath;
         state.sourcePath = null;
         state.dirty = false;
+        state.documentEpoch += 1;
         state.error = null;
       })
       .addCase(openProject.rejected, (state, action) => {
@@ -406,5 +416,5 @@ const documentSlice = createSlice({
   },
 });
 
-export const { clearNotification, clearError, setDocumentMeta, setDirty } = documentSlice.actions;
+export const { clearNotification, clearError, setDocumentMeta, setDirty, bumpDocumentEpoch } = documentSlice.actions;
 export default documentSlice.reducer;
