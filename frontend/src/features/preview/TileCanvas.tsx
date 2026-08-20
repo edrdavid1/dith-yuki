@@ -175,6 +175,35 @@ export function tilesToRequestAfterDocumentChange<T extends TileCoord>(
   return visible.filter((t) => !displayed.has(tileKey(t)));
 }
 
+/** True when two pyramid tiles cover overlapping document pixels. */
+export function tilesCoverSameDocumentArea(a: TileCoord, b: TileCoord): boolean {
+  if (a.level === b.level) return a.x === b.x && a.y === b.y;
+  const lo = a.level < b.level ? a : b;
+  const hi = a.level < b.level ? b : a;
+  const shift = hi.level - lo.level;
+  return (lo.x >> shift) === hi.x && (lo.y >> shift) === hi.y;
+}
+
+/**
+ * Keep other-LOD bitmaps while the current level still has holes.
+ * Dropping them on the zoom boundary is what flashed the preview gray.
+ */
+export function shouldKeepLodTile(
+  tile: TileCoord,
+  currentLevel: number,
+  visibleCurrent: TileCoord[],
+  displayedCurrentKeys: Iterable<string>,
+): boolean {
+  if (tile.level === currentLevel) return true;
+  const displayed =
+    displayedCurrentKeys instanceof Set
+      ? displayedCurrentKeys
+      : new Set(displayedCurrentKeys);
+  const missing = visibleCurrent.filter((t) => !displayed.has(tileKey(t)));
+  if (missing.length === 0) return false;
+  return missing.some((v) => tilesCoverSameDocumentArea(tile, v));
+}
+
 /**
  * True when every visible tile that is already on screen has a buffered
  * replacement. Used so a filter change paints as one frame, not a mix of
@@ -339,21 +368,23 @@ export default function TileCanvas({
     ctx.imageSmoothingEnabled = false;
 
     const currentLevel = computePyramidLevel(vp.zoom, docWidth, docHeight);
+    const visible = computeVisibleTiles(vp, docWidth, docHeight);
+    const haveCurrent = new Set(
+      [...tileMapRef.current.keys()].filter(
+        (k) => parseTileKey(k).level === currentLevel,
+      ),
+    );
 
-    // Only the active pyramid level. Drawing coarser tiles underneath
-    // (nearest-neighbour, 2^L × oversized) is what made zoom-in pixels look wrong.
-    for (const [key, bitmap] of tileMapRef.current) {
-      const { x, y, level } = parseTileKey(key);
-      if (level !== currentLevel) continue;
+    const blitOne = (x: number, y: number, level: number, bitmap: ImageBitmap) => {
       const blit = computeTileBlit(x, y, level, vp, docWidth, docHeight, dpr);
-      if (!blit) continue;
+      if (!blit) return;
       if (
         blit.dx + blit.dw < 0 ||
         blit.dy + blit.dh < 0 ||
         blit.dx > canvas.width ||
         blit.dy > canvas.height
       ) {
-        continue;
+        return;
       }
       ctx.drawImage(
         bitmap,
@@ -366,6 +397,19 @@ export default function TileCanvas({
         blit.dw,
         blit.dh,
       );
+    };
+
+    // Other LOD first (holes), then the active level on top.
+    for (const [key, bitmap] of tileMapRef.current) {
+      const tile = parseTileKey(key);
+      if (tile.level === currentLevel) continue;
+      if (!shouldKeepLodTile(tile, currentLevel, visible, haveCurrent)) continue;
+      blitOne(tile.x, tile.y, tile.level, bitmap);
+    }
+    for (const [key, bitmap] of tileMapRef.current) {
+      const tile = parseTileKey(key);
+      if (tile.level !== currentLevel) continue;
+      blitOne(tile.x, tile.y, tile.level, bitmap);
     }
 
     // Reset CSS transform since canvas is now drawn at correct position
@@ -502,16 +546,21 @@ export default function TileCanvas({
     const canvas = canvasRef.current;
     const lastVp = lastDrawnViewportRef.current;
 
-    // Drop bitmaps from other pyramid levels when zoom crosses a LOD boundary.
     const currentLevel = computePyramidLevel(viewport.zoom, docWidth, docHeight);
+    const visibleNow = computeVisibleTiles(viewport, docWidth, docHeight);
+    const haveCurrent = new Set(
+      [...tileMapRef.current.keys()].filter(
+        (k) => parseTileKey(k).level === currentLevel,
+      ),
+    );
     for (const [key, bitmap] of [...tileMapRef.current.entries()]) {
-      if (parseTileKey(key).level !== currentLevel) {
+      if (!shouldKeepLodTile(parseTileKey(key), currentLevel, visibleNow, haveCurrent)) {
         bitmap.close();
         tileMapRef.current.delete(key);
       }
     }
     for (const [key, bitmap] of [...refreshPendingRef.current.entries()]) {
-      if (parseTileKey(key).level !== currentLevel) {
+      if (!shouldKeepLodTile(parseTileKey(key), currentLevel, visibleNow, haveCurrent)) {
         bitmap.close();
         refreshPendingRef.current.delete(key);
       }
