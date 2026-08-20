@@ -359,15 +359,7 @@ pub fn compute_composite_tile(
             }
         }
         if waiting {
-            enqueue_composite_dedup(
-                state,
-                key,
-                doc_gen,
-                engine_tiles::Priority::ViewportCenter,
-            );
-            return Err(EngineError::invalid_state(
-                "Pyramid children not yet computed; scheduled for computation".to_string(),
-            ));
+            return retry_pyramid_parent(state, key, doc_gen);
         }
         if let Some(pyramid_tile) = engine_tiles::generate_pyramid_tile(
             key.coord.level,
@@ -397,9 +389,24 @@ pub fn compute_composite_tile(
             }
             return Ok(return_tile);
         }
-        return Err(EngineError::invalid_state(
-            "Pyramid children missing after wait".to_string(),
-        ));
+        // Children looked ready then vanished (zoom/pan eviction of finer
+        // levels) — retry; never drop the display parent.
+        for child_coord in &children {
+            if !coord_in_document(*child_coord, snapshot.width, snapshot.height) {
+                continue;
+            }
+            enqueue_composite_dedup(
+                state,
+                TileKey {
+                    layer: key.layer,
+                    coord: *child_coord,
+                    stage: CacheStage::Composite,
+                },
+                doc_gen,
+                engine_tiles::Priority::Immediate,
+            );
+        }
+        return retry_pyramid_parent(state, key, doc_gen);
     }
 
     // 2. Ensure all visible layers have fresh Processed tiles at this coordinate.
@@ -514,6 +521,22 @@ fn enqueue_composite_dedup(
     if enqueued {
         state.worker_wake.notify_one();
     }
+}
+
+fn retry_pyramid_parent(
+    state: &AppState,
+    key: TileKey,
+    doc_gen: u64,
+) -> Result<PixelTile, EngineError> {
+    enqueue_composite_dedup(
+        state,
+        key,
+        doc_gen,
+        engine_tiles::Priority::ViewportCenter,
+    );
+    Err(EngineError::invalid_state(
+        "Pyramid children not yet computed; scheduled for computation".to_string(),
+    ))
 }
 
 /// Below this many stale prefix tiles the depth-first recursion is cheaper than
@@ -1321,5 +1344,43 @@ mod tests {
             parent_tasks, 1,
             "four L0 children must enqueue the L1 parent once"
         );
+    }
+
+    #[test]
+    fn pyramid_parent_retries_quietly_when_children_vanish() {
+        use engine_tiles::decompose::decompose_image_to_tiles;
+
+        let mut doc = Document::new(DocumentId::new(1), 1024, 1024);
+        let layer = Layer::new(LayerId::new(1), LayerKind::Raster, 1024, 1024);
+        doc.root.push(LayerNode::Leaf(layer));
+        let mut state = make_app_state_with_layer(1, false);
+        state.document_handle = DocumentHandle::new(doc);
+        state.viewport.lock().unwrap().level = 2;
+
+        let mut buffer = vec![0.0f32; (1024 * 1024 * 4) as usize];
+        for px in buffer.chunks_exact_mut(4) {
+            px[3] = 1.0;
+        }
+        decompose_image_to_tiles(&buffer, 1024, 1024, 1, &state.tile_cache).unwrap();
+
+        let parent = TileKey {
+            layer: 0,
+            coord: TileCoord { level: 2, x: 0, y: 0 },
+            stage: CacheStage::Composite,
+        };
+        let err = match compute_composite_tile(parent, &state) {
+            Err(e) => e,
+            Ok(_) => panic!("L2 must wait for children"),
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("not yet computed"),
+            "expected retry, got {msg}"
+        );
+        assert!(
+            !msg.contains("missing after wait"),
+            "parent must stay scheduled instead of failing closed"
+        );
+        assert!(state.scheduler.contains_key(&parent));
     }
 }
