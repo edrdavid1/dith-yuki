@@ -7,6 +7,8 @@ import {
   shouldAcceptDecodedRev,
   isDocumentSourceReplace,
   tilesToRequestAfterDocumentChange,
+  shouldKeepLodTile,
+  tilesCoverSameDocumentArea,
   COMMIT_WAIT_MS,
   type ViewportState,
 } from '../TileCanvas';
@@ -133,6 +135,23 @@ describe('shouldCommitTileRefresh', () => {
     const visible = ['2/0/0', '2/1/0'];
     const pending = ['2/0/0', '2/1/0'];
     expect(shouldCommitTileRefresh(displayed, pending, visible)).toBe(true);
+  });
+});
+
+describe('LOD fallback retention', () => {
+  it('keeps coarser tiles while the new LOD still has holes', () => {
+    const visible = [
+      { level: 2, x: 0, y: 0 },
+      { level: 2, x: 1, y: 0 },
+    ];
+    expect(
+      shouldKeepLodTile({ level: 0, x: 0, y: 0 }, 2, visible, []),
+    ).toBe(true);
+    expect(
+      shouldKeepLodTile({ level: 0, x: 0, y: 0 }, 2, visible, ['2/0/0', '2/1/0']),
+    ).toBe(false);
+    expect(tilesCoverSameDocumentArea({ level: 0, x: 5, y: 7 }, { level: 2, x: 1, y: 1 })).toBe(true);
+    expect(tilesCoverSameDocumentArea({ level: 0, x: 0, y: 0 }, { level: 2, x: 1, y: 1 })).toBe(false);
   });
 });
 
