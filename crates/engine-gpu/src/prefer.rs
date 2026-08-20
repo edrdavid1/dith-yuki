@@ -5,10 +5,16 @@ pub fn force_cpu() -> bool {
     env_flag_enabled(std::env::var("DITHER_FORCE_CPU").ok().as_deref())
 }
 
-/// When set (`DITHER_GPU=1`), prefer GPU for eligible filters when a context exists.
-/// Default is off until D1 exit criteria are green (document in tasks §2.5).
+/// Prefer GPU for eligible filters when a [`crate::GpuContext`] exists.
+///
+/// Runtime `DITHER_GPU` wins when set (`1`/`true`/`yes` on, `0` off).
+/// If unset, a compile-time `DITHER_GPU=1` (baked into the binary) is used.
+/// Default with neither is off until D1 exit criteria are green.
 pub fn prefer_gpu() -> bool {
-    env_flag_enabled(std::env::var("DITHER_GPU").ok().as_deref())
+    match std::env::var("DITHER_GPU") {
+        Ok(v) => env_flag_enabled(Some(v.as_str())),
+        Err(_) => env_flag_enabled(option_env!("DITHER_GPU")),
+    }
 }
 
 /// Combined gate: GPU path may run only if not force-CPU and prefer-GPU is on.

@@ -116,6 +116,16 @@ impl GenerationTracker {
         self.document_gen.fetch_add(1, Ordering::Release)
     }
 
+    /// Current global generation.
+    pub fn current_document_gen(&self) -> u64 {
+        self.document_gen.load(Ordering::Acquire)
+    }
+
+    /// Set the global generation (document replace / restore past cache CAS).
+    pub fn set_document_gen(&self, gen: u64) {
+        self.document_gen.store(gen, Ordering::Release);
+    }
+
     /// Atomically increments and returns the new per-layer generation value.
     ///
     /// If the layer has no prior generation, it is initialized to 0 then incremented to 1.

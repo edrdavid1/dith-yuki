@@ -41,6 +41,7 @@ function renderHarness(opts: { canUndo?: boolean; canRedo?: boolean; hasDocument
       width: 8,
       height: 8,
       hasDocument: opts.hasDocument !== false,
+      hydrated: opts.hasDocument !== false,
       loading: false,
       notification: null,
       error: null,
@@ -48,6 +49,7 @@ function renderHarness(opts: { canUndo?: boolean; canRedo?: boolean; hasDocument
       projectPath: null,
       sourcePath: null,
       dirty: false,
+      documentEpoch: 0,
     },
     undo: {
       canUndo: opts.canUndo ?? true,
