@@ -49,17 +49,27 @@ fn main() {
         log::warn!("Dock affinity unavailable on this platform (no mouseup backend)");
     }
 
-    // Track D: optional GPU. Force-CPU via DITHER_FORCE_CPU=1; prefer via DITHER_GPU=1.
+    // Track D: optional GPU. Force-CPU via DITHER_FORCE_CPU=1; prefer via DITHER_GPU=1
+    // (runtime or compile-time). Finder-launched .app has no shell env.
     let gpu = if engine_gpu::force_cpu() {
+        eprintln!("[engine-gpu] DITHER_FORCE_CPU set — skipping adapter init");
         log::info!("engine-gpu: DITHER_FORCE_CPU set — skipping adapter init");
         None
     } else {
         match engine_gpu::GpuContext::try_new_blocking() {
             Some(ctx) => {
-                log::info!("engine-gpu: device ready (map_timeouts=0)");
+                eprintln!(
+                    "[engine-gpu] device ready filters={}",
+                    engine_gpu::gpu_filters_enabled()
+                );
+                log::info!(
+                    "engine-gpu: device ready (map_timeouts=0, filters={})",
+                    engine_gpu::gpu_filters_enabled()
+                );
                 Some(std::sync::Arc::new(ctx))
             }
             None => {
+                eprintln!("[engine-gpu] no adapter — CPU-only filters");
                 log::warn!("engine-gpu: no adapter — CPU-only filters");
                 None
             }

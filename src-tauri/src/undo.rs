@@ -222,7 +222,11 @@ where
 
 fn bump_live_document_gen(state: &AppState) {
     let live = state.document_handle.snapshot();
-    live.generations.increment_document_gen();
+    let live_gen = live.generations.current_document_gen();
+    let next = live_gen
+        .max(state.tile_cache.max_generation())
+        .saturating_add(1);
+    live.generations.set_document_gen(next);
 }
 
 fn restore_and_invalidate(

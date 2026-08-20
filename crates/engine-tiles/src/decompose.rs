@@ -77,6 +77,18 @@ pub fn decompose_image_to_tiles(
     layer_id: u32,
     cache: &TileCache,
 ) -> Result<TileGrid, TileError> {
+    decompose_image_to_tiles_at_generation(rgba_f32, width, height, layer_id, cache, 0)
+}
+
+/// Same as [`decompose_image_to_tiles`], stamping Raw entries with `generation`.
+pub fn decompose_image_to_tiles_at_generation(
+    rgba_f32: &[f32],
+    width: u32,
+    height: u32,
+    layer_id: u32,
+    cache: &TileCache,
+    generation: u64,
+) -> Result<TileGrid, TileError> {
     if width == 0 || height == 0 {
         return Err(TileError::ZeroDimensions);
     }
@@ -104,8 +116,7 @@ pub fn decompose_image_to_tiles(
                 },
                 stage: CacheStage::Raw,
             };
-            // Always overwrite: reload/open must not keep stale Raw from a prior document.
-            cache.insert_fresh(key, Arc::new(tile));
+            let _ = cache.insert_fresh_gen(key, Arc::new(tile), generation);
         }
     }
 
@@ -356,5 +367,24 @@ mod tests {
         assert_eq!(tile.at(HALO, HALO, 3), 1.0);
         // Adjacent pixels should be zero
         assert_eq!(tile.at(HALO + 1, HALO, 0), 0.0);
+    }
+
+    #[test]
+    fn decompose_at_generation_stamps_raw_entries() {
+        let buffer = vec![0.25f32; 4];
+        let cache = TileCache::new(100_000_000);
+        decompose_image_to_tiles_at_generation(&buffer, 1, 1, 1, &cache, 51).unwrap();
+        let key = TileKey {
+            layer: 1,
+            coord: TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            },
+            stage: CacheStage::Raw,
+        };
+        let entry = cache.entries.get(&key).unwrap();
+        assert_eq!(entry.generation, 51);
+        assert!(!entry.dirty.load(std::sync::atomic::Ordering::Acquire));
     }
 }

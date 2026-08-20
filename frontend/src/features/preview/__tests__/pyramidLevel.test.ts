@@ -5,6 +5,8 @@ import {
   computeVisibleTiles,
   shouldCommitTileRefresh,
   shouldAcceptDecodedRev,
+  isDocumentSourceReplace,
+  tilesToRequestAfterDocumentChange,
   COMMIT_WAIT_MS,
   type ViewportState,
 } from '../TileCanvas';
@@ -131,5 +133,27 @@ describe('shouldCommitTileRefresh', () => {
     const visible = ['2/0/0', '2/1/0'];
     const pending = ['2/0/0', '2/1/0'];
     expect(shouldCommitTileRefresh(displayed, pending, visible)).toBe(true);
+  });
+});
+
+describe('document source replace refetch', () => {
+  it('treats open/create/project/undo as source replace', () => {
+    expect(isDocumentSourceReplace('image_loaded')).toBe(true);
+    expect(isDocumentSourceReplace('document_created')).toBe(true);
+    expect(isDocumentSourceReplace('project_opened')).toBe(true);
+    expect(isDocumentSourceReplace('document_undone')).toBe(true);
+    expect(isDocumentSourceReplace('filter_updated')).toBe(false);
+  });
+
+  it('requests already-displayed keys when the source is replaced at the same docId', () => {
+    const visible = [
+      { level: 0, x: 0, y: 0 },
+      { level: 0, x: 1, y: 0 },
+    ];
+    const displayed = ['0/0/0'];
+    expect(tilesToRequestAfterDocumentChange(visible, displayed, false)).toEqual([
+      { level: 0, x: 1, y: 0 },
+    ]);
+    expect(tilesToRequestAfterDocumentChange(visible, displayed, true)).toEqual(visible);
   });
 });

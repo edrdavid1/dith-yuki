@@ -1,5 +1,5 @@
 import type { AppDispatch, AppStore } from './store';
-import { refreshDocument, setDirty } from './slices/documentSlice';
+import { refreshDocument, setDirty, bumpDocumentEpoch } from './slices/documentSlice';
 import { refreshLayers } from './slices/layersSlice';
 import { refreshFilters } from './slices/filtersSlice';
 import { applyRemote, fetchSelection } from './slices/selectionSlice';
@@ -84,6 +84,7 @@ export function startEngineEventBridge(store: AppStore): EngineBridgeCleanup {
 
     if (kind === 'document_undone' || kind === 'document_redone') {
       dispatch(bumpVersion());
+      dispatch(bumpDocumentEpoch());
     }
 
     // Document open / structural changes — refresh meta
