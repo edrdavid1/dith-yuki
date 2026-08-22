@@ -51,11 +51,19 @@ impl GpuContext {
             info.backend
         );
 
+        let mut required_features = wgpu::Features::empty();
+        if adapter
+            .features()
+            .contains(wgpu::Features::CLEAR_TEXTURE)
+        {
+            required_features |= wgpu::Features::CLEAR_TEXTURE;
+        }
+
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("dither-gpu"),
-                    required_features: wgpu::Features::empty(),
+                    required_features,
                     required_limits: wgpu::Limits::default(),
                     memory_hints: wgpu::MemoryHints::default(),
                 },

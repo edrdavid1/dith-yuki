@@ -67,7 +67,7 @@ impl Default for ErrorResiduals {
 /// Tiles store their edge residuals after processing; neighbor tiles read them
 /// to seed error propagation at boundaries.
 pub struct ErrorResidualsStore {
-    entries: DashMap<(LayerId, TileCoord), ErrorResiduals>,
+    entries: DashMap<(u32, LayerId, TileCoord), ErrorResiduals>,
     clear_count: AtomicU64,
 }
 
@@ -84,7 +84,7 @@ impl ErrorResidualsStore {
     ///
     /// Returns `None` if the current tile is at the left edge (x == 0)
     /// or if the left neighbor has not yet been processed.
-    pub fn get_left(&self, layer_id: LayerId, coord: TileCoord) -> Option<ErrorResiduals> {
+    pub fn get_left(&self, doc: u32, layer_id: LayerId, coord: TileCoord) -> Option<ErrorResiduals> {
         if coord.x == 0 {
             return None;
         }
@@ -93,14 +93,10 @@ impl ErrorResidualsStore {
             x: coord.x - 1,
             y: coord.y,
         };
-        self.entries.get(&(layer_id, left_coord)).map(|r| r.clone())
+        self.entries.get(&(doc, layer_id, left_coord)).map(|r| r.clone())
     }
 
-    /// Get residuals from the top neighbor tile (coord.y - 1).
-    ///
-    /// Returns `None` if the current tile is at the top edge (y == 0)
-    /// or if the top neighbor has not yet been processed.
-    pub fn get_top(&self, layer_id: LayerId, coord: TileCoord) -> Option<ErrorResiduals> {
+    pub fn get_top(&self, doc: u32, layer_id: LayerId, coord: TileCoord) -> Option<ErrorResiduals> {
         if coord.y == 0 {
             return None;
         }
@@ -109,15 +105,10 @@ impl ErrorResidualsStore {
             x: coord.x,
             y: coord.y - 1,
         };
-        self.entries.get(&(layer_id, top_coord)).map(|r| r.clone())
+        self.entries.get(&(doc, layer_id, top_coord)).map(|r| r.clone())
     }
 
-    /// Get residuals from the diagonal neighbor tile `(coord.x - 1, coord.y - 1)`.
-    ///
-    /// Used to seed the IncomingErrorBuffer corner channel into the top-left
-    /// of the current tile. Returns `None` at the top or left document edge,
-    /// or if that neighbor has not been processed yet.
-    pub fn get_diag(&self, layer_id: LayerId, coord: TileCoord) -> Option<ErrorResiduals> {
+    pub fn get_diag(&self, doc: u32, layer_id: LayerId, coord: TileCoord) -> Option<ErrorResiduals> {
         if coord.x == 0 || coord.y == 0 {
             return None;
         }
@@ -126,35 +117,63 @@ impl ErrorResidualsStore {
             x: coord.x - 1,
             y: coord.y - 1,
         };
-        self.entries.get(&(layer_id, diag_coord)).map(|r| r.clone())
+        self.entries.get(&(doc, layer_id, diag_coord)).map(|r| r.clone())
     }
 
-    /// Store residuals after processing a tile.
-    ///
-    /// Overwrites any previously stored residuals for this (layer, coord) pair.
-    pub fn store(&self, layer_id: LayerId, coord: TileCoord, residuals: ErrorResiduals) {
-        self.entries.insert((layer_id, coord), residuals);
+    pub fn store(&self, doc: u32, layer_id: LayerId, coord: TileCoord, residuals: ErrorResiduals) {
+        self.entries.insert((doc, layer_id, coord), residuals);
     }
 
-    /// Layer ids that currently have residual entries.
     pub fn cached_layer_ids(&self) -> std::collections::HashSet<u32> {
-        self.entries.iter().map(|e| e.key().0.0).collect()
+        self.entries.iter().map(|e| e.key().1.0).collect()
     }
 
-    /// Drop every residual entry for `layer`. Missing keys are a no-op.
-    pub fn evict_layer(&self, layer: LayerId) {
-        self.entries.retain(|(l, _), _| l.0 != layer.0);
+    pub fn evict_layer(&self, doc: u32, layer: LayerId) {
+        self.entries.retain(|(d, l, _), _| *d != doc || l.0 != layer.0);
+        self.clear_count.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Clear all stored residuals (on document change or invalidation).
+    /// Drop residuals for the ED causal cone at `level`: all tiles with
+    /// `x >= origin_x && y >= origin_y` (dependents of an invalidated origin).
+    pub fn evict_downstream_cone(
+        &self,
+        doc: u32,
+        layer: LayerId,
+        level: u8,
+        origin_x: u32,
+        origin_y: u32,
+    ) {
+        self.entries.retain(|(d, l, c), _| {
+            !(*d == doc
+                && l.0 == layer.0
+                && c.level == level
+                && c.x >= origin_x
+                && c.y >= origin_y)
+        });
+        self.clear_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn evict_document(&self, doc: u32) {
+        self.entries.retain(|(d, _, _), _| *d != doc);
+    }
+
+    /// Clear all stored residuals (full document replace / welcome).
     pub fn clear(&self) {
         self.entries.clear();
         self.clear_count.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// How many times [`clear`] has been called (tests / diagnostics).
+    /// How many residual invalidation ops (`clear` / `evict_layer` / cone) ran.
     pub fn clear_count(&self) -> u64 {
         self.clear_count.load(Ordering::Relaxed)
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 }
 
@@ -190,9 +209,9 @@ mod tests {
         let mut residuals = ErrorResiduals::new();
         residuals.corner[0] = 0.25;
 
-        store.store(layer, tc(1, 1), residuals);
+        store.store(1, layer, tc(1, 1), residuals);
 
-        let got = store.get_diag(layer, tc(2, 2));
+        let got = store.get_diag(1, layer, tc(2, 2));
         assert!(got.is_some());
         assert_eq!(got.unwrap().corner[0], 0.25);
     }
@@ -201,8 +220,8 @@ mod tests {
     fn get_diag_returns_none_at_edge() {
         let store = ErrorResidualsStore::new();
         let layer = LayerId::new(1);
-        assert!(store.get_diag(layer, tc(0, 1)).is_none());
-        assert!(store.get_diag(layer, tc(1, 0)).is_none());
+        assert!(store.get_diag(1, layer, tc(0, 1)).is_none());
+        assert!(store.get_diag(1, layer, tc(1, 0)).is_none());
     }
 
     #[test]
@@ -213,10 +232,10 @@ mod tests {
         residuals.right[0] = 0.5;
 
         // Store residuals for tile (2, 3)
-        store.store(layer, tc(2, 3), residuals);
+        store.store(1, layer, tc(2, 3), residuals);
 
         // Get from the right neighbor's perspective (tile 3, 3 looking left)
-        let got = store.get_left(layer, tc(3, 3));
+        let got = store.get_left(1, layer, tc(3, 3));
         assert!(got.is_some());
         assert_eq!(got.unwrap().right[0], 0.5);
     }
@@ -227,7 +246,7 @@ mod tests {
         let layer = LayerId::new(1);
 
         // x == 0 means no left neighbor
-        let got = store.get_left(layer, tc(0, 5));
+        let got = store.get_left(1, layer, tc(0, 5));
         assert!(got.is_none());
     }
 
@@ -237,7 +256,7 @@ mod tests {
         let layer = LayerId::new(1);
 
         // Left neighbor (4, 3) not stored
-        let got = store.get_left(layer, tc(5, 3));
+        let got = store.get_left(1, layer, tc(5, 3));
         assert!(got.is_none());
     }
 
@@ -249,10 +268,10 @@ mod tests {
         residuals.bottom[0] = 0.75;
 
         // Store residuals for tile (4, 1)
-        store.store(layer, tc(4, 1), residuals);
+        store.store(1, layer, tc(4, 1), residuals);
 
         // Get from the bottom neighbor's perspective (tile 4, 2 looking up)
-        let got = store.get_top(layer, tc(4, 2));
+        let got = store.get_top(1, layer, tc(4, 2));
         assert!(got.is_some());
         assert_eq!(got.unwrap().bottom[0], 0.75);
     }
@@ -263,7 +282,7 @@ mod tests {
         let layer = LayerId::new(1);
 
         // y == 0 means no top neighbor
-        let got = store.get_top(layer, tc(5, 0));
+        let got = store.get_top(1, layer, tc(5, 0));
         assert!(got.is_none());
     }
 
@@ -273,8 +292,29 @@ mod tests {
         let layer = LayerId::new(1);
 
         // Top neighbor (3, 4) not stored
-        let got = store.get_top(layer, tc(3, 5));
+        let got = store.get_top(1, layer, tc(3, 5));
         assert!(got.is_none());
+    }
+
+    #[test]
+    fn evict_downstream_cone_keeps_upstream_tiles() {
+        let store = ErrorResidualsStore::new();
+        let layer = LayerId::new(1);
+        store.store(1, layer, tc(0, 0), ErrorResiduals::new());
+        store.store(1, layer, tc(2, 0), ErrorResiduals::new());
+        store.store(1, layer, tc(0, 2), ErrorResiduals::new());
+        store.store(1, layer, tc(2, 2), ErrorResiduals::new());
+
+        store.evict_downstream_cone(1, layer, 0, 1, 1);
+
+        assert!(store.get_left(1, layer, tc(1, 0)).is_some()); // (0,0) kept
+        assert!(store.get_top(1, layer, tc(0, 1)).is_some()); // (0,0)
+        // (2,2) in cone — gone (get_left of (3,2) would need (2,2))
+        assert!(store.get_left(1, layer, tc(3, 2)).is_none());
+        // (2,0): x>=1 but y=0 < 1 — kept
+        assert!(store.get_left(1, layer, tc(3, 0)).is_some());
+        // (0,2): y>=1 but x=0 < 1 — kept
+        assert!(store.get_top(1, layer, tc(0, 3)).is_some());
     }
 
     #[test]
@@ -282,14 +322,14 @@ mod tests {
         let store = ErrorResidualsStore::new();
         let layer = LayerId::new(1);
 
-        store.store(layer, tc(0, 0), ErrorResiduals::new());
-        store.store(layer, tc(1, 0), ErrorResiduals::new());
-        store.store(layer, tc(0, 1), ErrorResiduals::new());
+        store.store(1, layer, tc(0, 0), ErrorResiduals::new());
+        store.store(1, layer, tc(1, 0), ErrorResiduals::new());
+        store.store(1, layer, tc(0, 1), ErrorResiduals::new());
 
         store.clear();
 
-        assert!(store.get_left(layer, tc(1, 0)).is_none());
-        assert!(store.get_top(layer, tc(0, 1)).is_none());
+        assert!(store.get_left(1, layer, tc(1, 0)).is_none());
+        assert!(store.get_top(1, layer, tc(0, 1)).is_none());
     }
 
     #[test]
@@ -300,13 +340,13 @@ mod tests {
 
         let mut a = ErrorResiduals::new();
         a.right[0] = 1.0;
-        store.store(layer_a, tc(3, 3), a);
-        store.store(layer_b, tc(3, 3), ErrorResiduals::new());
+        store.store(1, layer_a, tc(3, 3), a);
+        store.store(1, layer_b, tc(3, 3), ErrorResiduals::new());
 
-        store.evict_layer(layer_a);
+        store.evict_layer(1, layer_a);
 
-        assert!(store.get_left(layer_a, tc(4, 3)).is_none());
-        assert!(store.get_left(layer_b, tc(4, 3)).is_some());
+        assert!(store.get_left(1, layer_a, tc(4, 3)).is_none());
+        assert!(store.get_left(1, layer_b, tc(4, 3)).is_some());
     }
 
     #[test]
@@ -317,13 +357,13 @@ mod tests {
 
         let mut residuals = ErrorResiduals::new();
         residuals.right[0] = 1.0;
-        store.store(layer_a, tc(3, 3), residuals);
+        store.store(1, layer_a, tc(3, 3), residuals);
 
         // Layer B has no data at that coord
-        assert!(store.get_left(layer_b, tc(4, 3)).is_none());
+        assert!(store.get_left(1, layer_b, tc(4, 3)).is_none());
 
         // Layer A does
-        let got = store.get_left(layer_a, tc(4, 3));
+        let got = store.get_left(1, layer_a, tc(4, 3));
         assert!(got.is_some());
         assert_eq!(got.unwrap().right[0], 1.0);
     }

@@ -19,9 +19,22 @@ fn luminance(r: f32, g: f32, b: f32) -> f32 {
 ///
 /// Deterministic: no RNG. Same input + params → same output.
 pub fn apply_glow(tile: &PixelTile, radius: f32, intensity: f32, threshold: f32) -> PixelTile {
+    let mut result = PixelTile::new();
+    apply_glow_into(tile, radius, intensity, threshold, &mut result);
+    result
+}
+
+/// Glow into an existing buffer. Mask blur still uses a small scratch Vec;
+/// the output tile itself is not allocated.
+pub fn apply_glow_into(
+    tile: &PixelTile,
+    radius: f32,
+    intensity: f32,
+    threshold: f32,
+    dst: &mut PixelTile,
+) {
     let r_px = radius.round().clamp(1.0, HALO as f32) as i32;
 
-    // Bright mask (RGB); A unused in blur.
     let mut mask = vec![0.0f32; (TILE_FULL_SIZE * TILE_FULL_SIZE * 3) as usize];
     for y in 0..TILE_FULL_SIZE {
         for x in 0..TILE_FULL_SIZE {
@@ -40,19 +53,17 @@ pub fn apply_glow(tile: &PixelTile, radius: f32, intensity: f32, threshold: f32)
 
     let blurred = box_blur_separable(&mask, r_px);
 
-    let mut result = PixelTile::new();
     for y in 0..TILE_FULL_SIZE {
         for x in 0..TILE_FULL_SIZE {
             let idx = ((y * TILE_FULL_SIZE + x) * 3) as usize;
             for c in 0..3u32 {
                 let src = tile.at(x, y, c);
                 let glow = blurred[idx + c as usize] * intensity;
-                result.set(x, y, c, (src + glow).clamp(0.0, 1.0));
+                dst.set(x, y, c, (src + glow).clamp(0.0, 1.0));
             }
-            result.set(x, y, 3, tile.at(x, y, 3));
+            dst.set(x, y, 3, tile.at(x, y, 3));
         }
     }
-    result
 }
 
 fn box_blur_separable(src: &[f32], radius: i32) -> Vec<f32> {

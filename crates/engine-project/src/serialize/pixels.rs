@@ -44,14 +44,16 @@ pub fn count_raster_layers(nodes: &[LayerNode]) -> usize {
 /// Assemble level-0 Raw tiles for a raster layer into an RGBA8 document-sized buffer,
 /// then encode PNG.
 ///
+/// `doc_id` is the runtime [`crate::types::DocumentId`] — Raw keys are namespaced by doc.
 /// Missing any Raw tile covering `layer.bounds_l0` → [`ProjectError::IncompleteRaw`].
 pub fn assemble_layer_png(
     cache: &TileCache,
     layer: &Layer,
     doc_width: u32,
     doc_height: u32,
+    doc_id: u32,
 ) -> Result<Vec<u8>, ProjectError> {
-    let rgba = assemble_layer_rgba8(cache, layer, doc_width, doc_height)?;
+    let rgba = assemble_layer_rgba8(cache, layer, doc_width, doc_height, doc_id)?;
     encode_rgba8_png(&rgba, doc_width, doc_height)
 }
 
@@ -61,6 +63,7 @@ pub fn assemble_layer_rgba8(
     layer: &Layer,
     doc_width: u32,
     doc_height: u32,
+    doc_id: u32,
 ) -> Result<Vec<u8>, ProjectError> {
     if layer.kind != LayerKind::Raster {
         return Err(ProjectError::InvalidArchive(
@@ -75,6 +78,7 @@ pub fn assemble_layer_rgba8(
     for ty in bounds.min_y..=bounds.max_y {
         for tx in bounds.min_x..=bounds.max_x {
             let key = TileKey {
+                doc: doc_id,
                 layer: layer.id.0,
                 coord: TileCoord {
                     level: 0,
@@ -84,6 +88,7 @@ pub fn assemble_layer_rgba8(
                 stage: CacheStage::Raw,
             };
             let tile = cache.get_entry(key).ok_or(ProjectError::IncompleteRaw {
+                doc_id,
                 layer_id: layer.id.0,
             })?;
 
@@ -168,8 +173,9 @@ pub fn collect_raster_layers(nodes: &[LayerNode]) -> Vec<&Layer> {
 }
 
 /// Helper used by tests: drop a Raw tile by key without LRU eviction.
-pub fn force_drop_raw_tile(cache: &TileCache, layer_id: LayerId, x: u32, y: u32) {
+pub fn force_drop_raw_tile(cache: &TileCache, doc_id: u32, layer_id: LayerId, x: u32, y: u32) {
     let key = TileKey {
+        doc: doc_id,
         layer: layer_id.0,
         coord: TileCoord { level: 0, x, y },
         stage: CacheStage::Raw,
@@ -178,11 +184,12 @@ pub fn force_drop_raw_tile(cache: &TileCache, layer_id: LayerId, x: u32, y: u32)
 }
 
 /// Tiles required for a bounds box (inclusive).
-pub fn tile_keys_for_bounds(layer_id: u32, bounds: TileBounds) -> Vec<TileKey> {
+pub fn tile_keys_for_bounds(doc_id: u32, layer_id: u32, bounds: TileBounds) -> Vec<TileKey> {
     let mut keys = Vec::new();
     for ty in bounds.min_y..=bounds.max_y {
         for tx in bounds.min_x..=bounds.max_x {
             keys.push(TileKey {
+                doc: doc_id,
                 layer: layer_id,
                 coord: TileCoord {
                     level: 0,
@@ -216,16 +223,36 @@ mod tests {
         let h = 48u32;
         let buf = solid_f32(w, h, [1.0, 0.0, 0.0, 1.0]);
         let cache = TileCache::new(50_000_000);
-        decompose_image_to_tiles(&buf, w, h, 1, &cache).unwrap();
+        decompose_image_to_tiles(&buf, w, h, 1, 1, &cache).unwrap();
 
         let layer = Layer::new(LayerId::new(1), LayerKind::Raster, w, h);
-        let png = assemble_layer_png(&cache, &layer, w, h).unwrap();
+        let png = assemble_layer_png(&cache, &layer, w, h, 1).unwrap();
         let (dw, dh, f32buf) = decode_png_to_f32(&png).unwrap();
         assert_eq!((dw, dh), (w, h));
-        // Red channel should round-trip exactly from 8-bit source path
         assert!((f32buf[0] - 1.0).abs() < 1e-6);
         assert!((f32buf[1]).abs() < 1e-6);
         assert!((f32buf[3] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn assemble_requires_matching_doc_id() {
+        let w = 64u32;
+        let h = 64u32;
+        let buf = solid_f32(w, h, [0.0, 1.0, 0.0, 1.0]);
+        let cache = TileCache::new(50_000_000);
+        // Tiles live under doc=2 only.
+        decompose_image_to_tiles(&buf, w, h, 2, 1, &cache).unwrap();
+        let layer = Layer::new(LayerId::new(1), LayerKind::Raster, w, h);
+
+        let err = assemble_layer_png(&cache, &layer, w, h, 1).unwrap_err();
+        assert_eq!(
+            err,
+            ProjectError::IncompleteRaw {
+                doc_id: 1,
+                layer_id: 1
+            }
+        );
+        assert!(assemble_layer_png(&cache, &layer, w, h, 2).is_ok());
     }
 
     #[test]
@@ -234,19 +261,23 @@ mod tests {
         let h = 300u32;
         let buf = solid_f32(w, h, [0.5, 0.5, 0.5, 1.0]);
         let cache = TileCache::new(50_000_000);
-        decompose_image_to_tiles(&buf, w, h, 1, &cache).unwrap();
+        decompose_image_to_tiles(&buf, w, h, 1, 1, &cache).unwrap();
 
         let layer = Layer::new(LayerId::new(1), LayerKind::Raster, w, h);
-        // 300×300 → 2×2 tiles; drop one
-        force_drop_raw_tile(&cache, LayerId::new(1), 1, 1);
+        force_drop_raw_tile(&cache, 1, LayerId::new(1), 1, 1);
 
-        let err = assemble_layer_png(&cache, &layer, w, h).unwrap_err();
-        assert_eq!(err, ProjectError::IncompleteRaw { layer_id: 1 });
+        let err = assemble_layer_png(&cache, &layer, w, h, 1).unwrap_err();
+        assert_eq!(
+            err,
+            ProjectError::IncompleteRaw {
+                doc_id: 1,
+                layer_id: 1
+            }
+        );
     }
 
     #[test]
     fn soft_size_helper() {
-        // One 8192² layer ≈ 256 MiB
         assert!(soft_size_warning(8192, 8192, 1));
         assert!(!soft_size_warning(64, 64, 1));
     }

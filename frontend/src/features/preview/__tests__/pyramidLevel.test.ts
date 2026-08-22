@@ -161,6 +161,7 @@ describe('document source replace refetch', () => {
     expect(isDocumentSourceReplace('document_created')).toBe(true);
     expect(isDocumentSourceReplace('project_opened')).toBe(true);
     expect(isDocumentSourceReplace('document_undone')).toBe(true);
+    expect(isDocumentSourceReplace('document_activated')).toBe(true);
     expect(isDocumentSourceReplace('filter_updated')).toBe(false);
   });
 

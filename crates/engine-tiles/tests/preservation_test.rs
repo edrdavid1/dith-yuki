@@ -26,6 +26,7 @@ fn arb_task_with_priority(priority: Priority) -> impl Strategy<Value = Recompute
     (0..100u32, 0..16u32, 0..16u32, 0..4u8).prop_map(move |(layer, x, y, level)| {
         RecomputeTask {
             key: TileKey {
+                doc: 1,
                 layer,
                 coord: TileCoord { level, x, y },
                 stage: CacheStage::Composite,
@@ -114,6 +115,7 @@ proptest! {
 
         let task1 = RecomputeTask {
             key: TileKey {
+                doc: 1,
                 layer: 0,
                 coord: TileCoord { level: 0, x: x1, y: y1 },
                 stage: CacheStage::Composite,
@@ -124,6 +126,7 @@ proptest! {
         };
         let task2 = RecomputeTask {
             key: TileKey {
+                doc: 1,
                 layer: 0,
                 coord: TileCoord { level: 0, x: x2, y: y2 },
                 stage: CacheStage::Composite,
@@ -134,6 +137,7 @@ proptest! {
         };
         let task3 = RecomputeTask {
             key: TileKey {
+                doc: 1,
                 layer: 0,
                 coord: TileCoord { level: 0, x: x3, y: y3 },
                 stage: CacheStage::Composite,

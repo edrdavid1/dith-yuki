@@ -42,8 +42,14 @@ export async function createDocument(
   return invoke<LoadImageResponse>('create_document', { width, height, background });
 }
 
-export async function importImageLayer(path: string): Promise<{ layer_id: number }> {
-  return invoke<{ layer_id: number }>('import_image_layer', { path });
+export async function importImageLayer(
+  docId: number,
+  path: string
+): Promise<{ layer_id: number }> {
+  return invoke<{ layer_id: number }>('import_image_layer', {
+    docId,
+    path,
+  });
 }
 
 export async function exportImage(req: ExportImageRequest): Promise<void> {
@@ -52,4 +58,28 @@ export async function exportImage(req: ExportImageRequest): Promise<void> {
 
 export async function getDocumentSnapshot(): Promise<DocumentSnapshotResponse> {
   return invoke<DocumentSnapshotResponse>('get_document_snapshot');
+}
+
+export interface OpenDocumentTab {
+  id: number;
+  title: string;
+  dirty: boolean;
+  path: string | null;
+}
+
+export interface OpenDocumentsPayload {
+  tabs: OpenDocumentTab[];
+  active_id: number | null;
+}
+
+export async function listOpenDocuments(): Promise<OpenDocumentsPayload> {
+  return invoke<OpenDocumentsPayload>('list_open_documents');
+}
+
+export async function setActiveDocument(docId: number): Promise<DocumentSnapshotResponse> {
+  return invoke<DocumentSnapshotResponse>('set_active_document', { docId });
+}
+
+export async function closeDocument(docId: number): Promise<OpenDocumentsPayload> {
+  return invoke<OpenDocumentsPayload>('close_document', { docId });
 }

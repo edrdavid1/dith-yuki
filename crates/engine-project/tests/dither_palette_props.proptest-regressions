@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc fffc7a46c153ebd62112f6027287aee00fff2c2e49251c6ed25cb2388c4c7347 # shrinks to tile_seed = 0, palette_seed = 4553862767020246895, palette_size = 4, mode = Bayer4x4, coord = TileCoord { level: 0, x: 0, y: 1 }, threshold_scale_raw = 236, pixel_size = 2, color_mode = Rgb
+cc 956ddcdcbd3d0eef18256e6e23aa6cffe192f0b89a2dcc420f89c6b0bab0c438 # shrinks to tile_seed = 0, palette_seed = 11370526901936736745, palette_size = 11, mode = FloydSteinberg, coord = TileCoord { level: 0, x: 4, y: 3 }, pixel_size = 3, color_mode = Rgb

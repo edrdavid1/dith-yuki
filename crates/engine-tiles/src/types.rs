@@ -62,35 +62,31 @@ pub enum CacheStage {
 /// Complete stable address of a tile in the cache.
 ///
 /// Uniquely identifies a single tile by specifying:
+/// - `doc`: Runtime document session (`DocumentId.0`; never 0 for live tiles)
 /// - `layer`: Which layer the tile belongs to
 /// - `coord`: The spatial and pyramid-level coordinate (level, x, y)
 /// - `stage`: Which processing stage (Raw, Processed, or Composite)
-///
-/// This type is used as the key in the TileCache DashMap and is hashable and copyable
-/// for efficient lookups and task scheduling.
-///
-/// # Examples
-///
-/// ```ignore
-/// // Raw pixel data for layer 5, tile (256, 256) at pyramid level 0
-/// let raw_key = TileKey {
-///     layer: 5,
-///     coord: TileCoord { level: 0, x: 1, y: 1 },
-///     stage: CacheStage::Raw,
-/// };
-///
-/// // Processed data (after filters) for the same tile
-/// let processed_key = TileKey {
-///     layer: 5,
-///     coord: TileCoord { level: 0, x: 1, y: 1 },
-///     stage: CacheStage::Processed,
-/// };
-/// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct TileKey {
+    pub doc: u32,
     pub layer: LayerId,
     pub coord: TileCoord,
     pub stage: CacheStage,
+}
+
+impl TileKey {
+    pub fn new(doc: u32, layer: LayerId, coord: TileCoord, stage: CacheStage) -> Self {
+        Self {
+            doc,
+            layer,
+            coord,
+            stage,
+        }
+    }
+
+    pub fn with_stage(self, stage: CacheStage) -> Self {
+        Self { stage, ..self }
+    }
 }
 
 #[cfg(test)]
@@ -119,6 +115,7 @@ mod tests {
         use std::collections::HashSet;
         let mut set = HashSet::new();
         let key1 = TileKey {
+           doc: 1,
             layer: 0,
             coord: TileCoord {
                 level: 0,
@@ -128,6 +125,7 @@ mod tests {
             stage: CacheStage::Raw,
         };
         let key2 = TileKey {
+           doc: 1,
             layer: 0,
             coord: TileCoord {
                 level: 0,
@@ -139,6 +137,19 @@ mod tests {
         set.insert(key1);
         set.insert(key2);
         assert_eq!(set.len(), 2);
+
+        let same_place_other_doc = TileKey {
+           doc: 2,
+            layer: 0,
+            coord: TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            },
+            stage: CacheStage::Raw,
+        };
+        set.insert(same_place_other_doc);
+        assert_eq!(set.len(), 3);
 
         // Verify copyability
         let key_copy = key1;

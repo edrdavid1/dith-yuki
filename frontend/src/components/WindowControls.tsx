@@ -6,7 +6,7 @@ import { getPlatform } from '../lib/platform';
 export function WindowControls() {
   // On macOS or unknown platform, native traffic lights handle window controls
   const platform = getPlatform();
-  if (platform === 'macos' || platform === 'unknown') return null;
+  if (platform === 'macos') return null;
 
   const handleMinimize = useCallback(async () => {
     try {

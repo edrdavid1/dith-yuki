@@ -15,8 +15,19 @@ bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"
 log = "0.4"
 thiserror = "1"
+engine-tiles = { path = "../engine-tiles" }
+engine-color = { path = "../engine-color" }
+crossbeam = "0.8"
+crossbeam-channel = "0.5"
+dashmap = "5.5"
 
 [dev-dependencies]
 pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }
 wgpu = { version = "24.0", default-features = true }
+engine-tiles = { path = "../engine-tiles" }
+engine-color = { path = "../engine-color" }
+
+[[example]]
+name = "ed_gpu_prototype"
+path = "examples/ed_gpu_prototype.rs"

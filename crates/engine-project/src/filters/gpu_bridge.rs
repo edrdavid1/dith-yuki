@@ -1,12 +1,9 @@
 //! Bridge: PixelTile core ↔ GPU RGBA32 float + eligibility helpers.
 
-use engine_gpu::{
-    apply_bayer_gpu, apply_crt_gpu, apply_halftone_gpu, gpu_filters_enabled, BayerGpuParams,
-    BayerMatrixSize, CrtGpuParams, GpuContext, HalftoneGpuParams, CORE_SIZE, FLOATS_PER_TILE,
-};
-use engine_tiles::{PixelTile, TileCoord, HALO};
+use engine_gpu::{BayerMatrixSize, CORE_SIZE, FLOATS_PER_TILE};
+use engine_tiles::{PixelTile, HALO};
 
-use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
+use crate::filter::{DitherModeV2, DitherParamsV2};
 
 /// Extract 256×256 core as tightly packed RGBA32 float.
 pub fn extract_core(tile: &PixelTile) -> Vec<f32> {
@@ -58,121 +55,6 @@ pub(crate) fn bayer_gpu_eligible(params: &DitherParamsV2) -> bool {
         && params.threshold_bias == 0.0
         && params.pattern_angle == 0.0
         && bayer_matrix(&params.mode).is_some()
-}
-
-/// GpuEligible Bayer: ps==1, no palette, default bias/angle, RGB or Gray, prefer-GPU env on.
-pub fn try_ordered_bayer_gpu(
-    gpu: Option<&GpuContext>,
-    tile: &PixelTile,
-    coord: TileCoord,
-    params: &DitherParamsV2,
-) -> Option<PixelTile> {
-    if !gpu_filters_enabled() {
-        return None;
-    }
-    let ctx = gpu?;
-    if !bayer_gpu_eligible(params) {
-        return None;
-    }
-    let matrix = bayer_matrix(&params.mode)?;
-    let color_mode = match params.color_mode {
-        DitherColorMode::Rgb => 0u32,
-        DitherColorMode::Grayscale => 1u32,
-    } + if params.dither_alpha { 2 } else { 0 };
-    // Shader: 0=rgb, 1=gray, 2=rgb+dither_alpha, 3=gray+dither_alpha.
-    let input = extract_core(tile);
-    let out = apply_bayer_gpu(
-        ctx,
-        &input,
-        BayerGpuParams {
-            matrix,
-            levels: params.levels,
-            threshold_scale: params.threshold_scale,
-            color_mode,
-            tile_x: coord.x,
-            tile_y: coord.y,
-        },
-    )
-    .ok()?;
-    let mut result = PixelTile::new();
-    result.data.copy_from_slice(&tile.data);
-    write_core(&mut result, &out);
-    // Halo: leave as source (v1 core-only GPU path).
-    Some(result)
-}
-
-pub fn try_halftone_gpu(
-    gpu: Option<&GpuContext>,
-    tile: &PixelTile,
-    coord: TileCoord,
-    params: &DitherParamsV2,
-) -> Option<PixelTile> {
-    if !gpu_filters_enabled() {
-        return None;
-    }
-    let ctx = gpu?;
-    if params.pixel_size != 1 || params.palette_id.is_some() {
-        return None;
-    }
-    // GPU shader has no threshold_bias uniform (Track H / D follow-up).
-    if params.threshold_bias != 0.0 {
-        return None;
-    }
-    if !matches!(params.mode, DitherModeV2::CmykHalftone) {
-        return None;
-    }
-    // GPU shader assumes RGB input; grayscale → CPU for now.
-    if matches!(params.color_mode, DitherColorMode::Grayscale) {
-        return None;
-    }
-    let input = extract_core(tile);
-    let out = apply_halftone_gpu(
-        ctx,
-        &input,
-        HalftoneGpuParams {
-            cell_size: params.halftone_cell_size,
-            threshold_scale: params.threshold_scale,
-            tile_x: coord.x,
-            tile_y: coord.y,
-            dither_alpha: params.dither_alpha,
-        },
-    )
-    .ok()?;
-    let mut result = PixelTile::new();
-    result.data.copy_from_slice(&tile.data);
-    write_core(&mut result, &out);
-    Some(result)
-}
-
-pub fn try_crt_gpu(
-    gpu: Option<&GpuContext>,
-    tile: &PixelTile,
-    coord: TileCoord,
-    period: u8,
-    strength: f32,
-    mask_strength: f32,
-) -> Option<PixelTile> {
-    if !gpu_filters_enabled() {
-        return None;
-    }
-    let ctx = gpu?;
-    let input = extract_core(tile);
-    let out = apply_crt_gpu(
-        ctx,
-        &input,
-        CrtGpuParams {
-            period,
-            strength,
-            mask_strength,
-            tile_x: coord.x,
-            tile_y: coord.y,
-        },
-    )
-    .ok()?;
-    let mut result = PixelTile::new();
-    result.data.copy_from_slice(&tile.data);
-    write_core(&mut result, &out);
-    Some(result)
 }
 
 #[cfg(test)]

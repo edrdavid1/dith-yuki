@@ -139,7 +139,7 @@ fn m1_kernels_2x2_seam_sample() {
         );
         assert!(
             store
-                .get_diag(layer_id, TileCoord { level: 0, x: 1, y: 1 })
+                .get_diag(1, layer_id, TileCoord { level: 0, x: 1, y: 1 })
                 .is_some(),
             "{mode:?}: corner residuals must be stored from (0,0)"
         );
@@ -242,7 +242,7 @@ fn m2_serpentine_even_and_odd_global_row_seam() {
     .unwrap();
 
     let incoming = store
-        .get_left(layer_id, right_c)
+        .get_left(1, layer_id, right_c)
         .expect("left tile must store right-edge residuals");
     let energy: f32 = incoming.right.iter().map(|v| v.abs()).sum();
     assert!(energy > 1e-6, "serpentine must produce horizontal residuals");

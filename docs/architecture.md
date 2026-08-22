@@ -8,6 +8,7 @@
 > какой участок реально в профиле.
 >
 > **См. также:**
+> - [multi-doc-tabs.md](./multi-doc-tabs.md) — вкладки, мультипроектность, shared TileCache, save/export
 > - [tile-pipeline.md](./tile-pipeline.md) — тайловый pipeline, координаты, ED, GPU, стоимость тайла
 > - [color-lab.md](./color-lab.md) — цвет, палитры, Color Lab
 > - [palette-dither.md](./palette-dither.md) — Strict / Guided / Mixed / Simple
@@ -268,8 +269,7 @@ pub struct AppState {
     pub threshold_cache: ThresholdMapCache,
     pub error_residuals: ErrorResidualsStore,
     pub block_representatives: BlockRepresentativeCache,
-    pub diffusion_skip_counter: DiffusionSkipCounter,
-    pub pending_diffusion_waiters: PendingDiffusionWaiters,
+    pub ed_frontier: EdFrontier,             // ED/Composite blocked-on-deps (wavefront)
     /// Track D: optional wgpu device (None = CPU-only / no adapter)
     pub gpu: Option<Arc<engine_gpu::GpuContext>>,
     pub panel_manager: Mutex<PanelManager>,  // Multi-window panel state
@@ -382,7 +382,7 @@ loop {
          (слайдер: Processed-задачи отбрасываются, Composite догоняет последний кадр)
     3. Execute: Composite → composite_tile / Processed → apply_filter_to_tile
     4. Insert result в TileCache
-    5. Raw insert → wake pending_diffusion_waiters (Track A)
+    5. Raw/Processed insert → wake EdFrontier (ED deps + parked Composite)
     6. Emit tile-ready event
     7. No tasks → WorkerWake.wait() (Condvar; poisoned mutex → park 1ms)
 }
@@ -430,12 +430,16 @@ pub struct PanelManager {
 | Команда | Назначение |
 |---------|-----------|
 | `load_image` | Decode image → decompose to tiles → create Document; record Recent (Image) |
-| `create_document` | In-memory blank raster (same decompose/replace as `load_image`; **not** recorded in Recent) |
+| `create_document` / `new_document` | In-memory blank raster; `new_document` creates tab session |
+| `list_open_documents` / `set_active_document` / `close_document` | Multi-document tab session management |
+| `get_document_snapshot` | Complete document state DTO for active document |
 | `get_recent_files` | Load `{app_data_dir}/recent_files.json`, prune missing paths, rewrite if dropped |
-| `open_project` | Open `.dyproj` → replace document; record Recent (Project) |
+| `open_project` | Open `.dyproj` → create tab document; record Recent (Project) |
 | `save_project` / `save_project_as` | Write `.dyproj`; record Recent (Project) |
 | `export_pattern` / `import_pattern` | `.dyuki` pack/unpack (Track F) |
 | `export_image` | Full-res composite → PNG/JPEG encode → fs::write |
+| `get_gpu_preview_status` / `set_gpu_preview_enabled` | Preferences UI toggle & status for Path B GPU preview |
+| `is_release_build` | Check release profile status for diagnostics |
 | `set_viewport` | Update viewport → schedule dirty tiles |
 | `get_layer_tree` | Snapshot → serialize LayerNodeDto[] |
 | `add_layer` / `remove_layer` / `reorder_layer` | Layer CRUD + invalidation |
@@ -444,12 +448,16 @@ pub struct PanelManager {
 | `undo` / `redo` | Snapshot restore + invalidate + schedule |
 | `is_document_dirty` | Track P: `!ptr_eq(live, saved_mark)` |
 | `import_image_layer` | Decode → raster leaf at origin, clip, no scale |
-| `replace_palette` | Color Lab Apply (mutate existing PaletteId) |
-| `add_palette` / `remove_palette` / `import_palette` / `export_palette` | Palette CRUD |
+| `set_selection` / `get_selection` | Viewport rectangular / tile selection state |
+| `replace_palette` / `create_palette` / `delete_palette` / `rename_palette` | Palette CRUD & mutation |
+| `add_palette` / `remove_palette` / `import_palette` / `export_palette` | Palette file I/O & document binding |
+| `add_color_to_palette` / `update_palette_color` / `remove_palette_color` / `reorder_palette_color` | Fine-grained palette color entry edits |
 | `generate_palette` | Async MedianCut/KMeans from layer tiles → new Palette |
 | `list_builtin_palettes` / `import_builtin_palette` | Built-in retro presets → Document palette |
-| `generate_ramp_palette` / `generate_harmony_palette` | Draft-only color lists (no Document write) |
-| `undock_panel` / `dock_panel` / `show_panel` / `hide_panel` / `reorder_panels` | Panel management |
+| `generate_ramp_palette` / `generate_harmony_palette` / `colors_to_oklab` / `get_palette_oklab` | Color Lab & Oklab conversion utilities |
+| `undock_panel` / `undock_panel_with_size` / `dock_panel` / `show_panel` / `hide_panel` | Floating panel window management |
+| `move_panel_to_side` / `move_all_panels_to_side` / `swap_sidebars` / `update_dock_zone` | Advanced sidebar docking layout |
+| `begin_float_drag` / `cancel_float_drag` / `dock_panel_at` | Drag-and-drop window docking interactions |
 
 ### 3.9 Welcome Screen и Recent Files (Track G)
 
@@ -844,27 +852,21 @@ pub struct GpuContext {
 | Workgroup | `16×16` → dispatch `(16,16,1)` |
 | Sync | upload → dispatch → staging → `map_async` + poll w/ timeout |
 | Timeout | inc `map_timeout_counter` → caller CPU-fallback |
-| Env | `DITHER_FORCE_CPU=1` skip/force CPU; `DITHER_GPU=1` prefer GPU when available |
+| Env | `DITHER_FORCE_CPU=1` force CPU; `DITHER_GPU_PREVIEW=1` or Preferences UI toggle enables Path B GPU preview |
 
-**GpuEligible (v1, CPU = source of truth):**
+**GpuEligible (Path B Resident Graph Executor, CPU = source of truth):**
 - Bayer2/4/8: `pixel_size==1`, no palette, `threshold_bias==0`, `pattern_angle==0`
 - CMYK Halftone: `pixel_size==1`, no palette, `threshold_bias==0`
 - CRT (period / strength / mask)
+- Palette Guided / Mixed / Quantize (когда допустимо)
 - `dither_alpha` **не** снимает eligibility: шейдер кодирует mode 0–3 (rgb/gray ± alpha)
 
-**Never GPU:** Error Diffusion (все ядра Track M), CustomPng, Wave, Glow, `pixel_size>1`, palette.
+**Never GPU:** Error Diffusion (все ядра Track M), CustomPng, Wave, Glow, `pixel_size>1`, слои с чекпоинтами.
 
-**Стоимость GPU-пути (важно для оптимизации):**
-`dispatch_rgba32` держит `submit_lock` на весь encode/submit/`map_async`. Нет пула буферов —
-каждый тайл создаёт input/output/uniform/staging. `extract_core` / `write_core` — скалярные
-`at()`/`set()` по 256², не memcpy. Итог: GPU часто **не** быстрее CPU на одном Bayer-тайле;
-N воркеров сериализуются в одну очередь. По умолчанию GPU **выключен** (`DITHER_GPU` не задан).
-Подробности — §13.4 и [tile-pipeline.md](./tile-pipeline.md) §10–11.
+**Режим вычислений GPU:**
+Устаревший потайловый v1 `dispatch_rgba32` полностью удалён (задача T9). GPU ускорение работает исключительно через **Path B Resident Executor** на VRAM-атласе (`GpuTileCache`). По умолчанию GPU **выключен** (режим **OPT_IN ONLY**, управляемый в Preferences UI или через `DITHER_GPU_PREVIEW=1`). Подробности — §13.4 и [gpu-as-built.md](./gpu-as-built.md).
 
-Bridge: `filters/gpu_bridge.rs` extracts/writes core; `apply.rs` tries GPU then CPU.
-
-**Parity:** Bayer exact (`f32 ==`); Halftone/CRT max abs ≤ `1/255` per channel.  
-Full contract: [tile-pipeline.md](./tile-pipeline.md) §10.
+**Parity:** Bayer exact (`f32 ==`); Halftone/CRT max abs ≤ `1/255` per channel.
 
 ### 4.6 engine-core (Phase 0 stub)
 
@@ -1077,8 +1079,10 @@ graph TD
 
     subgraph Store["RTK store (app/store.ts)"]
         documentSlice
+        tabsSlice
         layersSlice
         filtersSlice
+        selectionSlice
         palettesSlice
         colorLabSlice
         undoSlice
@@ -1562,17 +1566,26 @@ Composite-задачи **не** stale-discard (см. §3.5). Processed-зада�
 Кэш 256 MB ≈ **~250 тайлов** всех стадий. Viewport 40 Composite + 40 Processed + 40 Raw
 уже ~120 MB на один слой без пирамиды.
 
-**Аллокации на один Processed (один Dither, opacity=1, Normal, CPU):**
+**Два разных бюджета (не путать):**
 
-1. `get_entry` Raw → часто `copy_tile` (~1.03 MB)
-2. `apply_filter_to_tile_with_caches`: `PixelTile::new` + `copy_from_slice`
-3. `apply_ordered` / `apply_error_diffusion`: ещё один `PixelTile::new` + запись пикселей
-4. `insert_fresh(Arc::new(tile))` — move, без лишней копии если единственный owner
-5. Composite: пустой тайл + `blend_tile` (SIMD over)
+| | Cache footprint | Compute temps |
+|--|-----------------|---------------|
+| Что считает | `Arc<PixelTile>` в `TileCache` (Raw/Processed/Composite) | Одновременно живые owned `PixelTile` на worker apply |
+| Рычаг | budget / eviction ([multi-doc-cache-budget](../.cursor-spec/multi-doc-cache-budget/SPEC.md)) | In-place + park ([tile-memory-inplace](../.cursor-spec/tile-memory-inplace/SPEC.md)) |
+
+**Аллокации на один Processed (один Dither, opacity=1, Normal, CPU) — as-built after in-place:**
+
+1. `get_entry` Raw → `&PixelTile` / `Arc` (без полной копии на return path)
+2. Worker park: take ≤2 working buffers (amortised; warm park ≈ 0 `new` на кадр)
+3. `apply_*_into` пишет в park `dst` (ping-pong); Track I — третий scratch из park, peak temps ≤ 3
+4. `Arc::new(finished)` + один `insert_fresh_gen` (pipeline); worker **не** re-insert'ит ту же картинку
+5. Composite: park/`copy_from` + `blend_tile` (SIMD over)
 6. Protocol: SIMD `f32_to_rgba8` core 256² (halo отбрасывается)
 
-Каждый extra filter в стеке = ещё один полный тайл, если apply не in-place.
-`opacity < 1` или `blend_mode != Normal` (Track I) = **ещё** тайл + `blend_tile`.
+Gate: peak live temps beyond immutable src ≤ **2** (Normal, warm park), ≤ **3** (Track I blend).  
+Не путать с count(`PixelTile::new`) после warm — amortised park делает `new` редким.
+
+Исключения: Adjust blur/sharp всё ещё держат internal temps; GPU hit → `copy_from` в dst (non-goal).
 
 `PixelTile::at` / `set` — индексная арифметика на каждый канал. GPU bridge
 (`extract_core` / `write_core`) делает это скалярно по 256²×4 — отдельный CPU
@@ -1587,7 +1600,7 @@ tax **до и после** шейдера.
 | **Error diffusion** | Последовательный L→R T→B; cross-tile wavefront (left/top/diag recurse); не SIMD | IncomingErrorBuffer, LUT nearest | Не GPU. Можно: меньше работы на halo, block `pixel_size`, не считать за viewport |
 | **Oklab на пиксель** | `linear_to_oklab` до LUT, даже когда nearest O(1) | LUT 64³ (~23× vs KD) | Квантовать в linear RGB без Oklab, когда палитра маленькая; SIMD Oklab |
 | **Ordered dither 260²** | Полный halo, per-pixel GlobalCoord + threshold | GlobalCoord helpers | SIMD Bayer; не ходить halo если фильтр его не читает |
-| **Копии PixelTile** | 1.03 MB × (1 + N filters + blend) | `copy_from_slice` (не поэлементно) | In-place apply; ping-pong двух буферов на воркер |
+| **Копии PixelTile** | 1.03 MB × (1 + N filters + blend) historically | In-place `*_into` + worker park (peak temps ≤2/3) | f16 stages; Adjust blur via park |
 | **Composite blend** | Все видимые слои × 260² | `blend_row_simd` | Пропускать fully-transparent; не blend'ить halo для preview |
 | **Protocol f32→u8** | Каждый tile-ready | `f32_to_rgba8_row_simd` | Кэшировать RGBA8 рядом с f32 (память ×) |
 | **Frontend decode** | Web Worker: ArrayBuffer → ImageData → ImageBitmap | parallel fetch (не sequential await) | SharedArrayBuffer / skip ImageBitmap |
@@ -1597,26 +1610,13 @@ tax **до и после** шейдера.
 **Что уже не является главным bottleneck'ом:** KD-tree на пиксель (заменён LUT);
 busy-wait воркеров; отсутствие SIMD на blend/levels/u8.
 
-### 13.4 GPU path: почему «включить GPU» ≠ быстрее
+### 13.4 GPU path: Path B Resident Executor и статус Industrial Gate
 
-GPU **opt-in** (`DITHER_GPU=1`). Eligible: Bayer ps=1 без палитры/bias/angle;
-Halftone ps=1 без bias; CRT. ED / Wave / CustomPng / Glow / `pixel_size>1` / palette — CPU.
+GPU ускорение работает исключительно через **Path B Resident Executor** (режим **OPT_IN ONLY**, включается в Preferences UI или через `DITHER_GPU_PREVIEW=1`). Устаревший v1 потайловый `dispatch_rgba32` полностью удалён (задача T9).
 
-`engine-gpu::dispatch_rgba32` на **каждый** тайл:
-
-1. Берёт `submit_lock` (все воркеры стоят в одной очереди)
-2. Создаёт 4 буфера (input, output, uniform, staging) — **нет пула**
-3. Upload 1 MB RGBA32 → compute 16×16 → copy → `map_async` + poll (timeout 2s)
-4. Download 1 MB
-5. `write_core` скалярно обратно в PixelTile; halo = копия source
-
-Track D bench (debug, Metal, Bayer8, один core 256²): GPU **~1.5–2×** vs скалярный
-CPU-loop. Это **не** сравнимо с preview: preview гоняет N тайлов параллельно на CPU,
-а GPU сериализует их. На viewport из 40 тайлов CPU-пул часто выигрывает.
-
-Имеет смысл трогать GPU, только если менять контракт v1: persistent buffers,
-убрать lock или batched dispatch нескольких тайлов, memcpy core вместо `at()`/`set()`,
-и/или считать на GPU весь стек, а не один Bayer. Иначе рычаг — CPU (§13.3).
+1. **Резидентный VRAM-атлас (`GpuTileCache`)**: Память выделяется под граф вычислений слоя без перенарезки и повторного создания буферов на каждый тайл.
+2. **Границы (E4)**: Ускоряются Bayer, Halftone, CRT и палитровые фильтры на прогретом видовом окне. Слои с Error Diffusion (ED) и `pixel_size > 1` всегда рассчитываются на CPU.
+3. **Причина Opt-In (R1)**: Холодный старт (первое касание/панорамирование по новым тайлам) у GPU медленнее CPU (~30.9 ms против ~10.4 ms), а также фильтры с ED требуют чекпоинта на CPU. Подробности см. в [gpu-as-built.md](./gpu-as-built.md).
 
 ### 13.5 Параллелизм и что его ломает
 
@@ -1684,7 +1684,7 @@ Halftone/CRT ≤ 1/255), debounce undo = 100ms в `useEffectLayer`.
 ### 14.2 Будущие улучшения
 
 - [x] Pyramid display (level > 0) — box-filter of L0 Composite; filters always L0
-- [ ] In-place / ping-pong `PixelTile` в filter stack (убрать N×1.03 MB alloc)
+- [x] In-place / ping-pong `PixelTile` в filter stack (peak live temps ≤2 Normal / ≤3 Track I; park)
 - [ ] GPU v2: buffer pool, batched tiles, без глобального `submit_lock`, memcpy core
 - [ ] SIMD Bayer / Oklab; LUT для Curves
 - [ ] Не blend'ить halo в preview composite
@@ -1692,8 +1692,7 @@ Halftone/CRT ≤ 1/255), debounce undo = 100ms в `useEffectLayer`.
 - [x] WorkerWake Condvar (не sleep 1ms)
 - [x] PaletteLut3D 64³ (Track B1)
 - [x] `engine-gpu` Bayer/Halftone/CRT (Track D); ED CPU-only
-- [ ] Mask editing UI
-- [ ] Video / ICC / batch export / multi-document
+- [ ] Video / ICC / batch export
 - [ ] Proper Luminance via Oklab L*
 
 ---
@@ -1731,6 +1730,23 @@ export interface ViewportState {
   panY: number;
   canvasWidth: number;
   canvasHeight: number;
+}
+
+// Multi-Document Session DTO
+export interface DocumentSummaryDto {
+  id: number;
+  title: string;
+  project_path: string | null;
+  dimensions: { width: number; height: number };
+  is_dirty: boolean;
+}
+
+// GPU Preview Status DTO
+export interface GpuPreviewStatusDto {
+  available: boolean;
+  enabled: boolean;
+  env_override: boolean;
+  reason?: string;
 }
 
 // Palette

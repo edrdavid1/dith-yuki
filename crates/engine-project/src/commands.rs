@@ -127,7 +127,7 @@ pub fn set_layer_props(
     });
 
     // Invalidate (properties changed)
-    invalidate_layer_props_changed(cache, layer_id);
+    invalidate_layer_props_changed(cache, _doc_id.0, layer_id);
 
     Ok(())
 }

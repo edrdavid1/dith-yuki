@@ -37,6 +37,18 @@ pub enum EngineError {
     #[error("Invalid state: {reason}")]
     InvalidState { reason: String },
 
+    /// Scheduler / worker should park or retry later — not a hard failure.
+    #[error("ED prefix not yet computed")]
+    EdPrefixPending,
+
+    /// ED Processed dequeued before left/top/diag (or Raw) ready.
+    #[error("ED dependencies not ready")]
+    EdDependenciesPending,
+
+    /// Display pyramid parent waiting on full-res Composite children.
+    #[error("Pyramid children not yet computed")]
+    PyramidChildrenPending,
+
     #[error("Operation not supported: {reason}")]
     NotSupported { reason: String },
 }

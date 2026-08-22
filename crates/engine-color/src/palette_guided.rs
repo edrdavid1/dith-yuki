@@ -70,9 +70,9 @@ pub fn quantize_channel_guided(
     range.min + (step / (levels - 1.0)) * span
 }
 
-/// Revision-keyed cache of [`palette_channel_ranges`].
+/// Revision-keyed cache of [`palette_channel_ranges`], scoped by document.
 pub struct PaletteChannelRangeCache {
-    entries: DashMap<PaletteId, (u64, Arc<[ChannelRange; 3]>)>,
+    entries: DashMap<(u32, PaletteId), (u64, Arc<[ChannelRange; 3]>)>,
 }
 
 impl PaletteChannelRangeCache {
@@ -82,8 +82,9 @@ impl PaletteChannelRangeCache {
         }
     }
 
-    pub fn get_or_compute(&self, palette: &Palette) -> [ChannelRange; 3] {
-        if let Some(entry) = self.entries.get(&palette.id) {
+    pub fn get_or_compute(&self, doc_id: u32, palette: &Palette) -> [ChannelRange; 3] {
+        let key = (doc_id, palette.id);
+        if let Some(entry) = self.entries.get(&key) {
             let (rev, ref ranges) = *entry;
             if rev == palette.revision {
                 return **ranges;
@@ -91,12 +92,16 @@ impl PaletteChannelRangeCache {
         }
         let ranges = palette_channel_ranges(palette);
         self.entries
-            .insert(palette.id, (palette.revision, Arc::new(ranges)));
+            .insert(key, (palette.revision, Arc::new(ranges)));
         ranges
     }
 
-    pub fn evict(&self, palette_id: PaletteId) {
-        self.entries.remove(&palette_id);
+    pub fn evict(&self, doc_id: u32, palette_id: PaletteId) {
+        self.entries.remove(&(doc_id, palette_id));
+    }
+
+    pub fn evict_document(&self, doc_id: u32) {
+        self.entries.retain(|&(doc, _), _| doc != doc_id);
     }
 }
 

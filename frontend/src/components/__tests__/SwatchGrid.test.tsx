@@ -32,7 +32,7 @@ function renderGrid(overrides?: Partial<React.ComponentProps<typeof SwatchGrid>>
     onColorReordered: vi.fn(),
   };
   const props = { ...defaults, ...overrides };
-  return { ...render(<SwatchGrid {...props} />), props };
+  return { ...render(<SwatchGrid docId={1} {...props} />), props };
 }
 
 describe('SwatchGrid', () => {
@@ -114,24 +114,26 @@ describe('SwatchGrid', () => {
     expect(input.value).toBe('FFFFFF');
   });
 
-  it('calls addColorToPalette and onColorAdded on add confirm', async () => {
+  it('calls addColorToPalette and onColorAdded when hex changes in add mode', async () => {
     const { props } = renderGrid();
     fireEvent.click(screen.getByLabelText('Add color'));
-    fireEvent.click(screen.getByText('Confirm'));
+    const input = screen.getByLabelText('Hex color value') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'ABCDEF' } });
     await waitFor(() => {
-      expect(mockedAdd).toHaveBeenCalledWith(1, 'FFFFFF');
-      expect(props.onColorAdded).toHaveBeenCalledTimes(1);
+      expect(mockedAdd).toHaveBeenCalledWith(1, 1, 'ABCDEF');
+      expect(props.onColorAdded).toHaveBeenCalled();
     });
   });
 
-  it('calls updatePaletteColor and onColorUpdated on edit confirm', async () => {
+  it('calls updatePaletteColor and onColorUpdated when hex changes in edit mode', async () => {
     const { props } = renderGrid();
     const swatches = screen.getAllByRole('button', { name: /Color swatch/ });
     fireEvent.doubleClick(swatches[1]);
-    fireEvent.click(screen.getByText('Confirm'));
+    const input = screen.getByLabelText('Hex color value') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '112233' } });
     await waitFor(() => {
-      expect(mockedUpdate).toHaveBeenCalledWith(1, 1, '00FF00');
-      expect(props.onColorUpdated).toHaveBeenCalledTimes(1);
+      expect(mockedUpdate).toHaveBeenCalledWith(1, 1, 1, '112233');
+      expect(props.onColorUpdated).toHaveBeenCalled();
     });
   });
 
@@ -141,7 +143,7 @@ describe('SwatchGrid', () => {
     fireEvent.click(swatches[0]);
     fireEvent.click(screen.getByLabelText('Remove selected color'));
     await waitFor(() => {
-      expect(mockedRemove).toHaveBeenCalledWith(1, 0);
+      expect(mockedRemove).toHaveBeenCalledWith(1, 1, 0);
       expect(props.onColorRemoved).toHaveBeenCalledTimes(1);
     });
   });
@@ -170,11 +172,11 @@ describe('SwatchGrid', () => {
     expect(screen.queryAllByRole('button', { name: /Color swatch/ })).toHaveLength(0);
   });
 
-  it('closes ColorPicker on cancel without calling IPC', () => {
+  it('closes ColorPicker on Escape without calling IPC', () => {
     renderGrid();
     fireEvent.click(screen.getByLabelText('Add color'));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
-    fireEvent.click(screen.getByText('Cancel'));
+    fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(mockedAdd).not.toHaveBeenCalled();
   });
