@@ -12,6 +12,8 @@ pub mod selection;
 pub use selection::*;
 pub mod viewport;
 pub use viewport::*;
+pub mod undo;
+pub use undo::*;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -4779,11 +4781,11 @@ mod tests {
             Ok::<(), String>(())
         })
         .unwrap();
-        assert!(state.must_active().undo_manager.lock().unwrap().state_dto().can_undo);
+        assert!(state.must_active().history.undo_manager.lock().unwrap().state_dto().can_undo);
 
         let buf = blank_rgba_f32(8, 8, BlankBackground::White);
         install_raster_document(&state, 8, 8, &buf, None).unwrap();
-        let dto = state.must_active().undo_manager.lock().unwrap().state_dto();
+        let dto = state.must_active().history.undo_manager.lock().unwrap().state_dto();
         assert!(!dto.can_undo);
         assert!(!dto.can_redo);
     }
