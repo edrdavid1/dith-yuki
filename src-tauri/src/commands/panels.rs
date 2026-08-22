@@ -1,22 +1,22 @@
 //! Tauri command handlers for panel docking/undocking operations.
-//!
-//! Each command acquires the PanelManager mutex from AppState, performs the
-//! requested operation, and emits a `panel-state-changed` event to all windows.
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
-use tauri::{AppHandle, Emitter, Manager, State};
 use tauri::webview::WebviewWindowBuilder;
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::AppState;
+use crate::dock_affinity::{DockAffinityEvent, DockZone, SidebarSide};
+use crate::global_mouseup;
 use crate::panel_manager::{DockSide, PanelInfo, SavedBounds, SerializedPanelState};
+use crate::services::PanelService;
 
 // ============================================================================
 // Monitor bounds correction
 // ============================================================================
 
 /// Abstracted monitor rectangle for bounds correction logic.
-/// This is decoupled from Tauri's Monitor type to allow unit testing.
 #[derive(Debug, Clone)]
 pub struct MonitorRect {
     pub x: i32,
@@ -25,8 +25,6 @@ pub struct MonitorRect {
     pub height: u32,
 }
 
-/// Check if a window rectangle intersects with a monitor rectangle.
-/// Uses the standard AABB overlap test.
 fn rect_intersects_monitor(bounds: &SavedBounds, monitor: &MonitorRect) -> bool {
     let win_right = bounds.x.saturating_add(bounds.width as i32);
     let win_bottom = bounds.y.saturating_add(bounds.height as i32);
@@ -39,31 +37,20 @@ fn rect_intersects_monitor(bounds: &SavedBounds, monitor: &MonitorRect) -> bool 
         && win_bottom > monitor.y
 }
 
-/// Correct saved bounds if the window falls entirely outside all available monitors.
-///
-/// - If the window rectangle intersects at least one monitor, returns bounds unchanged.
-/// - If it doesn't intersect any monitor, repositions to the center of the primary
-///   monitor while preserving the original width and height.
-/// - `primary_monitor` is the monitor to center on if correction is needed.
-///   If None, falls back to the first monitor in the list. If the list is empty,
-///   returns bounds unchanged (no correction possible).
 pub fn correct_bounds_for_monitors(
     bounds: &SavedBounds,
     monitors: &[MonitorRect],
     primary_monitor: Option<&MonitorRect>,
 ) -> SavedBounds {
-    // If no monitors are available, we can't correct — return as-is.
     if monitors.is_empty() {
         return bounds.clone();
     }
 
-    // Check if bounds intersects at least one monitor.
     let on_screen = monitors.iter().any(|m| rect_intersects_monitor(bounds, m));
     if on_screen {
         return bounds.clone();
     }
 
-    // Off-screen: center on primary monitor (or first available).
     let target = primary_monitor.unwrap_or(&monitors[0]);
     let new_x = target.x + (target.width as i32 - bounds.width as i32) / 2;
     let new_y = target.y + (target.height as i32 - bounds.height as i32) / 2;
@@ -76,8 +63,6 @@ pub fn correct_bounds_for_monitors(
     }
 }
 
-/// Query Tauri for all available monitors and the primary monitor, returning
-/// them as **logical-pixel** `MonitorRect` values matching frontend-saved bounds.
 pub fn get_monitor_rects(app_handle: &AppHandle) -> (Vec<MonitorRect>, Option<MonitorRect>) {
     let to_logical = |m: &tauri::Monitor| -> MonitorRect {
         let scale = m.scale_factor();
@@ -107,7 +92,6 @@ pub fn get_monitor_rects(app_handle: &AppHandle) -> (Vec<MonitorRect>, Option<Mo
     (monitors, primary)
 }
 
-/// Default floating-window size per panel (logical px).
 fn panel_default_size(id: &str) -> (u32, u32) {
     match id {
         "preferences" => (420, 360),
@@ -119,7 +103,6 @@ fn panel_default_size(id: &str) -> (u32, u32) {
     }
 }
 
-/// Hard cap so a bad saved/maximized size cannot open a panel at monitor size.
 fn panel_max_size(id: &str) -> (u32, u32) {
     match id {
         "colorlab" => (640, 760),
@@ -131,13 +114,11 @@ fn panel_max_size(id: &str) -> (u32, u32) {
     }
 }
 
-/// Max inner size for the OS window (logical px).
 pub fn panel_max_inner_size(id: &str) -> (f64, f64) {
     let (w, h) = panel_max_size(id);
     (w as f64, h as f64)
 }
 
-/// Center a window of the given size on the primary (or first) monitor.
 fn centered_bounds(
     width: u32,
     height: u32,
@@ -165,8 +146,6 @@ fn centered_bounds(
     }
 }
 
-/// Clamp size to the target monitor and ensure the window stays fully visible
-/// when possible (after off-screen correction).
 fn clamp_bounds_to_monitor(
     panel_id: &str,
     bounds: &SavedBounds,
@@ -187,8 +166,6 @@ fn clamp_bounds_to_monitor(
     }
 }
 
-/// Focus an already-floating panel; if it's off-screen (e.g. Retina mismatch),
-/// pull it back onto the primary monitor.
 fn focus_floating_panel(app_handle: &AppHandle, panel_id: &str, window_label: &str) {
     let Some(win) = app_handle.get_webview_window(window_label) else {
         return;
@@ -223,8 +200,6 @@ fn focus_floating_panel(app_handle: &AppHandle, panel_id: &str, window_label: &s
     let _ = win.set_focus();
 }
 
-/// Resolve final window bounds for undock: correct off-screen, clamp to monitor,
-/// or center with panel defaults when nothing was saved.
 pub fn resolve_undock_bounds(
     panel_id: &str,
     saved: Option<SavedBounds>,
@@ -257,7 +232,6 @@ pub fn resolve_undock_bounds(
 // Helpers
 // ============================================================================
 
-/// Map a panel ID to its user-facing display name.
 fn panel_display_name(id: &str) -> &str {
     match id {
         "effect" => "Effect Settings",
@@ -269,14 +243,12 @@ fn panel_display_name(id: &str) -> &str {
     }
 }
 
-/// Emit the `panel-state-changed` event with a full dual-sidebar snapshot.
 fn emit_panel_state(
     app_handle: &AppHandle,
     panels: Vec<PanelInfo>,
     left_order: Vec<String>,
     right_order: Vec<String>,
 ) {
-    // Fire-and-forget: if emit fails (e.g. no listeners), we silently ignore.
     let payload = SerializedPanelState {
         panels,
         left_order,
@@ -297,33 +269,28 @@ fn parse_dock_side(side: &str) -> Result<DockSide, String> {
 // Commands
 // ============================================================================
 
-/// Get full dual-sidebar panel snapshot.
 #[tauri::command]
 pub fn get_panels_state(state: State<Arc<AppState>>) -> Result<SerializedPanelState, String> {
-    let pm = state.panel_manager.lock().map_err(|e| e.to_string())?;
-    Ok(pm.serialize())
+    PanelService::new(state.inner().clone())
+        .get_panels_state()
+        .map_err(|e| e.to_string())
 }
 
-/// Undock a panel into a floating window.
 #[tauri::command]
 pub fn undock_panel(
     panel_id: String,
     app_handle: AppHandle,
     state: State<Arc<AppState>>,
 ) -> Result<(), String> {
-    let (result, panels_snapshot, left_order, right_order) = {
-        let mut pm = state.panel_manager.lock().map_err(|e| e.to_string())?;
-        let result = pm.undock(&panel_id).map_err(|e| e.to_string())?;
-        let (snapshot, left, right) = pm.get_state_with_orders();
-        (result, snapshot, left, right)
-    };
+    let service = PanelService::new(state.inner().clone());
+    let (result, panels_snapshot, left_order, right_order) =
+        service.undock(&panel_id).map_err(|e| e.to_string())?;
 
     if result.already_floating {
         focus_floating_panel(&app_handle, &panel_id, &result.window_label);
         return Ok(());
     }
 
-    // Resolve position/size in logical px (Retina-safe) — always place on-screen.
     let (monitors, primary) = get_monitor_rects(&app_handle);
     let bounds = resolve_undock_bounds(
         &panel_id,
@@ -335,8 +302,6 @@ pub fn undock_panel(
     let title = format!("Dither – {}", panel_display_name(&panel_id));
     let url = tauri::WebviewUrl::App(result.url.into());
 
-    // All panels use custom titlebar with decorations disabled
-    // and Overlay title bar style (for macOS traffic lights).
     let builder = WebviewWindowBuilder::new(&app_handle, &result.window_label, url)
         .title(&title)
         .inner_size(bounds.width as f64, bounds.height as f64)
@@ -350,9 +315,7 @@ pub fn undock_panel(
 
     let revert_side = result.previous_dock_side.unwrap_or(DockSide::Right);
     builder.build().map_err(|e| {
-        // Revert the undock in panel state since window creation failed.
-        let mut pm = state.panel_manager.lock().unwrap();
-        let _ = pm.dock(&panel_id, revert_side, usize::MAX);
+        let _ = service.dock_at(&panel_id, revert_side, usize::MAX);
         format!("Window creation failed: {}", e)
     })?;
 
@@ -360,57 +323,37 @@ pub fn undock_panel(
     Ok(())
 }
 
-/// Dock a floating panel back into the sidebar.
-/// Uses the panel's last dock side when remembered; otherwise defaults to `right`.
 #[tauri::command]
 pub fn dock_panel(
     panel_id: String,
     app_handle: AppHandle,
     state: State<Arc<AppState>>,
 ) -> Result<(), String> {
-    let (old_label, panels_snapshot, left_order, right_order) = {
-        let mut pm = state.panel_manager.lock().map_err(|e| e.to_string())?;
-        let side = pm.remembered_dock_side(&panel_id);
-        let old_label = pm
-            .dock(&panel_id, side, usize::MAX)
-            .map_err(|e| e.to_string())?;
-        let (snapshot, left, right) = pm.get_state_with_orders();
-        (old_label, snapshot, left, right)
-    };
+    let service = PanelService::new(state.inner().clone());
+    let (old_label, panels_snapshot, left_order, right_order) =
+        service.dock(&panel_id).map_err(|e| e.to_string())?;
 
-    // Close the floating window if one existed.
     if let Some(label) = old_label {
         if let Some(win) = app_handle.get_webview_window(&label) {
             let _ = win.close();
         }
         emit_panel_state(&app_handle, panels_snapshot, left_order, right_order);
     }
-    // If old_label is None, the panel was already docked — no-op, no event.
 
     Ok(())
 }
 
-/// Hide a panel without destroying it.
 #[tauri::command]
 pub fn hide_panel(
     panel_id: String,
     app_handle: AppHandle,
     state: State<Arc<AppState>>,
 ) -> Result<(), String> {
-    let (changed, window_label, panels_snapshot, left_order, right_order) = {
-        let mut pm = state.panel_manager.lock().map_err(|e| e.to_string())?;
-        let changed = pm.hide(&panel_id).map_err(|e| e.to_string())?;
-        let (snapshot, left, right) = pm.get_state_with_orders();
-        // Grab window_label to check if we need to hide the OS window.
-        let window_label = snapshot
-            .iter()
-            .find(|p| p.id == panel_id)
-            .and_then(|p| p.window_label.clone());
-        (changed, window_label, snapshot, left, right)
-    };
+    let service = PanelService::new(state.inner().clone());
+    let (changed, window_label, panels_snapshot, left_order, right_order) =
+        service.hide(&panel_id).map_err(|e| e.to_string())?;
 
     if changed {
-        // If panel is floating, hide the OS window.
         if let Some(label) = window_label {
             if let Some(win) = app_handle.get_webview_window(&label) {
                 let _ = win.hide();
@@ -422,26 +365,17 @@ pub fn hide_panel(
     Ok(())
 }
 
-/// Show a hidden panel.
 #[tauri::command]
 pub fn show_panel(
     panel_id: String,
     app_handle: AppHandle,
     state: State<Arc<AppState>>,
 ) -> Result<(), String> {
-    let (changed, window_label, panels_snapshot, left_order, right_order) = {
-        let mut pm = state.panel_manager.lock().map_err(|e| e.to_string())?;
-        let changed = pm.show(&panel_id).map_err(|e| e.to_string())?;
-        let (snapshot, left, right) = pm.get_state_with_orders();
-        let window_label = snapshot
-            .iter()
-            .find(|p| p.id == panel_id)
-            .and_then(|p| p.window_label.clone());
-        (changed, window_label, snapshot, left, right)
-    };
+    let service = PanelService::new(state.inner().clone());
+    let (changed, window_label, panels_snapshot, left_order, right_order) =
+        service.show(&panel_id).map_err(|e| e.to_string())?;
 
     if changed {
-        // If panel is floating, show the OS window.
         if let Some(label) = window_label {
             if let Some(win) = app_handle.get_webview_window(&label) {
                 let _ = win.show();
@@ -453,8 +387,6 @@ pub fn show_panel(
     Ok(())
 }
 
-/// Reorder docked panels within one sidebar.
-/// `side` is `"left"` or `"right"`; `order` must be a permutation of that side's members.
 #[tauri::command]
 pub fn reorder_sidebar(
     side: String,
@@ -463,19 +395,14 @@ pub fn reorder_sidebar(
     state: State<Arc<AppState>>,
 ) -> Result<(), String> {
     let dock_side = parse_dock_side(&side)?;
-    let (panels_snapshot, left_order, right_order) = {
-        let mut pm = state.panel_manager.lock().map_err(|e| e.to_string())?;
-        pm.reorder_side(dock_side, order)
-            .map_err(|e| e.to_string())?;
-        pm.get_state_with_orders()
-    };
+    let service = PanelService::new(state.inner().clone());
+    let (panels_snapshot, left_order, right_order) =
+        service.reorder_side(dock_side, order).map_err(|e| e.to_string())?;
 
     emit_panel_state(&app_handle, panels_snapshot, left_order, right_order);
     Ok(())
 }
 
-/// Move a docked panel to another sidebar (or same side at a new index).
-/// `insert_index` defaults to append when omitted / null.
 #[tauri::command]
 pub fn move_panel_to_side(
     panel_id: String,
@@ -485,19 +412,16 @@ pub fn move_panel_to_side(
     state: State<Arc<AppState>>,
 ) -> Result<(), String> {
     let dock_side = parse_dock_side(&side)?;
-    let (panels_snapshot, left_order, right_order) = {
-        let mut pm = state.panel_manager.lock().map_err(|e| e.to_string())?;
-        let index = insert_index.unwrap_or(usize::MAX);
-        pm.move_to_side(&panel_id, dock_side, index)
-            .map_err(|e| e.to_string())?;
-        pm.get_state_with_orders()
-    };
+    let index = insert_index.unwrap_or(usize::MAX);
+    let service = PanelService::new(state.inner().clone());
+    let (panels_snapshot, left_order, right_order) = service
+        .move_to_side(&panel_id, dock_side, index)
+        .map_err(|e| e.to_string())?;
 
     emit_panel_state(&app_handle, panels_snapshot, left_order, right_order);
     Ok(())
 }
 
-/// Move all currently docked dockable panels onto one side (single-stack).
 #[tauri::command]
 pub fn move_all_panels_to_side(
     side: String,
@@ -505,36 +429,27 @@ pub fn move_all_panels_to_side(
     state: State<Arc<AppState>>,
 ) -> Result<(), String> {
     let dock_side = parse_dock_side(&side)?;
-    let (panels_snapshot, left_order, right_order) = {
-        let mut pm = state.panel_manager.lock().map_err(|e| e.to_string())?;
-        pm.move_all_to_side(dock_side)
-            .map_err(|e| e.to_string())?;
-        pm.get_state_with_orders()
-    };
+    let service = PanelService::new(state.inner().clone());
+    let (panels_snapshot, left_order, right_order) =
+        service.move_all_to_side(dock_side).map_err(|e| e.to_string())?;
 
     emit_panel_state(&app_handle, panels_snapshot, left_order, right_order);
     Ok(())
 }
 
-/// Swap left and right docked panel stacks.
 #[tauri::command]
 pub fn swap_sidebars(
     app_handle: AppHandle,
     state: State<Arc<AppState>>,
 ) -> Result<(), String> {
-    let (panels_snapshot, left_order, right_order) = {
-        let mut pm = state.panel_manager.lock().map_err(|e| e.to_string())?;
-        pm.swap_sides();
-        pm.get_state_with_orders()
-    };
+    let service = PanelService::new(state.inner().clone());
+    let (panels_snapshot, left_order, right_order) =
+        service.swap_sidebars().map_err(|e| e.to_string())?;
 
     emit_panel_state(&app_handle, panels_snapshot, left_order, right_order);
     Ok(())
 }
 
-/// Undock a panel into a floating window with explicit size and position.
-/// Used by drag-to-undock where the frontend provides the measured panel dimensions
-/// and the cursor's screen coordinates at release.
 #[tauri::command]
 pub fn undock_panel_with_size(
     panel_id: String,
@@ -545,19 +460,15 @@ pub fn undock_panel_with_size(
     app_handle: AppHandle,
     state: State<Arc<AppState>>,
 ) -> Result<(), String> {
-    let (result, panels_snapshot, left_order, right_order) = {
-        let mut pm = state.panel_manager.lock().map_err(|e| e.to_string())?;
-        let result = pm.undock(&panel_id).map_err(|e| e.to_string())?;
-        let (snapshot, left, right) = pm.get_state_with_orders();
-        (result, snapshot, left, right)
-    };
+    let service = PanelService::new(state.inner().clone());
+    let (result, panels_snapshot, left_order, right_order) =
+        service.undock(&panel_id).map_err(|e| e.to_string())?;
 
     if result.already_floating {
         focus_floating_panel(&app_handle, &panel_id, &result.window_label);
         return Ok(());
     }
 
-    // Apply off-screen correction + clamp using the provided position and size.
     let provided_bounds = SavedBounds { x, y, width, height };
     let (monitors, primary) = get_monitor_rects(&app_handle);
     let corrected_bounds =
@@ -566,8 +477,6 @@ pub fn undock_panel_with_size(
     let title = format!("Dither – {}", panel_display_name(&panel_id));
     let url = tauri::WebviewUrl::App(result.url.into());
 
-    // All panels use custom titlebar with decorations disabled
-    // and Overlay title bar style (for macOS traffic lights).
     let builder = WebviewWindowBuilder::new(&app_handle, &result.window_label, url)
         .title(&title)
         .inner_size(corrected_bounds.width as f64, corrected_bounds.height as f64)
@@ -581,9 +490,7 @@ pub fn undock_panel_with_size(
 
     let revert_side = result.previous_dock_side.unwrap_or(DockSide::Right);
     builder.build().map_err(|e| {
-        // Revert the undock in panel state since window creation failed.
-        let mut pm = state.panel_manager.lock().unwrap();
-        let _ = pm.dock(&panel_id, revert_side, usize::MAX);
+        let _ = service.dock_at(&panel_id, revert_side, usize::MAX);
         format!("Window creation failed: {}", e)
     })?;
 
@@ -591,8 +498,6 @@ pub fn undock_panel_with_size(
     Ok(())
 }
 
-/// Save panel bounds (called from frontend on window move/resize).
-/// This is a silent position save — no event is emitted.
 #[tauri::command]
 pub fn save_panel_bounds(
     panel_id: String,
@@ -602,8 +507,8 @@ pub fn save_panel_bounds(
     height: u32,
     state: State<Arc<AppState>>,
 ) -> Result<(), String> {
-    let mut pm = state.panel_manager.lock().map_err(|e| e.to_string())?;
-    pm.update_bounds(&panel_id, SavedBounds { x, y, width, height })
+    PanelService::new(state.inner().clone())
+        .save_bounds(&panel_id, SavedBounds { x, y, width, height })
         .map_err(|e| e.to_string())
 }
 
@@ -611,15 +516,7 @@ pub fn save_panel_bounds(
 // Dock Affinity
 // ============================================================================
 
-use crate::dock_affinity::{DockAffinityEvent, DockZone, SidebarSide};
-use crate::global_mouseup;
-use std::sync::atomic::Ordering;
-
 fn emit_dock_affinity(app_handle: &AppHandle, event: &DockAffinityEvent) {
-    eprintln!(
-        "[dock-affinity] emit panel={} armed={} insert={:?} side={:?}",
-        event.panel_id, event.armed, event.insert_index, event.side
-    );
     let _ = app_handle.emit("dock-affinity", event);
 }
 
@@ -638,8 +535,6 @@ fn parse_sidebar_side(side: &str) -> Result<SidebarSide, String> {
     }
 }
 
-/// Main window reports a sidebar dock zone (+ slot midpoints) for one side.
-/// Pass `zone: null` to clear that side's zone.
 #[tauri::command]
 pub fn update_dock_zone(
     side: String,
@@ -648,23 +543,10 @@ pub fn update_dock_zone(
 ) -> Result<(), String> {
     let sidebar_side = parse_sidebar_side(&side)?;
     let mut ctrl = state.dock_affinity.lock().map_err(|e| e.to_string())?;
-    match &zone {
-        Some(z) => eprintln!(
-            "[dock-affinity] zone side={:?} x={:.0} y={:.0} w={:.0} h={:.0} slots={}",
-            sidebar_side,
-            z.x,
-            z.y,
-            z.width,
-            z.height,
-            z.slots.len()
-        ),
-        None => eprintln!("[dock-affinity] zone cleared side={:?}", sidebar_side),
-    }
     ctrl.set_dock_zone(sidebar_side, zone);
     Ok(())
 }
 
-/// Atomic dock + insert at index among docked+visible panels on `side`.
 #[tauri::command]
 pub fn dock_panel_at(
     panel_id: String,
@@ -684,24 +566,9 @@ fn dock_panel_at_inner(
     app_handle: &AppHandle,
     state: &Arc<AppState>,
 ) -> Result<(), String> {
-    let (old_label, panels_snapshot, left_order, right_order) = {
-        let mut pm = state.panel_manager.lock().map_err(|e| e.to_string())?;
-        let already_docked = pm
-            .get_state()
-            .iter()
-            .find(|p| p.id == panel_id)
-            .map(|p| p.docked)
-            .unwrap_or(false);
-        let old_label = if already_docked {
-            pm.move_to_dock_insert_index(panel_id, side, index)
-                .map_err(|e| e.to_string())?;
-            None
-        } else {
-            pm.dock(panel_id, side, index).map_err(|e| e.to_string())?
-        };
-        let (snapshot, left, right) = pm.get_state_with_orders();
-        (old_label, snapshot, left, right)
-    };
+    let service = PanelService::new(state.clone());
+    let (old_label, panels_snapshot, left_order, right_order) =
+        service.dock_at(panel_id, side, index).map_err(|e| e.to_string())?;
 
     if let Some(label) = old_label {
         if let Some(win) = app_handle.get_webview_window(&label) {
@@ -712,14 +579,12 @@ fn dock_panel_at_inner(
     Ok(())
 }
 
-/// Begin a float-drag session (call before `startDragging`).
 #[tauri::command]
 pub fn begin_float_drag(
     panel_id: String,
     app_handle: AppHandle,
     state: State<Arc<AppState>>,
 ) -> Result<(), String> {
-    // Tear down any previous hook/session (removeMonitor must be on main).
     {
         let mut hook = state.float_drag_mouseup_hook.lock().map_err(|e| e.to_string())?;
         if let Some(h) = hook.take() {
@@ -734,14 +599,12 @@ pub fn begin_float_drag(
     let started = {
         let mut ctrl = state.dock_affinity.lock().map_err(|e| e.to_string())?;
         if !ctrl.enabled {
-            log::warn!("begin_float_drag: dock affinity disabled");
             return Ok(());
         }
         ctrl.begin(&panel_id)
     };
 
     if !started {
-        log::debug!("begin_float_drag: rejected for panel '{}'", panel_id);
         return Ok(());
     }
 
@@ -751,13 +614,10 @@ pub fn begin_float_drag(
         if let Some(ev) = ctrl.cancel() {
             emit_dock_affinity(&app_handle, &ev);
         }
-        log::warn!("dock affinity disabled: no mouseup backend on this platform");
         return Ok(());
     }
 
-    // Ensure we have a dock zone even if the JS reporter hasn't flushed yet.
     ensure_fallback_dock_zone(&app_handle, &state);
-    // Ask main window to re-report precise left/right zones (overrides fallbacks).
     let _ = app_handle.emit("dock-zones-refresh", ());
 
     state
@@ -767,8 +627,6 @@ pub fn begin_float_drag(
     let app_handle_watch = app_handle.clone();
     let state_arc: Arc<AppState> = Arc::clone(state.inner());
     let panel_label_tick = format!("panel-{}", panel_id);
-
-    eprintln!("[dock-affinity] begin session for '{}'", panel_id);
 
     let app_for_install = app_handle.clone();
     let hook = global_mouseup::install_left_mouseup_hook(
@@ -781,8 +639,6 @@ pub fn begin_float_drag(
             let app = app_handle_watch.clone();
             let state = state_arc.clone();
             move || {
-                eprintln!("[dock-affinity] NSEvent mouseup");
-                // MUST defer: removeMonitor inside the NSEvent callback crashes/hangs.
                 let app2 = app.clone();
                 let state2 = state.clone();
                 let _ = app.run_on_main_thread(move || {
@@ -800,7 +656,6 @@ pub fn begin_float_drag(
         },
     );
 
-    // Position polling for affinity while the hook is alive.
     let tick_cancel = hook.cancel_flag();
     global_mouseup::spawn_tick_loop(tick_cancel.clone(), {
         let app = app_handle_watch.clone();
@@ -810,12 +665,10 @@ pub fn begin_float_drag(
         }
     });
 
-    // HID backup if NSEvent mouseUp is swallowed after OS window drag.
     global_mouseup::spawn_hid_mouseup_backup(tick_cancel, {
         let app = app_handle_watch;
         let state = state_arc;
         move || {
-            eprintln!("[dock-affinity] HID backup mouseup");
             if let Some((pid, _, _, _)) = state
                 .dock_affinity
                 .lock()
@@ -826,10 +679,9 @@ pub fn begin_float_drag(
             }
             let app2 = app.clone();
             let state2 = state.clone();
-            if let Err(e) = app.run_on_main_thread(move || {
+            if let Err(_) = app.run_on_main_thread(move || {
                 complete_float_drag(&app2, &state2);
             }) {
-                eprintln!("[dock-affinity] run_on_main_thread failed: {e}");
                 complete_float_drag(&app, &state);
             }
         }
@@ -843,9 +695,6 @@ pub fn begin_float_drag(
     Ok(())
 }
 
-/// Ensure each dock side has a zone. Frontend reporters are preferred; when a
-/// side is missing (empty column, HMR, or reporter lag), derive an edge strip
-/// from the main window so float→dock still works.
 fn ensure_fallback_dock_zone(app_handle: &AppHandle, state: &AppState) {
     let mut ctrl = match state.dock_affinity.lock() {
         Ok(c) => c,
@@ -854,11 +703,6 @@ fn ensure_fallback_dock_zone(app_handle: &AppHandle, state: &AppState) {
     let need_left = !ctrl.zones.contains_key(&SidebarSide::Left);
     let need_right = !ctrl.zones.contains_key(&SidebarSide::Right);
     if !need_left && !need_right {
-        eprintln!(
-            "[dock-affinity] zones ok left={:?} right={:?}",
-            ctrl.zones.get(&SidebarSide::Left).map(|z| (z.x, z.y, z.width, z.height, z.slots.len())),
-            ctrl.zones.get(&SidebarSide::Right).map(|z| (z.x, z.y, z.width, z.height, z.slots.len())),
-        );
         return;
     }
     let Some(main) = app_handle.get_webview_window("main") else {
@@ -877,7 +721,6 @@ fn ensure_fallback_dock_zone(app_handle: &AppHandle, state: &AppState) {
     let y = pos.y as f64 / scale;
     let w = size.width as f64 / scale;
     let h = size.height as f64 / scale;
-    // Thin magnet strip — side-aligned float titlebar probe can hit this.
     let edge = 96.0_f64.min(w * 0.2).max(64.0);
 
     if need_left {
@@ -890,15 +733,10 @@ fn ensure_fallback_dock_zone(app_handle: &AppHandle, state: &AppState) {
             side: SidebarSide::Left,
             slots: vec![],
         };
-        eprintln!(
-            "[dock-affinity] fallback LEFT zone x={:.0} y={:.0} w={:.0} h={:.0}",
-            zone.x, zone.y, zone.width, zone.height
-        );
         ctrl.set_dock_zone(SidebarSide::Left, Some(zone));
     }
 
     if need_right {
-        // Wider strip when right was never reported (classic single-stack UX).
         let strip = 320.0_f64.min(w * 0.4).max(edge);
         let zone = crate::dock_affinity::DockZone {
             x: x + w - strip,
@@ -909,10 +747,6 @@ fn ensure_fallback_dock_zone(app_handle: &AppHandle, state: &AppState) {
             side: SidebarSide::Right,
             slots: vec![],
         };
-        eprintln!(
-            "[dock-affinity] fallback RIGHT zone x={:.0} y={:.0} w={:.0} h={:.0}",
-            zone.x, zone.y, zone.width, zone.height
-        );
         ctrl.set_dock_zone(SidebarSide::Right, Some(zone));
     }
 }
@@ -939,7 +773,6 @@ fn poll_panel_affinity(app_handle: &AppHandle, state: &Arc<AppState>, window_lab
     handle_panel_moved(app_handle, state, logical);
 }
 
-/// Cancel an in-progress float-drag session (Escape / unmount).
 #[tauri::command]
 pub fn cancel_float_drag(
     app_handle: AppHandle,
@@ -960,14 +793,11 @@ pub fn cancel_float_drag(
     Ok(())
 }
 
-/// Complete gesture on mouseup: dock if armed, always end session.
 pub fn complete_float_drag(app_handle: &AppHandle, state: &Arc<AppState>) {
     state
         .float_drag_mouseup_cancel
         .store(true, Ordering::SeqCst);
 
-    // Take the hook but delay removeMonitor — never call it re-entrantly from
-    // an NSEvent monitor callback (even via run_on_main_thread sync paths).
     let pending_hook = state
         .float_drag_mouseup_hook
         .lock()
@@ -983,24 +813,17 @@ pub fn complete_float_drag(app_handle: &AppHandle, state: &Arc<AppState>) {
     };
 
     let Some((panel_id, armed, insert_index, armed_side)) = snapshot else {
-        log::debug!("complete_float_drag: no active session");
         if let Some(h) = pending_hook {
             defer_hook_cancel(app_handle, h);
         }
         return;
     };
 
-    eprintln!(
-        "[dock-affinity] complete panel='{}' armed={} insert={} side={:?}",
-        panel_id, armed, insert_index, armed_side
-    );
-
     if armed {
         let side = armed_side
             .map(sidebar_side_to_dock)
             .unwrap_or(DockSide::Right);
         if let Err(e) = dock_panel_at_inner(&panel_id, side, insert_index, app_handle, state) {
-            log::warn!("dock_panel_at failed during affinity release: {}", e);
             let _ = app_handle.emit(
                 "panel-error",
                 format!("Failed to dock panel: {}", e),
@@ -1034,7 +857,6 @@ fn defer_hook_cancel(app_handle: &AppHandle, hook: global_mouseup::MouseUpHook) 
     });
 }
 
-/// Feed a floating panel outer rect (logical px) into the affinity controller.
 pub fn handle_panel_moved(
     app_handle: &AppHandle,
     state: &Arc<AppState>,
@@ -1078,14 +900,11 @@ mod tests {
 
     #[test]
     fn bounds_off_screen_right_gets_centered() {
-        // Window is far to the right, beyond any monitor
         let bounds = SavedBounds { x: 5000, y: 100, width: 400, height: 600 };
         let monitors = vec![make_monitor(0, 0, 1920, 1080)];
         let primary = monitors[0].clone();
 
         let result = correct_bounds_for_monitors(&bounds, &monitors, Some(&primary));
-        // Centered: x = 0 + (1920 - 400) / 2 = 760
-        //           y = 0 + (1080 - 600) / 2 = 240
         assert_eq!(result.x, 760);
         assert_eq!(result.y, 240);
         assert_eq!(result.width, 400);
@@ -1094,7 +913,6 @@ mod tests {
 
     #[test]
     fn bounds_off_screen_left_gets_centered() {
-        // Window is far to the left
         let bounds = SavedBounds { x: -5000, y: -3000, width: 400, height: 600 };
         let monitors = vec![make_monitor(0, 0, 1920, 1080)];
         let primary = monitors[0].clone();
@@ -1108,20 +926,17 @@ mod tests {
 
     #[test]
     fn bounds_partially_on_screen_returned_unchanged() {
-        // Window is partially off-screen but still overlaps with the monitor
         let bounds = SavedBounds { x: 1800, y: 900, width: 400, height: 600 };
         let monitors = vec![make_monitor(0, 0, 1920, 1080)];
         let primary = monitors[0].clone();
 
         let result = correct_bounds_for_monitors(&bounds, &monitors, Some(&primary));
-        // Still intersects the monitor (1800 < 1920 and 1800+400 > 0)
         assert_eq!(result.x, 1800);
         assert_eq!(result.y, 900);
     }
 
     #[test]
     fn multi_monitor_on_second_screen_unchanged() {
-        // Window on second monitor (positioned to the right)
         let bounds = SavedBounds { x: 2000, y: 100, width: 400, height: 600 };
         let monitors = vec![
             make_monitor(0, 0, 1920, 1080),
@@ -1130,14 +945,12 @@ mod tests {
         let primary = monitors[0].clone();
 
         let result = correct_bounds_for_monitors(&bounds, &monitors, Some(&primary));
-        // Intersects the second monitor — unchanged
         assert_eq!(result.x, 2000);
         assert_eq!(result.y, 100);
     }
 
     #[test]
     fn multi_monitor_off_all_screens_centers_on_primary() {
-        // Window is off both monitors
         let bounds = SavedBounds { x: 10000, y: 5000, width: 400, height: 600 };
         let monitors = vec![
             make_monitor(0, 0, 1920, 1080),
@@ -1146,7 +959,6 @@ mod tests {
         let primary = monitors[0].clone();
 
         let result = correct_bounds_for_monitors(&bounds, &monitors, Some(&primary));
-        // Centers on primary (monitor[0]): x = (1920-400)/2 = 760, y = (1080-600)/2 = 240
         assert_eq!(result.x, 760);
         assert_eq!(result.y, 240);
         assert_eq!(result.width, 400);
@@ -1169,7 +981,6 @@ mod tests {
         let monitors = vec![make_monitor(0, 0, 2560, 1440)];
 
         let result = correct_bounds_for_monitors(&bounds, &monitors, None);
-        // Centers on first monitor: x = (2560-300)/2 = 1130, y = (1440-500)/2 = 470
         assert_eq!(result.x, 1130);
         assert_eq!(result.y, 470);
         assert_eq!(result.width, 300);
@@ -1189,16 +1000,11 @@ mod tests {
 
     #[test]
     fn window_exactly_touching_monitor_edge_is_on_screen() {
-        // Window right edge touches monitor left edge: they share a boundary
-        // According to our intersection test: x < mx + mw && x + w > mx
-        // bounds.x = -400, bounds.x + bounds.width = 0, monitor.x = 0
-        // So: -400 < 1920 (true) && 0 > 0 (false) → NOT intersecting
         let bounds = SavedBounds { x: -400, y: 0, width: 400, height: 600 };
         let monitors = vec![make_monitor(0, 0, 1920, 1080)];
         let primary = monitors[0].clone();
 
         let result = correct_bounds_for_monitors(&bounds, &monitors, Some(&primary));
-        // Not intersecting (just touching edge), so it gets corrected
         assert_eq!(result.x, 760);
         assert_eq!(result.y, 240);
     }
@@ -1220,13 +1026,11 @@ mod tests {
 
     #[test]
     fn window_one_pixel_overlap_stays_on_screen() {
-        // Window overlaps by 1 pixel
         let bounds = SavedBounds { x: -399, y: 0, width: 400, height: 600 };
         let monitors = vec![make_monitor(0, 0, 1920, 1080)];
         let primary = monitors[0].clone();
 
         let result = correct_bounds_for_monitors(&bounds, &monitors, Some(&primary));
-        // -399 < 1920 (true) && (-399 + 400 = 1) > 0 (true) → intersecting
         assert_eq!(result.x, -399);
         assert_eq!(result.y, 0);
     }

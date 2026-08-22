@@ -6,6 +6,8 @@
 
 pub mod diagnostics;
 pub use diagnostics::*;
+pub mod panels;
+pub use panels::*;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -150,7 +152,7 @@ pub struct AppState {
     pub gpu_executor: Option<std::sync::Mutex<engine_gpu::GpuExecutor>>,
     /// Set once in app setup — used to emit `tile-ready` from GPU preview publish.
     pub app_handle: Mutex<Option<tauri::AppHandle>>,
-    pub panel_manager: Mutex<PanelManager>,
+    pub ui: crate::state::UiState,
     pub selection: Mutex<SelectionState>,
     pub dock_affinity: Mutex<crate::dock_affinity::DockAffinityController>,
     /// Cancels the active global mouseup watcher (set on end/cancel).

@@ -13,3 +13,6 @@ pub enum AppError {
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
+
+pub mod panel_service;
+pub use panel_service::PanelService;
