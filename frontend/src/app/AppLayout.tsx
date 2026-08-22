@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import MenuBar from '../components/MenuBar';
+import DocumentTabBar from '../features/document/DocumentTabBar';
+import { WindowShell } from '../components/WindowShell';
 import Notification from '../components/common/Notification';
 import NewProjectDialog from '../components/NewProjectDialog';
 import HelpDialog from '../components/HelpDialog';
@@ -12,8 +14,9 @@ import { useAppUpdates } from '../hooks/useAppUpdates';
 import { useAppDispatch, useAppSelector } from './hooks';
 import { refreshFilters } from './slices/filtersSlice';
 import { refreshLayers } from './slices/layersSlice';
+import { refreshDocument, setDocumentMeta } from './slices/documentSlice';
 import { redo as redoDocument, undo as undoDocument } from './slices/undoSlice';
-import { setDocumentMeta } from './slices/documentSlice';
+import { refreshTabs, tabsChanged } from './slices/tabsSlice';
 import { useShell } from './shell/ShellContext';
 import { previewBackgroundStyle } from '../features/preview/previewBackground';
 import {
@@ -21,6 +24,7 @@ import {
   onPanelStateChanged,
   onNativeMenu,
   onAppQuitRequested,
+  onTabsChanged,
   allowAppExit,
   confirmAppQuit,
   swapSidebars as swapSidebarPanels,
@@ -56,7 +60,8 @@ export default function AppLayout() {
     onSaveImage,
     onSaveProject,
     onSaveProjectAs,
-    confirmReplace,
+    confirmQuit,
+    confirmCloseTab,
     unsavedDialog,
   } = useWelcomeScreen();
   const { panels, visibleDocked, error: panelError } = usePanels();
@@ -67,7 +72,7 @@ export default function AppLayout() {
 
   const updates = useAppUpdates({
     autoCheckOnLaunch: true,
-    confirmRestart: confirmReplace,
+    confirmRestart: confirmQuit,
     fileError: doc.error,
     onStatus: (message, kind) => {
       dispatch(
@@ -83,14 +88,14 @@ export default function AppLayout() {
 
   const allowCloseRef = useRef(false);
   const quitInFlightRef = useRef(false);
-  const confirmReplaceRef = useRef(confirmReplace);
-  confirmReplaceRef.current = confirmReplace;
+  const confirmQuitRef = useRef(confirmQuit);
+  confirmQuitRef.current = confirmQuit;
 
   const requestQuit = useCallback(async () => {
     if (quitInFlightRef.current) return;
     quitInFlightRef.current = true;
     try {
-      const ok = await confirmReplaceRef.current();
+      const ok = await confirmQuitRef.current();
       if (!ok) return;
       allowCloseRef.current = true;
       await confirmAppQuit();
@@ -116,6 +121,25 @@ export default function AppLayout() {
   }, [doc.dirty, doc.hasDocument, doc.projectPath, doc.sourcePath]);
 
   useEffect(() => {
+    void dispatch(refreshTabs());
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+    void onTabsChanged((event) => {
+      dispatch(tabsChanged(event.payload));
+      void dispatch(refreshDocument());
+      void dispatch(refreshLayers(event.payload.active_id));
+      void dispatch(refreshFilters());
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [dispatch]);
+
+  useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | null = null;
     const win = getCurrentWindow();
@@ -123,7 +147,7 @@ export default function AppLayout() {
       .onCloseRequested(async (event) => {
         if (allowCloseRef.current) return;
         event.preventDefault();
-        const ok = await confirmReplaceRef.current();
+        const ok = await confirmQuitRef.current();
         if (!ok) return;
         allowCloseRef.current = true;
         try {
@@ -301,10 +325,10 @@ export default function AppLayout() {
           if (doc.hasDocument) onSaveImage();
           break;
         case 'undo':
-          if (canUndo) void dispatch(undoDocument());
+          if (canUndo && doc.docId != null) void dispatch(undoDocument(doc.docId));
           break;
         case 'redo':
-          if (canRedo) void dispatch(redoDocument());
+          if (canRedo && doc.docId != null) void dispatch(redoDocument(doc.docId));
           break;
         case 'export-pattern':
           if (doc.hasDocument) void doc.exportPattern();
@@ -438,56 +462,74 @@ export default function AppLayout() {
 
   const gridTemplateColumns = `${leftW}px 1fr ${rightW}px`;
 
+  const chromeTitle = windowChromeTitle({
+    dirty: doc.dirty,
+    hasDocument: doc.hasDocument,
+    projectPath: doc.projectPath,
+    sourcePath: doc.sourcePath,
+  });
+
   return (
+    <WindowShell
+      titlebarContent={
+        <>
+          <div data-tauri-drag-region="false">
+            <MenuBar
+              hasDocument={doc.hasDocument}
+              canUndo={canUndo}
+              canRedo={canRedo}
+              recentEntries={welcome.recentEntries}
+              onNewProject={welcome.onNewProject}
+              onOpenImage={welcome.onOpenImage}
+              onImportImageLayer={() => void doc.importImageLayer()}
+              onSaveImage={onSaveImage}
+              onOpenProject={welcome.onOpenProject}
+              onOpenRecent={welcome.onOpenRecent}
+              onSaveProject={onSaveProject}
+              onSaveProjectAs={onSaveProjectAs}
+              onExportPattern={() => void doc.exportPattern()}
+              onImportPattern={() => void doc.importPattern()}
+              onOpenColorLab={handleOpenColorLab}
+              onOpenPreferences={handleOpenPreferences}
+              onOpenHelp={handleOpenHelp}
+              onUndo={() => {
+                if (doc.docId != null) void dispatch(undoDocument(doc.docId));
+              }}
+              onRedo={() => {
+                if (doc.docId != null) void dispatch(redoDocument(doc.docId));
+              }}
+            />
+          </div>
+          <div className="titlebar-filename">{chromeTitle}</div>
+          <div className={cn('toolbar-icon-group')} data-tauri-drag-region="false">
+            <button
+              type="button"
+              className={cn('sidebar-changer-icon-btn')}
+              onClick={() => void handleSwapSidebars()}
+              title="Swap left and right sidebars"
+              aria-label="Swap left and right sidebars"
+            >
+              <Icon name="sidebar-swap" width={16} height={16} />
+            </button>
+            <button
+              type="button"
+              className={cn(
+                'sidebar-changer-icon-btn',
+                focusMode && 'sidebar-changer-icon-btn-active'
+              )}
+              onClick={() => setFocusMode((on) => !on)}
+              title={focusMode ? 'Exit focus mode' : 'Focus mode — hide sidebars'}
+              aria-label={focusMode ? 'Exit focus mode' : 'Focus mode'}
+              aria-pressed={focusMode}
+            >
+              <Icon name="focus-mode" width={16} height={16} />
+            </button>
+          </div>
+        </>
+      }
+    >
     <div className={cn('app-layout', 'app-layout-dual')} style={{ gridTemplateColumns }}>
-      <div className={cn('app-toolbar')}>
-        <MenuBar
-          hasDocument={doc.hasDocument}
-          canUndo={canUndo}
-          canRedo={canRedo}
-          recentEntries={welcome.recentEntries}
-          onNewProject={welcome.onNewProject}
-          onOpenImage={welcome.onOpenImage}
-          onImportImageLayer={() => void doc.importImageLayer()}
-          onSaveImage={onSaveImage}
-          onOpenProject={welcome.onOpenProject}
-          onOpenRecent={welcome.onOpenRecent}
-          onSaveProject={onSaveProject}
-          onSaveProjectAs={onSaveProjectAs}
-          onExportPattern={() => void doc.exportPattern()}
-          onImportPattern={() => void doc.importPattern()}
-          onOpenColorLab={handleOpenColorLab}
-          onOpenPreferences={handleOpenPreferences}
-          onOpenHelp={handleOpenHelp}
-          onUndo={() => void dispatch(undoDocument())}
-          onRedo={() => void dispatch(redoDocument())}
-        />
-        <div className={cn('toolbar-spacer')} />
-        <div className={cn('toolbar-icon-group')}>
-          <button
-            type="button"
-            className={cn('sidebar-changer-icon-btn')}
-            onClick={() => void handleSwapSidebars()}
-            title="Swap left and right sidebars"
-            aria-label="Swap left and right sidebars"
-          >
-            <Icon name="sidebar-swap" width={16} height={16} />
-          </button>
-          <button
-            type="button"
-            className={cn(
-              'sidebar-changer-icon-btn',
-              focusMode && 'sidebar-changer-icon-btn-active'
-            )}
-            onClick={() => setFocusMode((on) => !on)}
-            title={focusMode ? 'Exit focus mode' : 'Focus mode — hide sidebars'}
-            aria-label={focusMode ? 'Exit focus mode' : 'Focus mode'}
-            aria-pressed={focusMode}
-          >
-            <Icon name="focus-mode" width={16} height={16} />
-          </button>
-        </div>
-      </div>
+      <DocumentTabBar onNewProject={welcome.onNewProject} onCloseTab={confirmCloseTab} />
 
       {!focusMode && (
         <DockedSidebar
@@ -561,5 +603,6 @@ export default function AppLayout() {
       {updates.dialogs}
       {doc.svgDialog}
     </div>
+    </WindowShell>
   );
 }

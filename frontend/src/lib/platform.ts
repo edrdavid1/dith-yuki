@@ -22,9 +22,11 @@ export async function initPlatform(): Promise<void> {
     } else {
       resolvedPlatform = 'unknown';
     }
+    document.documentElement.dataset.platform = resolvedPlatform;
   } catch {
     resolvedPlatform = 'unknown';
   }
+  document.documentElement.dataset.platform = resolvedPlatform;
 }
 
 /**

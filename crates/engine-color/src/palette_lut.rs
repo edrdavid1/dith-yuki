@@ -109,6 +109,12 @@ impl PaletteLut3D {
         self.grid[flat_index(i, j, k, n)]
     }
 
+    /// Flat `size³` nearest-index grid (row-major L, a, b).
+    #[inline]
+    pub fn grid(&self) -> &[u16] {
+        &self.grid
+    }
+
     #[inline]
     pub fn size(&self) -> u32 {
         self.size
@@ -135,9 +141,9 @@ impl PaletteLut3D {
     }
 }
 
-/// Concurrent cache: PaletteId → (revision, Arc<PaletteLut3D>).
+/// Concurrent cache: (doc_id, PaletteId) → (revision, Arc<PaletteLut3D>).
 pub struct PaletteLutCache {
-    entries: DashMap<PaletteId, (u64, Arc<PaletteLut3D>)>,
+    entries: DashMap<(u32, PaletteId), (u64, Arc<PaletteLut3D>)>,
     channel_ranges: PaletteChannelRangeCache,
 }
 
@@ -149,12 +155,10 @@ impl PaletteLutCache {
         }
     }
 
-    /// Get or build a LUT for `palette` at the given grid `size`.
-    ///
-    /// Uses `kd_cache` to obtain the KD-tree for cell-center queries.
-    /// Rebuilds when revision mismatches. Concurrent inserts: last-writer-wins.
+    /// Get or build a LUT for `palette` at the given grid `size`, scoped to `doc_id`.
     pub fn get_or_build(
         &self,
+        doc_id: u32,
         palette: &Palette,
         kd_cache: &PaletteKdCache,
         size: u32,
@@ -163,30 +167,37 @@ impl PaletteLutCache {
             return Err(PaletteError::Empty);
         }
 
-        if let Some(entry) = self.entries.get(&palette.id) {
+        let key = (doc_id, palette.id);
+        if let Some(entry) = self.entries.get(&key) {
             let (cached_revision, ref lut) = *entry;
             if cached_revision == palette.revision && lut.size() == size {
                 return Ok(Arc::clone(lut));
             }
         }
 
-        let tree = kd_cache.get_or_build(palette)?;
+        let tree = kd_cache.get_or_build(doc_id, palette)?;
         let lut = PaletteLut3D::build(palette, size, &tree)?;
         let arc = Arc::new(lut);
         self.entries
-            .insert(palette.id, (palette.revision, Arc::clone(&arc)));
+            .insert(key, (palette.revision, Arc::clone(&arc)));
         Ok(arc)
     }
 
-    /// Evict the cached entry for the given palette ID.
-    pub fn evict(&self, palette_id: PaletteId) {
-        self.entries.remove(&palette_id);
-        self.channel_ranges.evict(palette_id);
+    /// Evict one palette for one document.
+    pub fn evict(&self, doc_id: u32, palette_id: PaletteId) {
+        self.entries.remove(&(doc_id, palette_id));
+        self.channel_ranges.evict(doc_id, palette_id);
     }
 
-    /// Revision-keyed channel min/max (Track Q Guided). Not recomputed per pixel.
-    pub fn channel_ranges(&self, palette: &Palette) -> [ChannelRange; 3] {
-        self.channel_ranges.get_or_compute(palette)
+    /// Drop every LUT belonging to a closed document session.
+    pub fn evict_document(&self, doc_id: u32) {
+        self.entries.retain(|&(doc, _), _| doc != doc_id);
+        self.channel_ranges.evict_document(doc_id);
+    }
+
+    /// Revision-keyed channel min/max (Track Q Guided), scoped by document.
+    pub fn channel_ranges(&self, doc_id: u32, palette: &Palette) -> [ChannelRange; 3] {
+        self.channel_ranges.get_or_compute(doc_id, palette)
     }
 
     /// Same as [`palette_channel_ranges`] without going through the cache (tests).
@@ -194,8 +205,8 @@ impl PaletteLutCache {
         palette_channel_ranges(palette)
     }
 
-    /// Palette ids currently resident in the LUT cache.
-    pub fn cached_ids(&self) -> Vec<PaletteId> {
+    /// Palette cache keys currently resident in the LUT cache.
+    pub fn cached_keys(&self) -> Vec<(u32, PaletteId)> {
         self.entries.iter().map(|e| *e.key()).collect()
     }
 }
@@ -279,7 +290,7 @@ mod tests {
     fn empty_palette_rejected() {
         let kd = PaletteKdCache::new();
         let palette = make_palette(1, 1, vec![]);
-        let tree = kd.get_or_build(&rgb_palette()).unwrap();
+        let tree = kd.get_or_build(1, &rgb_palette()).unwrap();
         assert!(matches!(
             PaletteLut3D::build(&palette, 8, &tree),
             Err(PaletteError::Empty)
@@ -287,7 +298,7 @@ mod tests {
 
         let lut_cache = PaletteLutCache::new();
         assert!(matches!(
-            lut_cache.get_or_build(&palette, &kd, 8),
+            lut_cache.get_or_build(1, &palette, &kd, 8),
             Err(PaletteError::Empty)
         ));
     }
@@ -296,7 +307,7 @@ mod tests {
     fn cell_centers_match_kdtree() {
         let palette = rgb_palette();
         let kd = PaletteKdCache::new();
-        let tree = kd.get_or_build(&palette).unwrap();
+        let tree = kd.get_or_build(1, &palette).unwrap();
         let size = 8u32;
         let lut = PaletteLut3D::build(&palette, size, &tree).unwrap();
 
@@ -323,7 +334,7 @@ mod tests {
     fn out_of_range_clamps() {
         let palette = rgb_palette();
         let kd = PaletteKdCache::new();
-        let tree = kd.get_or_build(&palette).unwrap();
+        let tree = kd.get_or_build(1, &palette).unwrap();
         let lut = PaletteLut3D::build(&palette, 8, &tree).unwrap();
 
         // Far below / above ranges — must not panic; equals corresponding edge cell.
@@ -357,12 +368,59 @@ mod tests {
         let kd = PaletteKdCache::new();
         let lut_cache = PaletteLutCache::new();
         let a = lut_cache
-            .get_or_build(&palette, &kd, DEFAULT_LUT_SIZE)
+            .get_or_build(1, &palette, &kd, DEFAULT_LUT_SIZE)
             .unwrap();
         let b = lut_cache
-            .get_or_build(&palette, &kd, DEFAULT_LUT_SIZE)
+            .get_or_build(1, &palette, &kd, DEFAULT_LUT_SIZE)
             .unwrap();
         assert!(Arc::ptr_eq(&a, &b));
+    }
+
+    #[test]
+    fn same_palette_id_different_docs_isolated() {
+        let kd = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let large = make_palette(
+            1,
+            1,
+            (0..50)
+                .map(|i| LinearColor {
+                    r: i as f32 / 50.0,
+                    g: 0.0,
+                    b: 0.0,
+                })
+                .collect(),
+        );
+        let small = make_palette(
+            1,
+            1,
+            (0..15)
+                .map(|i| LinearColor {
+                    r: i as f32 / 15.0,
+                    g: 0.0,
+                    b: 0.0,
+                })
+                .collect(),
+        );
+        let _ = lut_cache
+            .get_or_build(1, &large, &kd, 8)
+            .unwrap();
+        let lut_small = lut_cache
+            .get_or_build(2, &small, &kd, 8)
+            .unwrap();
+        // Every LUT cell for doc2 must index into the 15-color palette.
+        for i in 0..lut_small.size() {
+            for j in 0..lut_small.size() {
+                for k in 0..lut_small.size() {
+                    let lab = Oklab {
+                        l: i as f32 / lut_small.size() as f32,
+                        a: (j as f32 / lut_small.size() as f32) * 0.8 - 0.4,
+                        b: (k as f32 / lut_small.size() as f32) * 0.8 - 0.4,
+                    };
+                    assert!((lut_small.nearest_index(lab) as usize) < 15);
+                }
+            }
+        }
     }
 
     #[test]
@@ -387,7 +445,7 @@ mod tests {
             ],
         );
         let lut1 = lut_cache
-            .get_or_build(&v1, &kd, 8)
+            .get_or_build(1, &v1, &kd, 8)
             .unwrap();
 
         let v2 = make_palette(
@@ -407,7 +465,7 @@ mod tests {
             ],
         );
         let lut2 = lut_cache
-            .get_or_build(&v2, &kd, 8)
+            .get_or_build(1, &v2, &kd, 8)
             .unwrap();
         assert!(!Arc::ptr_eq(&lut1, &lut2));
 
@@ -435,7 +493,7 @@ mod tests {
                 .collect();
             let palette = make_palette(1, 1, colors);
             let kd = PaletteKdCache::new();
-            let tree = kd.get_or_build(&palette).unwrap();
+            let tree = kd.get_or_build(1, &palette).unwrap();
             let lut = PaletteLut3D::build(&palette, DEFAULT_LUT_SIZE, &tree).unwrap();
 
             let mut identity_misses = Vec::new();
@@ -490,7 +548,7 @@ mod tests {
     fn random_oklab_disagreement_bounded() {
         let palette = rgb_palette();
         let kd = PaletteKdCache::new();
-        let tree = kd.get_or_build(&palette).unwrap();
+        let tree = kd.get_or_build(1, &palette).unwrap();
         let lut = PaletteLut3D::build(&palette, DEFAULT_LUT_SIZE, &tree).unwrap();
         let palette_oklab: Vec<Oklab> = palette
             .colors

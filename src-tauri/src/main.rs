@@ -1,9 +1,10 @@
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
 mod commands;
-mod diffusion_waiters;
+mod document_session;
 mod dock_affinity;
 mod global_mouseup;
+mod gpu_resident_shadow;
 mod macos_title;
 mod native_menu;
 mod panel_commands;
@@ -36,14 +37,6 @@ use objc::{msg_send, sel, sel_impl, class};
 use tile_protocol::{f32_tile_to_rgba8, parse_tile_url, LayerTarget};
 
 fn main() {
-    // Initialize app state
-    use engine_project::types::DocumentId;
-    
-    let document = engine_project::Document::new(DocumentId::new(1), 800, 600);
-    let doc_handle = DocumentHandle::new(document);
-    let tile_cache = TileCache::new(256 * 1024 * 1024); // 256 MB budget
-    let scheduler = Scheduler::new();
-    
     let dock_affinity_enabled = global_mouseup::mouseup_backend_available();
     if !dock_affinity_enabled {
         log::warn!("Dock affinity unavailable on this platform (no mouseup backend)");
@@ -59,12 +52,16 @@ fn main() {
         match engine_gpu::GpuContext::try_new_blocking() {
             Some(ctx) => {
                 eprintln!(
-                    "[engine-gpu] device ready filters={}",
-                    engine_gpu::gpu_filters_enabled()
+                    "[engine-gpu] device ready filters={} preview={} resident={}",
+                    engine_gpu::gpu_filters_enabled(),
+                    engine_gpu::gpu_preview_enabled(),
+                    engine_gpu::gpu_resident_enabled()
                 );
                 log::info!(
-                    "engine-gpu: device ready (map_timeouts=0, filters={})",
-                    engine_gpu::gpu_filters_enabled()
+                    "engine-gpu: device ready (filters={}, preview={}, resident={})",
+                    engine_gpu::gpu_filters_enabled(),
+                    engine_gpu::gpu_preview_enabled(),
+                    engine_gpu::gpu_resident_enabled()
                 );
                 Some(std::sync::Arc::new(ctx))
             }
@@ -76,34 +73,10 @@ fn main() {
         }
     };
 
-    let app_state = AppState {
-        document_handle: doc_handle,
-        tile_cache,
-        scheduler,
-        viewport: Mutex::new(ViewportState::default()),
-        worker_wake: WorkerWake::new(),
-        palette_cache: engine_color::palette_cache::PaletteKdCache::new(),
-        palette_lut_cache: engine_color::palette_lut::PaletteLutCache::new(),
-        threshold_cache: engine_color::threshold_map::ThresholdMapCache::new(),
-        error_residuals: engine_project::filters::ErrorResidualsStore::new(),
-        block_representatives: engine_tiles::BlockRepresentativeCache::new(),
-        diffusion_skip_counter: diffusion_waiters::DiffusionSkipCounter::new(),
-        pending_diffusion_waiters: diffusion_waiters::PendingDiffusionWaiters::new(),
-        gpu,
-        panel_manager: Mutex::new(PanelManager::new()),
-        selection: Mutex::new(commands::SelectionState::default()),
-        dock_affinity: Mutex::new(dock_affinity::DockAffinityController::new(
-            dock_affinity_enabled,
-        )),
-        float_drag_mouseup_cancel: Arc::new(AtomicBool::new(true)),
-        float_drag_mouseup_hook: Mutex::new(None),
-        project_path: Mutex::new(None),
-        undo_manager: Mutex::new(crate::undo::UndoManager::new()),
-        saved_snapshot: Mutex::new(None),
-        preview_pass_inflight: AtomicUsize::new(0),
-        pending_preview_refresh: Mutex::new(None),
-        ed_prefix_lock: Mutex::new(()),
-    };
+    // Path B: resident VRAM cache is created inside empty_process when adapter exists.
+    // Decision 0 (multi-doc-cache-budget): 512 MiB holds one hot ~3k doc
+    // (Raw+Processed+Composite ≈ 446 MiB); multi-doc still needs pressure eviction.
+    let app_state = AppState::empty_process(gpu, 512 * 1024 * 1024, dock_affinity_enabled);
 
     // Wrap in Arc for sharing between Tauri state and worker threads
     let state = Arc::new(app_state);
@@ -125,6 +98,19 @@ fn main() {
             let is_panel = label.starts_with("panel-");
 
             match event {
+                WindowEvent::Resized(_) if !is_panel => {
+                    #[cfg(target_os = "macos")]
+                    {
+                        // Photoshop-style: never stay in Mission Control fullscreen.
+                        if window.is_fullscreen().unwrap_or(false) {
+                            let _ = window.set_fullscreen(false);
+                            let _ = window.maximize();
+                        }
+                        // Do NOT refresh traffic lights here — NSWindowDidResize
+                        // already re-pins every frame. A delayed second layout
+                        // after live resize was a major source of the jump.
+                    }
+                }
                 WindowEvent::Moved(_) if is_panel => {
                     let app_handle = window.app_handle().clone();
                     let state = app_handle.state::<Arc<AppState>>();
@@ -202,6 +188,9 @@ fn main() {
         .setup(move |app| {
             native_menu::install(app)?;
             let app_handle = app.handle().clone();
+            if let Ok(mut slot) = state.app_handle.lock() {
+                *slot = Some(app_handle.clone());
+            }
 
             // Set native titlebar color on macOS
             #[cfg(target_os = "macos")]
@@ -210,18 +199,27 @@ fn main() {
                 use cocoa::base::id;
 
                 let main_window = app.get_webview_window("main").unwrap();
-                macos_title::install_centered_title(&main_window);
+                // decorations stay true so traffic lights exist; Overlay+fullSize
+                // puts them on the same row as File/Edit (not a second native strip).
+                macos_title::apply_overlay_csd(&main_window);
                 let ns_window = main_window.ns_window().unwrap() as id;
                 unsafe {
-                    // #999999 → RGB (0.6, 0.6, 0.6)
+                    // Match --color-gray (#CDCDCD) so the Overlay strip isn't a darker band.
                     let bg_color: id = msg_send![
                         class!(NSColor),
-                        colorWithRed: 0.6f64
-                        green: 0.6f64
-                        blue: 0.6f64
+                        colorWithRed: (0xCD as f64) / 255.0
+                        green: (0xCD as f64) / 255.0
+                        blue: (0xCD as f64) / 255.0
                         alpha: 1.0f64
                     ];
                     ns_window.setBackgroundColor_(bg_color);
+                }
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            {
+                if let Some(main_window) = app.get_webview_window("main") {
+                    let _ = main_window.set_decorations(false);
                 }
             }
 
@@ -324,6 +322,9 @@ fn main() {
             commands::confirm_app_quit,
             commands::new_document,
             commands::get_document_snapshot,
+            commands::list_open_documents,
+            commands::set_active_document,
+            commands::close_document,
             
             // Layer commands
             commands::add_layer,
@@ -353,6 +354,8 @@ fn main() {
             crate::undo::redo,
             crate::undo::is_document_dirty,
             commands::is_release_build,
+            commands::get_gpu_preview_status,
+            commands::set_gpu_preview_enabled,
             
             // Palette commands
             commands::list_palettes,
@@ -473,12 +476,15 @@ fn handle_tile_request(
         }
     };
 
-    // 2. Validate document
-    let snapshot = state.document_handle.snapshot();
-    if snapshot.id.0 != parsed.doc_id {
-        let msg = format!("404 Not Found: document {} not found", parsed.doc_id);
-        return tile_response(404, "text/plain", msg.into_bytes(), None);
-    }
+    // 2. Validate document session (never substitute the active tab)
+    let session = match state.session(parsed.doc_id) {
+        Ok(s) => s,
+        Err(_) => {
+            let msg = format!("404 Not Found: document {} not found", parsed.doc_id);
+            return tile_response(404, "text/plain", msg.into_bytes(), None);
+        }
+    };
+    let snapshot = session.document_handle.snapshot();
 
     // 3. Validate layer
     let layer_id = match parsed.layer {
@@ -513,6 +519,7 @@ fn handle_tile_request(
 
     // 5. Build TileKey and check cache. Ready = !dirty && generation >= doc_gen.
     let key = TileKey {
+        doc: parsed.doc_id,
         layer: layer_id,
         coord: TileCoord {
             level: parsed.level,

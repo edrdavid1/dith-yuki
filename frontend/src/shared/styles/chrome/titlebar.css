@@ -6,7 +6,7 @@
 /* src/styles/titlebar.css */
 
 :root {
-  --titlebar-height: 32px; /* logical CSS pixels — NOT device pixels */
+  --titlebar-height: 26px; /* logical CSS pixels — NOT device pixels */
 }
 
 /* ─── WindowShell ─────────────────────────────────────────────────────────── */
@@ -38,20 +38,50 @@
   min-height: var(--titlebar-height);
   max-height: var(--titlebar-height);
   display: flex;
-  align-items: center;
-  padding: 0 8px;
-  background: #999999;
-  border-bottom: var(--border-width) solid var(--color-dark-gray);
+  flex-direction: row;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  align-items: stretch;
+  padding: 0;
+  /* content-box so a bottom rule does not shrink menu buttons away from the edge */
+  box-sizing: content-box;
+  background: var(--color-gray);
+  /* drawn outside the content height — vertical button borders stay edge-to-edge */
+  border-bottom: var(--border);
   user-select: none;
   position: relative;
   z-index: 9999;
   pointer-events: auto;
 }
 
+html[data-platform='macos'] .app-titlebar {
+  /* room for tao trafficLightPosition x=12 + native button cluster */
+  padding-left: 78px;
+}
+
+.titlebar-filename {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-family: var(--font-family, 'ChicagoFLF', monospace);
+  pointer-events: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* macOS: native drag hint (applied inline via style prop for platform specificity) */
 /* -webkit-app-region: drag is set inline on macOS only */
 
 /* No-drag zones inside the titlebar */
+.app-titlebar > [data-tauri-drag-region="false"] {
+  height: 100%;
+  display: flex;
+  align-items: stretch;
+}
+
 .app-titlebar button,
 .app-titlebar input,
 .app-titlebar select,

@@ -88,14 +88,14 @@ export function useAppShortcuts() {
           docs?.saveProjectAs();
           return;
         case 'undo':
-          if (!hasDocument || !canUndo) return;
+          if (!hasDocument || !canUndo || docId == null) return;
           steal();
-          void dispatch(undo());
+          void dispatch(undo(docId));
           return;
         case 'redo':
-          if (!hasDocument || !canRedo) return;
+          if (!hasDocument || !canRedo || docId == null) return;
           steal();
-          void dispatch(redo());
+          void dispatch(redo(docId));
           return;
         case 'newLayer':
           if (!hasDocument) return;
@@ -116,10 +116,10 @@ export function useAppShortcuts() {
           return;
         }
         case 'deleteLayer':
-          if (!hasDocument || !selectedFilterId || imageSourceId == null) return;
+          if (!hasDocument || !selectedFilterId || imageSourceId == null || docId == null) return;
           steal();
           void dispatch(
-            removeFilterThunk({ layerId: imageSourceId, filterId: selectedFilterId })
+            removeFilterThunk({ docId, layerId: imageSourceId, filterId: selectedFilterId })
           ).then(() => {
             void dispatch(setSelection({ layerId: imageSourceId, filterId: null }));
             void dispatch(refreshLayers(docId));

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useAppSelector } from '../../app/hooks';
 import {
   listPalettes,
   importPalette,
@@ -26,6 +27,7 @@ interface PalettePanelProps {
 }
 
 function PalettePanel({ layerId }: PalettePanelProps) {
+  const docId = useAppSelector((s) => s.document.docId);
   const [palettes, setPalettes] = useState<PaletteDto[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [genMethod, setGenMethod] = useState<string>('MedianCut');
@@ -83,7 +85,8 @@ function PalettePanel({ layerId }: PalettePanelProps) {
     }
     setCreateError(null);
     try {
-      await createPalette(trimmed);
+      if (docId == null) return;
+      await createPalette(docId, trimmed);
       setShowCreateInput(false);
       setCreateName('');
       refresh();
@@ -115,7 +118,8 @@ function PalettePanel({ layerId }: PalettePanelProps) {
         multiple: false,
       });
       if (selected && typeof selected === 'string') {
-        await importPalette(selected);
+        if (docId == null) return;
+        await importPalette(docId, selected);
         refresh();
       }
     } catch (e) {
@@ -146,7 +150,8 @@ function PalettePanel({ layerId }: PalettePanelProps) {
       const supportedFormats = ['ase', 'gpl', 'json', 'aco', 'pal', 'csv'];
       const format = supportedFormats.includes(ext) ? ext : 'json';
 
-      await exportPalette(paletteId, filePath, format);
+      if (docId == null) return;
+      await exportPalette(docId, paletteId, filePath, format);
     } catch (e) {
       setError(typeof e === 'string' ? e : String(e));
     }
@@ -164,7 +169,8 @@ function PalettePanel({ layerId }: PalettePanelProps) {
 
     setError(null);
     try {
-      await deletePalette(selectedPaletteId);
+      if (docId == null) return;
+      await deletePalette(docId, selectedPaletteId);
       setSelectedPaletteId(null);
       refresh();
     } catch (e) {
@@ -181,7 +187,8 @@ function PalettePanel({ layerId }: PalettePanelProps) {
     }
     setError(null);
     try {
-      await generatePalette(layerId, genCount, genMethod);
+      if (docId == null || layerId == null) return;
+      await generatePalette(docId, layerId, genCount, genMethod);
       refresh();
       setShowGenOptions(false);
     } catch (e) {
@@ -206,7 +213,8 @@ function PalettePanel({ layerId }: PalettePanelProps) {
       return;
     }
     try {
-      await renamePalette(editingPaletteId, trimmed);
+      if (docId == null) return;
+      await renamePalette(docId, editingPaletteId, trimmed);
       refresh();
     } catch (e) {
       setError(typeof e === 'string' ? e : String(e));
@@ -391,6 +399,7 @@ function PalettePanel({ layerId }: PalettePanelProps) {
       {selectedPalette && (
         <div className={cn("sidebar-section", "palette-panel-section-divider-padded")}>
           <SwatchGrid
+              docId={docId!}
             paletteId={selectedPalette.id}
             colors={selectedPalette.hex_colors}
             onColorAdded={refresh}

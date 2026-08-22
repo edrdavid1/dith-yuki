@@ -1,5 +1,6 @@
 import { configureStore } from '@reduxjs/toolkit';
 import documentReducer from './slices/documentSlice';
+import tabsReducer from './slices/tabsSlice';
 import layersReducer from './slices/layersSlice';
 import filtersReducer from './slices/filtersSlice';
 import selectionReducer from './slices/selectionSlice';
@@ -16,6 +17,7 @@ export function createAppStore() {
   return configureStore({
     reducer: {
       document: documentReducer,
+      tabs: tabsReducer,
       layers: layersReducer,
       filters: filtersReducer,
       selection: selectionReducer,

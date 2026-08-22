@@ -47,6 +47,7 @@ export function useEffectLayer(
 ): UseEffectLayerReturn {
   const dispatch = useAppDispatch();
   const filters = useAppSelector(selectFiltersList);
+  const docId = useAppSelector((s) => s.document.docId);
   const [optimisticParams, setOptimisticParams] = useState<FilterParams | null>(null);
   const [optimisticOpacity, setOptimisticOpacity] = useState<number | null>(null);
   const [optimisticBlend, setOptimisticBlend] = useState<string | null>(null);
@@ -55,12 +56,14 @@ export function useEffectLayer(
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
   const blendDebounceRef = useRef<ReturnType<typeof setTimeout>>();
   const layerIdRef = useRef<number | null>(layerId);
+  const docIdRef = useRef<number | null>(docId);
   const paramsRef = useRef<FilterParams | null>(null);
   const filterIdRef = useRef<string | null>(null);
   const inflightRef = useRef(false);
   const queuedPatchRef = useRef<Record<string, unknown> | null>(null);
 
   layerIdRef.current = layerId;
+  docIdRef.current = docId;
 
   const storeFilter = useMemo(() => {
     if (layerId === null) return null;
@@ -114,9 +117,12 @@ export function useEffectLayer(
     setError(null);
 
     blendDebounceRef.current = setTimeout(async () => {
+      const targetDocId = docIdRef.current;
+      if (targetDocId == null || layerIdRef.current == null || filterIdRef.current == null) return;
       try {
         // Empty params: opacity/blend only — do not zero the rest of the filter.
-        await updateFilter(layerIdRef.current!, filterIdRef.current!, {}, patch);
+        // Capture docId at schedule time (VS Code URI style) — not active-at-resolve.
+        await updateFilter(targetDocId, layerIdRef.current, filterIdRef.current, {}, patch);
       } catch (err) {
         logIpcError('useEffectLayer.updateFilterBlend', err);
         setOptimisticOpacity(null);
@@ -153,9 +159,13 @@ export function useEffectLayer(
       };
 
       const flush = async (patch: Record<string, unknown>) => {
+        const targetDocId = docIdRef.current;
+        if (targetDocId == null || layerIdRef.current == null || filterIdRef.current == null) {
+          return;
+        }
         inflightRef.current = true;
         try {
-          await updateFilter(layerIdRef.current!, filterIdRef.current!, patch);
+          await updateFilter(targetDocId, layerIdRef.current, filterIdRef.current, patch);
         } catch (err) {
           logIpcError('useEffectLayer.updateFilter', err);
           setOptimisticParams(prevParams);

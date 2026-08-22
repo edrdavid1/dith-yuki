@@ -70,7 +70,7 @@ export default function LayersFeature({
       const targetLayerId = imageSourceLayer?.id ?? selectedLayerId;
       if (targetLayerId === null) return;
       try {
-        await dispatch(removeFilterThunk({ layerId: targetLayerId, filterId })).unwrap();
+        await dispatch(removeFilterThunk({ docId: docId!, layerId: targetLayerId, filterId })).unwrap();
         void dispatch(setSelection({ layerId: targetLayerId, filterId: null }));
         await dispatch(refreshLayers(docId));
       } catch (err) {
@@ -86,7 +86,7 @@ export default function LayersFeature({
       if (targetLayerId == null) return;
       try {
         await dispatch(
-          reorderFilterThunk({ layerId: targetLayerId, filterId, newIndex })
+          reorderFilterThunk({ docId: docId!, layerId: targetLayerId, filterId, newIndex })
         ).unwrap();
         await dispatch(refreshLayers(docId));
       } catch (err) {
@@ -106,10 +106,10 @@ export default function LayersFeature({
   const handleToggleFilterEnabled = useCallback(
     (filterId: string) => {
       const targetLayerId = imageSourceLayer?.id;
-      if (targetLayerId == null) return;
-      void dispatch(toggleFilterEnabled({ layerId: targetLayerId, filterId }));
+      if (targetLayerId == null || docId == null) return;
+      void dispatch(toggleFilterEnabled({ docId, layerId: targetLayerId, filterId }));
     },
-    [dispatch, imageSourceLayer]
+    [dispatch, docId, imageSourceLayer]
   );
 
   const handleBlendModeChange = useCallback(

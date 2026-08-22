@@ -74,10 +74,11 @@ pub fn decompose_image_to_tiles(
     rgba_f32: &[f32],
     width: u32,
     height: u32,
+    doc_id: u32,
     layer_id: u32,
     cache: &TileCache,
 ) -> Result<TileGrid, TileError> {
-    decompose_image_to_tiles_at_generation(rgba_f32, width, height, layer_id, cache, 0)
+    decompose_image_to_tiles_at_generation(rgba_f32, width, height, doc_id, layer_id, cache, 0)
 }
 
 /// Same as [`decompose_image_to_tiles`], stamping Raw entries with `generation`.
@@ -85,6 +86,7 @@ pub fn decompose_image_to_tiles_at_generation(
     rgba_f32: &[f32],
     width: u32,
     height: u32,
+    doc_id: u32,
     layer_id: u32,
     cache: &TileCache,
     generation: u64,
@@ -108,6 +110,7 @@ pub fn decompose_image_to_tiles_at_generation(
         for col in 0..cols {
             let tile = extract_tile(rgba_f32, width, height, col, row);
             let key = TileKey {
+                doc: doc_id,
                 layer: layer_id,
                 coord: TileCoord {
                     level: 0,
@@ -184,7 +187,7 @@ mod tests {
         let buffer = vec![0.5f32; (width * height * 4) as usize];
         let cache = TileCache::new(100_000_000);
 
-        let grid = decompose_image_to_tiles(&buffer, width, height, 0, &cache).unwrap();
+        let grid = decompose_image_to_tiles(&buffer, width, height, 1, 0, &cache).unwrap();
 
         assert_eq!(grid.cols, 1);
         assert_eq!(grid.rows, 1);
@@ -192,6 +195,7 @@ mod tests {
 
         // Verify main region pixel values
         let key = TileKey {
+            doc: 1,
             layer: 0,
             coord: TileCoord {
                 level: 0,
@@ -216,7 +220,7 @@ mod tests {
         let buffer = vec![1.0f32; (width * height * 4) as usize];
         let cache = TileCache::new(100_000_000);
 
-        let grid = decompose_image_to_tiles(&buffer, width, height, 1, &cache).unwrap();
+        let grid = decompose_image_to_tiles(&buffer, width, height, 1, 1, &cache).unwrap();
 
         assert_eq!(grid.cols, 2);
         assert_eq!(grid.rows, 2);
@@ -226,6 +230,7 @@ mod tests {
         // Its main region starts at image (256, 256).
         // Only pixels (256..300, 256..300) = 44×44 pixels are in-bounds.
         let key = TileKey {
+            doc: 1,
             layer: 1,
             coord: TileCoord {
                 level: 0,
@@ -260,7 +265,7 @@ mod tests {
         buffer[idx + 3] = 1.0; // A
 
         let cache = TileCache::new(100_000_000);
-        let grid = decompose_image_to_tiles(&buffer, width, height, 0, &cache).unwrap();
+        let grid = decompose_image_to_tiles(&buffer, width, height, 1, 0, &cache).unwrap();
 
         assert_eq!(grid.cols, 2);
         assert_eq!(grid.rows, 2);
@@ -271,6 +276,7 @@ mod tests {
         // The pixel we set is at image (255, 128).
         // In tile (1, 0): tx = 1 (halo), ty = HALO + 128 (main row 128)
         let key = TileKey {
+            doc: 1,
             layer: 0,
             coord: TileCoord {
                 level: 0,
@@ -290,7 +296,7 @@ mod tests {
         let buffer = vec![0.0f32; 100]; // wrong size for any valid image
         let cache = TileCache::new(100_000_000);
 
-        let result = decompose_image_to_tiles(&buffer, 256, 256, 0, &cache);
+        let result = decompose_image_to_tiles(&buffer, 256, 256, 1, 0, &cache);
         assert!(result.is_err());
         match result.unwrap_err() {
             TileError::InvalidBufferSize { expected, actual } => {
@@ -306,7 +312,7 @@ mod tests {
         let buffer: Vec<f32> = vec![];
         let cache = TileCache::new(100_000_000);
 
-        let result = decompose_image_to_tiles(&buffer, 0, 256, 0, &cache);
+        let result = decompose_image_to_tiles(&buffer, 0, 256, 1, 0, &cache);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), TileError::ZeroDimensions);
     }
@@ -319,7 +325,7 @@ mod tests {
         let buffer = vec![0.25f32; (width * height * 4) as usize];
         let cache = TileCache::new(100_000_000);
 
-        let grid = decompose_image_to_tiles(&buffer, width, height, 0, &cache).unwrap();
+        let grid = decompose_image_to_tiles(&buffer, width, height, 1, 0, &cache).unwrap();
 
         assert_eq!(grid.cols, 2);
         assert_eq!(grid.rows, 2);
@@ -327,6 +333,7 @@ mod tests {
 
         // All main region pixels should be 0.25
         let key = TileKey {
+            doc: 1,
             layer: 0,
             coord: TileCoord {
                 level: 0,
@@ -345,12 +352,13 @@ mod tests {
         let buffer = vec![0.9f32, 0.8, 0.7, 1.0];
         let cache = TileCache::new(100_000_000);
 
-        let grid = decompose_image_to_tiles(&buffer, 1, 1, 5, &cache).unwrap();
+        let grid = decompose_image_to_tiles(&buffer, 1, 1, 1, 5, &cache).unwrap();
 
         assert_eq!(grid.cols, 1);
         assert_eq!(grid.rows, 1);
 
         let key = TileKey {
+            doc: 1,
             layer: 5,
             coord: TileCoord {
                 level: 0,
@@ -373,8 +381,9 @@ mod tests {
     fn decompose_at_generation_stamps_raw_entries() {
         let buffer = vec![0.25f32; 4];
         let cache = TileCache::new(100_000_000);
-        decompose_image_to_tiles_at_generation(&buffer, 1, 1, 1, &cache, 51).unwrap();
+        decompose_image_to_tiles_at_generation(&buffer, 1, 1, 1, 1, &cache, 51).unwrap();
         let key = TileKey {
+            doc: 1,
             layer: 1,
             coord: TileCoord {
                 level: 0,
@@ -386,5 +395,67 @@ mod tests {
         let entry = cache.entries.get(&key).unwrap();
         assert_eq!(entry.generation, 51);
         assert!(!entry.dirty.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    /// Decision 0 gate: 3072² Raw-only footprint (document in multi-doc-cache-budget SPEC).
+    #[test]
+    fn gate_used_bytes_3072_raw_only() {
+        let width = 3072u32;
+        let height = 3072u32;
+        let buffer = vec![0.5f32; (width as usize) * (height as usize) * 4];
+        let cache = TileCache::new(512 * 1024 * 1024);
+        let grid = decompose_image_to_tiles(&buffer, width, height, 1, 1, &cache).unwrap();
+        assert_eq!(grid.cols * grid.rows, 144);
+        assert_eq!(cache.entry_count(), 144);
+        assert_eq!(cache.used_bytes_count(), 144 * crate::TILE_BYTES);
+        assert_eq!(cache.used_bytes_count(), 155_750_400);
+    }
+
+    #[test]
+    fn decompose_pressure_pins_open_raw_over_budget() {
+        use crate::EvictContext;
+        use std::collections::HashSet;
+
+        // 4×4 tiles = 16 Raw ≈ 17.3 MB; budget for 4 tiles.
+        let width = 1024u32;
+        let height = 1024u32;
+        let buffer = vec![0.5f32; (width as usize) * (height as usize) * 4];
+        let budget = 4 * crate::TILE_BYTES;
+        let cache = TileCache::new(budget);
+        decompose_image_to_tiles(&buffer, width, height, 1, 1, &cache).unwrap();
+        assert!(cache.used_bytes_count() > budget);
+
+        let mut viewport = HashSet::new();
+        viewport.insert(TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        });
+        viewport.insert(TileCoord {
+            level: 0,
+            x: 1,
+            y: 0,
+        });
+        let mut open_docs = HashSet::new();
+        open_docs.insert(1);
+        cache.evict_for_pressure(&EvictContext {
+            active_doc: Some(1),
+            open_docs: &open_docs,
+            viewport_coords: &viewport,
+        });
+
+        // Open-session Raw is pinned — pressure cannot shrink below full L0 Raw.
+        assert_eq!(cache.entry_count(), 16);
+        assert!(cache.used_bytes_count() > budget);
+        assert!(cache.entries.contains_key(&TileKey {
+            doc: 1,
+            layer: 1,
+            coord: TileCoord {
+                level: 0,
+                x: 0,
+                y: 0
+            },
+            stage: CacheStage::Raw,
+        }));
     }
 }

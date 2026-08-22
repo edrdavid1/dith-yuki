@@ -484,8 +484,29 @@ pub fn apply_ordered_with_cache(
     block_cache: &BlockRepresentativeCache,
     layer_id: LayerId,
 ) -> Result<PixelTile, EngineError> {
+    let mut out = PixelTile::new();
+    apply_ordered_with_cache_into(
+        tile, coord, params, threshold_cache, palette_cache, lut_cache, document,
+        block_cache, layer_id, &mut out,
+    )?;
+    Ok(out)
+}
+
+/// Write ordered dither into an existing buffer (no alloc). Full 260² write.
+pub fn apply_ordered_with_cache_into(
+    tile: &PixelTile,
+    coord: TileCoord,
+    params: &DitherParamsV2,
+    threshold_cache: &ThresholdMapCache,
+    palette_cache: &PaletteKdCache,
+    lut_cache: &PaletteLutCache,
+    document: &Document,
+    block_cache: &BlockRepresentativeCache,
+    layer_id: LayerId,
+    dst: &mut PixelTile,
+) -> Result<(), EngineError> {
     if matches!(params.mode, DitherModeV2::CmykHalftone) {
-        return apply_cmyk_halftone(
+        return apply_cmyk_halftone_into(
             tile,
             coord,
             params,
@@ -494,10 +515,10 @@ pub fn apply_ordered_with_cache(
             document,
             block_cache,
             layer_id,
+            dst,
         );
     }
 
-    let mut result = PixelTile::new();
     let levels = params.levels as f32;
     let ps = params.pixel_size as u32;
 
@@ -528,14 +549,14 @@ pub fn apply_ordered_with_cache(
         (Some(p), PaletteDitherMode::Guided { channel_levels }) => {
             let lv = channel_levels.unwrap_or_else(|| default_channel_levels(p));
             PalettePath::Guided {
-                ranges: lut_cache.channel_ranges(p),
+                ranges: lut_cache.channel_ranges(document.id.0, p),
                 levels: lv,
             }
         }
         (Some(p), PaletteDitherMode::Mixed { channel_levels }) => {
             let lv = channel_levels.unwrap_or_else(|| default_channel_levels(p));
             PalettePath::Mixed {
-                ranges: lut_cache.channel_ranges(p),
+                ranges: lut_cache.channel_ranges(document.id.0, p),
                 levels: lv,
                 picker: OrderedPalettePicker::new(p),
             }
@@ -562,7 +583,7 @@ pub fn apply_ordered_with_cache(
             // Do not rotate before alignment: mega-pixel blocks stay axis-aligned rectangles.
             // Wave is not matrix-indexed; it samples pixel-space block origin.
             let (r, g, b, block_a) = if ps > 1 {
-                read_block_source(tile, coord, block_gx, block_gy, block_cache, layer_id, ps)
+                read_block_source(tile, coord, block_gx, block_gy, block_cache, document.id.0, layer_id, ps)
             } else {
                 (tile.at(x, y, 0), tile.at(x, y, 1), tile.at(x, y, 2), tile.at(x, y, 3))
             };
@@ -591,18 +612,18 @@ pub fn apply_ordered_with_cache(
                     PalettePath::Strict(picker) => {
                         let (qr, qg, qb) =
                             picker.pick(r, g, b, threshold, params.threshold_scale);
-                        result.set(x, y, 0, qr);
-                        result.set(x, y, 1, qg);
-                        result.set(x, y, 2, qb);
+                        dst.set(x, y, 0, qr);
+                        dst.set(x, y, 1, qg);
+                        dst.set(x, y, 2, qb);
                     }
                     PalettePath::Guided {
                         ranges,
                         levels: ch_levels,
                     } => {
                         let t = 0.5 + (threshold - 0.5) * params.threshold_scale;
-                        result.set(x, y, 0, quantize_channel_guided(r, ranges[0], *ch_levels, t));
-                        result.set(x, y, 1, quantize_channel_guided(g, ranges[1], *ch_levels, t));
-                        result.set(x, y, 2, quantize_channel_guided(b, ranges[2], *ch_levels, t));
+                        dst.set(x, y, 0, quantize_channel_guided(r, ranges[0], *ch_levels, t));
+                        dst.set(x, y, 1, quantize_channel_guided(g, ranges[1], *ch_levels, t));
+                        dst.set(x, y, 2, quantize_channel_guided(b, ranges[2], *ch_levels, t));
                     }
                     PalettePath::Mixed {
                         ranges,
@@ -615,26 +636,26 @@ pub fn apply_ordered_with_cache(
                         let qb = quantize_channel_guided(b, ranges[2], *ch_levels, t);
                         let (sr, sg, sb) =
                             picker.pick(qr, qg, qb, threshold, params.threshold_scale);
-                        result.set(x, y, 0, sr);
-                        result.set(x, y, 1, sg);
-                        result.set(x, y, 2, sb);
+                        dst.set(x, y, 0, sr);
+                        dst.set(x, y, 1, sg);
+                        dst.set(x, y, 2, sb);
                     }
                     PalettePath::Simple(picker) => {
                         let srgb_offset = (threshold - 0.5)
                             * params.threshold_scale
                             * SIMPLE_BAYER_SRGB_AMPLITUDE;
                         let (qr, qg, qb) = picker.pick(r, g, b, srgb_offset);
-                        result.set(x, y, 0, qr);
-                        result.set(x, y, 1, qg);
-                        result.set(x, y, 2, qb);
+                        dst.set(x, y, 0, qr);
+                        dst.set(x, y, 1, qg);
+                        dst.set(x, y, 2, qb);
                     }
                     PalettePath::None => {
                         let qr = quantize_uniform(r, levels, offset);
                         let qg = quantize_uniform(g, levels, offset);
                         let qb = quantize_uniform(b, levels, offset);
-                        result.set(x, y, 0, qr);
-                        result.set(x, y, 1, qg);
-                        result.set(x, y, 2, qb);
+                        dst.set(x, y, 0, qr);
+                        dst.set(x, y, 1, qg);
+                        dst.set(x, y, 2, qb);
                     }
                 },
                 DitherColorMode::Grayscale => {
@@ -643,9 +664,9 @@ pub fn apply_ordered_with_cache(
                         PalettePath::Strict(picker) => {
                             let (qr, qg, qb) =
                                 picker.pick(lum, lum, lum, threshold, params.threshold_scale);
-                            result.set(x, y, 0, qr);
-                            result.set(x, y, 1, qg);
-                            result.set(x, y, 2, qb);
+                            dst.set(x, y, 0, qr);
+                            dst.set(x, y, 1, qg);
+                            dst.set(x, y, 2, qb);
                         }
                         PalettePath::Guided {
                             ranges,
@@ -655,9 +676,9 @@ pub fn apply_ordered_with_cache(
                             let qr = quantize_channel_guided(lum, ranges[0], *ch_levels, t);
                             let qg = quantize_channel_guided(lum, ranges[1], *ch_levels, t);
                             let qb = quantize_channel_guided(lum, ranges[2], *ch_levels, t);
-                            result.set(x, y, 0, qr);
-                            result.set(x, y, 1, qg);
-                            result.set(x, y, 2, qb);
+                            dst.set(x, y, 0, qr);
+                            dst.set(x, y, 1, qg);
+                            dst.set(x, y, 2, qb);
                         }
                         PalettePath::Mixed {
                             ranges,
@@ -670,24 +691,24 @@ pub fn apply_ordered_with_cache(
                             let qb = quantize_channel_guided(lum, ranges[2], *ch_levels, t);
                             let (sr, sg, sb) =
                                 picker.pick(qr, qg, qb, threshold, params.threshold_scale);
-                            result.set(x, y, 0, sr);
-                            result.set(x, y, 1, sg);
-                            result.set(x, y, 2, sb);
+                            dst.set(x, y, 0, sr);
+                            dst.set(x, y, 1, sg);
+                            dst.set(x, y, 2, sb);
                         }
                         PalettePath::Simple(picker) => {
                             let srgb_offset = (threshold - 0.5)
                                 * params.threshold_scale
                                 * SIMPLE_BAYER_SRGB_AMPLITUDE;
                             let (qr, qg, qb) = picker.pick(lum, lum, lum, srgb_offset);
-                            result.set(x, y, 0, qr);
-                            result.set(x, y, 1, qg);
-                            result.set(x, y, 2, qb);
+                            dst.set(x, y, 0, qr);
+                            dst.set(x, y, 1, qg);
+                            dst.set(x, y, 2, qb);
                         }
                         PalettePath::None => {
                             let qlum = quantize_uniform(lum, levels, offset);
-                            result.set(x, y, 0, qlum);
-                            result.set(x, y, 1, qlum);
-                            result.set(x, y, 2, qlum);
+                            dst.set(x, y, 0, qlum);
+                            dst.set(x, y, 1, qlum);
+                            dst.set(x, y, 2, qlum);
                         }
                     }
                 }
@@ -695,17 +716,17 @@ pub fn apply_ordered_with_cache(
 
             let a = params.map_alpha(src_a, threshold);
             if params.dither_alpha && a <= 0.0 {
-                result.set(x, y, 0, 0.0);
-                result.set(x, y, 1, 0.0);
-                result.set(x, y, 2, 0.0);
-                result.set(x, y, 3, 0.0);
+                dst.set(x, y, 0, 0.0);
+                dst.set(x, y, 1, 0.0);
+                dst.set(x, y, 2, 0.0);
+                dst.set(x, y, 3, 0.0);
             } else {
-                result.set(x, y, 3, a);
+                dst.set(x, y, 3, a);
             }
         }
     }
 
-    Ok(result)
+    Ok(())
 }
 
 /// Read RGBA for a block representative: prefer [`BlockRepresentativeCache`], else
@@ -716,11 +737,12 @@ fn read_block_source(
     block_gx: i32,
     block_gy: i32,
     block_cache: &BlockRepresentativeCache,
+    doc: u32,
     layer_id: LayerId,
     ps: u32,
 ) -> (f32, f32, f32, f32) {
     if block_gx >= 0 && block_gy >= 0 {
-        let key = BlockCoord::from_global(layer_id.0, block_gx as u32, block_gy as u32, ps);
+        let key = BlockCoord::from_global(doc, layer_id.0, block_gx as u32, block_gy as u32, ps);
         if let Some(px) = block_cache.get_raw(key) {
             return (px[0], px[1], px[2], px[3]);
         }
@@ -739,6 +761,7 @@ fn read_block_source(
 }
 
 /// CMYK angled-screen halftone on the ordered dither path.
+#[allow(dead_code)] // public-style wrapper kept for symmetry with ordered path
 fn apply_cmyk_halftone(
     tile: &PixelTile,
     coord: TileCoord,
@@ -749,7 +772,24 @@ fn apply_cmyk_halftone(
     block_cache: &BlockRepresentativeCache,
     layer_id: LayerId,
 ) -> Result<PixelTile, EngineError> {
-    let mut result = PixelTile::new();
+    let mut out = PixelTile::new();
+    apply_cmyk_halftone_into(
+        tile, coord, params, palette_cache, lut_cache, document, block_cache, layer_id, &mut out,
+    )?;
+    Ok(out)
+}
+
+fn apply_cmyk_halftone_into(
+    tile: &PixelTile,
+    coord: TileCoord,
+    params: &DitherParamsV2,
+    palette_cache: &PaletteKdCache,
+    lut_cache: &PaletteLutCache,
+    document: &Document,
+    block_cache: &BlockRepresentativeCache,
+    layer_id: LayerId,
+    dst: &mut PixelTile,
+) -> Result<(), EngineError> {
     let ps = params.pixel_size as u32;
     let s = params.halftone_cell_size as f32;
     let angles: [f32; 4] = HALFTONE_ANGLES_DEG.map(|d| d.to_radians());
@@ -759,7 +799,7 @@ fn apply_cmyk_halftone(
             .get_palette(palette_id)
             .ok_or_else(|| EngineError::palette_not_found(palette_id))?;
         let lut = lut_cache
-            .get_or_build(palette, palette_cache, DEFAULT_LUT_SIZE)
+            .get_or_build(document.id.0, palette, palette_cache, DEFAULT_LUT_SIZE)
             .map_err(|_| EngineError::palette_not_found(palette_id))?;
         Some((palette, lut))
     } else {
@@ -774,7 +814,7 @@ fn apply_cmyk_halftone(
             let block_gy = block.y;
 
             let (r, g, b, block_a) = if ps > 1 {
-                read_block_source(tile, coord, block_gx, block_gy, block_cache, layer_id, ps)
+                read_block_source(tile, coord, block_gx, block_gy, block_cache, document.id.0, layer_id, ps)
             } else {
                 (tile.at(x, y, 0), tile.at(x, y, 1), tile.at(x, y, 2), tile.at(x, y, 3))
             };
@@ -820,28 +860,35 @@ fn apply_cmyk_halftone(
                     b: out_b,
                 });
                 let nearest_idx = lut.nearest_index(oklab) as usize;
-                let palette_color = &palette.colors[nearest_idx];
-                result.set(x, y, 0, palette_color.r);
-                result.set(x, y, 1, palette_color.g);
-                result.set(x, y, 2, palette_color.b);
+                let Some(palette_color) = palette.colors.get(nearest_idx) else {
+                    return Err(EngineError::InvalidFilterParams {
+                        reason: format!(
+                            "palette LUT index {nearest_idx} out of range for palette len {}",
+                            palette.colors.len()
+                        ),
+                    });
+                };
+                dst.set(x, y, 0, palette_color.r);
+                dst.set(x, y, 1, palette_color.g);
+                dst.set(x, y, 2, palette_color.b);
             } else {
-                result.set(x, y, 0, out_r);
-                result.set(x, y, 1, out_g);
-                result.set(x, y, 2, out_b);
+                dst.set(x, y, 0, out_r);
+                dst.set(x, y, 1, out_g);
+                dst.set(x, y, 2, out_b);
             }
             let a = params.map_alpha(src_a, 0.5);
             if params.dither_alpha && a <= 0.0 {
-                result.set(x, y, 0, 0.0);
-                result.set(x, y, 1, 0.0);
-                result.set(x, y, 2, 0.0);
-                result.set(x, y, 3, 0.0);
+                dst.set(x, y, 0, 0.0);
+                dst.set(x, y, 1, 0.0);
+                dst.set(x, y, 2, 0.0);
+                dst.set(x, y, 3, 0.0);
             } else {
-                result.set(x, y, 3, a);
+                dst.set(x, y, 3, a);
             }
         }
     }
 
-    Ok(result)
+    Ok(())
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

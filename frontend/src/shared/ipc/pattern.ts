@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
 export interface ExportPatternArgs {
+  docId: number;
   layerId: number;
   path: string;
   filterInstanceIds?: string[] | null;
@@ -16,6 +17,7 @@ export interface ImportPatternResponse {
 export async function exportPattern(args: ExportPatternArgs): Promise<void> {
   return invoke<void>('export_pattern', {
     req: {
+      doc_id: args.docId,
       layer_id: args.layerId,
       filter_instance_ids: args.filterInstanceIds ?? null,
       path: args.path,
@@ -26,10 +28,16 @@ export async function exportPattern(args: ExportPatternArgs): Promise<void> {
 }
 
 export async function importPattern(
+  docId: number,
   path: string,
   targetLayerId: number
 ): Promise<ImportPatternResponse> {
   return invoke<ImportPatternResponse>('import_pattern', {
-    req: { path, target_layer_id: targetLayerId },
+    req: {
+      doc_id: docId,
+      path,
+      target_layer_id: targetLayerId,
+    },
   });
 }
+

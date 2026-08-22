@@ -1,0 +1,80 @@
+.tab-bar {
+  grid-area: menubar;
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  height: 100%;
+  background: var(--color-dark-gray);
+  /* titlebar already draws the top rule — avoid a double line */
+  border-bottom: var(--border);
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 180px;
+  padding: 0 6px 0 10px;
+  border: none;
+  border-right: var(--border);
+  background: transparent;
+  font-family: var(--font-family);
+  font-size: 11px;
+  color: var(--color-white);
+  cursor: pointer;
+  min-width: 0;
+}
+
+.tab:hover {
+  background: color-mix(in srgb, var(--color-white) 12%, transparent);
+}
+
+.tab-active {
+  background: var(--color-gray);
+  color: var(--color-black);
+}
+
+.tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-close {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  line-height: 12px;
+  font-size: 12px;
+  border-radius: 2px;
+}
+
+.tab-close:hover {
+  background: var(--color-black);
+  color: var(--color-white);
+}
+
+.tab-active .tab-close:hover {
+  background: var(--color-dark-gray);
+  color: var(--color-white);
+}
+
+.tab-new {
+  width: 24px;
+  border: none;
+  border-right: var(--border);
+  background: transparent;
+  color: var(--color-white);
+  cursor: pointer;
+  font-size: 14px;
+  font-family: var(--font-family);
+}
+
+.tab-new:hover {
+  background: color-mix(in srgb, var(--color-white) 12%, transparent);
+}
+
+.tab-drag-rest {
+  flex: 1;
+  min-width: 24px;
+}

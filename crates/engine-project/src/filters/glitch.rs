@@ -110,13 +110,6 @@ pub(crate) fn block_displacement(
     )
 }
 
-fn copy_tile(tile: &PixelTile) -> PixelTile {
-    let mut result = PixelTile::new();
-    result.data.copy_from_slice(&tile.data);
-    result
-}
-
-/// Read a channel at a global coordinate; clamp to this tile buffer's halo edge.
 fn sample_global(tile: &PixelTile, coord: TileCoord, gx: i32, gy: i32, channel: u32) -> f32 {
     let (lx, ly) = GlobalCoordSigned { x: gx, y: gy }.to_local_with_halo(coord, HALO);
     let max = TILE_FULL_SIZE as i32 - 1;
@@ -139,23 +132,19 @@ impl GlitchFilter {
     }
 
     /// Apply RGB shift glitch to a tile.
-    fn apply_rgb_shift(&self, tile: &PixelTile, coord: TileCoord) -> PixelTile {
-        let mut result = PixelTile::new();
-
+    fn apply_rgb_shift_into(&self, tile: &PixelTile, coord: TileCoord, dst: &mut PixelTile) {
         for y in 0..TILE_FULL_SIZE {
             for x in 0..TILE_FULL_SIZE {
                 let g = GlobalCoordSigned::from_local_with_halo(coord, x, y, HALO);
                 let (sr, sg, sb) =
                     rgb_channel_shifts(self.seed, g.x, g.y, coord.level, self.intensity);
 
-                result.set(x, y, 0, sample_global(tile, coord, g.x + sr, g.y, 0));
-                result.set(x, y, 1, sample_global(tile, coord, g.x + sg, g.y, 1));
-                result.set(x, y, 2, sample_global(tile, coord, g.x + sb, g.y, 2));
-                result.set(x, y, 3, tile.at(x, y, 3));
+                dst.set(x, y, 0, sample_global(tile, coord, g.x + sr, g.y, 0));
+                dst.set(x, y, 1, sample_global(tile, coord, g.x + sg, g.y, 1));
+                dst.set(x, y, 2, sample_global(tile, coord, g.x + sb, g.y, 2));
+                dst.set(x, y, 3, tile.at(x, y, 3));
             }
         }
-
-        result
     }
 
     /// Apply block displacement glitch to a tile.
@@ -163,8 +152,8 @@ impl GlitchFilter {
     /// Dest starts as a copy of `pre` so unwritten pixels (holes) keep the
     /// source. Each source pixel is pushed by the displacement of its
     /// **global** block origin.
-    fn apply_block_displace(&self, tile: &PixelTile, coord: TileCoord) -> PixelTile {
-        let mut result = copy_tile(tile);
+    fn apply_block_displace_into(&self, tile: &PixelTile, coord: TileCoord, dst: &mut PixelTile) {
+        dst.copy_from(tile);
 
         for y in 0..TILE_FULL_SIZE {
             for x in 0..TILE_FULL_SIZE {
@@ -183,25 +172,37 @@ impl GlitchFilter {
                     && dly < TILE_FULL_SIZE as i32
                 {
                     for c in 0..4 {
-                        result.set(dlx as u32, dly as u32, c, tile.at(x, y, c));
+                        dst.set(dlx as u32, dly as u32, c, tile.at(x, y, c));
                     }
                 }
             }
         }
-
-        result
     }
 
     /// Apply the glitch filter to a tile.
     pub fn apply_to_tile(&self, tile: &PixelTile, coord: TileCoord) -> Result<PixelTile, EngineError> {
+        let mut out = PixelTile::new();
+        self.apply_to_tile_into(tile, coord, &mut out)?;
+        Ok(out)
+    }
+
+    /// Glitch into an existing buffer (full 260² write, no tile alloc).
+    pub fn apply_to_tile_into(
+        &self,
+        tile: &PixelTile,
+        coord: TileCoord,
+        dst: &mut PixelTile,
+    ) -> Result<(), EngineError> {
         if self.intensity < 0.001 {
-            return Ok(copy_tile(tile));
+            dst.copy_from(tile);
+            return Ok(());
         }
 
         match self.glitch_type {
-            GlitchType::RGBShift => Ok(self.apply_rgb_shift(tile, coord)),
-            GlitchType::BlockDisplace => Ok(self.apply_block_displace(tile, coord)),
+            GlitchType::RGBShift => self.apply_rgb_shift_into(tile, coord, dst),
+            GlitchType::BlockDisplace => self.apply_block_displace_into(tile, coord, dst),
         }
+        Ok(())
     }
 }
 
@@ -247,7 +248,7 @@ mod tests {
         let glitch = GlitchFilter::new(GlitchType::RGBShift, 0.5, 12345).unwrap();
         let tile = PixelTile::new();
         let coord = tile_coord(0, 0);
-        let result = glitch.apply_rgb_shift(&tile, coord);
+        let result = glitch.apply_to_tile(&tile, coord).unwrap();
         assert_eq!(result.at(0, 0, 3), 0.0);
     }
 
@@ -256,7 +257,7 @@ mod tests {
         let glitch = GlitchFilter::new(GlitchType::BlockDisplace, 0.5, 12345).unwrap();
         let tile = PixelTile::new();
         let coord = tile_coord(0, 0);
-        let result = glitch.apply_block_displace(&tile, coord);
+        let result = glitch.apply_to_tile(&tile, coord).unwrap();
         assert_eq!(result.at(0, 0, 0), 0.0);
     }
 

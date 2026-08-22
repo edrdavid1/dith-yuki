@@ -28,47 +28,15 @@ use crate::{TileCache, TileKey, CacheStage, LayerId, TileCoord};
 /// Each variant represents a different type of change with different invalidation semantics.
 #[derive(Clone, Debug)]
 pub enum InvalidationEvent {
-    /// Layer raw pixels changed at specific coordinates.
-    ///
-    /// Marks Raw + Processed for the affected tiles, and cascades to Composite for the layer
-    /// and all layers above. This is the most disruptive change type.
-    ///
-    /// # Arguments
-    /// - `layer`: The affected layer
-    /// - `coords`: Specific tile coordinates that changed (may be empty = all tiles affected)
     LayerRawChanged {
+        doc: u32,
         layer: LayerId,
         coords: Vec<TileCoord>,
     },
-
-    /// Layer filters changed (affects all tiles of the layer).
-    ///
-    /// Marks all Processed tiles for the affected layer, and cascades to Composite for the layer
-    /// and all layers above. Does not invalidate Raw tiles (pixels unchanged).
-    ///
-    /// # Arguments
-    /// - `layer`: The affected layer
-    LayerFilterChanged { layer: LayerId },
-
-    /// Layer properties changed (opacity, blend mode, visibility).
-    ///
-    /// Only cascades Composite tiles for the affected layer and layers above.
-    /// Raw and Processed tiles of this layer remain valid (their content didn't change,
-    /// only how they're blended into the composite).
-    ///
-    /// # Arguments
-    /// - `layer`: The affected layer
-    LayerPropsChanged { layer: LayerId },
-
-    /// Layer mask changed at specific coordinates.
-    ///
-    /// Marks Processed tiles at the affected coordinates, and cascades to Composite for the layer
-    /// and all layers above. Affects pixel content of the layer, but only at masked coordinates.
-    ///
-    /// # Arguments
-    /// - `layer`: The affected layer
-    /// - `coords`: Specific tile coordinates where mask changed
+    LayerFilterChanged { doc: u32, layer: LayerId },
+    LayerPropsChanged { doc: u32, layer: LayerId },
     MaskChanged {
+        doc: u32,
         layer: LayerId,
         coords: Vec<TileCoord>,
     },
@@ -101,47 +69,42 @@ pub enum InvalidationEvent {
 /// ```
 pub fn invalidate(cache: &TileCache, event: InvalidationEvent) {
     match event {
-        InvalidationEvent::LayerRawChanged { layer, coords } => {
+        InvalidationEvent::LayerRawChanged { doc, layer, coords } => {
             for coord in coords {
-                // Mark Raw stage dirty
                 cache.mark_dirty(TileKey {
+                    doc,
                     layer,
                     coord,
                     stage: CacheStage::Raw,
                 });
-                // Mark Processed stage dirty
                 cache.mark_dirty(TileKey {
+                    doc,
                     layer,
                     coord,
                     stage: CacheStage::Processed,
                 });
-                // Cascade: mark Composite for this layer and all above
-                cascade_composite_invalidation(cache, layer, coord);
+                cascade_composite_invalidation(cache, doc, layer, coord);
             }
         }
 
-        InvalidationEvent::LayerFilterChanged { layer } => {
-            // Mark all Processed tiles for this layer as dirty
-            mark_all_processed_for_layer(cache, layer);
-            // Cascade: mark Composite for this layer and all above
-            cascade_composite_invalidation_all_coords(cache, layer);
+        InvalidationEvent::LayerFilterChanged { doc, layer } => {
+            mark_all_processed_for_layer(cache, doc, layer);
+            cascade_composite_invalidation_all_coords(cache, doc, layer);
         }
 
-        InvalidationEvent::LayerPropsChanged { layer } => {
-            // Only cascade Composite; Raw and Processed of this layer are still valid
-            cascade_composite_invalidation_all_coords(cache, layer);
+        InvalidationEvent::LayerPropsChanged { doc, layer } => {
+            cascade_composite_invalidation_all_coords(cache, doc, layer);
         }
 
-        InvalidationEvent::MaskChanged { layer, coords } => {
+        InvalidationEvent::MaskChanged { doc, layer, coords } => {
             for coord in coords {
-                // Mark Processed stage dirty (mask affects processed content)
                 cache.mark_dirty(TileKey {
+                    doc,
                     layer,
                     coord,
                     stage: CacheStage::Processed,
                 });
-                // Cascade: mark Composite for this layer and all above
-                cascade_composite_invalidation(cache, layer, coord);
+                cascade_composite_invalidation(cache, doc, layer, coord);
             }
         }
     }
@@ -156,79 +119,40 @@ pub fn invalidate(cache: &TileCache, event: InvalidationEvent) {
 ///
 /// - `cache`: The TileCache
 /// - `layer`: The layer whose Processed tiles should be marked dirty
-fn mark_all_processed_for_layer(cache: &TileCache, layer: LayerId) {
+fn mark_all_processed_for_layer(cache: &TileCache, doc: u32, layer: LayerId) {
     let mut keys_to_mark = Vec::new();
-
-    // Collect keys from cache entries
     for entry in cache.entries.iter() {
         let key = *entry.key();
-        if key.layer == layer && key.stage == CacheStage::Processed {
+        if key.doc == doc && key.layer == layer && key.stage == CacheStage::Processed {
             keys_to_mark.push(key);
         }
     }
-
-    // Mark collected keys as dirty
     for key in keys_to_mark {
         cache.mark_dirty(key);
     }
 }
 
-/// Cascade Composite tile invalidation for a specific coordinate.
-///
-/// Marks all Composite tiles at the given coordinate for the specified layer
-/// and all layers above (layer ≥ given layer) as dirty.
-///
-/// This maintains the invariant that Composite tiles depend on all Raw/Processed
-/// tiles below them. When a lower layer changes, all Composite tiles that depend
-/// on it must be recomputed.
-///
-/// # Arguments
-///
-/// - `cache`: The TileCache
-/// - `layer`: The base layer; tiles at this layer and above will be cascaded
-/// - `coord`: The tile coordinate to cascade
-fn cascade_composite_invalidation(cache: &TileCache, _layer: LayerId, coord: TileCoord) {
+fn cascade_composite_invalidation(cache: &TileCache, doc: u32, _layer: LayerId, coord: TileCoord) {
     let mut keys_to_mark = Vec::new();
-
-    // Iterate cache entries and find ALL Composite tiles at this coordinate.
-    // The global composite (layer 0) depends on all layers, so any layer change
-    // invalidates all composite tiles at the affected coordinate.
     for entry in cache.entries.iter() {
         let key = *entry.key();
-        if key.stage == CacheStage::Composite && key.coord == coord {
+        if key.doc == doc && key.stage == CacheStage::Composite && key.coord == coord {
             keys_to_mark.push(key);
         }
     }
-
-    // Mark collected keys as dirty
     for key in keys_to_mark {
         cache.mark_dirty(key);
     }
 }
 
-/// Cascade Composite tile invalidation for all coordinates of a given layer.
-///
-/// Marks all Composite tiles for the specified layer and all layers above as dirty.
-/// This is used when layer properties change (affecting all Composite tiles).
-///
-/// # Arguments
-///
-/// - `cache`: The TileCache
-/// - `layer`: The base layer; tiles at this layer and above will be cascaded
-fn cascade_composite_invalidation_all_coords(cache: &TileCache, layer: LayerId) {
+fn cascade_composite_invalidation_all_coords(cache: &TileCache, doc: u32, _layer: LayerId) {
     let mut keys_to_mark = Vec::new();
-
-    // Iterate cache entries and find ALL Composite tiles.
-    // We mark all Composite tiles dirty because the global composite (layer 0)
-    // depends on every layer. Any layer change invalidates the composite.
     for entry in cache.entries.iter() {
         let key = *entry.key();
-        if key.stage == CacheStage::Composite {
+        if key.doc == doc && key.stage == CacheStage::Composite {
             keys_to_mark.push(key);
         }
     }
-
-    // Mark collected keys as dirty
     for key in keys_to_mark {
         cache.mark_dirty(key);
     }
@@ -242,6 +166,7 @@ mod tests {
 
     fn make_key(layer: u32, x: u32, y: u32, stage: CacheStage) -> TileKey {
         TileKey {
+            doc: 1,
             layer,
             coord: TileCoord {
                 level: 0,
@@ -270,8 +195,7 @@ mod tests {
         cache.get_or_insert(key_raw, tile.clone());
         cache.get_or_insert(key_processed, tile);
 
-        let event = InvalidationEvent::LayerRawChanged {
-            layer: 0,
+        let event = InvalidationEvent::LayerRawChanged { doc: 1, layer: 0,
             coords: vec![make_coord(0, 0)],
         };
         invalidate(&cache, event);
@@ -290,8 +214,7 @@ mod tests {
         cache.get_or_insert(key_composite_0, tile.clone());
         cache.get_or_insert(key_composite_1, tile);
 
-        let event = InvalidationEvent::LayerRawChanged {
-            layer: 0,
+        let event = InvalidationEvent::LayerRawChanged { doc: 1, layer: 0,
             coords: vec![make_coord(0, 0)],
         };
         invalidate(&cache, event);
@@ -313,7 +236,7 @@ mod tests {
         cache.get_or_insert(key_processed_2, tile.clone());
         cache.get_or_insert(key_raw, tile);
 
-        let event = InvalidationEvent::LayerFilterChanged { layer: 0 };
+        let event = InvalidationEvent::LayerFilterChanged { doc: 1, layer: 0 };
         invalidate(&cache, event);
 
         // Processed tiles should be dirty
@@ -336,7 +259,7 @@ mod tests {
         cache.get_or_insert(key_processed, tile.clone());
         cache.get_or_insert(key_raw, tile);
 
-        let event = InvalidationEvent::LayerPropsChanged { layer: 0 };
+        let event = InvalidationEvent::LayerPropsChanged { doc: 1, layer: 0 };
         invalidate(&cache, event);
 
         // Only Composite should be dirty
@@ -355,8 +278,7 @@ mod tests {
         cache.get_or_insert(key_processed, tile.clone());
         cache.get_or_insert(key_raw, tile);
 
-        let event = InvalidationEvent::MaskChanged {
-            layer: 0,
+        let event = InvalidationEvent::MaskChanged { doc: 1, layer: 0,
             coords: vec![make_coord(0, 0)],
         };
         invalidate(&cache, event);
@@ -381,8 +303,7 @@ mod tests {
 
         // Invalidate layer 1; should cascade to ALL composite tiles
         // because the global composite depends on all layers
-        let event = InvalidationEvent::LayerRawChanged {
-            layer: 1,
+        let event = InvalidationEvent::LayerRawChanged { doc: 1, layer: 1,
             coords: vec![make_coord(0, 0)],
         };
         invalidate(&cache, event);
@@ -401,8 +322,7 @@ mod tests {
 
         cache.get_or_insert(key, tile);
 
-        let event = InvalidationEvent::LayerRawChanged {
-            layer: 0,
+        let event = InvalidationEvent::LayerRawChanged { doc: 1, layer: 0,
             coords: vec![],
         };
         invalidate(&cache, event);
@@ -423,8 +343,7 @@ mod tests {
         cache.get_or_insert(key2, tile.clone());
         cache.get_or_insert(key3, tile);
 
-        let event = InvalidationEvent::LayerRawChanged {
-            layer: 0,
+        let event = InvalidationEvent::LayerRawChanged { doc: 1, layer: 0,
             coords: vec![make_coord(0, 0), make_coord(1, 0), make_coord(2, 0)],
         };
         invalidate(&cache, event);
@@ -438,8 +357,7 @@ mod tests {
     fn invalidate_nonexistent_key_is_safe() {
         let cache = TileCache::new(10_000_000);
 
-        let event = InvalidationEvent::LayerRawChanged {
-            layer: 99,
+        let event = InvalidationEvent::LayerRawChanged { doc: 1, layer: 99,
             coords: vec![make_coord(99, 99)],
         };
 

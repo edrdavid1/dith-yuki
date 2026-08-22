@@ -66,6 +66,7 @@ export default function ColorLabFeature({
   onMoveToSide,
 }: ColorLabFeatureProps) {
   const dispatch = useAppDispatch();
+  const docId = useAppSelector((s) => s.document.docId);
   const hasDocument = useAppSelector((s) => s.document.hasDocument);
   const layerId = useAppSelector((s) => s.selection.layerId);
   const palettesVersion = useAppSelector((s) => s.palettes.version);
@@ -134,7 +135,7 @@ export default function ColorLabFeature({
         .filter((c) => c.valid)
         .map((c) => [c.r, c.g, c.b] as [number, number, number]);
       lastLivePushRef.current = sig;
-      void replacePalette(selectedPaletteId, name.trim(), rgb)
+      docId != null && void replacePalette(docId, selectedPaletteId, name.trim(), rgb)
         .then((dto) => {
           setPalettes((prev) => prev.map((p) => (p.id === dto.id ? dto : p)));
           void emitPaletteChanged();
@@ -185,7 +186,8 @@ export default function ColorLabFeature({
         filters: [{ name: 'Palettes', extensions: ['ase', 'aco', 'gpl', 'pal', 'csv', 'json'] }],
       });
       if (!filePath) return;
-      const dto = await importPalette(filePath as string);
+      if (docId == null) return;
+      const dto = await importPalette(docId, filePath as string);
       dispatch(setColors(dto.colors.map(([r, g, b]) => createColorEntry(toHex(r, g, b)))));
       if (dto.name) dispatch(setName(dto.name));
       dispatch(setSelectedPaletteId(dto.id ?? null));
@@ -209,7 +211,8 @@ export default function ColorLabFeature({
         return;
       }
       try {
-        const dto = await importBuiltinPalette(id);
+        if (docId == null) return;
+        const dto = await importBuiltinPalette(docId, id);
         dispatch(setColors(dto.colors.map(([r, g, b]) => createColorEntry(toHex(r, g, b)))));
         if (dto.name) dispatch(setName(dto.name));
         dispatch(setSelectedPaletteId(dto.id ?? null));
@@ -263,8 +266,9 @@ export default function ColorLabFeature({
         });
         if (!savePath) return;
         const rgbTuples = validColors.map((c) => [c.r, c.g, c.b] as [number, number, number]);
-        const dto = await addPalette(name.trim() || 'Export', rgbTuples);
-        await exportPalette(dto.id, savePath, formatLower);
+        if (docId == null) return;
+        const dto = await addPalette(docId, name.trim() || 'Export', rgbTuples);
+        await exportPalette(docId, dto.id, savePath, formatLower);
         dispatch(setError(null));
         dispatch(setSuccessMessage('Palette exported successfully.'));
         window.setTimeout(() => dispatch(setSuccessMessage(null)), 3000);
@@ -309,8 +313,8 @@ export default function ColorLabFeature({
       const nameTrimmed = name.trim();
       const dto =
         selectedPaletteId !== null && shouldReplaceSelectedPalette(selectedPaletteId, palettes)
-          ? await replacePalette(selectedPaletteId, nameTrimmed, rgb)
-          : await addPalette(nameTrimmed, rgb);
+          ? await replacePalette(docId!, selectedPaletteId, nameTrimmed, rgb)
+          : await addPalette(docId!, nameTrimmed, rgb);
       dispatch(bumpVersion({ lastCreatedId: dto.id }));
       publishPaletteBinding(dto.id ?? null);
       dispatch(setSelectedPaletteId(dto.id));

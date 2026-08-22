@@ -31,11 +31,14 @@ export default function PreviewFeature({
   welcome,
 }: PreviewFeatureProps) {
   const docId = useAppSelector((s) => s.document.docId);
+  const tabsActiveId = useAppSelector((s) => s.tabs.activeId);
   const docWidth = useAppSelector((s) => s.document.width);
   const docHeight = useAppSelector((s) => s.document.height);
   const hasDocument = useAppSelector((s) => s.document.hasDocument);
   const hydrated = useAppSelector((s) => s.document.hydrated);
   const { previewBackground } = useShell();
+  // Tabs stay correct even if a raced refreshDocument fails to parse snap.id.
+  const effectiveDocId = docId ?? tabsActiveId;
 
   const {
     viewport,
@@ -85,24 +88,24 @@ export default function PreviewFeature({
       setCanvasSize(rect.width, rect.height);
     }
     return () => observer.disconnect();
-  }, [setCanvasSize]);
+  }, [setCanvasSize, hasDocument, effectiveDocId]);
 
   // Fit + center when a document opens (or its size changes) and the canvas
   // has a real size — avoids the default pan (0,0) top-left placement.
   useEffect(() => {
-    if (!hasDocument || docId === null) {
+    if (!hasDocument || effectiveDocId === null) {
       fittedDocKeyRef.current = null;
       return;
     }
     if (viewport.canvasWidth <= 0 || viewport.canvasHeight <= 0) return;
     if (docWidth <= 0 || docHeight <= 0) return;
-    const key = `${docId}:${docWidth}x${docHeight}`;
+    const key = `${effectiveDocId}:${docWidth}x${docHeight}`;
     if (fittedDocKeyRef.current === key) return;
     fittedDocKeyRef.current = key;
     fitToView();
   }, [
     hasDocument,
-    docId,
+    effectiveDocId,
     docWidth,
     docHeight,
     viewport.canvasWidth,
@@ -113,7 +116,7 @@ export default function PreviewFeature({
   // Floating / multi-window: re-send viewport when document meta refreshes
   // so this window's tiles get scheduled (engine bridge owns document events).
   useEffect(() => {
-    if (!hasDocument || docId === null) return;
+    if (!hasDocument || effectiveDocId === null) return;
     const vp = viewportRef.current;
     if (vp.canvasWidth <= 0 || vp.canvasHeight <= 0) return;
     setViewport({
@@ -125,34 +128,14 @@ export default function PreviewFeature({
     }).catch((err) => {
       logIpcError('PreviewFeature.setViewport', err);
     });
-  }, [docId, docWidth, docHeight, hasDocument]);
+  }, [effectiveDocId, docWidth, docHeight, hasDocument]);
 
-  if (!hasDocument || !docId) {
-    if (!hydrated) {
-      return (
-        <div
-          aria-hidden
-          style={
-            fill
-              ? { flex: 1, ...previewBackgroundStyle(previewBackground) }
-              : { width: '100%', height: '100%', ...previewBackgroundStyle(previewBackground) }
-          }
-        />
-      );
-    }
-    return (
-      <EmptyState
-        fill={fill}
-        recentEntries={welcome?.recentEntries}
-        onNewProject={welcome?.onNewProject}
-        onOpenImage={welcome?.onOpenImage}
-        onOpenProject={welcome?.onOpenProject}
-        onOpenRecent={welcome?.onOpenRecent}
-      />
-    );
-  }
-
-  const showCanvas = viewport.canvasWidth > 0 && viewport.canvasHeight > 0;
+  const waiting = !hydrated;
+  const empty = hydrated && (!hasDocument || effectiveDocId === null);
+  // Mount PreviewWindow whenever a document exists — do not wait for canvas
+  // size. Gating on canvasWidth caused a blank preview (bg only, no chrome)
+  // when size lagged after open / tab switch; TileCanvas no-ops at 0×0.
+  const showPreview = !empty && !waiting && effectiveDocId !== null;
 
   return (
     <div
@@ -163,9 +146,21 @@ export default function PreviewFeature({
           : { width: '100%', height: '100%', ...previewBackgroundStyle(previewBackground) }
       }
     >
-      {showCanvas && (
+      {waiting ? (
+        <div aria-hidden style={{ flex: 1 }} />
+      ) : empty ? (
+        <EmptyState
+          fill={fill}
+          recentEntries={welcome?.recentEntries}
+          onNewProject={welcome?.onNewProject}
+          onOpenImage={welcome?.onOpenImage}
+          onOpenProject={welcome?.onOpenProject}
+          onOpenRecent={welcome?.onOpenRecent}
+        />
+      ) : (
+        showPreview && effectiveDocId !== null && (
         <PreviewWindow
-          docId={docId}
+          docId={effectiveDocId}
           docWidth={docWidth}
           docHeight={docHeight}
           viewport={{ ...viewport, zoomMode }}
@@ -181,6 +176,7 @@ export default function PreviewFeature({
           onTitleBarMouseDown={onTitleBarMouseDown}
           hideTitleBar={hideTitleBar}
         />
+        )
       )}
     </div>
   );

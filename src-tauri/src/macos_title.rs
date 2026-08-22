@@ -16,7 +16,152 @@ const TITLE_INACTIVE: (f64, f64, f64) = (0.22, 0.22, 0.22);
 const CENTER_MASK: u64 = 1 | 4 | 8 | 32;
 
 #[cfg(not(target_os = "macos"))]
-pub fn install_centered_title(_window: &tauri::WebviewWindow) {}
+pub fn apply_overlay_csd(_window: &tauri::WebviewWindow) {}
+
+#[cfg(not(target_os = "macos"))]
+pub fn refresh_traffic_lights(_window: &tauri::Window) {}
+
+/// Draw the webview under the traffic lights so File/Edit sit on the same row.
+///
+/// **Do not** manually `setFrame` the traffic lights on resize. Tauri/tao already
+/// re-applies `trafficLightPosition` from `tauri.conf.json` inside the NSView
+/// `drawRect` path. A second DidResize layout fought that every frame and made
+/// the buttons jump while dragging the window edge.
+#[cfg(target_os = "macos")]
+pub fn apply_overlay_csd(window: &tauri::WebviewWindow) {
+    let Ok(ns_window) = window.ns_window() else {
+        return;
+    };
+    let ns_window = ns_window as id;
+    let _ = window.set_title_bar_style(tauri::TitleBarStyle::Overlay);
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        let _: () = msg_send![ns_window, setTitleVisibility: 1]; // NSWindowTitleHidden
+        let _: () = msg_send![ns_window, setTitlebarAppearsTransparent: YES];
+        let mask: u64 = msg_send![ns_window, styleMask];
+        let full_size: u64 = 1 << 15; // NSFullSizeContentViewWindowMask
+        if mask & full_size == 0 {
+            let _: () = msg_send![ns_window, setStyleMask: mask | full_size];
+        }
+        // macOS 11+: kill the native separator line above the HTML chrome.
+        let _: () = msg_send![ns_window, setTitlebarSeparatorStyle: 0]; // None
+        install_zoom_not_fullscreen(ns_window);
+        observe_zoom_not_fullscreen(ns_window);
+    }));
+
+    // Native chrome can reset the green button action after first paint.
+    let delayed = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let win = delayed.clone();
+        let _ = delayed.run_on_main_thread(move || {
+            if let Ok(ns) = win.ns_window() {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+                    install_zoom_not_fullscreen(ns as id);
+                }));
+            }
+        });
+    });
+}
+
+/// Re-apply zoom wiring after exit fullscreen (no traffic-light frame writes).
+#[cfg(target_os = "macos")]
+pub fn refresh_traffic_lights(window: &tauri::Window) {
+    let Ok(ns_window) = window.ns_window() else {
+        return;
+    };
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        install_zoom_not_fullscreen(ns_window as id);
+    }));
+}
+
+/// Photoshop-style green button: `zoom:` (fit screen), never Mission Control fullscreen.
+#[cfg(target_os = "macos")]
+unsafe fn install_zoom_not_fullscreen(ns_window: id) {
+    use cocoa::appkit::{NSWindow, NSWindowButton, NSWindowCollectionBehavior};
+
+    let mut behavior = ns_window.collectionBehavior();
+    behavior.remove(NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenPrimary);
+    behavior.remove(NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenAuxiliary);
+    // NSWindowCollectionBehaviorFullScreenNone (10.11+) — not in cocoa 0.26 bitflags.
+    const FULL_SCREEN_NONE: u64 = 1 << 9;
+    let bits = behavior.bits() | FULL_SCREEN_NONE;
+    ns_window.setCollectionBehavior_(NSWindowCollectionBehavior::from_bits_truncate(bits));
+
+    // Strip fullscreen bit from style mask if present.
+    let mask: u64 = msg_send![ns_window, styleMask];
+    const FULLSCREEN_MASK: u64 = 1 << 14; // NSFullScreenWindowMask
+    if mask & FULLSCREEN_MASK != 0 {
+        let _: () = msg_send![ns_window, setStyleMask: mask & !FULLSCREEN_MASK];
+    }
+
+    // Default green-button click is toggleFullScreen on modern macOS — force zoom:.
+    let zoom: id = ns_window.standardWindowButton_(NSWindowButton::NSWindowZoomButton);
+    if zoom != nil {
+        let _: () = msg_send![zoom, setTarget: ns_window];
+        let _: () = msg_send![zoom, setAction: sel!(zoom:)];
+    }
+}
+
+/// Keep green-button → zoom: after AppKit fullscreen transitions.
+#[cfg(target_os = "macos")]
+unsafe fn observe_zoom_not_fullscreen(ns_window: id) {
+    use block::ConcreteBlock;
+
+    let center: id = msg_send![class!(NSNotificationCenter), defaultCenter];
+    let names = [
+        "NSWindowDidEndLiveResizeNotification",
+        "NSWindowDidExitFullScreenNotification",
+        "NSWindowDidEnterFullScreenNotification",
+    ];
+    for name in names {
+        let ns_name: id = ns_string(name);
+        let win = ns_window;
+        let exit_fs_if_entered = name == "NSWindowDidEnterFullScreenNotification";
+        let block = ConcreteBlock::new(move |notification: id| {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let obj: id = msg_send![notification, object];
+                if obj != win {
+                    return;
+                }
+                if exit_fs_if_entered {
+                    let _: () = msg_send![win, toggleFullScreen: nil];
+                }
+                install_zoom_not_fullscreen(win);
+            }));
+        });
+        let block = block.copy();
+        let _: id = msg_send![
+            center,
+            addObserverForName: ns_name
+            object: ns_window
+            queue: nil
+            usingBlock: &*block
+        ];
+        std::mem::forget(block);
+    }
+
+    let will: id = ns_string("NSWindowWillEnterFullScreenNotification");
+    let win = ns_window;
+    let block = ConcreteBlock::new(move |notification: id| {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let obj: id = msg_send![notification, object];
+            if obj != win {
+                return;
+            }
+            let _: () = msg_send![win, toggleFullScreen: nil];
+            install_zoom_not_fullscreen(win);
+        }));
+    });
+    let block = block.copy();
+    let _: id = msg_send![
+        center,
+        addObserverForName: will
+        object: ns_window
+        queue: nil
+        usingBlock: &*block
+    ];
+    std::mem::forget(block);
+}
 
 #[cfg(target_os = "macos")]
 pub fn install_centered_title(window: &tauri::WebviewWindow) {

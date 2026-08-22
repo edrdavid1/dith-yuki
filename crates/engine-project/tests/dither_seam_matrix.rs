@@ -169,7 +169,7 @@ fn step1_fs_divisors_of_256_clean() {
     const SEAM: f64 = 1e-4;
     for ps in [4u8, 8, 16, 32] {
         blocks.clear_dithered();
-        blocks.populate_from_buffer(&rgba, IMG_W, IMG_H, LAYER, ps as u32);
+        blocks.populate_from_buffer(&rgba, IMG_W, IMG_H, 1, LAYER, ps as u32);
         let fs = fs_params(ps);
         let store = ErrorResidualsStore::new();
         let left = apply_error_diffusion_with_cache(
@@ -210,7 +210,7 @@ fn step2_full_seam_matrix_clean() {
 
     for &ps in &PIXEL_SIZES {
         if ps > 1 {
-            blocks.populate_from_buffer(&rgba, IMG_W, IMG_H, LAYER, ps as u32);
+            blocks.populate_from_buffer(&rgba, IMG_W, IMG_H, 1, LAYER, ps as u32);
         }
         blocks.clear_dithered();
 
@@ -283,15 +283,15 @@ fn step2_full_seam_matrix_clean() {
 fn step3_invalidation_recomputes_representative() {
     let mut rgba = gradient_rgba();
     let cache = BlockRepresentativeCache::new();
-    cache.populate_from_buffer(&rgba, IMG_W, IMG_H, LAYER, 8);
-    let key = engine_tiles::block_cache::BlockCoord::from_global(LAYER, 256, 0, 8);
+    cache.populate_from_buffer(&rgba, IMG_W, IMG_H, 1, LAYER, 8);
+    let key = engine_tiles::block_cache::BlockCoord::from_global(1, LAYER, 256, 0, 8);
     let before = cache.get_raw(key).unwrap()[0];
 
     // Edit the representative pixel of the block at gx=256
     let idx = (0 * IMG_W + 256) as usize * 4;
     rgba[idx] = 0.123;
     cache.invalidate_all();
-    cache.populate_from_buffer(&rgba, IMG_W, IMG_H, LAYER, 8);
+    cache.populate_from_buffer(&rgba, IMG_W, IMG_H, 1, LAYER, 8);
     let after = cache.get_raw(key).unwrap()[0];
     assert_ne!(before, after);
     assert!((after - 0.123).abs() < 1e-6);
@@ -303,7 +303,7 @@ fn step3_populate_perf_is_linear() {
     let rgba = gradient_rgba();
     let cache = BlockRepresentativeCache::new();
     let t0 = Instant::now();
-    cache.populate_from_buffer(&rgba, IMG_W, IMG_H, LAYER, 16);
+    cache.populate_from_buffer(&rgba, IMG_W, IMG_H, 1, LAYER, 16);
     let elapsed = t0.elapsed();
     eprintln!("populate 512×512 ps=16: {elapsed:?}");
     // Should be well under 100ms even in debug; catch accidental O(n²).
@@ -323,10 +323,10 @@ fn track_a_atkinson_seam_sample_clean() {
     let palette_cache = PaletteKdCache::new();
     let lut_cache = PaletteLutCache::new();
     let blocks = BlockRepresentativeCache::new();
-    blocks.populate_from_buffer(&rgba, IMG_W, IMG_H, LAYER, 1);
+    blocks.populate_from_buffer(&rgba, IMG_W, IMG_H, 1, LAYER, 1);
     for ps in [1u8, 3, 8, 16] {
         if ps > 1 {
-            blocks.populate_from_buffer(&rgba, IMG_W, IMG_H, LAYER, ps as u32);
+            blocks.populate_from_buffer(&rgba, IMG_W, IMG_H, 1, LAYER, ps as u32);
         }
         let left_c = TileCoord { level: 0, x: 0, y: 0 };
         let right_c = TileCoord { level: 0, x: 1, y: 0 };
@@ -416,7 +416,7 @@ fn track_a_fs_2x2_diagonal_seed_no_boundary_darkening() {
         "tile (1,1) corner lum={corner_lum} vs interior={interior_mean} — possible diagonal loss"
     );
     assert!(
-        store.get_diag(layer_id, TileCoord { level: 0, x: 1, y: 1 }).is_some(),
+        store.get_diag(1, layer_id, TileCoord { level: 0, x: 1, y: 1 }).is_some(),
         "corner channel must be stored from (0,0)"
     );
 }

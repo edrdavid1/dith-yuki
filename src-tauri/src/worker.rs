@@ -115,7 +115,16 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
             // changes, but insert_fresh then overwrote a newer result with a
             // slower older one. Discard stale tasks; schedule_dirty_viewport_tiles
             // already enqueued the current generation.
-            let snapshot = state.document_handle.snapshot();
+            let snapshot = match state.session(task.key.doc) {
+                Ok(s) => s.document_handle.snapshot(),
+                Err(_) => {
+                    state
+                        .preview_pass_inflight
+                        .fetch_sub(1, Ordering::AcqRel);
+                    crate::commands::on_preview_task_finished(&state);
+                    continue;
+                }
+            };
 
             if task_is_stale(&task, &snapshot) {
                 state
@@ -125,80 +134,115 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
                 continue;
             }
 
-            // Execute task based on stage
-            let result = match task.key.stage {
+            let result: Result<Arc<PixelTile>, engine_project::error::EngineError> =
+                match task.key.stage {
                 CacheStage::Raw => load_raw_tile(task.key, &state),
-                CacheStage::Processed => compute_processed_tile(task.key, &state),
-                CacheStage::Composite => compute_composite_tile(task.key, &state),
+                CacheStage::Processed => {
+                    if crate::tile_pipeline::layer_has_error_diffusion(
+                        &snapshot.root,
+                        task.key.layer,
+                    ) && !engine_tiles::ed_ready(&state.tile_cache, task.key, true)
+                    {
+                        state.ed_frontier.block(task, &state.tile_cache);
+                        state
+                            .preview_pass_inflight
+                            .fetch_sub(1, Ordering::AcqRel);
+                        crate::commands::on_preview_task_finished(&state);
+                        continue;
+                    }
+                    compute_processed_tile(task.key, &state)
+                }
+                CacheStage::Composite => match compute_composite_tile(task.key, &state) {
+                    Err(engine_project::error::EngineError::EdPrefixPending) => {
+                        let deps = crate::tile_pipeline::pending_ed_processed_at_coord(
+                            &state,
+                            &snapshot.root,
+                            task.key.doc,
+                            task.key.coord,
+                        );
+                        if deps.is_empty() {
+                            state.scheduler.enqueue_or_bump(task);
+                            state.worker_wake.notify_one();
+                        } else {
+                            state.ed_frontier.block_on(task, deps);
+                        }
+                        state
+                            .preview_pass_inflight
+                            .fetch_sub(1, Ordering::AcqRel);
+                        crate::commands::on_preview_task_finished(&state);
+                        continue;
+                    }
+                    other => other,
+                },
             };
 
             if let Ok(tile) = result {
                 // Re-check after compute: gen may have advanced while we worked.
-                let snapshot = state.document_handle.snapshot();
+                let snapshot = match state.session(task.key.doc) {
+                    Ok(s) => s.document_handle.snapshot(),
+                    Err(_) => {
+                        state
+                            .preview_pass_inflight
+                            .fetch_sub(1, Ordering::AcqRel);
+                        crate::commands::on_preview_task_finished(&state);
+                        continue;
+                    }
+                };
                 if task_is_stale(&task, &snapshot) {
                     // Discarded; current gen should already be queued or pending refresh.
                 } else {
-                    let inserted = state.tile_cache.insert_fresh_gen(
-                        task.key,
-                        Arc::new(tile),
-                        task.generation,
-                    );
-                    if inserted {
-                    // Track A: wake Processed tiles that computed with zero-seed
-                    // because this raw neighbor was missing.
-                    if task.key.stage == CacheStage::Raw {
-                        let waiters = state.pending_diffusion_waiters.wake(&task.key);
-                        if !waiters.is_empty() {
-                            let doc_gen =
-                                snapshot.generations.document_gen.load(Ordering::Acquire);
-                            for processed_key in waiters {
-                                state.tile_cache.mark_dirty(processed_key);
-                                let layer_gen =
-                                    snapshot.generations.get_layer_gen(processed_key.layer);
-                                state.scheduler.enqueue(engine_tiles::RecomputeTask {
-                                    key: processed_key,
-                                    generation: doc_gen,
-                                    layer_generation: layer_gen,
-                                    priority: engine_tiles::Priority::Immediate,
-                                });
-                                state.worker_wake.notify_one();
+                    match task.key.stage {
+                        // Raw is already in cache; load_raw_tile returns the shared Arc.
+                        CacheStage::Raw => {
+                            let inserted = state.tile_cache.insert_fresh_gen(
+                                task.key,
+                                tile,
+                                task.generation,
+                            );
+                            if inserted {
+                                state.evict_for_pressure_if_needed();
+                                crate::tile_pipeline::wake_ed_frontier_after_insert(
+                                    &state, task.key,
+                                );
+                            } else {
+                                crate::tile_pipeline::reschedule_if_insert_rejected(
+                                    &state, task.key, false,
+                                );
+                            }
+                        }
+                        // Processed / Composite: pipeline already published a single Arc.
+                        CacheStage::Processed | CacheStage::Composite => {
+                            let viewport_level = state.viewport.lock().unwrap().level;
+                            if task.key.stage == CacheStage::Composite
+                                && task.key.coord.level == viewport_level
+                                && state.tile_cache.get_entry(task.key).is_some()
+                            {
+                                let payload = TileReadyPayload {
+                                    doc_id: snapshot.id.0,
+                                    layer_id: task.key.layer,
+                                    stage: "composite".to_string(),
+                                    level: task.key.coord.level,
+                                    x: task.key.coord.x,
+                                    y: task.key.coord.y,
+                                };
+                                let _ = app_handle.emit_to(
+                                    tauri::EventTarget::Any,
+                                    "tile-ready",
+                                    payload,
+                                );
                             }
                         }
                     }
-
-                    // Only push tiles the canvas will actually blit (current pyramid level).
-                    // Intermediate L0 children of a zoom-out display tile stay in cache.
-                    let viewport_level = state.viewport.lock().unwrap().level;
-                    if task.key.stage == CacheStage::Composite
-                        && task.key.coord.level == viewport_level
-                    {
-                        let payload = TileReadyPayload {
-                            doc_id: snapshot.id.0,
-                            layer_id: task.key.layer,
-                            stage: "composite".to_string(),
-                            level: task.key.coord.level,
-                            x: task.key.coord.x,
-                            y: task.key.coord.y,
-                        };
-                        let _ = app_handle.emit_to(
-                            tauri::EventTarget::Any,
-                            "tile-ready",
-                            payload,
-                        );
-                    }
-                    } else {
-                        crate::tile_pipeline::reschedule_if_insert_rejected(
-                            &state,
-                            task.key,
-                            false,
-                        );
-                    }
                 }
             } else if let Err(err) = result {
-                let msg = err.to_string();
-                if !msg.contains("Pyramid children not yet computed") {
+                if !matches!(
+                    err,
+                    engine_project::error::EngineError::PyramidChildrenPending
+                        | engine_project::error::EngineError::EdPrefixPending
+                        | engine_project::error::EngineError::EdDependenciesPending
+                ) {
                     eprintln!(
-                        "tile compute failed layer={} stage={:?} l={}/{}/{}: {msg}",
+                        "tile compute failed layer={} stage={:?} l={}/{}/{}: {err}",
                         task.key.layer,
                         task.key.stage,
                         task.key.coord.level,
@@ -227,40 +271,30 @@ pub(crate) fn task_is_stale(task: &RecomputeTask, snapshot: &Document) -> bool {
     task.generation != doc_gen || task.layer_generation != layer_gen
 }
 
-/// Load a Raw-stage tile from the cache.
-///
-/// Raw tiles are populated during image decomposition (`load_image` / `decompose_image_to_tiles`).
-/// This function copies the existing tile data into a new PixelTile if present in the cache.
-/// In the future, this could trigger on-demand loading from disk for tiles evicted from cache.
-fn load_raw_tile(key: TileKey, state: &AppState) -> Result<PixelTile, String> {
-    match state.tile_cache.get_entry(key) {
-        Some(tile) => {
-            // Copy the tile data into a new PixelTile
-            let mut new_tile = PixelTile::new();
-            new_tile.data.copy_from_slice(&tile.data);
-            Ok(new_tile)
-        }
-        None => Err(format!(
+fn load_raw_tile(
+    key: TileKey,
+    state: &AppState,
+) -> Result<Arc<PixelTile>, engine_project::error::EngineError> {
+    state.tile_cache.get_entry(key).ok_or_else(|| {
+        engine_project::error::EngineError::invalid_state(format!(
             "Raw tile not found in cache: layer={}, level={}, ({}, {})",
             key.layer, key.coord.level, key.coord.x, key.coord.y
-        )),
-    }
+        ))
+    })
 }
 
-/// Compute a Processed-stage tile (apply layer filters to the Raw tile).
-///
-/// Delegates to `tile_pipeline::compute_processed_tile` for the real implementation.
-fn compute_processed_tile(key: TileKey, state: &AppState) -> Result<PixelTile, String> {
+fn compute_processed_tile(
+    key: TileKey,
+    state: &AppState,
+) -> Result<Arc<PixelTile>, engine_project::error::EngineError> {
     crate::tile_pipeline::compute_processed_tile(key, state)
-        .map_err(|e| format!("{}", e))
 }
 
-/// Compute a Composite-stage tile (blend all visible layers).
-///
-/// Delegates to `tile_pipeline::compute_composite_tile` for the real implementation.
-fn compute_composite_tile(key: TileKey, state: &AppState) -> Result<PixelTile, String> {
+fn compute_composite_tile(
+    key: TileKey,
+    state: &AppState,
+) -> Result<Arc<PixelTile>, engine_project::error::EngineError> {
     crate::tile_pipeline::compute_composite_tile(key, state)
-        .map_err(|e| format!("{}", e))
 }
 
 #[cfg(test)]
@@ -273,6 +307,7 @@ mod tests {
     fn composite_task(generation: u64) -> RecomputeTask {
         RecomputeTask {
             key: TileKey {
+                doc: 1,
                 layer: 0,
                 coord: TileCoord {
                     level: 0,

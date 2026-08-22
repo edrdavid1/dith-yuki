@@ -22,14 +22,17 @@ use engine_tiles::{HALO, TILE_SIZE};
 /// Groups are handled with isolation: children are composited within the group
 /// first, then the group result is blended into the parent composite.
 ///
+/// `doc` must be the runtime `DocumentId` — TileCache keys are namespaced by it.
+///
 /// Returns a fully transparent tile if no visible layers contribute content.
 pub fn composite_tile(
     root: &[LayerNode],
+    doc: u32,
     coord: TileCoord,
     cache: &TileCache,
 ) -> Result<PixelTile, EngineError> {
     let mut composite = PixelTile::new(); // starts fully transparent
-    composite_nodes(root, coord, cache, &mut composite)?;
+    composite_nodes(root, doc, coord, cache, &mut composite)?;
     Ok(composite)
 }
 
@@ -37,6 +40,7 @@ pub fn composite_tile(
 /// Processes nodes in order (bottom-to-top as stored in the document).
 fn composite_nodes(
     nodes: &[LayerNode],
+    doc: u32,
     coord: TileCoord,
     cache: &TileCache,
     dst: &mut PixelTile,
@@ -48,9 +52,9 @@ fn composite_nodes(
                     continue;
                 }
                 // Get Processed tile for this layer from cache
-                let processed = get_processed_tile(layer.id.0, coord, cache);
+                let processed = get_processed_tile(doc, layer.id.0, coord, cache);
                 // Apply mask if present
-                let masked = apply_layer_mask(&layer.mask, &processed, coord, cache);
+                let masked = apply_layer_mask(&layer.mask, &processed, doc, coord, cache);
                 // Blend into composite
                 blend_tile(dst, &masked, layer.blend_mode, layer.opacity);
             }
@@ -61,11 +65,12 @@ fn composite_nodes(
                 }
                 // Group isolation: composite children into a fresh tile
                 let mut group_composite = PixelTile::new();
-                composite_nodes(&group.children, coord, cache, &mut group_composite)?;
+                composite_nodes(&group.children, doc, coord, cache, &mut group_composite)?;
                 // Apply group mask if present
                 let masked = apply_layer_mask(
                     &group.mask,
                     &group_composite,
+                    doc,
                     coord,
                     cache,
                 );
@@ -81,8 +86,9 @@ fn composite_nodes(
 /// Falls back to the Raw-stage tile if no Processed tile exists
 /// (this handles the case where filters haven't been applied yet).
 /// If neither exists, returns a fully transparent tile.
-fn get_processed_tile(layer_id: u32, coord: TileCoord, cache: &TileCache) -> PixelTile {
+fn get_processed_tile(doc: u32, layer_id: u32, coord: TileCoord, cache: &TileCache) -> PixelTile {
     let processed_key = TileKey {
+        doc,
         layer: layer_id,
         coord,
         stage: CacheStage::Processed,
@@ -95,6 +101,7 @@ fn get_processed_tile(layer_id: u32, coord: TileCoord, cache: &TileCache) -> Pix
 
     // Fallback: use Raw tile if Processed isn't available yet
     let raw_key = TileKey {
+        doc,
         layer: layer_id,
         coord,
         stage: CacheStage::Raw,
@@ -115,6 +122,7 @@ fn get_processed_tile(layer_id: u32, coord: TileCoord, cache: &TileCache) -> Pix
 fn apply_layer_mask(
     mask: &Option<MaskRef>,
     tile: &PixelTile,
+    doc: u32,
     coord: TileCoord,
     cache: &TileCache,
 ) -> PixelTile {
@@ -140,6 +148,7 @@ fn apply_layer_mask(
     };
 
     let mask_key = TileKey {
+        doc,
         layer: mask_layer_id,
         coord,
         stage: CacheStage::Processed,
@@ -306,7 +315,7 @@ mod tests {
     #[test]
     fn empty_layer_tree_returns_transparent_tile() {
         let cache = TileCache::new(100_000_000);
-        let result = composite_tile(&[], make_coord(), &cache).unwrap();
+        let result = composite_tile(&[], 1, make_coord(), &cache).unwrap();
         // All pixels should be zero (transparent)
         for y in HALO..(HALO + TILE_SIZE) {
             for x in HALO..(HALO + TILE_SIZE) {
@@ -322,6 +331,7 @@ mod tests {
 
         // Insert a red tile in cache for layer 1
         let key = TileKey {
+            doc: 1,
             layer: 1,
             coord,
             stage: CacheStage::Processed,
@@ -334,7 +344,7 @@ mod tests {
         layer.visible = false;
 
         let nodes = vec![LayerNode::Leaf(layer)];
-        let result = composite_tile(&nodes, coord, &cache).unwrap();
+        let result = composite_tile(&nodes, 1, coord, &cache).unwrap();
 
         // Should be transparent since layer is invisible
         assert_eq!(result.at(HALO, HALO, 3), 0.0);
@@ -347,6 +357,7 @@ mod tests {
 
         // Insert a red tile for layer 1
         let key = TileKey {
+            doc: 1,
             layer: 1,
             coord,
             stage: CacheStage::Processed,
@@ -356,7 +367,7 @@ mod tests {
 
         let layer = Layer::new(LayerId::new(1), LayerKind::Raster, 256, 256);
         let nodes = vec![LayerNode::Leaf(layer)];
-        let result = composite_tile(&nodes, coord, &cache).unwrap();
+        let result = composite_tile(&nodes, 1, coord, &cache).unwrap();
 
         // Should be solid red
         assert_eq!(result.at(HALO, HALO, 0), 1.0);
@@ -371,6 +382,7 @@ mod tests {
         let coord = make_coord();
 
         let key = TileKey {
+            doc: 1,
             layer: 1,
             coord,
             stage: CacheStage::Processed,
@@ -382,7 +394,7 @@ mod tests {
         layer.opacity = 0.5;
 
         let nodes = vec![LayerNode::Leaf(layer)];
-        let result = composite_tile(&nodes, coord, &cache).unwrap();
+        let result = composite_tile(&nodes, 1, coord, &cache).unwrap();
 
         // With 50% opacity over transparent: alpha = 0.5, red = 1.0 * 0.5 = 0.5
         assert!((result.at(HALO, HALO, 0) - 0.5).abs() < 1e-5);
@@ -396,6 +408,7 @@ mod tests {
 
         // Bottom layer: green, full opacity
         let key1 = TileKey {
+            doc: 1,
             layer: 1,
             coord,
             stage: CacheStage::Processed,
@@ -404,6 +417,7 @@ mod tests {
 
         // Top layer: red, full opacity
         let key2 = TileKey {
+            doc: 1,
             layer: 2,
             coord,
             stage: CacheStage::Processed,
@@ -414,7 +428,7 @@ mod tests {
         let layer2 = Layer::new(LayerId::new(2), LayerKind::Raster, 256, 256);
         let nodes = vec![LayerNode::Leaf(layer1), LayerNode::Leaf(layer2)];
 
-        let result = composite_tile(&nodes, coord, &cache).unwrap();
+        let result = composite_tile(&nodes, 1, coord, &cache).unwrap();
 
         // Top red layer fully covers green layer
         assert!((result.at(HALO, HALO, 0) - 1.0).abs() < 1e-5);
@@ -428,11 +442,11 @@ mod tests {
         let coord = make_coord();
 
         // Bottom: white (1,1,1,1)
-        let key1 = TileKey { layer: 1, coord, stage: CacheStage::Processed };
+        let key1 = TileKey { doc: 1, layer: 1, coord, stage: CacheStage::Processed };
         cache.insert_fresh(key1, Arc::new(make_solid_tile(1.0, 1.0, 1.0, 1.0)));
 
         // Top: 50% gray with Multiply
-        let key2 = TileKey { layer: 2, coord, stage: CacheStage::Processed };
+        let key2 = TileKey { doc: 1, layer: 2, coord, stage: CacheStage::Processed };
         cache.insert_fresh(key2, Arc::new(make_solid_tile(0.5, 0.5, 0.5, 1.0)));
 
         let layer1 = Layer::new(LayerId::new(1), LayerKind::Raster, 256, 256);
@@ -440,7 +454,7 @@ mod tests {
         layer2.blend_mode = BlendMode::Multiply;
 
         let nodes = vec![LayerNode::Leaf(layer1), LayerNode::Leaf(layer2)];
-        let result = composite_tile(&nodes, coord, &cache).unwrap();
+        let result = composite_tile(&nodes, 1, coord, &cache).unwrap();
 
         // Multiply: 0.5 * 1.0 = 0.5, over dst_a=1 with src_a=1:
         // out = 0.5 * 1.0 + 1.0 * 1.0 * (1.0 - 1.0) = 0.5
@@ -533,7 +547,7 @@ mod tests {
         let coord = make_coord();
 
         // Put a red tile in cache for layer 10
-        let key = TileKey { layer: 10, coord, stage: CacheStage::Processed };
+        let key = TileKey { doc: 1, layer: 10, coord, stage: CacheStage::Processed };
         cache.insert_fresh(key, Arc::new(make_solid_tile(1.0, 0.0, 0.0, 1.0)));
 
         // Create a group with a visible child, but group itself is invisible
@@ -543,7 +557,7 @@ mod tests {
         group.children.push(LayerNode::Leaf(child));
 
         let nodes = vec![LayerNode::Group(group)];
-        let result = composite_tile(&nodes, coord, &cache).unwrap();
+        let result = composite_tile(&nodes, 1, coord, &cache).unwrap();
 
         // Should be transparent since group is invisible
         assert_eq!(result.at(HALO, HALO, 3), 0.0);
@@ -555,11 +569,11 @@ mod tests {
         let coord = make_coord();
 
         // Background layer (layer 1): white
-        let key1 = TileKey { layer: 1, coord, stage: CacheStage::Processed };
+        let key1 = TileKey { doc: 1, layer: 1, coord, stage: CacheStage::Processed };
         cache.insert_fresh(key1, Arc::new(make_solid_tile(1.0, 1.0, 1.0, 1.0)));
 
         // Group child (layer 10): red
-        let key10 = TileKey { layer: 10, coord, stage: CacheStage::Processed };
+        let key10 = TileKey { doc: 1, layer: 10, coord, stage: CacheStage::Processed };
         cache.insert_fresh(key10, Arc::new(make_solid_tile(1.0, 0.0, 0.0, 1.0)));
 
         // Background layer
@@ -572,7 +586,7 @@ mod tests {
         group.children.push(LayerNode::Leaf(child));
 
         let nodes = vec![LayerNode::Leaf(bg), LayerNode::Group(group)];
-        let result = composite_tile(&nodes, coord, &cache).unwrap();
+        let result = composite_tile(&nodes, 1, coord, &cache).unwrap();
 
         // Red over white at 50% opacity:
         // blended_r = 1.0 (Normal blend), out_r = 1.0 * 0.5 + 1.0 * 1.0 * 0.5 = 1.0
@@ -591,10 +605,39 @@ mod tests {
         // Layer with no tile in cache
         let layer = Layer::new(LayerId::new(99), LayerKind::Raster, 256, 256);
         let nodes = vec![LayerNode::Leaf(layer)];
-        let result = composite_tile(&nodes, coord, &cache).unwrap();
+        let result = composite_tile(&nodes, 1, coord, &cache).unwrap();
 
         // All transparent since tile not in cache
         assert_eq!(result.at(HALO, HALO, 3), 0.0);
+    }
+
+
+    #[test]
+    fn composite_uses_requested_doc_not_doc_one() {
+        let cache = TileCache::new(100_000_000);
+        let coord = make_coord();
+
+        // Doc 1 = red, doc 2 = green — same layer id / coord.
+        cache.insert_fresh(
+            TileKey { doc: 1, layer: 1, coord, stage: CacheStage::Raw },
+            Arc::new(make_solid_tile(1.0, 0.0, 0.0, 1.0)),
+        );
+        cache.insert_fresh(
+            TileKey { doc: 2, layer: 1, coord, stage: CacheStage::Raw },
+            Arc::new(make_solid_tile(0.0, 1.0, 0.0, 1.0)),
+        );
+
+        let layer = Layer::new(LayerId::new(1), LayerKind::Raster, 256, 256);
+        let nodes = vec![LayerNode::Leaf(layer)];
+        let result = composite_tile(&nodes, 2, coord, &cache).unwrap();
+
+        assert!(
+            (result.at(HALO, HALO, 1) - 1.0).abs() < 1e-5,
+            "doc=2 composite must read green Raw, got r={} g={}",
+            result.at(HALO, HALO, 0),
+            result.at(HALO, HALO, 1),
+        );
+        assert!((result.at(HALO, HALO, 0)).abs() < 1e-5);
     }
 
     // --- Tests for apply_layer_mask (Task 12.2) ---
@@ -605,7 +648,7 @@ mod tests {
         let coord = make_coord();
         let tile = make_solid_tile(1.0, 0.0, 0.0, 0.8);
 
-        let result = apply_layer_mask(&None, &tile, coord, &cache);
+        let result = apply_layer_mask(&None, &tile, 1, coord, &cache);
 
         // Alpha should be unchanged
         for y in HALO..(HALO + TILE_SIZE) {
@@ -625,7 +668,7 @@ mod tests {
         let mut mask_ref = MaskRef::external(LayerId::new(50));
         mask_ref.enabled = false;
 
-        let result = apply_layer_mask(&Some(mask_ref), &tile, coord, &cache);
+        let result = apply_layer_mask(&Some(mask_ref), &tile, 1, coord, &cache);
 
         // Alpha should be unchanged since mask is disabled
         for y in HALO..(HALO + TILE_SIZE) {
@@ -647,6 +690,7 @@ mod tests {
         // Mask tile: 50% gray → luminance = 0.2126*0.5 + 0.7152*0.5 + 0.0722*0.5 = 0.5
         let mask_tile = make_solid_tile(0.5, 0.5, 0.5, 1.0);
         let mask_key = TileKey {
+            doc: 1,
             layer: 50,
             coord,
             stage: CacheStage::Processed,
@@ -654,7 +698,7 @@ mod tests {
         cache.insert_fresh(mask_key, Arc::new(mask_tile));
 
         let mask_ref = MaskRef::external(LayerId::new(50));
-        let result = apply_layer_mask(&Some(mask_ref), &tile, coord, &cache);
+        let result = apply_layer_mask(&Some(mask_ref), &tile, 1, coord, &cache);
 
         // Luminance of (0.5, 0.5, 0.5) = 0.5
         // alpha = 1.0 * 0.5 = 0.5
@@ -681,6 +725,7 @@ mod tests {
         // Mask tile: 80% gray → luminance = 0.2126*0.8 + 0.7152*0.8 + 0.0722*0.8 = 0.8
         let mask_tile = make_solid_tile(0.8, 0.8, 0.8, 1.0);
         let mask_key = TileKey {
+            doc: 1,
             layer: 60,
             coord,
             stage: CacheStage::Processed,
@@ -690,7 +735,7 @@ mod tests {
         let mut mask_ref = MaskRef::external(LayerId::new(60));
         mask_ref.inverted = true;
 
-        let result = apply_layer_mask(&Some(mask_ref), &tile, coord, &cache);
+        let result = apply_layer_mask(&Some(mask_ref), &tile, 1, coord, &cache);
 
         // Luminance of (0.8, 0.8, 0.8) = 0.8
         // Inverted mask_value = 1.0 - 0.8 = 0.2
@@ -718,7 +763,7 @@ mod tests {
 
         // Mask references layer 70, but no tile inserted in cache
         let mask_ref = MaskRef::external(LayerId::new(70));
-        let result = apply_layer_mask(&Some(mask_ref), &tile, coord, &cache);
+        let result = apply_layer_mask(&Some(mask_ref), &tile, 1, coord, &cache);
 
         // Alpha should be unchanged since mask tile is not in cache
         for y in HALO..(HALO + TILE_SIZE) {
@@ -739,6 +784,7 @@ mod tests {
         // Mask tile: pure red (1,0,0) → luminance = 0.2126*1 + 0.7152*0 + 0.0722*0 = 0.2126
         let mask_tile = make_solid_tile(1.0, 0.0, 0.0, 1.0);
         let mask_key = TileKey {
+            doc: 1,
             layer: 80,
             coord,
             stage: CacheStage::Processed,
@@ -746,7 +792,7 @@ mod tests {
         cache.insert_fresh(mask_key, Arc::new(mask_tile));
 
         let mask_ref = MaskRef::external(LayerId::new(80));
-        let result = apply_layer_mask(&Some(mask_ref), &tile, coord, &cache);
+        let result = apply_layer_mask(&Some(mask_ref), &tile, 1, coord, &cache);
 
         // Luminance of pure red = 0.2126
         // alpha = 1.0 * 0.2126 = 0.2126

@@ -108,7 +108,7 @@ export const addRasterLayer = createAsyncThunk(
     if (args.docId === null) return;
     try {
       const index = findLayerIndex(args.layers, args.selectedLayerId);
-      await addLayerIPC('raster', null, index !== null ? index + 1 : args.layers.length);
+      await addLayerIPC(args.docId, 'raster', null, index !== null ? index + 1 : args.layers.length);
       await dispatch(refreshLayers(args.docId));
     } catch (err) {
       logIpcError('layers.addRaster', err);
@@ -122,7 +122,7 @@ export const removeLayer = createAsyncThunk(
   async (args: { docId: number | null; layerId: number }, { dispatch, rejectWithValue }) => {
     if (args.docId === null) return;
     try {
-      await removeLayerIPC(args.layerId);
+      await removeLayerIPC(args.docId, args.layerId);
       await dispatch(refreshLayers(args.docId));
     } catch (err) {
       logIpcError('layers.remove', err);
@@ -154,7 +154,7 @@ export const addLayerWithEffect = createAsyncThunk(
       ) {
         defaultParams.palette_id = lastCreatedId;
       }
-      await addFilter(imageSourceLayer.id, filterKind, defaultParams);
+      await addFilter(args.docId, imageSourceLayer.id, filterKind, defaultParams);
       await dispatch(refreshLayers(args.docId));
       return imageSourceLayer.id;
     } catch (err) {
@@ -174,7 +174,7 @@ export const toggleLayerVisibility = createAsyncThunk(
     const layer = findLayerById(args.layers, args.layerId);
     if (!layer) return;
     try {
-      await setLayerPropsIPC(args.layerId, { visible: !layer.visible });
+      await setLayerPropsIPC(args.docId, args.layerId, { visible: !layer.visible });
       await dispatch(refreshLayers(args.docId));
     } catch (err) {
       logIpcError('layers.toggleVisibility', err);
@@ -191,7 +191,7 @@ export const reorderLayer = createAsyncThunk(
   ) => {
     if (args.docId === null) return;
     try {
-      await reorderLayerIPC(args.layerId, args.newParent, args.newIndex);
+      await reorderLayerIPC(args.docId, args.layerId, args.newParent, args.newIndex);
       await dispatch(refreshLayers(args.docId));
     } catch (err) {
       logIpcError('layers.reorder', err);
@@ -208,7 +208,7 @@ export const patchLayerProps = createAsyncThunk(
   ) => {
     if (args.docId === null) return;
     try {
-      await setLayerPropsIPC(args.layerId, args.patch);
+      await setLayerPropsIPC(args.docId, args.layerId, args.patch);
       await dispatch(refreshLayers(args.docId));
     } catch (err) {
       logIpcError('layers.patchProps', err);

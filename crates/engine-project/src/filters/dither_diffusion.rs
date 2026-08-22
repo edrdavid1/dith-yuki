@@ -64,7 +64,11 @@ fn snap_rgb_to_palette(
     lut: &PaletteLut3D,
 ) -> (f32, f32, f32) {
     let oklab = linear_to_oklab(LinRgb { r, g, b });
-    let c = &palette.colors[lut.nearest_index(oklab) as usize];
+    let idx = lut.nearest_index(oklab) as usize;
+    let c = palette
+        .colors
+        .get(idx)
+        .unwrap_or_else(|| &palette.colors[0]);
     (c.r, c.g, c.b)
 }
 
@@ -329,7 +333,27 @@ pub fn apply_error_diffusion_with_cache(
     document: &Document,
     block_cache: &BlockRepresentativeCache,
 ) -> Result<PixelTile, EngineError> {
-    let mut result = PixelTile::new();
+    let mut out = PixelTile::new();
+    apply_error_diffusion_with_cache_into(
+        tile, coord, params, residuals_store, layer_id, palette_cache, lut_cache, document,
+        block_cache, &mut out,
+    )?;
+    Ok(out)
+}
+
+/// Write error diffusion into an existing buffer (no tile alloc).
+pub fn apply_error_diffusion_with_cache_into(
+    tile: &PixelTile,
+    coord: TileCoord,
+    params: &DitherParamsV2,
+    residuals_store: &ErrorResidualsStore,
+    layer_id: LayerId,
+    palette_cache: &PaletteKdCache,
+    lut_cache: &PaletteLutCache,
+    document: &Document,
+    block_cache: &BlockRepresentativeCache,
+    dst: &mut PixelTile,
+) -> Result<(), EngineError> {
     let levels = params.levels as f32;
     let ps = params.pixel_size as u32;
 
@@ -340,18 +364,18 @@ pub fn apply_error_diffusion_with_cache(
         })?;
         match params.palette_dither_mode {
             PaletteDitherMode::Guided { channel_levels } => PaletteQuant::Guided {
-                ranges: lut_cache.channel_ranges(palette),
+                ranges: lut_cache.channel_ranges(document.id.0, palette),
                 levels: channel_levels.unwrap_or_else(|| default_channel_levels(palette)),
             },
             PaletteDitherMode::Mixed { channel_levels } => PaletteQuant::Mixed {
-                ranges: lut_cache.channel_ranges(palette),
+                ranges: lut_cache.channel_ranges(document.id.0, palette),
                 levels: channel_levels.unwrap_or_else(|| default_channel_levels(palette)),
                 picker: OrderedPalettePicker::new(palette),
             },
             PaletteDitherMode::Simple => PaletteQuant::Simple(SimpleRgbPicker::new(palette)),
             PaletteDitherMode::Strict => {
                 let lut = lut_cache
-                    .get_or_build(palette, palette_cache, DEFAULT_LUT_SIZE)
+                    .get_or_build(document.id.0, palette, palette_cache, DEFAULT_LUT_SIZE)
                     .map_err(|_| EngineError::palette_not_found(palette_id))?;
                 PaletteQuant::Strict { palette, lut }
             }
@@ -371,21 +395,25 @@ pub fn apply_error_diffusion_with_cache(
     // Diagonal corner → tile (tx+1, ty+1)
     let mut corner_overflow = vec![0.0f32; CORNER_PATCH * CORNER_PATCH * 3];
 
+    let doc = document.id.0;
+
     // Seed boundary errors from neighbor tiles (Req 3.4 / Track A Req 4)
-    if let Some(left_residuals) = residuals_store.get_left(layer_id, coord) {
+    if let Some(left_residuals) = residuals_store.get_left(doc, layer_id, coord) {
         seed_left_boundary(&mut error_buf, &left_residuals);
     }
-    if let Some(top_residuals) = residuals_store.get_top(layer_id, coord) {
+    if let Some(top_residuals) = residuals_store.get_top(doc, layer_id, coord) {
         seed_top_boundary(&mut error_buf, &top_residuals);
     }
-    if let Some(diag_residuals) = residuals_store.get_diag(layer_id, coord) {
+    if let Some(diag_residuals) = residuals_store.get_diag(doc, layer_id, coord) {
         seed_diag_corner(&mut error_buf, &diag_residuals);
     }
 
-    // Halo is not on the wire (256 core). Copying it would leave Adjust's
-    // smooth alpha as a 2px contour around every tile when dither_alpha.
-    if !params.dither_alpha {
-        copy_halo(tile, &mut result);
+    // Halo is not on the wire (256 core). With dither_alpha we leave halo
+    // transparent (zeros) — must clear reused park buffers, not skip writes.
+    if params.dither_alpha {
+        dst.clear_halo();
+    } else {
+        dst.copy_halo_from(tile);
     }
 
     // Sequential scan: top-to-bottom. Even global rows L→R; odd global rows
@@ -418,6 +446,7 @@ pub fn apply_error_diffusion_with_cache(
 
             let src_a = if params.dither_alpha && ps > 1 && block_gx >= 0 && block_gy >= 0 {
                 let key = BlockCoord::from_global(
+                    document.id.0,
                     layer_id.0,
                     block_gx as u32,
                     block_gy as u32,
@@ -441,7 +470,7 @@ pub fn apply_error_diffusion_with_cache(
             } else {
                 tile.at(tile_x, tile_y, 3)
             };
-            result.set(tile_x, tile_y, 3, params.map_alpha(src_a, 0.5));
+            dst.set(tile_x, tile_y, 3, params.map_alpha(src_a, 0.5));
 
             if ps > 1 && !is_representative {
                 // Non-representative: copy dithered color from the block representative.
@@ -455,21 +484,22 @@ pub fn apply_error_diffusion_with_cache(
                 {
                     let rx = rep_tile_x as u32;
                     let ry = rep_tile_y as u32;
-                    result.set(tile_x, tile_y, 0, result.at(rx, ry, 0));
-                    result.set(tile_x, tile_y, 1, result.at(rx, ry, 1));
-                    result.set(tile_x, tile_y, 2, result.at(rx, ry, 2));
-                    result.set(tile_x, tile_y, 3, result.at(rx, ry, 3));
+                    dst.set(tile_x, tile_y, 0, dst.at(rx, ry, 0));
+                    dst.set(tile_x, tile_y, 1, dst.at(rx, ry, 1));
+                    dst.set(tile_x, tile_y, 2, dst.at(rx, ry, 2));
+                    dst.set(tile_x, tile_y, 3, dst.at(rx, ry, 3));
                 } else if block_gx >= 0 && block_gy >= 0 {
                     let key = BlockCoord::from_global(
+                        document.id.0,
                         layer_id.0,
                         block_gx as u32,
                         block_gy as u32,
                         ps,
                     );
                     if let Some(rgb) = block_cache.get_dithered(key) {
-                        result.set(tile_x, tile_y, 0, rgb[0]);
-                        result.set(tile_x, tile_y, 1, rgb[1]);
-                        result.set(tile_x, tile_y, 2, rgb[2]);
+                        dst.set(tile_x, tile_y, 0, rgb[0]);
+                        dst.set(tile_x, tile_y, 1, rgb[1]);
+                        dst.set(tile_x, tile_y, 2, rgb[2]);
                     } else {
                         // Fallback when neighbor dithered rep is not ready: sample raw
                         // (prefer BRC) and quantize with the same palette/uniform path
@@ -506,17 +536,17 @@ pub fn apply_error_diffusion_with_cache(
                                 quantize_ed_rgb(sr, sg, sb, levels, &palette_quant)
                             }
                         };
-                        result.set(tile_x, tile_y, 0, qr);
-                        result.set(tile_x, tile_y, 1, qg);
-                        result.set(tile_x, tile_y, 2, qb);
+                        dst.set(tile_x, tile_y, 0, qr);
+                        dst.set(tile_x, tile_y, 1, qg);
+                        dst.set(tile_x, tile_y, 2, qb);
                     }
                 }
 
-                if params.dither_alpha && result.at(tile_x, tile_y, 3) <= 0.0 {
-                    result.set(tile_x, tile_y, 0, 0.0);
-                    result.set(tile_x, tile_y, 1, 0.0);
-                    result.set(tile_x, tile_y, 2, 0.0);
-                    result.set(tile_x, tile_y, 3, 0.0);
+                if params.dither_alpha && dst.at(tile_x, tile_y, 3) <= 0.0 {
+                    dst.set(tile_x, tile_y, 0, 0.0);
+                    dst.set(tile_x, tile_y, 1, 0.0);
+                    dst.set(tile_x, tile_y, 2, 0.0);
+                    dst.set(tile_x, tile_y, 3, 0.0);
                 }
                 continue;
             }
@@ -527,6 +557,7 @@ pub fn apply_error_diffusion_with_cache(
             // need a neighbor pixel; for in-tile reps the tile sample matches.
             let (src_r, src_g, src_b) = if ps > 1 && block_gx >= 0 && block_gy >= 0 {
                 let key = BlockCoord::from_global(
+                    document.id.0,
                     layer_id.0,
                     block_gx as u32,
                     block_gy as u32,
@@ -625,18 +656,19 @@ pub fn apply_error_diffusion_with_cache(
             }
 
             // Write quantized pixel to output (at core area offset)
-            result.set(tile_x, tile_y, 0, quant_r);
-            result.set(tile_x, tile_y, 1, quant_g);
-            result.set(tile_x, tile_y, 2, quant_b);
-            if params.dither_alpha && result.at(tile_x, tile_y, 3) <= 0.0 {
-                result.set(tile_x, tile_y, 0, 0.0);
-                result.set(tile_x, tile_y, 1, 0.0);
-                result.set(tile_x, tile_y, 2, 0.0);
+            dst.set(tile_x, tile_y, 0, quant_r);
+            dst.set(tile_x, tile_y, 1, quant_g);
+            dst.set(tile_x, tile_y, 2, quant_b);
+            if params.dither_alpha && dst.at(tile_x, tile_y, 3) <= 0.0 {
+                dst.set(tile_x, tile_y, 0, 0.0);
+                dst.set(tile_x, tile_y, 1, 0.0);
+                dst.set(tile_x, tile_y, 2, 0.0);
             }
 
             // Publish dithered block color for cross-tile non-representatives
             if ps > 1 && is_representative && block_gx >= 0 && block_gy >= 0 {
                 let key = BlockCoord::from_global(
+                    document.id.0,
                     layer_id.0,
                     block_gx as u32,
                     block_gy as u32,
@@ -671,54 +703,12 @@ pub fn apply_error_diffusion_with_cache(
         bottom: bottom_overflow,
         corner: corner_overflow,
     };
-    residuals_store.store(layer_id, coord, residuals);
+    residuals_store.store(document.id.0, layer_id, coord, residuals);
 
-    Ok(result)
+    Ok(())
 }
 
 // ─── Halo Copy Helper ────────────────────────────────────────────────────────
-
-/// Copy the halo region (border pixels) from input to output unchanged.
-///
-/// The core area (HALO..HALO+TILE_SIZE in both dimensions) is handled by
-/// the diffusion loop. Everything else (the 2-pixel border) is copied as-is.
-fn copy_halo(src: &PixelTile, dst: &mut PixelTile) {
-    let full = TILE_SIZE + 2 * HALO;
-
-    // Top halo rows (0..HALO)
-    for y in 0..HALO {
-        for x in 0..full {
-            for c in 0..4u32 {
-                dst.set(x, y, c, src.at(x, y, c));
-            }
-        }
-    }
-
-    // Bottom halo rows (HALO + TILE_SIZE..full)
-    for y in (HALO + TILE_SIZE)..full {
-        for x in 0..full {
-            for c in 0..4u32 {
-                dst.set(x, y, c, src.at(x, y, c));
-            }
-        }
-    }
-
-    // Left and right halo columns in the core rows
-    for y in HALO..(HALO + TILE_SIZE) {
-        // Left halo (0..HALO)
-        for x in 0..HALO {
-            for c in 0..4u32 {
-                dst.set(x, y, c, src.at(x, y, c));
-            }
-        }
-        // Right halo (HALO + TILE_SIZE..full)
-        for x in (HALO + TILE_SIZE)..full {
-            for c in 0..4u32 {
-                dst.set(x, y, c, src.at(x, y, c));
-            }
-        }
-    }
-}
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
@@ -1180,11 +1170,11 @@ mod tests {
 
         // Residuals should have been stored
         // The right neighbor (1, 0) should be able to get left residuals
-        let residuals = store.get_left(layer_id, tc(1, 0));
+        let residuals = store.get_left(1, layer_id, tc(1, 0));
         assert!(residuals.is_some(), "No residuals stored for right neighbor");
 
         // The bottom neighbor (0, 1) should be able to get top residuals
-        let residuals = store.get_top(layer_id, tc(0, 1));
+        let residuals = store.get_top(1, layer_id, tc(0, 1));
         assert!(residuals.is_some(), "No residuals stored for bottom neighbor");
     }
 
@@ -1209,7 +1199,7 @@ mod tests {
             fake_residuals.right[idx + 1] = 0.4; // G
             fake_residuals.right[idx + 2] = 0.4; // B
         }
-        store.store(layer_id, tc(0, 0), fake_residuals);
+        store.store(1, layer_id, tc(0, 0), fake_residuals);
 
         // Process tile (1,0) WITH injected left residuals
         let result_with = apply_error_diffusion(
@@ -1253,7 +1243,7 @@ mod tests {
         )
         .unwrap();
 
-        let from_00 = store.get_diag(layer_id, tc(1, 1)).expect("diag residuals");
+        let from_00 = store.get_diag(1, layer_id, tc(1, 1)).expect("diag residuals");
         let corner_energy: f32 = from_00.corner.iter().map(|v| v.abs()).sum();
         assert!(
             corner_energy > 1e-6,
@@ -1269,7 +1259,7 @@ mod tests {
         fake.corner[0] = 0.4;
         fake.corner[1] = 0.4;
         fake.corner[2] = 0.4;
-        seeded.store(layer_id, tc(0, 0), fake);
+        seeded.store(1, layer_id, tc(0, 0), fake);
 
         let with_diag = apply_error_diffusion(
             &soft, tc(1, 1), &soft_params, &seeded, layer_id,
@@ -1344,7 +1334,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            store_a.get_left(layer_id, level1(1, 0)).is_some(),
+            store_a.get_left(1, layer_id, level1(1, 0)).is_some(),
             "Atkinson at level 1 stores residuals keyed by full TileCoord"
         );
     }
@@ -1352,7 +1342,9 @@ mod tests {
     #[test]
     fn halo_region_copied_from_input() {
         let tile = make_uniform_tile(0.75, 0.25, 0.5, 0.9);
-        let params = make_fs_params(4);
+        let mut params = make_fs_params(4);
+        // Halo copy runs only when alpha is not dithered (see apply path).
+        params.dither_alpha = false;
         let store = ErrorResidualsStore::new();
         let palette_cache = PaletteKdCache::new();
         let lut_cache = PaletteLutCache::new();

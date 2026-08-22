@@ -53,6 +53,21 @@ const initialState: DocumentState = {
   documentEpoch: 0,
 };
 
+/** Runtime DocumentId from IPC — number, numeric string, or newtype object. */
+export function parseRuntimeDocId(id: unknown): number | null {
+  if (typeof id === 'number' && Number.isFinite(id) && id > 0) return Math.trunc(id);
+  if (typeof id === 'string') {
+    const n = Number(id);
+    if (Number.isFinite(n) && n > 0) return Math.trunc(n);
+  }
+  if (id && typeof id === 'object') {
+    const o = id as Record<string, unknown>;
+    if (typeof o[0] === 'number' && o[0] > 0) return Math.trunc(o[0]);
+    if (typeof o.inner === 'number' && o.inner > 0) return Math.trunc(o.inner);
+  }
+  return null;
+}
+
 export const refreshDocument = createAsyncThunk(
   'document/refresh',
   async (_, { rejectWithValue }) => {
@@ -60,7 +75,7 @@ export const refreshDocument = createAsyncThunk(
       const response = await getDocumentSnapshot();
       const snap = response.snapshot;
       return {
-        docId: snap.id ?? null,
+        docId: parseRuntimeDocId(snap.id),
         width: snap.width ?? 0,
         height: snap.height ?? 0,
         hasDocument: (snap.layers?.length ?? 0) > 0,
@@ -113,9 +128,9 @@ export const createDocument = createAsyncThunk(
 
 export const importImageLayer = createAsyncThunk(
   'document/importImageLayer',
-  async (path: string, { rejectWithValue }) => {
+  async (args: { docId: number; path: string }, { rejectWithValue }) => {
     try {
-      const response = await importImageLayerIPC(path);
+      const response = await importImageLayerIPC(args.docId, args.path);
       return { layerId: response.layer_id };
     } catch (err) {
       logIpcError('document.importImageLayer', err);
@@ -158,9 +173,12 @@ export const openProject = createAsyncThunk(
 
 export const saveProject = createAsyncThunk(
   'document/saveProject',
-  async (path: string | null | undefined, { rejectWithValue }) => {
+  async (
+    args: { docId: number; path?: string | null },
+    { rejectWithValue }
+  ) => {
     try {
-      const response = await saveProjectIPC(path);
+      const response = await saveProjectIPC(args.docId, args.path);
       let notification = `Project saved: ${response.path.split(/[/\\]/).pop() ?? response.path}`;
       if (response.size_warning) {
         notification += ' (large project — uncompressed layers exceed 256 MB)';
@@ -175,9 +193,9 @@ export const saveProject = createAsyncThunk(
 
 export const saveProjectAs = createAsyncThunk(
   'document/saveProjectAs',
-  async (path: string, { rejectWithValue }) => {
+  async (args: { docId: number; path: string }, { rejectWithValue }) => {
     try {
-      const response = await saveProjectAsIPC(path);
+      const response = await saveProjectAsIPC(args.docId, args.path);
       let notification = `Project saved: ${response.path.split(/[/\\]/).pop() ?? response.path}`;
       if (response.size_warning) {
         notification += ' (large project — uncompressed layers exceed 256 MB)';
@@ -193,7 +211,7 @@ export const saveProjectAs = createAsyncThunk(
 export const exportPattern = createAsyncThunk(
   'document/exportPattern',
   async (
-    args: { layerId: number; path: string; name?: string },
+    args: { docId: number; layerId: number; path: string; name?: string },
     { rejectWithValue }
   ) => {
     try {
@@ -209,11 +227,11 @@ export const exportPattern = createAsyncThunk(
 export const importPattern = createAsyncThunk(
   'document/importPattern',
   async (
-    args: { path: string; targetLayerId: number },
+    args: { docId: number; path: string; targetLayerId: number },
     { rejectWithValue }
   ) => {
     try {
-      const response = await importPatternIPC(args.path, args.targetLayerId);
+      const response = await importPatternIPC(args.docId, args.path, args.targetLayerId);
       return {
         notification: 'Pattern imported',
         filterIds: response.filter_ids,

@@ -26,7 +26,8 @@
     "clean:all": "rm -rf node_modules frontend/node_modules frontend/dist && cargo clean",
 
     "fresh": "npm run clean && tauri dev",
-    "reset": "npm run clean:all && npm run setup"
+    "reset": "npm run clean:all && npm run setup",
+    "lint:no-magic-doc1": "bash scripts/check-no-magic-doc1.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1"

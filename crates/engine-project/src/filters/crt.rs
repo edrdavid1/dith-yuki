@@ -49,6 +49,19 @@ pub fn apply_crt(
     mask_strength: f32,
 ) -> PixelTile {
     let mut result = PixelTile::new();
+    apply_crt_into(tile, coord, period, strength, mask_strength, &mut result);
+    result
+}
+
+/// CRT into an existing buffer (full 260² write, no alloc).
+pub fn apply_crt_into(
+    tile: &PixelTile,
+    coord: TileCoord,
+    period: u8,
+    strength: f32,
+    mask_strength: f32,
+    dst: &mut PixelTile,
+) {
     for y in 0..TILE_FULL_SIZE {
         for x in 0..TILE_FULL_SIZE {
             let g = GlobalCoordSigned::from_local_with_halo(coord, x, y, HALO);
@@ -56,12 +69,11 @@ pub fn apply_crt(
             for c in 0..3usize {
                 let mask = rgb_mask_gain(g.x, c, mask_strength);
                 let v = tile.at(x, y, c as u32) * gain * mask;
-                result.set(x, y, c as u32, v.clamp(0.0, 1.0));
+                dst.set(x, y, c as u32, v.clamp(0.0, 1.0));
             }
-            result.set(x, y, 3, tile.at(x, y, 3));
+            dst.set(x, y, 3, tile.at(x, y, 3));
         }
     }
-    result
 }
 
 #[cfg(test)]
