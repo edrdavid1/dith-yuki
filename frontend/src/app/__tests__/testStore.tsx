@@ -9,6 +9,7 @@ import panelsReducer from '../slices/panelsSlice';
 import palettesReducer from '../slices/palettesSlice';
 import colorLabReducer from '../slices/colorLabSlice';
 import undoReducer from '../slices/undoSlice';
+import tabsReducer from '../slices/tabsSlice';
 import type { RootState } from '../store';
 
 /** Fresh store for unit tests (no engine bridge). */
@@ -23,6 +24,7 @@ export function createTestStore(preloadedState?: Partial<RootState>) {
       palettes: palettesReducer,
       colorLab: colorLabReducer,
       undo: undoReducer,
+      tabs: tabsReducer,
     },
     preloadedState: preloadedState as RootState | undefined,
     middleware: (getDefaultMiddleware) =>

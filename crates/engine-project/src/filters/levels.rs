@@ -103,25 +103,30 @@ impl LevelsFilter {
     /// Apply the levels filter to a tile.
     /// Uses row-based SIMD LUT processing for performance.
     pub fn apply_to_tile(&self, tile: &PixelTile) -> Result<PixelTile, EngineError> {
+        let mut result = PixelTile::new();
+        self.apply_to_tile_into(tile, &mut result)?;
+        Ok(result)
+    }
+
+    /// Apply levels into an existing buffer (full 260² write, no alloc).
+    pub fn apply_to_tile_into(&self, tile: &PixelTile, dst: &mut PixelTile) -> Result<(), EngineError> {
         use crate::simd::levels_row_simd;
         use engine_tiles::{HALO, TILE_SIZE};
 
-        let mut result = PixelTile::new();
         let size = (TILE_SIZE + 2 * HALO) as usize; // 260
         let mask = [self.channel_r, self.channel_g, self.channel_b];
 
-        // Process all rows (including halo) using SIMD LUT lookup
         for y in 0..size {
             let row_start = y * size * 4;
             let row_end = row_start + size * 4;
             levels_row_simd(
-                &mut result.data[row_start..row_end],
+                &mut dst.data[row_start..row_end],
                 &tile.data[row_start..row_end],
                 &self.lut,
                 mask,
             );
         }
-        Ok(result)
+        Ok(())
     }
 }
 

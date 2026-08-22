@@ -141,51 +141,50 @@ impl CurvesFilter {
     /// Apply the curves filter to a tile.
     pub fn apply_to_tile(&self, tile: &PixelTile) -> Result<PixelTile, EngineError> {
         let mut result = PixelTile::new();
+        self.apply_to_tile_into(tile, &mut result)?;
+        Ok(result)
+    }
 
-        // Copy all pixels from source and apply curve transformation
+    /// Apply curves into an existing buffer (full 260² write, no alloc).
+    pub fn apply_to_tile_into(&self, tile: &PixelTile, dst: &mut PixelTile) -> Result<(), EngineError> {
         for y in 0u32..260 {
             for x in 0u32..260 {
-                // Copy alpha channel unchanged
-                result.set(x, y, 3, tile.at(x, y, 3));
-
-                // Apply curve to relevant channels
+                dst.set(x, y, 3, tile.at(x, y, 3));
                 match self.channel {
                     CurveChannel::Red => {
                         let r = tile.at(x, y, 0);
-                        result.set(x, y, 0, self.lut_lookup(r));
-                        result.set(x, y, 1, tile.at(x, y, 1));
-                        result.set(x, y, 2, tile.at(x, y, 2));
+                        dst.set(x, y, 0, self.lut_lookup(r));
+                        dst.set(x, y, 1, tile.at(x, y, 1));
+                        dst.set(x, y, 2, tile.at(x, y, 2));
                     }
                     CurveChannel::Green => {
-                        result.set(x, y, 0, tile.at(x, y, 0));
+                        dst.set(x, y, 0, tile.at(x, y, 0));
                         let g = tile.at(x, y, 1);
-                        result.set(x, y, 1, self.lut_lookup(g));
-                        result.set(x, y, 2, tile.at(x, y, 2));
+                        dst.set(x, y, 1, self.lut_lookup(g));
+                        dst.set(x, y, 2, tile.at(x, y, 2));
                     }
                     CurveChannel::Blue => {
-                        result.set(x, y, 0, tile.at(x, y, 0));
-                        result.set(x, y, 1, tile.at(x, y, 1));
+                        dst.set(x, y, 0, tile.at(x, y, 0));
+                        dst.set(x, y, 1, tile.at(x, y, 1));
                         let b = tile.at(x, y, 2);
-                        result.set(x, y, 2, self.lut_lookup(b));
+                        dst.set(x, y, 2, self.lut_lookup(b));
                     }
                     CurveChannel::All => {
                         for c in 0..3 {
                             let val = tile.at(x, y, c);
-                            result.set(x, y, c, self.lut_lookup(val));
+                            dst.set(x, y, c, self.lut_lookup(val));
                         }
                     }
                     CurveChannel::Luminance => {
-                        // Simplified: apply to green channel as luminance proxy
-                        result.set(x, y, 0, tile.at(x, y, 0));
+                        dst.set(x, y, 0, tile.at(x, y, 0));
                         let val = tile.at(x, y, 1);
-                        result.set(x, y, 1, self.lut_lookup(val));
-                        result.set(x, y, 2, tile.at(x, y, 2));
+                        dst.set(x, y, 1, self.lut_lookup(val));
+                        dst.set(x, y, 2, tile.at(x, y, 2));
                     }
                 }
             }
         }
-
-        Ok(result)
+        Ok(())
     }
 }
 

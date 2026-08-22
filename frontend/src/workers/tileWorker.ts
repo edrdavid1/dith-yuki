@@ -46,17 +46,20 @@ export interface TileDecodedMessage {
   key: string;
   bitmap: ImageBitmap;
   rev?: number;
+  docId: number;
 }
 
 export interface TilePendingMessage {
   type: 'tile-pending';
   key: string;
+  docId: number;
 }
 
 export interface TileErrorMessage {
   type: 'tile-error';
   key: string;
   error: string;
+  docId: number;
 }
 
 export type WorkerOutMessage = TileDecodedMessage | TilePendingMessage | TileErrorMessage;
@@ -96,6 +99,7 @@ async function fetchAndDecodeTile(
         postMessage({
           type: 'tile-error',
           key,
+          docId,
           error: `Unexpected tile data size: ${buffer.byteLength} bytes (expected ${TILE_BYTE_LENGTH})`,
         } satisfies TileErrorMessage);
         return;
@@ -112,13 +116,13 @@ async function fetchAndDecodeTile(
       });
 
       // Transfer the bitmap (zero-copy) to the main thread
-      const msg: TileDecodedMessage = { type: 'tile-decoded', key, bitmap, rev };
+      const msg: TileDecodedMessage = { type: 'tile-decoded', key, bitmap, rev, docId };
       postMessage(msg, [bitmap]);
     } else if (response.status === 202) {
       // Tile is pending computation — retry with exponential backoff.
       // This is more reliable than depending solely on tile-ready events
       // which can be missed during React re-renders or viewport changes.
-      postMessage({ type: 'tile-pending', key } satisfies TilePendingMessage);
+      postMessage({ type: 'tile-pending', key, docId } satisfies TilePendingMessage);
 
       // Retry up to 5 times with increasing delays: 50, 100, 200, 400, 800ms
       for (let attempt = 0; attempt < 5; attempt++) {
@@ -139,6 +143,7 @@ async function fetchAndDecodeTile(
                 key,
                 bitmap: retryBitmap,
                 rev,
+                docId,
               };
               postMessage(retryMsg, [retryBitmap]);
             }
@@ -155,6 +160,7 @@ async function fetchAndDecodeTile(
       postMessage({
         type: 'tile-error',
         key,
+        docId,
         error: `Tile fetch failed with status ${response.status}: ${body}`,
       } satisfies TileErrorMessage);
     }
@@ -164,6 +170,7 @@ async function fetchAndDecodeTile(
     postMessage({
       type: 'tile-error',
       key,
+      docId,
       error: `Tile fetch/decode error: ${message}`,
     } satisfies TileErrorMessage);
   }

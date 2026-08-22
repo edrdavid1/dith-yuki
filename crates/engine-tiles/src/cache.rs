@@ -19,13 +19,25 @@
 //! When the cache exceeds its memory budget, the least-recently-used tile is evicted.
 //! Dirty tiles remain in the cache (marked but not deleted) for instant feedback.
 
-use crate::{TileCoord, TileKey, PixelTile};
+use crate::{CacheStage, TileCoord, TileKey, PixelTile};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Instant;
 use dashmap::DashMap;
 use crossbeam::queue::SegQueue;
+
+/// Context for doc-aware budget pressure eviction.
+///
+/// - `active_doc` + `viewport_coords`: viewport protect set for the visible doc
+///   (`None` active → legacy doc-blind coord protect).
+/// - `open_docs`: runtime sessions whose **Raw** tiles are hard-excluded from
+///   pressure (source of truth until close / `evict_document`).
+pub struct EvictContext<'a> {
+    pub active_doc: Option<u32>,
+    pub open_docs: &'a HashSet<u32>,
+    pub viewport_coords: &'a HashSet<TileCoord>,
+}
 
 /// Estimated size in bytes of a single PixelTile.
 ///
@@ -201,14 +213,20 @@ impl TileCache {
             .unwrap_or(0)
     }
 
-    /// Remove every cached stage for `layer` (Raw / Processed / Composite).
-    ///
-    /// Stale LRU-queue entries for the removed keys are ignored on pop,
-    /// matching existing eviction. Missing keys are a no-op.
-    pub fn evict_layer(&self, layer: crate::LayerId) {
+    /// Remove every cached stage for `layer` on `doc`.
+    pub fn evict_layer(&self, doc: u32, layer: crate::LayerId) {
+        self.retain_removed(|key| key.doc == doc && key.layer == layer);
+    }
+
+    /// Remove every cached tile for a document session.
+    pub fn evict_document(&self, doc: u32) {
+        self.retain_removed(|key| key.doc == doc);
+    }
+
+    fn retain_removed(&self, mut drop_key: impl FnMut(&TileKey) -> bool) {
         let mut removed = 0usize;
         self.entries.retain(|key, _| {
-            if key.layer == layer {
+            if drop_key(key) {
                 removed += 1;
                 false
             } else {
@@ -223,114 +241,163 @@ impl TileCache {
 
     /// Evict least-recently-used tiles if cache exceeds budget.
     ///
-    /// Compares current `used_bytes` against `budget_bytes`.
-    /// If over budget, pops tiles from the LRU queue and removes them from the cache
-    /// until `used_bytes ≤ budget_bytes`.
-    ///
-    /// Tiles are removed from the DashMap; their memory is freed when the last
-    /// Arc reference is dropped (may not be immediate if tiles are in-flight).
-    ///
-    /// # Notes
-    ///
-    /// - Uses relaxed atomic ordering for performance (cache-local state)
-    /// - Approximates true LRU due to SegQueue FIFO semantics (first-in, first-out)
-    /// - Does not guarantee perfect LRU; is a best-effort eviction
-    /// - May remove more tiles than necessary to return under budget
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// cache.get_or_insert(key1, tile1);
-    /// cache.get_or_insert(key2, tile2);
-    /// cache.evict_if_over_budget(); // Removes least-recently-used tiles
-    /// ```
+    /// Doc-blind: no viewport protection. Prefer [`Self::evict_for_pressure`] when
+    /// an active document / viewport is known.
     pub fn evict_if_over_budget(&self) {
-        let used = self.used_bytes.load(Ordering::Relaxed);
-        let budget = self.budget_bytes.load(Ordering::Relaxed);
+        let empty_vp = HashSet::new();
+        let empty_open = HashSet::new();
+        self.evict_for_pressure(&EvictContext {
+            active_doc: None,
+            open_docs: &empty_open,
+            viewport_coords: &empty_vp,
+        });
+    }
 
-        if used > budget {
-            while let Some(key) = self.lru_queue.pop() {
-                if self.entries.remove(&key).is_some() {
-                    self.used_bytes.fetch_sub(TILE_BYTES, Ordering::Relaxed);
-                    if self.used_bytes.load(Ordering::Relaxed) <= budget {
-                        break;
-                    }
+    /// Doc-aware pressure eviction.
+    ///
+    /// Cheap no-op when `used ≤ budget`. Drop order:
+    /// 1. inactive docs, Composite → Processed → (orphan) Raw
+    /// 2. active off-viewport, same stage order
+    /// 3. stop — allow over-budget if only protected / pinned remain
+    ///
+    /// **Pinned (never pressure-evicted):** `stage == Raw` and `doc ∈ open_docs`.
+    /// Close path uses [`Self::evict_document`], not pressure.
+    ///
+    /// Viewport-protected: `coord ∈ viewport_coords` and (`doc == active_doc` or
+    /// `active_doc` is `None`).
+    ///
+    /// If `viewport_coords` is empty and `active_doc` is set, only inactive-doc
+    /// non-pinned tiles are dropped (activate/open before `set_viewport`).
+    pub fn evict_for_pressure(&self, ctx: &EvictContext<'_>) {
+        let budget = self.budget_bytes.load(Ordering::Relaxed);
+        if self.used_bytes.load(Ordering::Relaxed) <= budget {
+            return;
+        }
+
+        // Raw of open docs is pinned; still scan Raw for orphans (not in open_docs).
+        let stage_order = [
+            Some(CacheStage::Composite),
+            Some(CacheStage::Processed),
+            Some(CacheStage::Raw),
+        ];
+
+        if ctx.active_doc.is_some() {
+            for stage in stage_order {
+                self.evict_pass(ctx, budget, true, stage);
+                if self.used_bytes.load(Ordering::Relaxed) <= budget {
+                    return;
                 }
+            }
+        }
+
+        if ctx.active_doc.is_some() && ctx.viewport_coords.is_empty() {
+            return;
+        }
+
+        for stage in stage_order {
+            self.evict_pass(ctx, budget, false, stage);
+            if self.used_bytes.load(Ordering::Relaxed) <= budget {
+                return;
             }
         }
     }
 
-    /// Evict least-recently-used tiles while preserving viewport tiles.
-    ///
-    /// Like `evict_if_over_budget`, but skips any tile whose `TileCoord` is in the
-    /// provided viewport set. Tiles at different stages (Raw, Processed, Composite)
-    /// sharing a coord that overlaps the viewport are all preserved.
-    ///
-    /// If the budget is exceeded but all remaining tiles are viewport tiles,
-    /// eviction stops and the cache is allowed to remain over-budget.
-    ///
-    /// # Arguments
-    ///
-    /// - `viewport_tiles`: The set of TileCoords that must be preserved (visible in the viewport
-    ///   at the active pyramid level)
-    ///
-    /// # Notes
-    ///
-    /// - Viewport tiles that are popped from the LRU queue are re-enqueued to maintain
-    ///   their presence in future eviction runs.
-    /// - If a key popped from the LRU queue is no longer in the cache (already removed),
-    ///   it is simply discarded without affecting `used_bytes`.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// use std::collections::HashSet;
-    /// let mut viewport = HashSet::new();
-    /// viewport.insert(TileCoord { level: 0, x: 0, y: 0 });
-    /// cache.evict_preserving_viewport(&viewport);
-    /// ```
-    pub fn evict_preserving_viewport(&self, viewport_tiles: &HashSet<TileCoord>) {
-        let used = self.used_bytes.load(Ordering::Relaxed);
-        let budget = self.budget_bytes.load(Ordering::Relaxed);
-
-        if used <= budget {
-            return;
+    fn is_viewport_protected(key: &TileKey, ctx: &EvictContext<'_>) -> bool {
+        if !ctx.viewport_coords.contains(&key.coord) {
+            return false;
         }
+        match ctx.active_doc {
+            Some(active) => key.doc == active,
+            None => true,
+        }
+    }
 
-        // Track viewport tiles we skip so we can re-enqueue them.
+    /// Raw tiles belonging to a still-open session — never dropped by pressure.
+    fn is_pinned_open_raw(key: &TileKey, ctx: &EvictContext<'_>) -> bool {
+        key.stage == CacheStage::Raw && ctx.open_docs.contains(&key.doc)
+    }
+
+    fn evict_pass(
+        &self,
+        ctx: &EvictContext<'_>,
+        budget: usize,
+        inactive_only: bool,
+        stage_filter: Option<CacheStage>,
+    ) {
         let mut skipped: Vec<TileKey> = Vec::new();
-        // Limit iterations to prevent infinite looping if all tiles are viewport tiles.
-        let max_iterations = self.entries.len();
+        let max_iterations = self.entries.len().saturating_mul(2).max(1);
         let mut iterations = 0;
+        let mut removed_this_pass = 0usize;
 
         while self.used_bytes.load(Ordering::Relaxed) > budget {
             iterations += 1;
             if iterations > max_iterations {
-                // All remaining tiles are viewport tiles; allow over-budget.
                 break;
             }
 
             match self.lru_queue.pop() {
                 Some(key) => {
-                    if viewport_tiles.contains(&key.coord) {
-                        // This tile overlaps the viewport — skip eviction, re-enqueue later.
+                    let pinned = Self::is_pinned_open_raw(&key, ctx);
+                    let protected = Self::is_viewport_protected(&key, ctx);
+                    let inactive = ctx
+                        .active_doc
+                        .map(|active| key.doc != active)
+                        .unwrap_or(false);
+                    let stage_ok = stage_filter
+                        .map(|s| key.stage == s)
+                        .unwrap_or(true);
+
+                    if pinned || !stage_ok {
                         skipped.push(key);
-                    } else if self.entries.remove(&key).is_some() {
-                        self.used_bytes.fetch_sub(TILE_BYTES, Ordering::Relaxed);
+                        if skipped.len() >= self.entries.len() && removed_this_pass == 0 {
+                            break;
+                        }
+                        continue;
                     }
-                    // If the key wasn't in the cache (already removed), just skip it.
+
+                    if inactive_only {
+                        if !inactive {
+                            skipped.push(key);
+                            if skipped.len() >= self.entries.len() && removed_this_pass == 0 {
+                                break;
+                            }
+                            continue;
+                        }
+                    } else if protected {
+                        skipped.push(key);
+                        if skipped.len() >= self.entries.len() && removed_this_pass == 0 {
+                            break;
+                        }
+                        continue;
+                    }
+
+                    if self.entries.remove(&key).is_some() {
+                        self.used_bytes.fetch_sub(TILE_BYTES, Ordering::Relaxed);
+                        removed_this_pass += 1;
+                    }
                 }
-                None => {
-                    // LRU queue is empty; nothing left to evict.
-                    break;
-                }
+                None => break,
             }
         }
 
-        // Re-enqueue skipped viewport tiles so they remain in the LRU queue.
         for key in skipped {
             self.lru_queue.push(key);
         }
+    }
+
+    /// Legacy doc-blind viewport preserve. Prefer [`Self::evict_for_pressure`].
+    pub fn evict_preserving_viewport(&self, viewport_tiles: &HashSet<TileCoord>) {
+        let empty_open = HashSet::new();
+        self.evict_for_pressure(&EvictContext {
+            active_doc: None,
+            open_docs: &empty_open,
+            viewport_coords: viewport_tiles,
+        });
+    }
+
+    /// Drop selected stages for one document (soft trim on deactivate).
+    pub fn evict_stages(&self, doc: u32, stages: &[CacheStage]) {
+        self.retain_removed(|key| key.doc == doc && stages.iter().any(|s| *s == key.stage));
     }
 
     /// Get the current memory usage in bytes.
@@ -455,6 +522,7 @@ mod tests {
 
     fn make_key(layer: u32, x: u32, y: u32) -> TileKey {
         TileKey {
+            doc: 1,
             layer,
             coord: TileCoord {
                 level: 0,
@@ -663,9 +731,10 @@ mod tests {
         let cache = TileCache::new(2 * TILE_BYTES);
         let coord = TileCoord { level: 0, x: 0, y: 0 };
 
-        let key_raw = TileKey { layer: 0, coord, stage: CacheStage::Raw };
-        let key_processed = TileKey { layer: 0, coord, stage: CacheStage::Processed };
+        let key_raw = TileKey { doc: 1, layer: 0, coord, stage: CacheStage::Raw };
+        let key_processed = TileKey { doc: 1, layer: 0, coord, stage: CacheStage::Processed };
         let key_other = TileKey {
+            doc: 1,
             layer: 0,
             coord: TileCoord { level: 0, x: 5, y: 5 },
             stage: CacheStage::Raw,
@@ -714,6 +783,7 @@ mod tests {
         for stage in stages {
             cache.get_or_insert(
                 TileKey {
+                    doc: 1,
                     layer: 1,
                     coord,
                     stage,
@@ -722,6 +792,7 @@ mod tests {
             );
             cache.get_or_insert(
                 TileKey {
+                    doc: 1,
                     layer: 2,
                     coord,
                     stage,
@@ -731,15 +802,17 @@ mod tests {
         }
         assert_eq!(cache.entry_count(), 6);
 
-        cache.evict_layer(1);
+        cache.evict_layer(1, 1);
 
         for stage in stages {
             assert!(!cache.entries.contains_key(&TileKey {
+                doc: 1,
                 layer: 1,
                 coord,
                 stage,
             }));
             assert!(cache.entries.contains_key(&TileKey {
+                doc: 1,
                 layer: 2,
                 coord,
                 stage,
@@ -753,8 +826,35 @@ mod tests {
     fn evict_layer_missing_keys_is_noop() {
         let cache = TileCache::new(10_000_000);
         cache.get_or_insert(make_key(2, 0, 0), Arc::new(PixelTile::new()));
-        cache.evict_layer(1);
+        cache.evict_layer(1, 1);
         assert_eq!(cache.entry_count(), 1);
+    }
+
+    #[test]
+    fn evict_document_keeps_other_doc_same_layer_coord() {
+        let cache = TileCache::new(10_000_000);
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
+        let a = TileKey {
+            doc: 1,
+            layer: 1,
+            coord,
+            stage: CacheStage::Raw,
+        };
+        let b = TileKey {
+            doc: 2,
+            layer: 1,
+            coord,
+            stage: CacheStage::Raw,
+        };
+        cache.get_or_insert(a, Arc::new(PixelTile::new()));
+        cache.get_or_insert(b, Arc::new(PixelTile::new()));
+        cache.evict_document(1);
+        assert!(!cache.entries.contains_key(&a));
+        assert!(cache.entries.contains_key(&b));
     }
 
     #[test]
@@ -777,6 +877,7 @@ mod tests {
 
     fn composite_key() -> TileKey {
         TileKey {
+            doc: 1,
             layer: 0,
             coord: TileCoord {
                 level: 0,
@@ -873,5 +974,196 @@ mod tests {
         assert_eq!(cache.used_bytes_count(), 0);
         assert_eq!(cache.max_generation(), 0);
         assert!(cache.insert_fresh_gen(make_key(1, 0, 0), marked_tile(0.9), 51));
+    }
+
+    fn key_doc(doc: u32, x: u32, y: u32, stage: CacheStage) -> TileKey {
+        TileKey {
+            doc,
+            layer: 0,
+            coord: TileCoord { level: 0, x, y },
+            stage,
+        }
+    }
+
+    fn open_set(ids: &[u32]) -> HashSet<u32> {
+        ids.iter().copied().collect()
+    }
+
+    #[test]
+    fn evict_for_pressure_single_doc_keeps_viewport_drops_outside_composite() {
+        // Open Raw is pinned — off-viewport pressure drops Composite, not Raw.
+        let cache = TileCache::new(TILE_BYTES);
+        let vp = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
+        cache.get_or_insert(
+            key_doc(2, 0, 0, CacheStage::Composite),
+            Arc::new(PixelTile::new()),
+        );
+        cache.get_or_insert(
+            key_doc(2, 5, 5, CacheStage::Composite),
+            Arc::new(PixelTile::new()),
+        );
+        let mut viewport = HashSet::new();
+        viewport.insert(vp);
+        let open = open_set(&[2]);
+        cache.evict_for_pressure(&EvictContext {
+            active_doc: Some(2),
+            open_docs: &open,
+            viewport_coords: &viewport,
+        });
+        assert!(cache
+            .entries
+            .contains_key(&key_doc(2, 0, 0, CacheStage::Composite)));
+        assert!(!cache
+            .entries
+            .contains_key(&key_doc(2, 5, 5, CacheStage::Composite)));
+    }
+
+    #[test]
+    fn evict_for_pressure_pins_open_raw_drops_inactive_composite() {
+        let cache = TileCache::new(TILE_BYTES);
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
+        let inactive_raw = key_doc(1, 0, 0, CacheStage::Raw);
+        let inactive_comp = key_doc(1, 0, 0, CacheStage::Composite);
+        let active_raw = key_doc(2, 0, 0, CacheStage::Raw);
+        cache.get_or_insert(inactive_raw, Arc::new(PixelTile::new()));
+        cache.get_or_insert(inactive_comp, Arc::new(PixelTile::new()));
+        cache.get_or_insert(active_raw, Arc::new(PixelTile::new()));
+        let mut viewport = HashSet::new();
+        viewport.insert(coord);
+        let open = open_set(&[1, 2]);
+        cache.evict_for_pressure(&EvictContext {
+            active_doc: Some(2),
+            open_docs: &open,
+            viewport_coords: &viewport,
+        });
+        assert!(
+            !cache.entries.contains_key(&inactive_comp),
+            "inactive Composite must go under pressure"
+        );
+        assert!(
+            cache.entries.contains_key(&inactive_raw),
+            "open-session Raw must stay pinned"
+        );
+        assert!(cache.entries.contains_key(&active_raw));
+    }
+
+    #[test]
+    fn evict_for_pressure_allows_over_budget_when_only_pinned_raw_remain() {
+        let cache = TileCache::new(TILE_BYTES);
+        cache.get_or_insert(key_doc(2, 0, 0, CacheStage::Raw), Arc::new(PixelTile::new()));
+        cache.get_or_insert(key_doc(2, 1, 0, CacheStage::Raw), Arc::new(PixelTile::new()));
+        let mut viewport = HashSet::new();
+        viewport.insert(TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        });
+        let open = open_set(&[2]);
+        cache.evict_for_pressure(&EvictContext {
+            active_doc: Some(2),
+            open_docs: &open,
+            viewport_coords: &viewport,
+        });
+        assert_eq!(cache.entry_count(), 2);
+        assert!(cache.used_bytes_count() > cache.budget_bytes_count());
+    }
+
+    #[test]
+    fn insert_then_pressure_evict_leaves_miss_for_reschedule() {
+        let cache = TileCache::new(TILE_BYTES);
+        let protected = key_doc(2, 0, 0, CacheStage::Composite);
+        let victim = key_doc(2, 9, 9, CacheStage::Composite);
+        assert!(cache.insert_fresh_gen(protected, marked_tile(0.1), 1));
+        assert!(cache.insert_fresh_gen(victim, marked_tile(0.2), 1));
+        let mut viewport = HashSet::new();
+        viewport.insert(TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        });
+        let open = open_set(&[2]);
+        cache.evict_for_pressure(&EvictContext {
+            active_doc: Some(2),
+            open_docs: &open,
+            viewport_coords: &viewport,
+        });
+        assert!(cache.entries.contains_key(&protected));
+        assert!(
+            !cache.entries.contains_key(&victim),
+            "evicted key must miss so callers reschedule"
+        );
+    }
+
+    #[test]
+    fn evict_for_pressure_prefers_composite_before_raw_on_inactive() {
+        let cache = TileCache::new(2 * TILE_BYTES);
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
+        cache.get_or_insert(
+            key_doc(1, 0, 0, CacheStage::Raw),
+            Arc::new(PixelTile::new()),
+        );
+        cache.get_or_insert(
+            key_doc(1, 0, 0, CacheStage::Composite),
+            Arc::new(PixelTile::new()),
+        );
+        cache.get_or_insert(
+            key_doc(2, 0, 0, CacheStage::Raw),
+            Arc::new(PixelTile::new()),
+        );
+        let mut viewport = HashSet::new();
+        viewport.insert(coord);
+        let open = open_set(&[1, 2]);
+        cache.evict_for_pressure(&EvictContext {
+            active_doc: Some(2),
+            open_docs: &open,
+            viewport_coords: &viewport,
+        });
+        assert!(
+            !cache
+                .entries
+                .contains_key(&key_doc(1, 0, 0, CacheStage::Composite)),
+            "inactive Composite should go before touching Raw"
+        );
+        assert!(cache
+            .entries
+            .contains_key(&key_doc(1, 0, 0, CacheStage::Raw)));
+        assert!(cache
+            .entries
+            .contains_key(&key_doc(2, 0, 0, CacheStage::Raw)));
+    }
+
+    #[test]
+    fn evict_stages_drops_processed_composite_keeps_raw() {
+        let cache = TileCache::new(10_000_000);
+        for stage in [
+            CacheStage::Raw,
+            CacheStage::Processed,
+            CacheStage::Composite,
+        ] {
+            cache.get_or_insert(key_doc(1, 0, 0, stage), Arc::new(PixelTile::new()));
+        }
+        cache.evict_stages(1, &[CacheStage::Processed, CacheStage::Composite]);
+        assert!(cache
+            .entries
+            .contains_key(&key_doc(1, 0, 0, CacheStage::Raw)));
+        assert!(!cache
+            .entries
+            .contains_key(&key_doc(1, 0, 0, CacheStage::Processed)));
+        assert!(!cache
+            .entries
+            .contains_key(&key_doc(1, 0, 0, CacheStage::Composite)));
+        assert_eq!(cache.used_bytes_count(), TILE_BYTES);
     }
 }

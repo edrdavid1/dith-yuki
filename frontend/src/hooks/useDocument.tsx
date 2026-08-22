@@ -18,7 +18,12 @@ import { refreshFilters } from '../app/slices/filtersSlice';
 import { maybeAutoExtractPalette } from '../app/autoExtract';
 import { useShell } from '../app/shell/ShellContext';
 import { openDialog, saveDialog } from '../shared/ipc';
+import { listOpenDocuments } from '../shared/ipc/document';
 import type { BlankBackground } from '../shared/ipc/document';
+import {
+  OPEN_DOC_MEMORY_WARNING,
+  shouldWarnOpenDocMemory,
+} from '../shared/memoryWarning';
 import SvgExportDialog, { type SvgExportAlgorithm } from '../components/SvgExportDialog';
 
 /**
@@ -32,6 +37,17 @@ export function useDocument() {
   const [svgOpen, setSvgOpen] = useState(false);
   const svgResolver = useRef<((algo: SvgExportAlgorithm | null) => void) | null>(null);
 
+  const maybeWarnMemory = useCallback(async () => {
+    try {
+      const { tabs } = await listOpenDocuments();
+      if (shouldWarnOpenDocMemory(tabs.length)) {
+        dispatch(setDocumentMeta({ notification: OPEN_DOC_MEMORY_WARNING }));
+      }
+    } catch {
+      // non-fatal
+    }
+  }, [dispatch]);
+
   const openImageAtFn = useCallback(
     async (filePath: string) => {
       const result = await dispatch(openImage(filePath));
@@ -40,9 +56,10 @@ export function useDocument() {
         await dispatch(refreshFilters());
         const layerId = result.payload.layerId ?? 1;
         void maybeAutoExtractPalette(dispatch, layerId, autoExtractPalettes);
+        void maybeWarnMemory();
       }
     },
-    [autoExtractPalettes, dispatch]
+    [autoExtractPalettes, dispatch, maybeWarnMemory]
   );
 
   const openImageFn = useCallback(async () => {
@@ -115,9 +132,10 @@ export function useDocument() {
       if (openProject.fulfilled.match(result)) {
         await dispatch(refreshLayers(result.payload.docId));
         await dispatch(refreshFilters());
+        void maybeWarnMemory();
       }
     },
-    [dispatch]
+    [dispatch, maybeWarnMemory]
   );
 
   const openProjectFn = useCallback(async () => {
@@ -135,10 +153,11 @@ export function useDocument() {
   }, [openProjectAtFn]);
 
   const saveProjectFn = useCallback(async (): Promise<boolean> => {
-    if (!state.hasDocument) return false;
+    if (!state.hasDocument || state.docId == null) return false;
+    const docId = state.docId;
     try {
       if (state.projectPath) {
-        const result = await dispatch(saveProject(null));
+        const result = await dispatch(saveProject({ docId, path: null }));
         return saveProject.fulfilled.match(result);
       }
       const filePath = await saveDialog({
@@ -148,15 +167,16 @@ export function useDocument() {
       const path = filePath.toLowerCase().endsWith('.dyproj')
         ? filePath
         : `${filePath}.dyproj`;
-      const result = await dispatch(saveProjectAs(path));
+      const result = await dispatch(saveProjectAs({ docId, path }));
       return saveProjectAs.fulfilled.match(result);
     } catch {
       return false;
     }
-  }, [dispatch, state.hasDocument, state.projectPath]);
+  }, [dispatch, state.docId, state.hasDocument, state.projectPath]);
 
   const saveProjectAsFn = useCallback(async () => {
-    if (!state.hasDocument) return;
+    if (!state.hasDocument || state.docId == null) return;
+    const docId = state.docId;
     try {
       const filePath = await saveDialog({
         filters: [{ name: 'Dither Project', extensions: ['dyproj'] }],
@@ -165,19 +185,20 @@ export function useDocument() {
       const path = filePath.toLowerCase().endsWith('.dyproj')
         ? filePath
         : `${filePath}.dyproj`;
-      await dispatch(saveProjectAs(path));
+      await dispatch(saveProjectAs({ docId, path }));
     } catch {
       // Dialog cancel / IPC errors handled in thunk
     }
-  }, [dispatch, state.hasDocument]);
+  }, [dispatch, state.docId, state.hasDocument]);
 
   const exportPatternFn = useCallback(
     async (layerId?: number | null) => {
       const target = layerId ?? selectedLayerId;
-      if (target == null) {
+      if (target == null || state.docId == null) {
         dispatch(setDocumentMeta({ error: 'Select a layer to export a pattern' }));
         return;
       }
+      const docId = state.docId;
       try {
         const filePath = await saveDialog({
           filters: [{ name: 'Dither Pattern', extensions: ['dyuki'] }],
@@ -186,21 +207,22 @@ export function useDocument() {
         const path = filePath.toLowerCase().endsWith('.dyuki')
           ? filePath
           : `${filePath}.dyuki`;
-        await dispatch(exportPattern({ layerId: target, path }));
+        await dispatch(exportPattern({ docId, layerId: target, path }));
       } catch {
         // Dialog cancel / IPC errors handled in thunk
       }
     },
-    [dispatch, selectedLayerId]
+    [dispatch, selectedLayerId, state.docId]
   );
 
   const importPatternFn = useCallback(
     async (layerId?: number | null) => {
       const target = layerId ?? selectedLayerId;
-      if (target == null) {
+      if (target == null || state.docId == null) {
         dispatch(setDocumentMeta({ error: 'Select a layer to import a pattern' }));
         return;
       }
+      const docId = state.docId;
       try {
         const filePath = await openDialog({
           multiple: false,
@@ -208,10 +230,10 @@ export function useDocument() {
         });
         if (!filePath) return;
         const result = await dispatch(
-          importPattern({ path: filePath as string, targetLayerId: target })
+          importPattern({ docId, path: filePath as string, targetLayerId: target })
         );
         if (importPattern.fulfilled.match(result)) {
-          await dispatch(refreshLayers(state.docId));
+          await dispatch(refreshLayers(docId));
           await dispatch(refreshFilters());
         }
       } catch {
@@ -227,24 +249,26 @@ export function useDocument() {
       if (createDocument.fulfilled.match(result)) {
         await dispatch(refreshLayers(result.payload.docId));
         await dispatch(refreshFilters());
+        void maybeWarnMemory();
         return true;
       }
       return false;
     },
-    [dispatch]
+    [dispatch, maybeWarnMemory]
   );
 
   const importImageLayerFn = useCallback(async () => {
-    if (!state.hasDocument) return;
+    if (!state.hasDocument || state.docId == null) return;
+    const docId = state.docId;
     try {
       const filePath = await openDialog({
         multiple: false,
         filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
       });
       if (!filePath) return;
-      const result = await dispatch(importImageLayer(filePath as string));
+      const result = await dispatch(importImageLayer({ docId, path: filePath as string }));
       if (importImageLayer.fulfilled.match(result)) {
-        await dispatch(refreshLayers(state.docId));
+        await dispatch(refreshLayers(docId));
         await dispatch(refreshFilters());
         void maybeAutoExtractPalette(dispatch, result.payload.layerId, autoExtractPalettes);
       }

@@ -151,13 +151,15 @@ export function tileKey(t: TileCoord): string {
   return `${t.level}/${t.x}/${t.y}`;
 }
 
-/** Full document replace / restore — same `docId`, new source pixels. */
+/** Full document replace / restore / tab switch — drop stale bitmaps. */
 export const DOCUMENT_SOURCE_REPLACE_KINDS = new Set([
   'image_loaded',
   'document_created',
   'project_opened',
   'document_undone',
   'document_redone',
+  'document_activated',
+  'document_closed',
 ]);
 
 export function isDocumentSourceReplace(kind: string): boolean {
@@ -341,6 +343,7 @@ export default function TileCanvas({
   const docSizeRef = useRef({ docWidth, docHeight });
   const tileRevRef = useRef(0);
   const commitTimerRef = useRef<number | null>(null);
+  const handleWorkerMessageRef = useRef<(e: MessageEvent) => void>(() => {});
 
   viewportRef.current = viewport;
   docSizeRef.current = { docWidth, docHeight };
@@ -474,6 +477,12 @@ export default function TileCanvas({
       const key = msg.key as string;
       const bitmap = msg.bitmap as ImageBitmap;
       const decodedRev = msg.rev as number | undefined;
+      const msgDocId = msg.docId as number | undefined;
+      // Drop late responses from a previous tab / open (keys are level/x/y only).
+      if (typeof msgDocId === 'number' && msgDocId !== docId) {
+        bitmap.close();
+        return;
+      }
       if (!shouldAcceptDecodedRev(decodedRev, tileRevRef.current)) {
         bitmap.close();
         return;
@@ -503,17 +512,20 @@ export default function TileCanvas({
       clearCommitTimer();
       flushPendingCommit();
     },
-    [armCommitTimeout, clearCommitTimer, flushPendingCommit, scheduleRedraw],
+    [armCommitTimeout, clearCommitTimer, docId, flushPendingCommit, scheduleRedraw],
   );
+  handleWorkerMessageRef.current = handleWorkerMessage;
 
-  // ─── Initialize Web Worker ──────────────────────────────────────────────
+  // ─── Initialize Web Worker (stable — do not recreate on docId / handler churn) ─
 
   useEffect(() => {
     const worker = new Worker(
       new URL('../../workers/tileWorker.ts', import.meta.url),
       { type: 'module' },
     );
-    worker.onmessage = handleWorkerMessage;
+    worker.onmessage = (e: MessageEvent) => {
+      handleWorkerMessageRef.current(e);
+    };
     workerRef.current = worker;
 
     return () => {
@@ -536,7 +548,7 @@ export default function TileCanvas({
       }
       refreshPendingRef.current.clear();
     };
-  }, [handleWorkerMessage]);
+  }, []);
 
   // ─── Viewport change: CSS transform for instant pan, then async redraw ──
 
@@ -621,6 +633,11 @@ export default function TileCanvas({
 
   useEffect(() => {
     const unlisten = onDocumentChanged((event) => {
+      const eventDocId = event.payload.doc_id;
+      // Stale event from another tab / previous open — do not paint its tiles.
+      if (typeof eventDocId === 'number' && eventDocId !== docId) {
+        return;
+      }
       const sourceReplace = isDocumentSourceReplace(event.payload.kind);
       tileRevRef.current += 1;
       if (commitTimerRef.current != null) {
@@ -656,7 +673,10 @@ export default function TileCanvas({
     };
   }, [docId, docWidth, docHeight]);
 
-  useEffect(() => {
+  // Clear bitmaps before paint when identity changes — otherwise the viewport
+  // effect still sees A's tiles under B's doc size ("same image, other canvas").
+  useLayoutEffect(() => {
+    tileRevRef.current += 1;
     for (const bitmap of tileMapRef.current.values()) {
       bitmap.close();
     }
@@ -665,14 +685,36 @@ export default function TileCanvas({
       bitmap.close();
     }
     refreshPendingRef.current.clear();
-  }, [docId, documentEpoch]);
+
+    // Request immediately in the same layout pass so a worker recreate / event
+    // race cannot leave the canvas cleared with no follow-up fetch.
+    const vp = viewportRef.current;
+    if (
+      workerRef.current &&
+      docId &&
+      vp.canvasWidth > 0 &&
+      vp.canvasHeight > 0 &&
+      docWidth > 0 &&
+      docHeight > 0
+    ) {
+      const visible = computeVisibleTiles(vp, docWidth, docHeight);
+      if (visible.length > 0) {
+        workerRef.current.postMessage({
+          type: 'request-tiles',
+          tiles: visible,
+          docId,
+          rev: tileRevRef.current,
+        });
+      }
+    }
+  }, [docId, documentEpoch, docWidth, docHeight]);
 
   // ─── Force refetch all visible tiles after docId changes (initial load) ─
 
   useEffect(() => {
     if (!docId || viewport.canvasWidth === 0 || viewport.canvasHeight === 0) return;
-    
-    // After a short delay, force-refetch all visible tiles to catch any 
+
+    // After a short delay, force-refetch all visible tiles to catch any
     // that were computed by the backend after our initial request
     const timer = setTimeout(() => {
       if (!workerRef.current) return;
@@ -684,7 +726,7 @@ export default function TileCanvas({
         rev: tileRevRef.current,
       });
     }, 300);
-    
+
     return () => clearTimeout(timer);
   }, [docId, documentEpoch, docWidth, docHeight, viewport.canvasWidth, viewport.canvasHeight]);
 

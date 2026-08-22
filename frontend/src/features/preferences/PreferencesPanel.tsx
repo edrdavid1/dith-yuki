@@ -2,6 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import SimpleBar from 'simplebar-react';
 import { useShell } from '../../app/shell/ShellContext';
 import {
+  getGpuPreviewStatus,
+  setGpuPreviewEnabled,
+  type GpuPreviewStatus,
+} from '../../shared/ipc/app';
+import {
   PREVIEW_BACKGROUNDS,
   previewBackgroundStyle,
 } from '../preview/previewBackground';
@@ -42,6 +47,22 @@ export default function PreferencesPanel() {
 
   const [busy, setBusy] = useState(false);
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
+  const [gpuStatus, setGpuStatus] = useState<GpuPreviewStatus | null>(null);
+
+  useEffect(() => {
+    getGpuPreviewStatus()
+      .then(setGpuStatus)
+      .catch((err) => console.warn('Failed to query GPU preview status:', err));
+  }, []);
+
+  const handleToggleGpu = useCallback(async (enabled: boolean) => {
+    try {
+      const updated = await setGpuPreviewEnabled(enabled);
+      setGpuStatus(updated);
+    } catch (err) {
+      console.error('Failed to set GPU preview status:', err);
+    }
+  }, []);
 
   useEffect(() => {
     if (!capturing) return;
@@ -157,6 +178,41 @@ export default function PreferencesPanel() {
             );
           })}
         </div>
+      </details>
+
+      <details className={cn('preferences-section')}>
+        <summary id="prefs-gpu-heading" className={cn('preferences-section-title')}>
+          GPU Acceleration (Opt-in)
+        </summary>
+
+        <div className={cn('param-group')}>
+          <label className={cn('preferences-checkbox-row')}>
+            <input
+              type="checkbox"
+              checked={gpuStatus?.enabled ?? false}
+              disabled={gpuStatus?.envForced || !(gpuStatus?.available ?? true)}
+              onChange={(e) => void handleToggleGpu(e.target.checked)}
+            />
+            <span>Enable Path B Resident GPU Preview</span>
+          </label>
+        </div>
+
+        {gpuStatus?.envForced && (
+          <p className={cn('preferences-hint')}>
+            Overridden by <code>DITHER_GPU_PREVIEW</code> environment variable.
+          </p>
+        )}
+
+        {gpuStatus && !gpuStatus.available && (
+          <p className={cn('preferences-hint')}>
+            GPU context/adapter unavailable on this system.
+          </p>
+        )}
+
+        <p className={cn('preferences-hint')}>
+          Speeds up pattern dither (Bayer, Halftone, CRT) and palette work via resident GPU execution.
+          Error diffusion (ED) filters always run on CPU. Cold path panning may be slower on first touch.
+        </p>
       </details>
 
       <details

@@ -50,17 +50,18 @@ pub fn tile_grid_at_level(doc_width: u32, doc_height: u32, level: u8) -> (u32, u
 ///
 /// Used by tests and optional callers. Production preview does **not** filter
 /// these tiles — zoom-out display downsamples Composite L0 instead.
-pub fn build_raw_pyramid(layer_id: u32, width: u32, height: u32, cache: &TileCache) {
+pub fn build_raw_pyramid(doc: u32, layer_id: u32, width: u32, height: u32, cache: &TileCache) {
     let max_level = max_pyramid_level(width, height);
     for level in 1..=max_level {
         let (cols, rows) = tile_grid_at_level(width, height, level);
         for y in 0..rows {
             for x in 0..cols {
                 let coord = TileCoord { level, x, y };
-                if let Some(tile) = generate_pyramid_tile(level, coord, layer_id, CacheStage::Raw, cache)
+                if let Some(tile) = generate_pyramid_tile(level, coord, doc, layer_id, CacheStage::Raw, cache)
                 {
                     cache.insert_fresh(
                         TileKey {
+                            doc,
                             layer: layer_id,
                             coord,
                             stage: CacheStage::Raw,
@@ -163,6 +164,7 @@ pub fn downsample_tile(parent: &PixelTile) -> PixelTile {
 pub fn generate_pyramid_tile(
     level: u8,
     coord: TileCoord,
+    doc: u32,
     layer: u32,
     stage: CacheStage,
     cache: &TileCache,
@@ -183,7 +185,7 @@ pub fn generate_pyramid_tile(
 
     // Fetch all 4 child tiles from cache
     let child_tiles: Vec<_> = children.iter().map(|c| {
-        let key = TileKey { layer, coord: *c, stage };
+        let key = TileKey { doc, layer, coord: *c, stage };
         cache.get_entry(key)
     }).collect();
 
@@ -364,7 +366,7 @@ mod tests {
     fn generate_pyramid_tile_returns_none_for_level_0() {
         let cache = TileCache::new(100_000_000);
         let coord = TileCoord { level: 0, x: 0, y: 0 };
-        let result = generate_pyramid_tile(0, coord, 0, CacheStage::Composite, &cache);
+        let result = generate_pyramid_tile(0, coord, 1, 0, CacheStage::Composite, &cache);
         assert!(result.is_none());
     }
 
@@ -388,6 +390,7 @@ mod tests {
                     }
                 }
                 let key = TileKey {
+                    doc: 1,
                     layer: 0,
                     coord: TileCoord { level: child_level, x: cx, y: cy },
                     stage: CacheStage::Composite,
@@ -398,7 +401,7 @@ mod tests {
 
         // Generate pyramid tile at level 1, coord (0,0)
         let coord = TileCoord { level: 1, x: 0, y: 0 };
-        let result = generate_pyramid_tile(1, coord, 0, CacheStage::Composite, &cache);
+        let result = generate_pyramid_tile(1, coord, 1, 0, CacheStage::Composite, &cache);
         assert!(result.is_some());
 
         let tile = result.unwrap();
@@ -435,6 +438,7 @@ mod tests {
                 }
             }
             let key = TileKey {
+                doc: 1,
                 layer: 0,
                 coord: TileCoord { level: 0, x: cx, y: 0 },
                 stage: CacheStage::Composite,
@@ -444,7 +448,7 @@ mod tests {
 
         // Generate pyramid tile — missing bottom children
         let coord = TileCoord { level: 1, x: 0, y: 0 };
-        let result = generate_pyramid_tile(1, coord, 0, CacheStage::Composite, &cache);
+        let result = generate_pyramid_tile(1, coord, 1, 0, CacheStage::Composite, &cache);
 
         // Should still return Some since we handle missing children gracefully
         // (averaging only present children)
@@ -475,13 +479,13 @@ mod tests {
                     }
                 }
             }
-            let key = TileKey { layer: 0, coord: *coord, stage: CacheStage::Composite };
+            let key = TileKey { doc: 1, layer: 0, coord: *coord, stage: CacheStage::Composite };
             cache.insert_fresh(key, Arc::new(tile));
         }
 
         // Generate level 1 tile at (0,0)
         let coord = TileCoord { level: 1, x: 0, y: 0 };
-        let result = generate_pyramid_tile(1, coord, 0, CacheStage::Composite, &cache);
+        let result = generate_pyramid_tile(1, coord, 1, 0, CacheStage::Composite, &cache);
         assert!(result.is_some());
         let tile = result.unwrap();
 
@@ -529,10 +533,11 @@ mod tests {
         let height = 512u32;
         let buffer = vec![0.4f32; (width * height * 4) as usize];
         let cache = TileCache::new(100_000_000);
-        decompose_image_to_tiles(&buffer, width, height, 7, &cache).unwrap();
-        crate::pyramid::build_raw_pyramid(7, width, height, &cache);
+        decompose_image_to_tiles(&buffer, width, height, 1, 7, &cache).unwrap();
+        crate::pyramid::build_raw_pyramid(1, 7, width, height, &cache);
 
         let l1 = cache.get_entry(TileKey {
+            doc: 1,
             layer: 7,
             coord: TileCoord { level: 1, x: 0, y: 0 },
             stage: CacheStage::Raw,

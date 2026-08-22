@@ -17,18 +17,18 @@ const initialState: UndoState = {
   canRedo: false,
 };
 
-export const undo = createAsyncThunk('undo/undo', async (_, { rejectWithValue }) => {
+export const undo = createAsyncThunk('undo/undo', async (docId: number, { rejectWithValue }) => {
   try {
-    return await undoIPC();
+    return await undoIPC(docId);
   } catch (err) {
     logIpcError('undo', err);
     return rejectWithValue(formatIpcError(err));
   }
 });
 
-export const redo = createAsyncThunk('undo/redo', async (_, { rejectWithValue }) => {
+export const redo = createAsyncThunk('undo/redo', async (docId: number, { rejectWithValue }) => {
   try {
-    return await redoIPC();
+    return await redoIPC(docId);
   } catch (err) {
     logIpcError('redo', err);
     return rejectWithValue(formatIpcError(err));

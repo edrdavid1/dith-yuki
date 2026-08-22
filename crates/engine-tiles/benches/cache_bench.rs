@@ -14,6 +14,7 @@ fn bench_cache_get_or_insert(c: &mut Criterion) {
         // Pre-populate cache with tiles to simulate realistic scenario
         for i in 0..1000u32 {
             let key = TileKey {
+                doc: 1,
                 layer: 0,
                 coord: TileCoord {
                     level: 0,
@@ -30,6 +31,7 @@ fn bench_cache_get_or_insert(c: &mut Criterion) {
         b.iter(|| {
             for i in 0..1000u32 {
                 let key = black_box(TileKey {
+                    doc: 1,
                     layer: 0,
                     coord: TileCoord {
                         level: 0,
@@ -56,6 +58,7 @@ fn bench_cache_mark_dirty(c: &mut Criterion) {
         // Pre-populate cache with tiles
         for i in 0..1000u32 {
             let key = TileKey {
+                doc: 1,
                 layer: 0,
                 coord: TileCoord {
                     level: 0,
@@ -72,6 +75,7 @@ fn bench_cache_mark_dirty(c: &mut Criterion) {
         b.iter(|| {
             for i in 0..1000u32 {
                 let key = black_box(TileKey {
+                    doc: 1,
                     layer: 0,
                     coord: TileCoord {
                         level: 0,

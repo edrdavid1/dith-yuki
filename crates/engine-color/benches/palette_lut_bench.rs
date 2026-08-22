@@ -38,7 +38,7 @@ fn sample_oklab(i: usize) -> Oklab {
 fn bench_lut(c: &mut Criterion) {
     let palette = make_palette(16);
     let kd = PaletteKdCache::new();
-    let tree = kd.get_or_build(&palette).unwrap();
+    let tree = kd.get_or_build(1, &palette).unwrap();
 
     let mut group = c.benchmark_group("palette_lut");
 
@@ -94,13 +94,13 @@ fn bench_lut(c: &mut Criterion) {
     // Cache hit path (should be Arc clone only)
     let lut_cache = PaletteLutCache::new();
     let _ = lut_cache
-        .get_or_build(&palette, &kd, DEFAULT_LUT_SIZE)
+        .get_or_build(1, &palette, &kd, DEFAULT_LUT_SIZE)
         .unwrap();
     group.bench_function("cache_hit", |b| {
         b.iter(|| {
             black_box(
                 lut_cache
-                    .get_or_build(&palette, &kd, DEFAULT_LUT_SIZE)
+                    .get_or_build(1, &palette, &kd, DEFAULT_LUT_SIZE)
                     .unwrap(),
             );
         });

@@ -124,9 +124,29 @@ pub fn apply_adjust(
     sharpness: f32,
     noise: f32,
 ) -> PixelTile {
-    let mut current = PixelTile::new();
+    let mut out = PixelTile::new();
+    apply_adjust_into(
+        tile, coord, contrast, brightness, saturation, blur, sharpness, noise, &mut out,
+    );
+    out
+}
+
+/// Adjust into an existing buffer.
+///
+/// Point ops / noise write directly to `dst`. Blur/sharpness still use internal
+/// `PixelTile` temps (Wave 3 exception — see tile-memory-inplace SPEC).
+pub fn apply_adjust_into(
+    tile: &PixelTile,
+    coord: TileCoord,
+    contrast: f32,
+    brightness: f32,
+    saturation: f32,
+    blur: f32,
+    sharpness: f32,
+    noise: f32,
+    dst: &mut PixelTile,
+) {
     let contrast_m = 1.0 + contrast;
-    // Negative: −1 = grayscale. Positive: extra chroma so it reads through dither.
     let sat_m = if saturation >= 0.0 {
         1.0 + saturation * 2.0
     } else {
@@ -149,45 +169,46 @@ pub fn apply_adjust(
             g = lum + (g - lum) * sat_m;
             b = lum + (b - lum) * sat_m;
 
-            current.set(x, y, 0, r.clamp(0.0, 1.0));
-            current.set(x, y, 1, g.clamp(0.0, 1.0));
-            current.set(x, y, 2, b.clamp(0.0, 1.0));
-            current.set(x, y, 3, a);
+            dst.set(x, y, 0, r.clamp(0.0, 1.0));
+            dst.set(x, y, 1, g.clamp(0.0, 1.0));
+            dst.set(x, y, 2, b.clamp(0.0, 1.0));
+            dst.set(x, y, 3, a);
             if a <= 1e-6 {
-                current.set(x, y, 0, 0.0);
-                current.set(x, y, 1, 0.0);
-                current.set(x, y, 2, 0.0);
+                dst.set(x, y, 0, 0.0);
+                dst.set(x, y, 1, 0.0);
+                dst.set(x, y, 2, 0.0);
             }
         }
     }
 
     let blur_r = blur_radius_px(blur);
     if blur_r > 0 || sharpness > 1e-6 {
-        premultiply_rgb(&mut current);
+        premultiply_rgb(dst);
     }
     if blur_r > 0 {
-        current = box_blur_rgb(&current, blur_r);
+        let blurred = box_blur_rgb(dst, blur_r);
+        dst.copy_from(&blurred);
     }
 
     if sharpness > 1e-6 {
         let sharp_r = blur_r.max(SHARP_RADIUS);
-        let blurred = box_blur_rgb(&current, sharp_r);
+        let blurred = box_blur_rgb(dst, sharp_r);
         let amount = sharpness * 1.5;
         let mut sharpened = PixelTile::new();
         for y in 0..TILE_FULL_SIZE {
             for x in 0..TILE_FULL_SIZE {
                 for c in 0..3u32 {
-                    let orig = current.at(x, y, c);
+                    let orig = dst.at(x, y, c);
                     let low = blurred.at(x, y, c);
                     sharpened.set(x, y, c, (orig + amount * (orig - low)).clamp(0.0, 1.0));
                 }
-                sharpened.set(x, y, 3, current.at(x, y, 3));
+                sharpened.set(x, y, 3, dst.at(x, y, 3));
             }
         }
-        current = sharpened;
+        dst.copy_from(&sharpened);
     }
     if blur_r > 0 || sharpness > 1e-6 {
-        unpremultiply_rgb(&mut current);
+        unpremultiply_rgb(dst);
     }
 
     if noise > 1e-6 {
@@ -201,14 +222,12 @@ pub fn apply_adjust(
                 let cy = gy / NOISE_CELL;
                 let n = hash01(cx, cy, 0) * 2.0 - 1.0;
                 for c in 0..3u32 {
-                    let v = current.at(x, y, c) + n * noise;
-                    current.set(x, y, c, v.clamp(0.0, 1.0));
+                    let v = dst.at(x, y, c) + n * noise;
+                    dst.set(x, y, c, v.clamp(0.0, 1.0));
                 }
             }
         }
     }
-
-    current
 }
 
 #[cfg(test)]

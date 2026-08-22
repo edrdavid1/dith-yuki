@@ -126,49 +126,44 @@ pub struct ErrorResiduals {
 - Перед обработкой (X+1, Y+1): read `get_diag(layer, {X+1, Y+1})` → seed `corner`
   (IncomingErrorBuffer — диагональный FS/Atkinson overflow больше не отбрасывается)
 
-### 4.2 Row-Major Dependency Enforcement
+### 4.2 ED wavefront scheduler
 
-Тайлы обрабатываются worker pool в произвольном порядке (scheduler dequeue by priority).
-Для error diffusion это создаёт проблему: если (1,0) обработан раньше (0,0),
-residuals от (0,0) ещё не существуют → шов на границе.
+Тайлы dequeит worker pool по приоритету (Immediate…Prefetch). Для error diffusion
+порядок задаёт **планировщик**, не рекурсия на воркере.
 
-**Решение (on-demand recursive):** `compute_processed_tile` проверяет:
+Спека: `.cursor-spec/ed-scheduler/SPEC.md`.
 
 ```
-if layer.has_error_diffusion:   # all pyramid levels
-    if left_neighbor needs recompute (missing OR dirty) and raw present:
-        recursively compute left_neighbor first
-    if top_neighbor needs recompute …:
-        recursively compute top_neighbor first
-    if diag (x-1,y-1) needs recompute …:
-        recursively compute diagonal neighbor first
-    if neighbor raw missing:
-        increment diffusion_skip_counter; register pending_diffusion_waiters;
-        proceed with zero-seed this pass (wake on later raw insert)
+schedule_dirty_viewport_tiles / ensure_processed ED:
+  enqueue causal prefix [0..=x]×[0..=y] with priority inheritance
+  A.priority := max(A.priority, B.priority)
+
+Worker:
+  Processed ED !ed_ready → EdFrontier.block (no zero-seed)
+  Composite EdPrefixPending → EdFrontier.block_on(pending ED Processed keys)
+  insert Raw/Processed → wake frontier → enqueue_or_bump ready tasks
 ```
 
-Рекурсия:
-- На **всех** pyramid levels (ключи residuals включают полный `TileCoord.level`)
-- Только если raw tile соседа существует; иначе silent-skip + waiter registration
-- `is_dependency = true` → если тайл свежий в кэше, сразу возвращаем (без recompute)
+Typed pending: `EngineError::EdPrefixPending` / `EdDependenciesPending` / `PyramidChildrenPending`
+(не string-match). Один механизм ожидания — `EdFrontier` (Raw + Processed + Composite).
 
-**Diagnosis (Track A §1):** raw level-0 обычно присутствует после `decompose`
-(eviction в production path сейчас не вызывается) — ветка skip редко достижима;
-контракт waiters зафиксирован хелперами + unit-тестами и лёгкой prod-проводкой.
+Метрика: `ed_prefix_tiles_enqueued`, `ed_blocked_total`.
+
+Scheduler: pending task per `TileKey` in a `DashMap`; SegQueue lanes hold key hints only
+(priority bump updates in place — no duplicate payloads).
+
+Residuals: filter/preview invalidation uses `evict_layer(doc, layer)` (and
+`evict_downstream_cone` for spatial Raw edits); process-wide `clear` only on full replace.
 
 ### 4.3 Invalidation Flow
 
 При изменении параметров DitherV2 фильтра:
 
 ```
-1. error_residuals.clear()           — сброс ВСЕХ residuals
-2. invalidate(LayerFilterChanged)    — mark dirty: Processed + Composite тайлы
-3. schedule_dirty_viewport_tiles()   — enqueue задачи в scheduler
-4. Worker dequeue → compute_processed_tile:
-   a. Detect requires_full_row
-   b. Check left/top neighbors: dirty? → recompute them first
-   c. Neighbors produce fresh residuals → store
-   d. Current tile reads fresh residuals → seamless result
+1. error_residuals.clear()
+2. invalidate(LayerFilterChanged)
+3. schedule_dirty_viewport_tiles()   — Composite + ED prefix closure
+4. Workers: wavefront Processed → wake Composite from frontier
 ```
 
 ---
@@ -358,11 +353,15 @@ tile://    = 256 × 256 × 4 × u8  = 256 KB
 ### CPU ordered (Bayer, один фильтр)
 
 ```
-Raw copy → PixelTile::new+copy → ordered 260² (GlobalCoord + threshold)
-        → Arc insert → Composite blend → f32_to_rgba8 → tile:// → ImageBitmap
+Raw Arc → park take dst → ordered_into 260² → Arc insert (once)
+        → Composite blend → f32_to_rgba8 → tile:// → ImageBitmap
 ```
 
 Тайлы независимы → N воркеров почти линейны. Halo 2px считается вместе с core.
+Stack depth N больше не аллоцирует N полных тайлов: ping-pong из park (peak temps ≤ 2
+при Normal+opacity1 после warm; Track I ≤ 3 вокруг blend).
+
+Cache footprint (Arc в `TileCache`) — отдельный бюджет от compute temps; см. architecture §13.2.
 
 ### CPU error diffusion
 
@@ -391,9 +390,10 @@ Viewport из десятков тайлов на CPU-пуле часто быс�
 
 1. Профиль `tile_worker_loop` на реальном слайдере (Bayer vs FS vs zoom-out).
 2. Zoom-out → display pyramid (box-filter L0 Composite; filters stay L0).
-3. Filter stack alloc → in-place/ping-pong PixelTile.
+3. ~~Filter stack alloc → in-place/ping-pong PixelTile.~~ **shipped** (tile-memory-inplace).
 4. ED → не GPU; уменьшать лишнюю работу (viewport-only, skip halo preview).
 5. GPU v2 только после (3) и только с persistent buffers + без глобального lock.
+6. Follow-up temps: Adjust blur via park; preview composite без halo; f16 cache stages.
 
 Инварианты: `GlobalCoord`/`rem_euclid`, ED corner residuals, GPU parity, LUT
 границы ячеек. Не «ускорять» копированием локальных координат тайла.

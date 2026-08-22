@@ -68,8 +68,10 @@ pub enum ProjectError {
     #[error("archive kind mismatch: expected {expected}, found {found}")]
     KindMismatch { expected: String, found: String },
 
-    #[error("incomplete Raw tiles for layer {layer_id}; cannot assemble project PNG")]
-    IncompleteRaw { layer_id: u32 },
+    #[error(
+        "incomplete Raw tiles for document {doc_id} layer {layer_id}; cannot assemble project PNG — reopen the file"
+    )]
+    IncompleteRaw { doc_id: u32, layer_id: u32 },
 
     #[error("missing archive entry: {0}")]
     MissingEntry(String),

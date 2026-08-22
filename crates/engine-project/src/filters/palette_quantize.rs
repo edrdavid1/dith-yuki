@@ -44,11 +44,25 @@ impl PaletteQuantizeFilter {
     /// Returns `EngineError::InvalidFilterParams` if the palette is empty.
     pub fn apply(
         tile: &PixelTile,
-        _coord: TileCoord,
+        coord: TileCoord,
         palette: &Palette,
         lut: &PaletteLut3D,
         diffusion: Option<DiffusionKernel>,
     ) -> Result<PixelTile, EngineError> {
+        let mut out = PixelTile::new();
+        Self::apply_into(tile, coord, palette, lut, diffusion, &mut out)?;
+        Ok(out)
+    }
+
+    /// Palette quantize into an existing buffer (no tile alloc).
+    pub fn apply_into(
+        tile: &PixelTile,
+        _coord: TileCoord,
+        palette: &Palette,
+        lut: &PaletteLut3D,
+        diffusion: Option<DiffusionKernel>,
+        dst: &mut PixelTile,
+    ) -> Result<(), EngineError> {
         if palette.colors.is_empty() {
             return Err(EngineError::invalid_filter_params(
                 "PaletteQuantize requires a non-empty palette",
@@ -56,8 +70,8 @@ impl PaletteQuantizeFilter {
         }
 
         match diffusion {
-            None => Self::apply_nearest(tile, palette, lut),
-            Some(kernel) => Self::apply_diffusion(tile, palette, lut, kernel),
+            None => Self::apply_nearest_into(tile, palette, lut, dst),
+            Some(kernel) => Self::apply_diffusion_into(tile, palette, lut, kernel, dst),
         }
     }
 
@@ -69,13 +83,12 @@ impl PaletteQuantizeFilter {
     /// 3. Find nearest palette index via LUT
     /// 4. Write palette color (linear RGB) to output
     /// 5. Copy alpha unchanged
-    fn apply_nearest(
+    fn apply_nearest_into(
         tile: &PixelTile,
         palette: &Palette,
         lut: &PaletteLut3D,
-    ) -> Result<PixelTile, EngineError> {
-        let mut output = PixelTile::new();
-
+        dst: &mut PixelTile,
+    ) -> Result<(), EngineError> {
         for y in 0..FULL_SIZE {
             for x in 0..FULL_SIZE {
                 let r = tile.at(x, y, 0);
@@ -84,17 +97,24 @@ impl PaletteQuantizeFilter {
 
                 let oklab = linear_to_oklab(engine_color::oklab::LinRgb { r, g, b });
                 let nearest_idx = lut.nearest_index(oklab) as usize;
-                let palette_color = &palette.colors[nearest_idx];
+                let palette_color = palette
+                    .colors
+                    .get(nearest_idx)
+                    .ok_or_else(|| EngineError::InvalidFilterParams {
+                        reason: format!(
+                            "palette LUT index {nearest_idx} out of range for palette len {}",
+                            palette.colors.len()
+                        ),
+                    })?;
 
-                output.set(x, y, 0, palette_color.r);
-                output.set(x, y, 1, palette_color.g);
-                output.set(x, y, 2, palette_color.b);
-                // Preserve alpha unmodified
-                output.set(x, y, 3, tile.at(x, y, 3));
+                dst.set(x, y, 0, palette_color.r);
+                dst.set(x, y, 1, palette_color.g);
+                dst.set(x, y, 2, palette_color.b);
+                dst.set(x, y, 3, tile.at(x, y, 3));
             }
         }
 
-        Ok(output)
+        Ok(())
     }
 
     /// Error diffusion quantization in Oklab space.
@@ -109,14 +129,14 @@ impl PaletteQuantizeFilter {
     ///    - Distribute error to neighbors via kernel
     ///    - Write nearest palette color (linear RGB) to output
     /// 3. Alpha preserved unmodified
-    fn apply_diffusion(
+    fn apply_diffusion_into(
         tile: &PixelTile,
         palette: &Palette,
         lut: &PaletteLut3D,
         kernel: DiffusionKernel,
-    ) -> Result<PixelTile, EngineError> {
+        dst: &mut PixelTile,
+    ) -> Result<(), EngineError> {
         let size = FULL_SIZE as usize;
-        let mut output = PixelTile::new();
 
         // Error buffer: 3 channels (L, a, b) for each pixel
         let mut error_buf = vec![0.0f32; size * size * 3];
@@ -154,8 +174,22 @@ impl PaletteQuantizeFilter {
 
                 // Find nearest palette color (O(1) LUT)
                 let nearest_idx = lut.nearest_index(clamped) as usize;
-                let nearest_oklab = palette_oklab[nearest_idx];
-                let palette_color = &palette.colors[nearest_idx];
+                let palette_color = palette.colors.get(nearest_idx).ok_or_else(|| {
+                    EngineError::InvalidFilterParams {
+                        reason: format!(
+                            "palette LUT index {nearest_idx} out of range for palette len {}",
+                            palette.colors.len()
+                        ),
+                    }
+                })?;
+                let nearest_oklab = palette_oklab.get(nearest_idx).copied().ok_or_else(|| {
+                    EngineError::InvalidFilterParams {
+                        reason: format!(
+                            "palette Oklab index {nearest_idx} out of range for len {}",
+                            palette_oklab.len()
+                        ),
+                    }
+                })?;
 
                 // Compute error (difference between adjusted and quantized)
                 let err_l = clamped.l - nearest_oklab.l;
@@ -175,15 +209,15 @@ impl PaletteQuantizeFilter {
                 );
 
                 // Write palette color (CRITICAL: always write exact palette entry)
-                output.set(xu, yu, 0, palette_color.r);
-                output.set(xu, yu, 1, palette_color.g);
-                output.set(xu, yu, 2, palette_color.b);
+                dst.set(xu, yu, 0, palette_color.r);
+                dst.set(xu, yu, 1, palette_color.g);
+                dst.set(xu, yu, 2, palette_color.b);
                 // Preserve alpha unmodified
-                output.set(xu, yu, 3, tile.at(xu, yu, 3));
+                dst.set(xu, yu, 3, tile.at(xu, yu, 3));
             }
         }
 
-        Ok(output)
+        Ok(())
     }
 
     /// Distribute quantization error to neighboring pixels according to the kernel.
@@ -255,7 +289,7 @@ mod tests {
     /// Helper: build a LUT from a palette (via KD at cell centers).
     fn build_lut(palette: &Palette) -> PaletteLut3D {
         let kd = PaletteKdCache::new();
-        let tree = kd.get_or_build(palette).unwrap();
+        let tree = kd.get_or_build(1, palette).unwrap();
         PaletteLut3D::build(palette, DEFAULT_LUT_SIZE, &tree).unwrap()
     }
 

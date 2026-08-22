@@ -41,6 +41,7 @@ pub type DitheredRgb = [f32; 3];
 /// Block address in the document-global mega-pixel grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BlockCoord {
+    pub doc: u32,
     pub layer: u32,
     /// `aligned_x / pixel_size`
     pub block_x: u32,
@@ -51,9 +52,10 @@ pub struct BlockCoord {
 
 impl BlockCoord {
     #[inline]
-    pub fn from_global(layer: u32, gx: u32, gy: u32, pixel_size: u32) -> Self {
+    pub fn from_global(doc: u32, layer: u32, gx: u32, gy: u32, pixel_size: u32) -> Self {
         debug_assert!(pixel_size >= 1);
         Self {
+            doc,
             layer,
             block_x: gx / pixel_size,
             block_y: gy / pixel_size,
@@ -88,12 +90,12 @@ impl BlockRepresentativeCache {
     }
 
     #[inline]
-    fn pack_key(layer: u32, pixel_size: u32) -> u64 {
-        ((layer as u64) << 8) | (pixel_size as u64 & 0xff)
+    fn pack_key(doc: u32, layer: u32, pixel_size: u32) -> u64 {
+        ((doc as u64) << 40) | ((layer as u64) << 8) | (pixel_size as u64 & 0xff)
     }
 
-    pub fn is_populated(&self, layer: u32, pixel_size: u32) -> bool {
-        self.populated.contains_key(&Self::pack_key(layer, pixel_size))
+    pub fn is_populated(&self, doc: u32, layer: u32, pixel_size: u32) -> bool {
+        self.populated.contains_key(&Self::pack_key(doc, layer, pixel_size))
     }
 
     pub fn get_raw(&self, block: BlockCoord) -> Option<RawPixelValue> {
@@ -136,13 +138,20 @@ impl BlockRepresentativeCache {
     }
 
     /// Drop raw, dithered, and populated entries for `layer`. Missing keys are a no-op.
-    pub fn evict_layer(&self, layer: u32) {
-        self.raw.retain(|k, _| k.layer != layer);
-        self.dithered.retain(|k, _| k.layer != layer);
+    pub fn evict_layer(&self, doc: u32, layer: u32) {
+        self.raw.retain(|k, _| k.doc != doc || k.layer != layer);
+        self.dithered.retain(|k, _| k.doc != doc || k.layer != layer);
         self.populated.retain(|k, _| {
-            let packed_layer = (*k >> 8) as u32;
-            packed_layer != layer
+            let packed_doc = (*k >> 40) as u32;
+            let packed_layer = ((*k >> 8) as u32) & 0xffff_ffff;
+            packed_doc != doc || packed_layer != layer
         });
+    }
+
+    pub fn evict_document(&self, doc: u32) {
+        self.raw.retain(|k, _| k.doc != doc);
+        self.dithered.retain(|k, _| k.doc != doc);
+        self.populated.retain(|k, _| (*k >> 40) as u32 != doc);
     }
 
     /// Full invalidate — raw image changed.
@@ -164,6 +173,7 @@ impl BlockRepresentativeCache {
         rgba: &[f32],
         width: u32,
         height: u32,
+        doc: u32,
         layer: u32,
         pixel_size: u32,
     ) {
@@ -171,8 +181,7 @@ impl BlockRepresentativeCache {
         if width == 0 || height == 0 {
             return;
         }
-        // Replace any previous entries for this layer+ps
-        self.raw.retain(|k, _| !(k.layer == layer && k.pixel_size == pixel_size));
+        self.raw.retain(|k, _| !(k.doc == doc && k.layer == layer && k.pixel_size == pixel_size));
 
         let w = width as usize;
         let h = height as usize;
@@ -188,10 +197,10 @@ impl BlockRepresentativeCache {
                 } else {
                     [0.0, 0.0, 0.0, 0.0]
                 };
-                self.insert_raw(BlockCoord::from_global(layer, gx, gy, pixel_size), value);
+                self.insert_raw(BlockCoord::from_global(doc, layer, gx, gy, pixel_size), value);
                 gx = gx.saturating_add(pixel_size);
                 if gx == 0 {
-                    break; // overflow guard
+                    break;
                 }
             }
             gy = gy.saturating_add(pixel_size);
@@ -200,37 +209,36 @@ impl BlockRepresentativeCache {
             }
         }
 
-        // Silence unused in release if optimizer drops — keep h for clarity
         let _ = (w, h, ps);
 
-        self.populated.insert(Self::pack_key(layer, pixel_size), ());
+        self.populated.insert(Self::pack_key(doc, layer, pixel_size), ());
     }
 
-    /// Lazy populate from raw tiles already in [`TileCache`] (no full buffer).
     pub fn ensure_populated_from_tiles(
         &self,
         tile_cache: &TileCache,
+        doc: u32,
         layer: u32,
         pixel_size: u32,
         width: u32,
         height: u32,
     ) {
-        if pixel_size <= 1 || self.is_populated(layer, pixel_size) {
+        if pixel_size <= 1 || self.is_populated(doc, layer, pixel_size) {
             return;
         }
         if width == 0 || height == 0 {
             return;
         }
 
-        self.raw.retain(|k, _| !(k.layer == layer && k.pixel_size == pixel_size));
+        self.raw.retain(|k, _| !(k.doc == doc && k.layer == layer && k.pixel_size == pixel_size));
 
         let mut gy = 0u32;
         while gy < height {
             let mut gx = 0u32;
             while gx < width {
-                let value = read_raw_from_tiles(tile_cache, layer, gx, gy)
+                let value = read_raw_from_tiles(tile_cache, doc, layer, gx, gy)
                     .unwrap_or([0.0, 0.0, 0.0, 0.0]);
-                self.insert_raw(BlockCoord::from_global(layer, gx, gy, pixel_size), value);
+                self.insert_raw(BlockCoord::from_global(doc, layer, gx, gy, pixel_size), value);
                 let next = gx.saturating_add(pixel_size);
                 if next <= gx {
                     break;
@@ -244,7 +252,7 @@ impl BlockRepresentativeCache {
             gy = next;
         }
 
-        self.populated.insert(Self::pack_key(layer, pixel_size), ());
+        self.populated.insert(Self::pack_key(doc, layer, pixel_size), ());
     }
 }
 
@@ -256,6 +264,7 @@ impl Default for BlockRepresentativeCache {
 
 fn read_raw_from_tiles(
     tile_cache: &TileCache,
+    doc: u32,
     layer: u32,
     gx: u32,
     gy: u32,
@@ -265,6 +274,7 @@ fn read_raw_from_tiles(
     let local_x = gx % TILE_SIZE + HALO;
     let local_y = gy % TILE_SIZE + HALO;
     let key = TileKey {
+        doc,
         layer,
         coord: TileCoord {
             level: 0,
@@ -302,16 +312,16 @@ mod tests {
         rgba[4 * 2] = 0.0;
         rgba[4 * 2 + 1] = 1.0;
 
-        cache.populate_from_buffer(&rgba, 4, 4, 1, 2);
-        assert!(cache.is_populated(1, 2));
+        cache.populate_from_buffer(&rgba, 4, 4, 1, 1, 2);
+        assert!(cache.is_populated(1, 1, 2));
 
         let a = cache
-            .get_raw(BlockCoord::from_global(1, 0, 0, 2))
+            .get_raw(BlockCoord::from_global(1, 1, 0, 0, 2))
             .unwrap();
         assert_eq!(a[0], 1.0);
 
         let b = cache
-            .get_raw(BlockCoord::from_global(1, 2, 0, 2))
+            .get_raw(BlockCoord::from_global(1, 1, 2, 0, 2))
             .unwrap();
         assert_eq!(b[1], 1.0);
     }
@@ -320,11 +330,11 @@ mod tests {
     fn invalidate_clears_populated() {
         let cache = BlockRepresentativeCache::new();
         let rgba = vec![0.5f32; 8 * 8 * 4];
-        cache.populate_from_buffer(&rgba, 8, 8, 1, 4);
-        assert!(cache.is_populated(1, 4));
+        cache.populate_from_buffer(&rgba, 8, 8, 1, 1, 4);
+        assert!(cache.is_populated(1, 1, 4));
         let gen = cache.generation();
         cache.invalidate_all();
-        assert!(!cache.is_populated(1, 4));
+        assert!(!cache.is_populated(1, 1, 4));
         assert!(cache.generation() > gen);
     }
 
@@ -333,36 +343,36 @@ mod tests {
         let cache = BlockRepresentativeCache::new();
         let rgba_a = vec![0.25f32; 4 * 4 * 4];
         let rgba_b = vec![0.75f32; 4 * 4 * 4];
-        cache.populate_from_buffer(&rgba_a, 4, 4, 1, 2);
-        cache.populate_from_buffer(&rgba_b, 4, 4, 2, 2);
-        cache.insert_dithered(BlockCoord::from_global(1, 0, 0, 2), [0.1, 0.2, 0.3]);
-        cache.insert_dithered(BlockCoord::from_global(2, 0, 0, 2), [0.4, 0.5, 0.6]);
+        cache.populate_from_buffer(&rgba_a, 4, 4, 1, 1, 2);
+        cache.populate_from_buffer(&rgba_b, 4, 4, 1, 2, 2);
+        cache.insert_dithered(BlockCoord::from_global(1, 1, 0, 0, 2), [0.1, 0.2, 0.3]);
+        cache.insert_dithered(BlockCoord::from_global(1, 2, 0, 0, 2), [0.4, 0.5, 0.6]);
 
-        cache.evict_layer(1);
+        cache.evict_layer(1, 1);
 
-        assert!(cache.get_raw(BlockCoord::from_global(1, 0, 0, 2)).is_none());
-        assert!(cache.get_dithered(BlockCoord::from_global(1, 0, 0, 2)).is_none());
-        assert!(!cache.is_populated(1, 2));
-        assert!(cache.get_raw(BlockCoord::from_global(2, 0, 0, 2)).is_some());
-        assert!(cache.get_dithered(BlockCoord::from_global(2, 0, 0, 2)).is_some());
-        assert!(cache.is_populated(2, 2));
+        assert!(cache.get_raw(BlockCoord::from_global(1, 1, 0, 0, 2)).is_none());
+        assert!(cache.get_dithered(BlockCoord::from_global(1, 1, 0, 0, 2)).is_none());
+        assert!(!cache.is_populated(1, 1, 2));
+        assert!(cache.get_raw(BlockCoord::from_global(1, 2, 0, 0, 2)).is_some());
+        assert!(cache.get_dithered(BlockCoord::from_global(1, 2, 0, 0, 2)).is_some());
+        assert!(cache.is_populated(1, 2, 2));
     }
 
     #[test]
     fn edit_pixel_requires_repopulate() {
         let cache = BlockRepresentativeCache::new();
         let mut rgba = vec![0.0f32; 8 * 8 * 4];
-        cache.populate_from_buffer(&rgba, 8, 8, 1, 4);
+        cache.populate_from_buffer(&rgba, 8, 8, 1, 1, 4);
         let before = cache
-            .get_raw(BlockCoord::from_global(1, 0, 0, 4))
+            .get_raw(BlockCoord::from_global(1, 1, 0, 0, 4))
             .unwrap()[0];
         assert_eq!(before, 0.0);
 
         rgba[0] = 0.75;
         cache.invalidate_all();
-        cache.populate_from_buffer(&rgba, 8, 8, 1, 4);
+        cache.populate_from_buffer(&rgba, 8, 8, 1, 1, 4);
         let after = cache
-            .get_raw(BlockCoord::from_global(1, 0, 0, 4))
+            .get_raw(BlockCoord::from_global(1, 1, 0, 0, 4))
             .unwrap()[0];
         assert_eq!(after, 0.75);
     }
@@ -371,8 +381,8 @@ mod tests {
     fn get_raw_respects_thread_local_sampling_flag() {
         let cache = BlockRepresentativeCache::new();
         let rgba = vec![0.25f32; 4 * 4 * 4];
-        cache.populate_from_buffer(&rgba, 4, 4, 1, 2);
-        let key = BlockCoord::from_global(1, 0, 0, 2);
+        cache.populate_from_buffer(&rgba, 4, 4, 1, 1, 2);
+        let key = BlockCoord::from_global(1, 1, 0, 0, 2);
         assert!(cache.get_raw(key).is_some());
         with_raw_block_sampling(false, || {
             assert!(cache.get_raw(key).is_none());

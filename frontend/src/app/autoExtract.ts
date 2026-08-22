@@ -33,9 +33,14 @@ export const extractPalette = createAsyncThunk<
   const targetCount = args.targetCount ?? extractCount;
   const method = args.method ?? extractMethod;
 
+  const docId = getState().document.docId;
+  if (docId == null) {
+    return rejectWithValue('No document open');
+  }
+
   dispatch(setError(null));
   try {
-    const dto = await generatePalette(args.layerId, targetCount, method, {
+    const dto = await generatePalette(docId, args.layerId, targetCount, method, {
       chromaWeight,
       contrastWeight,
     });

@@ -17,7 +17,11 @@
         "height": 800,
         "resizable": true,
         "fullscreen": false,
-        "backgroundColor": "#000000"
+        "decorations": true,
+        "hiddenTitle": true,
+        "titleBarStyle": "Overlay",
+        "trafficLightPosition": { "x": 12, "y": 14 },
+        "backgroundColor": "#CDCDCD"
       }
     ],
     "security": {
