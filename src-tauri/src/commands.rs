@@ -4,11 +4,12 @@
 //! Each command acquires the DocumentHandle and TileCache from app state,
 //! delegates to engine-project for mutations, and returns DTOs for serialization.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use engine_project::{
     document::DocumentHandle,
@@ -22,6 +23,7 @@ use engine_tiles::{CacheStage, Priority, RecomputeTask, TileKey};
 
 use crate::panel_manager::PanelManager;
 use crate::worker::WorkerWake;
+use crate::document_session::{emit_tabs_changed, OpenDocumentsPayload};
 
 // ============================================================================
 // Data Structures for Command Arguments
@@ -29,6 +31,8 @@ use crate::worker::WorkerWake;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AddLayerRequest {
+    #[serde(alias = "docId")]
+    pub doc_id: u32,
     pub kind: String, // "raster" or "adjustment"
     pub parent_group: Option<u32>,
     pub index: usize,
@@ -36,6 +40,8 @@ pub struct AddLayerRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SetLayerPropsRequest {
+    #[serde(alias = "docId")]
+    pub doc_id: u32,
     pub layer_id: u32,
     pub name: Option<String>,
     pub opacity: Option<f32>,
@@ -46,6 +52,8 @@ pub struct SetLayerPropsRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReorderLayerRequest {
+    #[serde(alias = "docId")]
+    pub doc_id: u32,
     pub layer_id: u32,
     pub new_parent: Option<u32>,
     pub new_index: usize,
@@ -117,7 +125,9 @@ pub(crate) struct PendingPreviewRefresh {
 
 /// Shared application state for Tauri commands.
 pub struct AppState {
-    pub document_handle: DocumentHandle,
+    pub sessions: Mutex<HashMap<u32, Arc<crate::document_session::DocumentSession>>>,
+    pub next_doc_id: AtomicU32,
+    pub active_id: Mutex<Option<u32>>,
     pub tile_cache: TileCache,
     pub scheduler: Scheduler,
     pub viewport: Mutex<ViewportState>,
@@ -127,12 +137,16 @@ pub struct AppState {
     pub threshold_cache: engine_color::threshold_map::ThresholdMapCache,
     pub error_residuals: engine_project::filters::ErrorResidualsStore,
     pub block_representatives: engine_tiles::BlockRepresentativeCache,
-    /// Track A: silent-skip diagnosis counter (left/top raw missing).
-    pub diffusion_skip_counter: crate::diffusion_waiters::DiffusionSkipCounter,
-    /// Track A: pending waiters contract (helpers + tests; prod wake optional).
-    pub pending_diffusion_waiters: crate::diffusion_waiters::PendingDiffusionWaiters,
+    /// ED wavefront: blocked Processed/Composite waiting on deps.
+    pub ed_frontier: engine_tiles::EdFrontier,
     /// Track D: optional GPU compute context (None = CPU-only / no adapter).
     pub gpu: Option<std::sync::Arc<engine_gpu::GpuContext>>,
+    /// Path B: GPU-resident tile cache (VRAM slots); None without adapter.
+    pub gpu_resident: Option<std::sync::Arc<engine_gpu::GpuTileCache>>,
+    /// Path B: dedicated submit thread; None without adapter.
+    pub gpu_executor: Option<std::sync::Mutex<engine_gpu::GpuExecutor>>,
+    /// Set once in app setup — used to emit `tile-ready` from GPU preview publish.
+    pub app_handle: Mutex<Option<tauri::AppHandle>>,
     pub panel_manager: Mutex<PanelManager>,
     pub selection: Mutex<SelectionState>,
     pub dock_affinity: Mutex<crate::dock_affinity::DockAffinityController>,
@@ -140,21 +154,10 @@ pub struct AppState {
     pub float_drag_mouseup_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Keeps macOS NSEvent monitors alive for the active float-drag session.
     pub float_drag_mouseup_hook: Mutex<Option<crate::global_mouseup::MouseUpHook>>,
-    /// Path of the current `.dyproj` (set on save/open; cleared on `load_image`).
-    pub project_path: Mutex<Option<std::path::PathBuf>>,
-    /// Track N: snapshot undo/redo (not taken by workers).
-    pub undo_manager: Mutex<crate::undo::UndoManager>,
-    /// Track P: live Arc at last clean point (save / replace). Dirty = !ptr_eq.
-    pub saved_snapshot: Mutex<Option<std::sync::Arc<engine_project::Document>>>,
     /// Workers currently executing a dequeued task (including stale discards).
     pub preview_pass_inflight: AtomicUsize,
     /// Latest filter-driven preview refresh to run once the current pass drains.
     pub pending_preview_refresh: Mutex<Option<PendingPreviewRefresh>>,
-    /// Held by the worker currently building an error-diffusion prefix by
-    /// anti-diagonals. `try_lock` only: losers fall back to depth-first
-    /// recursion instead of blocking a worker (and, under nested rayon, the
-    /// pool thread the diagonal work needs).
-    pub ed_prefix_lock: Mutex<()>,
 }
 
 /// Cmd+Q / Dock Quit must not terminate until the frontend save dialog finishes.
@@ -171,13 +174,21 @@ pub struct QuitGuard {
 pub struct DocumentChangedPayload {
     pub kind: String,
     pub layer_id: Option<u32>,
+    pub doc_id: Option<u32>,
 }
 
 /// Helper to emit document-changed to all windows (including floating panels).
-pub(crate) fn emit_document_changed(app_handle: &AppHandle, kind: &str, layer_id: Option<u32>) {
+/// `doc_id` should be the document that changed (not “whoever is active now”).
+pub(crate) fn emit_document_changed(
+    app_handle: &AppHandle,
+    kind: &str,
+    layer_id: Option<u32>,
+    doc_id: Option<u32>,
+) {
     let payload = DocumentChangedPayload {
         kind: kind.to_string(),
         layer_id,
+        doc_id,
     };
     let _ = app_handle.emit_to(tauri::EventTarget::Any, "document-changed", payload);
 }
@@ -261,14 +272,15 @@ fn find_layers_referencing_palette(
 /// If no FilterInstance references the modified PaletteId, this is a no-op.
 /// Does not block on tile recomputation; invalidation and scheduling complete synchronously.
 fn invalidate_palette_changed(palette_id: engine_project::types::PaletteId, state: &AppState) {
-    let snapshot = state.document_handle.snapshot();
+    let Ok(snapshot) = state.active_session().map(|s| s.document_handle.snapshot()) else {
+        return;
+    };
     let affected_layers = find_layers_referencing_palette(&snapshot.root, palette_id);
 
     for layer_id in &affected_layers {
         engine_tiles::invalidation::invalidate(
             &state.tile_cache,
-            engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
-                layer: layer_id.0,
+            engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { doc: snapshot.id.0, layer: layer_id.0,
             },
         );
     }
@@ -303,13 +315,13 @@ pub fn new_document(
 ) -> Result<DocumentResponse, String> {
     use engine_project::types::DocumentId;
     
-    let new_doc = engine_project::Document::new(DocumentId::new(1), width, height);
-    state.document_handle.mutate(|doc| {
-        *doc = new_doc.clone();
-    });
-    crate::undo::clear_history(&state, Some(&app_handle))?;
+    let new_doc = engine_project::Document::new(DocumentId::new(state.alloc_doc_id()), width, height);
+    let session = state.spawn_session(new_doc);
+    let doc_id = session.id.0;
+    crate::undo::clear_history(&state, Some(&app_handle), doc_id)?;
+    emit_tabs_changed(Some(&app_handle), &state);
     
-    let snapshot = state.document_handle.snapshot();
+    let snapshot = session.document_handle.snapshot();
     let dto = engine_project::dto::document_to_dto(&snapshot);
     
     Ok(DocumentResponse { snapshot: dto })
@@ -320,12 +332,15 @@ pub fn new_document(
 pub fn get_document_snapshot(
     state: State<'_, Arc<AppState>>,
 ) -> Result<DocumentResponse, String> {
-    let snapshot = state.document_handle.snapshot();
+    let Ok(session) = state.active_session() else {
+        let empty = engine_project::Document::new(engine_project::types::DocumentId::new(0), 0, 0);
+        let dto = engine_project::dto::document_to_dto(&empty);
+        return Ok(DocumentResponse { snapshot: dto });
+    };
+    let snapshot = session.document_handle.snapshot();
     let dto = engine_project::dto::document_to_dto(&snapshot);
     Ok(DocumentResponse { snapshot: dto })
-}
-
-/// Get the layer tree as a flat DTO structure for frontend consumption.
+}/// Get the layer tree as a flat DTO structure for frontend consumption.
 ///
 /// Returns the full layer hierarchy as `Vec<LayerNodeDto>`, where groups
 /// have `children: Some(vec![...])` and leaves have `children: None`.
@@ -333,12 +348,13 @@ pub fn get_document_snapshot(
 pub fn get_layer_tree(
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<LayerNodeDto>, String> {
-    let snapshot = state.document_handle.snapshot();
+    let Ok(session) = state.active_session() else {
+        return Ok(vec![]);
+    };
+    let snapshot = session.document_handle.snapshot();
     let tree = layer_nodes_to_dto(&snapshot.root);
     Ok(tree)
-}
-
-/// Convert internal LayerNode tree to flat LayerNodeDto tree.
+}/// Convert internal LayerNode tree to flat LayerNodeDto tree.
 fn layer_nodes_to_dto(nodes: &[engine_project::LayerNode]) -> Vec<LayerNodeDto> {
     nodes.iter().map(layer_node_to_flat_dto).collect()
 }
@@ -383,17 +399,18 @@ pub fn add_layer(
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<LayerIdResponse, String> {
+    let doc_id = req.doc_id;
     let kind = match req.kind.as_str() {
         "raster" => LayerKind::Raster,
         "adjustment" => LayerKind::Adjustment,
         _ => return Err("Invalid layer kind".to_string()),
     };
 
-    crate::undo::with_document_undo(&state, Some(&app_handle), || {
-        let snapshot = state.document_handle.snapshot();
+    crate::undo::with_document_undo(&state, Some(&app_handle), doc_id, || {
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         let width = snapshot.width;
         let height = snapshot.height;
-        let doc_id = snapshot.id;
+        let engine_doc_id = snapshot.id;
         drop(snapshot);
 
         let args = AddLayerArgs {
@@ -404,9 +421,9 @@ pub fn add_layer(
             height,
         };
 
-        match engine_commands::add_layer(&state.document_handle, &state.tile_cache, doc_id, args) {
+        match engine_commands::add_layer(&state.require_session(doc_id)?.document_handle, &state.tile_cache, engine_doc_id, args) {
             Ok(layer_id) => {
-                emit_document_changed(&app_handle, "layer_added", Some(layer_id.0));
+                emit_document_changed(&app_handle, "layer_added", Some(layer_id.0), Some(doc_id));
                 Ok(LayerIdResponse { layer_id: layer_id.0 })
             }
             Err(e) => Err(format!("Failed to add layer: {:?}", e)),
@@ -417,23 +434,24 @@ pub fn add_layer(
 /// Remove a layer from the document.
 #[tauri::command]
 pub fn remove_layer(
+    doc_id: u32,
     layer_id: u32,
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
-    crate::undo::with_document_undo(&state, Some(&app_handle), || {
-        let snapshot = state.document_handle.snapshot();
-        let doc_id = snapshot.id;
+    crate::undo::with_document_undo(&state, Some(&app_handle), doc_id, || {
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
+        let engine_doc_id = snapshot.id;
         drop(snapshot);
 
         match engine_commands::remove_layer(
-            &state.document_handle,
+            &state.require_session(doc_id)?.document_handle,
             &state.tile_cache,
-            doc_id,
+            engine_doc_id,
             LayerId::new(layer_id),
         ) {
             Ok(_) => {
-                emit_document_changed(&app_handle, "layer_removed", Some(layer_id));
+                emit_document_changed(&app_handle, "layer_removed", Some(layer_id), Some(doc_id));
                 Ok(())
             }
             Err(e) => Err(format!("Failed to remove layer: {:?}", e)),
@@ -448,6 +466,7 @@ pub fn set_layer_props(
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
+    let doc_id = req.doc_id;
     let blend_mode = req.blend_mode.as_ref().map(|bm| {
         match bm.as_str() {
             "normal" => BlendMode::Normal,
@@ -479,23 +498,23 @@ pub fn set_layer_props(
         offset: req.offset,
     };
 
-    let snapshot = state.document_handle.snapshot();
-    let doc_id = snapshot.id;
+    let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
+    let engine_doc_id = snapshot.id;
     drop(snapshot);
 
-    crate::undo::with_document_undo(&state, Some(&app_handle), || {
+    crate::undo::with_document_undo(&state, Some(&app_handle), doc_id, || {
         match engine_commands::set_layer_props(
-            &state.document_handle,
+            &state.require_session(doc_id)?.document_handle,
             &state.tile_cache,
-            doc_id,
+            engine_doc_id,
             LayerId::new(layer_id),
             patch,
         ) {
             Ok(_) => {
-                if is_visual_change {
+                if is_visual_change && state.active_id() == Some(doc_id) {
                     schedule_dirty_viewport_tiles(&state);
                 }
-                emit_document_changed(&app_handle, "layer_changed", Some(layer_id));
+                emit_document_changed(&app_handle, "layer_changed", Some(layer_id), Some(doc_id));
                 Ok(())
             }
             Err(e) => Err(format!("Failed to set layer props: {:?}", e)),
@@ -510,21 +529,22 @@ pub fn reorder_layer(
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
-    crate::undo::with_document_undo(&state, Some(&app_handle), || {
-        let snapshot = state.document_handle.snapshot();
-        let doc_id = snapshot.id;
+    let doc_id = req.doc_id;
+    crate::undo::with_document_undo(&state, Some(&app_handle), doc_id, || {
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
+        let engine_doc_id = snapshot.id;
         drop(snapshot);
 
         match engine_commands::reorder_layer(
-            &state.document_handle,
+            &state.require_session(doc_id)?.document_handle,
             &state.tile_cache,
-            doc_id,
+            engine_doc_id,
             LayerId::new(req.layer_id),
             req.new_parent.map(LayerId::new),
             req.new_index,
         ) {
             Ok(_) => {
-                emit_document_changed(&app_handle, "layer_reordered", None);
+                emit_document_changed(&app_handle, "layer_reordered", None, Some(doc_id));
                 Ok(())
             }
             Err(e) => Err(format!("Failed to reorder layer: {:?}", e)),
@@ -538,6 +558,8 @@ pub fn reorder_layer(
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AddFilterRequest {
+    #[serde(alias = "docId")]
+    pub doc_id: u32,
     pub layer_id: u32,
     pub kind: String,
     pub params: serde_json::Value,
@@ -575,6 +597,8 @@ fn parse_adjust_params(
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateFilterRequest {
+    #[serde(alias = "docId")]
+    pub doc_id: u32,
     pub layer_id: u32,
     pub filter_id: String,
     pub params: serde_json::Value,
@@ -588,6 +612,8 @@ pub struct UpdateFilterRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RemoveFilterRequest {
+    #[serde(alias = "docId")]
+    pub doc_id: u32,
     pub layer_id: u32,
     pub filter_id: String,
 }
@@ -604,6 +630,7 @@ pub fn add_filter(
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<FilterIdResponse, String> {
+    let doc_id = req.doc_id;
     use engine_project::{FilterKind, FilterParams, FilterInstance};
     use engine_project::filters::curves::CurveChannel;
     use engine_project::filter::{DitherMode, DiffusionKernel};
@@ -745,7 +772,7 @@ pub fn add_filter(
     
     let filter_id = filter.id.to_string();
 
-    crate::undo::with_document_undo(&state, Some(&app_handle), || {
+    crate::undo::with_document_undo(&state, Some(&app_handle), doc_id, || {
         // Add filter to layer in document
         let layer_id = req.layer_id;
         let mut found = false;
@@ -753,11 +780,13 @@ pub fn add_filter(
         // Clear error residuals for the affected layer when adding a DitherV2 filter
         // (Req 10.4: clear on filter parameter change)
         if matches!(&filter.params, FilterParams::DitherV2(_)) {
-            state.error_residuals.clear();
+            state
+                .error_residuals
+                .evict_layer(doc_id, engine_project::types::LayerId::new(layer_id));
             state.block_representatives.clear_dithered();
         }
 
-        state.document_handle.mutate(|doc| {
+        state.require_session(doc_id)?.document_handle.mutate(|doc| {
             // Find layer (recursing into groups) and add filter
             fn find_and_add_filter(nodes: &mut Vec<engine_project::LayerNode>, layer_id: u32, filter: FilterInstance) -> bool {
                 for node in nodes.iter_mut() {
@@ -790,22 +819,22 @@ pub fn add_filter(
 
         // Increment layer generation (requirement 10.1)
         {
-            let snapshot = state.document_handle.snapshot();
+            let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
             snapshot.generations.increment_layer_gen(layer_id);
         }
 
         // Invalidate tile cache for the affected layer (Processed + Composite cascade)
+        let doc = state.require_session(doc_id)?.document_handle.snapshot().id.0;
         engine_tiles::invalidation::invalidate(
             &state.tile_cache,
-            engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
-                layer: layer_id,
+            engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { doc, layer: layer_id,
             },
         );
 
         // Schedule viewport-visible dirty tiles for immediate recomputation
         schedule_dirty_viewport_tiles(&state);
 
-        emit_document_changed(&app_handle, "filter_added", Some(layer_id));
+        emit_document_changed(&app_handle, "filter_added", Some(layer_id), Some(doc_id));
 
         Ok(FilterIdResponse { filter_id })
     })
@@ -818,10 +847,11 @@ pub fn remove_filter(
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
-    crate::undo::with_document_undo(&state, Some(&app_handle), || {
+    let doc_id = req.doc_id;
+    crate::undo::with_document_undo(&state, Some(&app_handle), doc_id, || {
         let mut found = false;
 
-        state.document_handle.mutate(|doc| {
+        state.require_session(doc_id)?.document_handle.mutate(|doc| {
         fn find_and_remove_filter(nodes: &mut Vec<engine_project::LayerNode>, layer_id: u32, filter_id: &str) -> bool {
             for node in nodes.iter_mut() {
                 match node {
@@ -861,10 +891,10 @@ pub fn remove_filter(
     request_preview_refresh(
         &state,
         req.layer_id,
-        layer_needs_dither_cache_reset(&state.document_handle.snapshot().root, req.layer_id),
+        layer_needs_dither_cache_reset(&state.require_session(doc_id)?.document_handle.snapshot().root, req.layer_id),
     );
 
-    emit_document_changed(&app_handle, "filter_removed", Some(req.layer_id));
+    emit_document_changed(&app_handle, "filter_removed", Some(req.layer_id), Some(doc_id));
 
         Ok(())
     })
@@ -876,6 +906,8 @@ pub fn remove_filter(
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReorderFilterRequest {
+    #[serde(alias = "docId")]
+    pub doc_id: u32,
     pub layer_id: u32,
     pub filter_id: String,
     pub new_index: usize,
@@ -888,10 +920,11 @@ pub fn reorder_filter(
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
-    crate::undo::with_document_undo(&state, Some(&app_handle), || {
+    let doc_id = req.doc_id;
+    crate::undo::with_document_undo(&state, Some(&app_handle), doc_id, || {
         let mut success = false;
 
-        state.document_handle.mutate(|doc| {
+        state.require_session(doc_id)?.document_handle.mutate(|doc| {
         fn find_and_reorder(nodes: &mut Vec<engine_project::LayerNode>, layer_id: u32, filter_id: &str, new_index: usize) -> bool {
             for node in nodes.iter_mut() {
                 match node {
@@ -936,10 +969,10 @@ pub fn reorder_filter(
     request_preview_refresh(
         &state,
         req.layer_id,
-        layer_needs_dither_cache_reset(&state.document_handle.snapshot().root, req.layer_id),
+        layer_needs_dither_cache_reset(&state.require_session(doc_id)?.document_handle.snapshot().root, req.layer_id),
     );
 
-    emit_document_changed(&app_handle, "filter_reordered", Some(req.layer_id));
+    emit_document_changed(&app_handle, "filter_reordered", Some(req.layer_id), Some(doc_id));
 
         Ok(())
     })
@@ -956,6 +989,7 @@ pub fn update_filter(
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
+    let doc_id = req.doc_id;
     use engine_project::{FilterKind, FilterParams, FilterInstance};
     use engine_project::filters::curves::CurveChannel;
     use engine_project::filter::{DitherMode, DiffusionKernel};
@@ -968,7 +1002,7 @@ pub fn update_filter(
     let filter_id = FilterInstanceId(uuid);
 
     // First, get the filter's kind so we know how to parse params
-    let snapshot = state.document_handle.snapshot();
+    let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
     let (filter_kind, is_dither_v2, existing_params) = {
         fn find_filter_kind(
             nodes: &[engine_project::LayerNode],
@@ -1147,11 +1181,11 @@ pub fn update_filter(
     };
     temp_filter.validate().map_err(|e| format!("Invalid parameters: {}", e))?;
 
-    crate::undo::with_document_undo(&state, Some(&app_handle), || {
+    crate::undo::with_document_undo(&state, Some(&app_handle), doc_id, || {
         // Apply the update within a document mutation
         let layer_id = req.layer_id;
         let mut found = false;
-        state.document_handle.mutate(|doc| {
+        state.require_session(doc_id)?.document_handle.mutate(|doc| {
         fn update_filter_in_nodes(
             nodes: &mut Vec<engine_project::LayerNode>,
             layer_id: u32,
@@ -1226,7 +1260,7 @@ pub fn update_filter(
 
     // Increment layer generation (requirement 10.1)
     {
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         snapshot.generations.increment_layer_gen(layer_id);
     }
 
@@ -1234,10 +1268,10 @@ pub fn update_filter(
     request_preview_refresh(
         &state,
         layer_id,
-        layer_needs_dither_cache_reset(&state.document_handle.snapshot().root, layer_id),
+        layer_needs_dither_cache_reset(&state.require_session(doc_id)?.document_handle.snapshot().root, layer_id),
     );
 
-    emit_document_changed(&app_handle, "filter_updated", Some(layer_id));
+    emit_document_changed(&app_handle, "filter_updated", Some(layer_id), Some(doc_id));
 
         Ok(())
     })
@@ -1346,30 +1380,14 @@ fn install_raster_document(
     use engine_project::types::DocumentId;
     use engine_tiles::decompose::decompose_image_to_tiles_at_generation;
 
-    let prev_gen = state
-        .document_handle
-        .snapshot()
-        .generations
-        .current_document_gen();
-    reset_tiles_for_new_document(state);
-    let live_gen = prev_gen.saturating_add(1);
-
+    let doc_id = state.alloc_doc_id();
+    let live_gen = 1u64;
     let layer_id = 1u32;
     let grid = decompose_image_to_tiles_at_generation(
-        rgba_f32,
-        width,
-        height,
-        layer_id,
-        &state.tile_cache,
-        live_gen,
+        rgba_f32, width, height, doc_id, layer_id, &state.tile_cache, live_gen,
     )
     .map_err(|e| format!("Tile decomposition error: {}", e))?;
 
-    if let Ok(mut path) = state.project_path.lock() {
-        *path = None;
-    }
-
-    let doc_id: u32 = 1;
     let mut new_doc = engine_project::Document::new(DocumentId::new(doc_id), width, height);
     let layer = engine_project::layer::Layer::new(
         engine_project::types::LayerId::new(1),
@@ -1381,12 +1399,14 @@ fn install_raster_document(
     new_doc.increment_generation();
     new_doc.generations.set_document_gen(live_gen);
 
-    state.document_handle.mutate(|doc| {
-        *doc = new_doc;
-    });
-    crate::undo::clear_history(state, app)?;
+    let session = state.spawn_session(new_doc);
+    state.evict_inactive_for_pressure_if_needed();
+    crate::undo::clear_history(state, app, doc_id)?;
+    emit_tabs_changed(app, state);
 
     schedule_dirty_viewport_tiles(state);
+
+    let _ = session;
 
     Ok(LoadImageResponse {
         doc_id,
@@ -1414,7 +1434,7 @@ pub async fn load_image(
 
     let response = install_raster_document(&state, width, height, &rgba_f32, Some(&app_handle))?;
 
-    emit_document_changed(&app_handle, "image_loaded", None);
+    emit_document_changed(&app_handle, "image_loaded", None, Some(response.doc_id));
     crate::recent_files::record_from_app(
         &app_handle,
         &recent_path,
@@ -1442,13 +1462,14 @@ pub async fn create_document(
     .map_err(|e| format!("Create error: {e}"))?;
 
     let response = install_raster_document(&state, width, height, &rgba_f32, Some(&app_handle))?;
-    emit_document_changed(&app_handle, "document_created", None);
+    emit_document_changed(&app_handle, "document_created", None, Some(response.doc_id));
     Ok(response)
 }
 
 /// Add a decoded raster as a new layer at the document origin (clip, no scale).
 fn import_raster_layer(
     state: &AppState,
+    doc_id: u32,
     src_w: u32,
     src_h: u32,
     src_rgba: &[f32],
@@ -1456,19 +1477,19 @@ fn import_raster_layer(
 ) -> Result<LayerIdResponse, String> {
     use engine_tiles::decompose::decompose_image_to_tiles_at_generation;
 
-    let snapshot = state.document_handle.snapshot();
+    let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
     if snapshot.root.is_empty() {
         return Err("No document open".to_string());
     }
     let dst_w = snapshot.width;
     let dst_h = snapshot.height;
-    let doc_id = snapshot.id;
+    let engine_doc_id = snapshot.id;
     let insert_index = snapshot.root.len();
     drop(snapshot);
 
     let placed = place_image_at_origin(src_rgba, src_w, src_h, dst_w, dst_h);
 
-    crate::undo::with_document_undo(state, app, || {
+    crate::undo::with_document_undo(state, app, doc_id, || {
         let args = AddLayerArgs {
             kind: LayerKind::Raster,
             parent_group: None,
@@ -1477,32 +1498,32 @@ fn import_raster_layer(
             height: dst_h,
         };
         let layer_id = engine_commands::add_layer(
-            &state.document_handle,
+            &state.require_session(doc_id)?.document_handle,
             &state.tile_cache,
-            doc_id,
+            engine_doc_id,
             args,
         )
         .map_err(|e| format!("Failed to add layer: {e:?}"))?;
 
         let live_gen = state
+            .require_session(doc_id)?
             .document_handle
             .snapshot()
             .generations
             .current_document_gen();
         decompose_image_to_tiles_at_generation(
-            &placed,
-            dst_w,
-            dst_h,
-            layer_id.0,
-            &state.tile_cache,
-            live_gen,
+            &placed, dst_w, dst_h, doc_id, layer_id.0, &state.tile_cache, live_gen,
         )
             .map_err(|e| format!("Tile decomposition error: {e}"))?;
 
+        state.evict_inactive_for_pressure_if_needed();
+
         if let Some(handle) = app {
-            emit_document_changed(handle, "layer_added", Some(layer_id.0));
+            emit_document_changed(handle, "layer_added", Some(layer_id.0), Some(doc_id));
         }
-        schedule_dirty_viewport_tiles(state);
+        if state.active_id() == Some(doc_id) {
+            schedule_dirty_viewport_tiles(state);
+        }
         Ok(LayerIdResponse {
             layer_id: layer_id.0,
         })
@@ -1512,6 +1533,7 @@ fn import_raster_layer(
 /// Import an image as a new raster layer without replacing the document.
 #[tauri::command]
 pub async fn import_image_layer(
+    doc_id: u32,
     path: String,
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
@@ -1528,7 +1550,7 @@ pub async fn import_image_layer(
     .await
     .map_err(|e| format!("Load error: {e}"))??;
 
-    import_raster_layer(&state, width, height, &rgba_f32, Some(&app_handle))
+    import_raster_layer(&state, doc_id, width, height, &rgba_f32, Some(&app_handle))
 }
 
 // ============================================================================
@@ -1554,6 +1576,7 @@ pub struct OpenProjectResponse {
 /// Save the current document to an existing project path, or `path` if provided.
 #[tauri::command]
 pub async fn save_project(
+    doc_id: u32,
     path: Option<String>,
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
@@ -1561,7 +1584,8 @@ pub async fn save_project(
     let target = match path {
         Some(p) => p,
         None => {
-            let guard = state
+            let session = state.require_session(doc_id)?;
+            let guard = session
                 .project_path
                 .lock()
                 .map_err(|e| format!("Lock error: {e}"))?;
@@ -1571,23 +1595,27 @@ pub async fn save_project(
                 .ok_or_else(|| "Save As required: no project path set".to_string())?
         }
     };
-    save_project_as(target, app_handle, state).await
+    save_project_as(doc_id, target, app_handle, state).await
 }
 
 /// Save the current document to `path` and remember it as the project path.
 #[tauri::command]
 pub async fn save_project_as(
+    doc_id: u32,
     path: String,
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<SaveProjectResponse, String> {
     use engine_io::sandbox;
     use engine_project::serialize::{read_png_file, save_project_to_path};
+    use engine_project::serialize::ProjectError;
 
     let resolved = sandbox::resolve_export_path(&path, &["dyproj"])
         .map_err(|e| format!("Path error: {e}"))?;
 
-    let snapshot = state.document_handle.snapshot();
+    let session = state.require_session(doc_id)?;
+    let _io_guard = session.begin_io();
+    let snapshot = session.document_handle.snapshot();
     let doc = (*snapshot).clone();
     drop(snapshot);
 
@@ -1602,12 +1630,17 @@ pub async fn save_project_as(
             env!("CARGO_PKG_VERSION"),
             |p| read_png_file(p),
         )
-        .map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| format!("Save error: {e}"))??;
+    .map_err(|e| format!("Save error: {e}"))?
+    .map_err(|e| match e {
+        ProjectError::IncompleteRaw { doc_id, layer_id } => format!(
+            "Cannot save: image tiles missing from memory for document {doc_id} layer {layer_id} — reopen the file"
+        ),
+        other => format!("Save error: {other}"),
+    })?;
 
-    if let Ok(mut guard) = state.project_path.lock() {
+    if let Ok(mut guard) = session.project_path.lock() {
         *guard = Some(resolved.clone());
     }
 
@@ -1650,10 +1683,10 @@ pub async fn open_project(
     .await
     .map_err(|e| format!("Open error: {e}"))??;
 
-    // Staging cache: only swap live document after a full successful open.
+    let runtime_id = state.alloc_doc_id();
     let staging = TileCache::new(state.tile_cache.budget_bytes_count());
     let opened = tauri::async_runtime::spawn_blocking(move || {
-        open_project_from_bytes(&zip_bytes, &staging, DocumentId::new(1))
+        open_project_from_bytes(&zip_bytes, &staging, DocumentId::new(runtime_id))
             .map(|r| (r, staging))
             .map_err(|e| e.to_string())
     })
@@ -1661,14 +1694,7 @@ pub async fn open_project(
     .map_err(|e| format!("Open error: {e}"))??;
 
     let (opened, staging) = opened;
-
-    let prev_gen = state
-        .document_handle
-        .snapshot()
-        .generations
-        .current_document_gen();
-    reset_tiles_for_new_document(&state);
-    let live_gen = prev_gen.saturating_add(1);
+    let live_gen = 1u64;
 
     for entry in staging.entries.iter() {
         let key = *entry.key();
@@ -1681,18 +1707,20 @@ pub async fn open_project(
     let mut new_doc = opened.document;
     new_doc.increment_generation();
     new_doc.generations.set_document_gen(live_gen);
-    state.document_handle.mutate(|doc| {
-        *doc = new_doc;
-    });
-    crate::undo::clear_history(&state, Some(&app_handle))?;
+    let session = state.spawn_session(new_doc);
+    state.evict_inactive_for_pressure_if_needed();
+    let doc_id = runtime_id;
+    crate::undo::clear_history(&state, Some(&app_handle), doc_id)?;
+    crate::undo::mark_clean_doc(&state, doc_id);
 
     schedule_dirty_viewport_tiles(&state);
 
-    if let Ok(mut guard) = state.project_path.lock() {
+    if let Ok(mut guard) = session.project_path.lock() {
         *guard = Some(resolved.clone());
     }
 
-    emit_document_changed(&app_handle, "project_opened", None);
+    emit_document_changed(&app_handle, "project_opened", None, Some(doc_id));
+    emit_tabs_changed(Some(&app_handle), &state);
 
     let stored = resolved.to_string_lossy().into_owned();
     crate::recent_files::record_from_app(
@@ -1702,7 +1730,7 @@ pub async fn open_project(
     );
 
     Ok(OpenProjectResponse {
-        doc_id: 1,
+        doc_id: runtime_id,
         width,
         height,
         path: stored,
@@ -1715,6 +1743,8 @@ pub async fn open_project(
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ExportPatternRequest {
+    #[serde(alias = "docId")]
+    pub doc_id: u32,
     pub layer_id: u32,
     pub filter_instance_ids: Option<Vec<String>>,
     pub path: String,
@@ -1724,6 +1754,8 @@ pub struct ExportPatternRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ImportPatternRequest {
+    #[serde(alias = "docId")]
+    pub doc_id: u32,
     pub path: String,
     pub target_layer_id: u32,
 }
@@ -1740,6 +1772,7 @@ pub fn export_pattern(
     req: ExportPatternRequest,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
+    let doc_id = req.doc_id;
     use engine_io::sandbox;
     use engine_project::serialize::{
         export_pattern_from_document, read_png_file, write_pattern_to_path, PatternExportMeta,
@@ -1766,7 +1799,7 @@ pub fn export_pattern(
         }
     };
 
-    let snapshot = state.document_handle.snapshot();
+    let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
     let zip = export_pattern_from_document(
         &snapshot,
         engine_project::types::LayerId::new(req.layer_id),
@@ -1792,6 +1825,7 @@ pub fn import_pattern(
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<ImportPatternResponse, String> {
+    let doc_id = req.doc_id;
     use engine_io::sandbox;
     use engine_project::filter::FilterParams;
     use engine_project::serialize::import_pattern_into_document;
@@ -1802,11 +1836,11 @@ pub fn import_pattern(
 
     let zip_bytes = fs::read(&resolved).map_err(|e| format!("Read error: {e}"))?;
 
-    crate::undo::with_document_undo(&state, Some(&app_handle), || {
+    crate::undo::with_document_undo(&state, Some(&app_handle), doc_id, || {
         let mut imported_filters_are_dither = false;
         let mut err: Option<String> = None;
         let mut out: Option<engine_project::serialize::ImportPatternResult> = None;
-        state.document_handle.mutate(|doc| {
+        state.require_session(doc_id)?.document_handle.mutate(|doc| {
         match import_pattern_into_document(
             &zip_bytes,
             doc,
@@ -1848,25 +1882,28 @@ pub fn import_pattern(
     let result = out.ok_or_else(|| "Import failed".to_string())?;
 
     if imported_filters_are_dither {
-        state.error_residuals.clear();
+        state.error_residuals.evict_layer(
+            doc_id,
+            engine_project::types::LayerId::new(req.target_layer_id),
+        );
         state.block_representatives.clear_dithered();
     }
 
     {
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         snapshot
             .generations
             .increment_layer_gen(req.target_layer_id);
     }
 
+    let doc = state.require_session(doc_id)?.document_handle.snapshot().id.0;
     engine_tiles::invalidation::invalidate(
         &state.tile_cache,
-        engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
-            layer: req.target_layer_id,
+        engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { doc, layer: req.target_layer_id,
         },
     );
     schedule_dirty_viewport_tiles(&state);
-    emit_document_changed(&app_handle, "pattern_imported", Some(req.target_layer_id));
+    emit_document_changed(&app_handle, "pattern_imported", Some(req.target_layer_id), Some(doc_id));
 
         Ok(ImportPatternResponse {
             filter_ids: result.filter_ids.iter().map(|id| id.to_string()).collect(),
@@ -1886,7 +1923,7 @@ pub fn import_pattern(
 pub(crate) fn reset_tiles_for_new_document(state: &AppState) {
     state.tile_cache.clear();
     state.scheduler.clear_all();
-    state.pending_diffusion_waiters.clear();
+    state.ed_frontier.clear();
     state.block_representatives.invalidate_all();
     state.error_residuals.clear();
     if let Ok(mut pending) = state.pending_preview_refresh.lock() {
@@ -1910,7 +1947,13 @@ pub(crate) fn invalidate_after_document_replace(state: &AppState) {
         state.tile_cache.mark_dirty(key);
     }
     state.block_representatives.invalidate_all();
-    state.error_residuals.clear();
+    if let Ok(session) = state.active_session() {
+        state
+            .error_residuals
+            .evict_document(session.document_handle.snapshot().id.0);
+    } else {
+        state.error_residuals.clear();
+    }
 }
 
 /// Schedule viewport-visible dirty tiles for immediate recomputation.
@@ -1926,14 +1969,25 @@ pub(crate) fn schedule_dirty_viewport_tiles(state: &AppState) {
     use std::sync::atomic::Ordering;
 
     let viewport = state.viewport.lock().unwrap().clone();
-    let snapshot = state.document_handle.snapshot();
+    let Ok(snapshot) = state.active_session().map(|s| s.document_handle.snapshot()) else {
+        return;
+    };
     let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
 
+    // ED: enqueue causal prefix for visible tiles (same Immediate lane + inheritance).
+    crate::tile_pipeline::schedule_ed_for_viewport(state);
+
+    // G10: exclusive GPU L0 Composite when eligible; else CPU schedule as usual.
+    let gpu_authored_l0 = crate::gpu_resident_shadow::try_publish_gpu_preview_viewport(state);
+
     for coord in &viewport.visible_tiles {
-        // Schedule Composite-stage tile recomputation.
-        // The worker's compute_composite_tile already ensures Processed tiles
-        // are fresh before compositing, so we only need to schedule Composite tasks.
+        // Pyramid L>0 always CPU. Skip L0 coords the GPU just published.
+        if gpu_authored_l0.contains(coord) {
+            continue;
+        }
+
         let key = TileKey {
+            doc: snapshot.id.0,
             layer: 0,
             coord: *coord,
             stage: CacheStage::Composite,
@@ -1955,6 +2009,8 @@ pub(crate) fn schedule_dirty_viewport_tiles(state: &AppState) {
             state.worker_wake.notify_one();
         }
     }
+
+    crate::gpu_resident_shadow::enqueue_resident_shadow_viewport(state);
 }
 
 fn preview_pass_busy(state: &AppState) -> bool {
@@ -2009,13 +2065,19 @@ pub(crate) fn request_preview_refresh(state: &AppState, layer_id: u32, clear_res
 }
 
 fn run_preview_refresh(state: &AppState, layer_id: u32, clear_residuals: bool) {
+    let Ok(session) = state.active_session() else {
+        return;
+    };
     if clear_residuals {
-        state.error_residuals.clear();
-        state.block_representatives.evict_layer(layer_id);
+        let doc = session.document_handle.snapshot().id.0;
+        state
+            .error_residuals
+            .evict_layer(doc, engine_project::types::LayerId::new(layer_id));
+        state.block_representatives.evict_layer(doc, layer_id);
     }
     engine_tiles::invalidation::invalidate(
         &state.tile_cache,
-        engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { layer: layer_id },
+        engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { doc: session.document_handle.snapshot().id.0, layer: layer_id },
     );
     schedule_dirty_viewport_tiles(state);
 }
@@ -2106,11 +2168,15 @@ pub async fn export_image(
         return Err("Invalid parameters: format must be PNG, JPEG, or SVG".to_string());
     }
 
-    // 2. Get document snapshot and validate doc_id
-    let snapshot = state.document_handle.snapshot();
-    if snapshot.id.0 != req.doc_id {
-        return Err("Document not found".to_string());
-    }
+    // 2. Resolve session by requested doc_id (not "active only") — SessionGone vs RawIncomplete.
+    let session = state.session(req.doc_id).map_err(|_| {
+        format!(
+            "Document was closed (id {}); cannot export",
+            req.doc_id
+        )
+    })?;
+    let _io_guard = session.begin_io();
+    let snapshot = session.document_handle.snapshot();
     let img_width = snapshot.width;
     let img_height = snapshot.height;
 
@@ -2124,13 +2190,19 @@ pub async fn export_image(
         let mut row_tiles: Vec<Arc<PixelTile>> = Vec::with_capacity(cols as usize);
         for col in 0..cols {
             let key = TileKey {
+                doc: req.doc_id,
                 layer: layer_id,
                 coord: TileCoord { level: 0, x: col, y: row },
                 stage: CacheStage::Raw,
             };
             match state.tile_cache.get_entry(key) {
                 Some(tile) => row_tiles.push(tile),
-                None => return Err("Document not found".to_string()),
+                None => {
+                    return Err(format!(
+                        "Cannot export: image tiles missing from memory for document {} layer {} — reopen the file",
+                        req.doc_id, layer_id
+                    ));
+                }
             }
         }
         tiles.push(row_tiles);
@@ -2274,6 +2346,8 @@ pub struct PaletteDto {
 /// Request body for adding a palette manually.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AddPaletteRequest {
+    #[serde(alias = "docId")]
+    pub doc_id: u32,
     pub name: String,
     pub colors: Vec<[u8; 3]>, // sRGB
 }
@@ -2281,6 +2355,8 @@ pub struct AddPaletteRequest {
 /// Request body for generating a palette from a layer.
 #[derive(Debug, Clone, Deserialize)]
 pub struct GeneratePaletteRequest {
+    #[serde(alias = "docId")]
+    pub doc_id: u32,
     pub layer_id: u32,
     pub target_count: u16,
     pub method: String, // "MedianCut" or "KMeans"
@@ -2316,12 +2392,13 @@ fn palette_to_dto(palette: &engine_color::palette::Palette) -> PaletteDto {
 /// List all palettes in the document.
 #[tauri::command]
 pub fn list_palettes(state: State<'_, Arc<AppState>>) -> Result<Vec<PaletteDto>, String> {
-    let snapshot = state.document_handle.snapshot();
+    let Ok(session) = state.active_session() else {
+        return Ok(vec![]);
+    };
+    let snapshot = session.document_handle.snapshot();
     let dtos: Vec<PaletteDto> = snapshot.palettes.iter().map(palette_to_dto).collect();
     Ok(dtos)
-}
-
-/// Preview DTO for a built-in retro palette (no Document write).
+}/// Preview DTO for a built-in retro palette (no Document write).
 #[derive(Debug, Clone, Serialize)]
 pub struct BuiltinPaletteDto {
     pub id: String,
@@ -2353,6 +2430,7 @@ pub fn list_builtin_palettes() -> Result<Vec<BuiltinPaletteDto>, String> {
 /// Import a built-in preset into the Document as a new palette (same path as `add_palette`).
 #[tauri::command]
 pub fn import_builtin_palette(
+    doc_id: u32,
     id: String,
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
@@ -2377,14 +2455,14 @@ pub fn import_builtin_palette(
         .collect();
 
     let mut palette_id_raw = 0u32;
-    crate::undo::with_document_undo(&state, Some(&app_handle), || {
-        state.document_handle.mutate(|doc| {
+    crate::undo::with_document_undo(&state, Some(&app_handle), doc_id, || {
+        state.require_session(doc_id)?.document_handle.mutate(|doc| {
             let pid = doc.add_palette(preset.name.to_string(), linear_colors);
             palette_id_raw = pid.0;
             doc.increment_generation();
         });
 
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         let palette = snapshot
             .palettes
             .iter()
@@ -2553,18 +2631,17 @@ pub fn get_palette_oklab(
     palette_id: u32,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<OklabPointDto>, String> {
-    let snapshot = state.document_handle.snapshot();
+    let snapshot = state.active_session()?.document_handle.snapshot();
     let palette = snapshot
         .palettes
         .iter()
         .find(|p| p.id == palette_id)
         .ok_or_else(|| format!("Palette {} not found", palette_id))?;
     Ok(oklab_points_from_linear(&palette.colors))
-}
-
-/// Import a palette from a file path (format auto-detected by extension).
+}/// Import a palette from a file path (format auto-detected by extension).
 #[tauri::command]
 pub fn import_palette(
+    doc_id: u32,
     path: String,
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
@@ -2601,14 +2678,14 @@ pub fn import_palette(
 
     // Add to document
     let mut palette_id_raw = 0u32;
-    crate::undo::with_document_undo(&state, Some(&app_handle), || {
-        state.document_handle.mutate(|doc| {
+    crate::undo::with_document_undo(&state, Some(&app_handle), doc_id, || {
+        state.require_session(doc_id)?.document_handle.mutate(|doc| {
             let pid = doc.add_palette(name.clone(), linear_colors.clone());
             palette_id_raw = pid.0;
             doc.increment_generation();
         });
 
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         let palette = snapshot
             .palettes
             .iter()
@@ -2625,6 +2702,7 @@ pub fn add_palette(
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<PaletteDto, String> {
+    let doc_id = req.doc_id;
     use engine_color::palette::{srgb_to_linear, LinearColor};
 
     // Convert sRGB u8 to linear f32
@@ -2639,14 +2717,14 @@ pub fn add_palette(
         .collect();
 
     let mut palette_id_raw = 0u32;
-    crate::undo::with_document_undo(&state, Some(&app_handle), || {
-        state.document_handle.mutate(|doc| {
+    crate::undo::with_document_undo(&state, Some(&app_handle), doc_id, || {
+        state.require_session(doc_id)?.document_handle.mutate(|doc| {
             let pid = doc.add_palette(req.name.clone(), linear_colors);
             palette_id_raw = pid.0;
             doc.increment_generation();
         });
 
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         let palette = snapshot
             .palettes
             .iter()
@@ -2659,6 +2737,8 @@ pub fn add_palette(
 /// Replace an existing document palette's name + colors (Color Lab Apply).
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReplacePaletteRequest {
+    #[serde(alias = "docId")]
+    pub doc_id: u32,
     pub palette_id: u32,
     pub name: String,
     pub colors: Vec<[u8; 3]>,
@@ -2670,6 +2750,7 @@ pub fn replace_palette(
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<PaletteDto, String> {
+    let doc_id = req.doc_id;
     use engine_color::palette::{srgb_to_linear, LinearColor};
     use engine_project::types::PaletteId;
 
@@ -2682,7 +2763,7 @@ pub fn replace_palette(
     }
 
     {
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         if !snapshot.palettes.iter().any(|p| p.id == req.palette_id) {
             return Err(format!("Palette {} not found", req.palette_id));
         }
@@ -2698,8 +2779,8 @@ pub fn replace_palette(
         })
         .collect();
 
-    crate::undo::with_document_undo(&state, Some(&app_handle), || {
-        state.document_handle.mutate(|doc| {
+    crate::undo::with_document_undo(&state, Some(&app_handle), doc_id, || {
+        state.require_session(doc_id)?.document_handle.mutate(|doc| {
             let _ = doc.modify_palette(PaletteId::new(req.palette_id), linear_colors.clone());
             if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id) {
                 palette.name = trimmed.clone();
@@ -2709,7 +2790,7 @@ pub fn replace_palette(
 
         invalidate_palette_changed(PaletteId::new(req.palette_id), &state);
 
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         let palette = snapshot
             .palettes
             .iter()
@@ -2729,6 +2810,7 @@ pub async fn generate_palette(
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<PaletteDto, String> {
+    let doc_id = req.doc_id;
     let state = Arc::clone(state.inner());
     tauri::async_runtime::spawn_blocking(move || generate_palette_blocking(req, &state, Some(&app_handle)))
         .await
@@ -2744,6 +2826,7 @@ fn generate_palette_blocking(
     use engine_color::palette::LinearColor;
     use engine_tiles::{CacheStage, TileCoord, TileKey, HALO, TILE_SIZE};
 
+    let doc_id = req.doc_id;
     let method = match req.method.as_str() {
         "KMeans" => PaletteGenMethod::KMeans,
         _ => PaletteGenMethod::MedianCut,
@@ -2761,7 +2844,7 @@ fn generate_palette_blocking(
         .validated()
         .map_err(|e| e.to_string())?;
 
-    let snapshot = state.document_handle.snapshot();
+    let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
     let doc_width = snapshot.width;
     let doc_height = snapshot.height;
     drop(snapshot);
@@ -2781,6 +2864,7 @@ fn generate_palette_blocking(
     for row in 0..rows {
         for col in 0..cols {
             let key = TileKey {
+                doc: doc_id,
                 layer: req.layer_id,
                 coord: TileCoord {
                     level: 0,
@@ -2826,8 +2910,8 @@ fn generate_palette_blocking(
     }
 
     let mut palette_id_raw = 0u32;
-    crate::undo::with_document_undo(state, app, || {
-        state.document_handle.mutate(|doc| {
+    crate::undo::with_document_undo(state, app, doc_id, || {
+        state.require_session(doc_id)?.document_handle.mutate(|doc| {
             match engine_project::palette_gen::generate_palette_from_layer_weighted(
                 doc,
                 engine_project::types::LayerId::new(req.layer_id),
@@ -2850,7 +2934,7 @@ fn generate_palette_blocking(
             );
         }
 
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         let palette = snapshot
             .palettes
             .iter()
@@ -2863,15 +2947,16 @@ fn generate_palette_blocking(
 /// Remove a palette from the document.
 #[tauri::command]
 pub fn remove_palette(
+    doc_id: u32,
     palette_id: u32,
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     use engine_project::types::PaletteId;
 
-    crate::undo::with_document_undo(&state, Some(&app_handle), || {
+    crate::undo::with_document_undo(&state, Some(&app_handle), doc_id, || {
         let mut result: Result<(), String> = Ok(());
-        state.document_handle.mutate(|doc| {
+        state.require_session(doc_id)?.document_handle.mutate(|doc| {
             match doc.remove_palette(PaletteId::new(palette_id)) {
                 Ok(_) => {
                     doc.increment_generation();
@@ -2892,6 +2977,8 @@ pub fn remove_palette(
 /// Request body for renaming a palette.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RenamePaletteRequest {
+    #[serde(alias = "docId")]
+    pub doc_id: u32,
     pub palette_id: u32,
     pub name: String,
 }
@@ -2904,6 +2991,7 @@ pub fn rename_palette(
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<PaletteDto, String> {
+    let doc_id = req.doc_id;
     // 1. Validate name: trim, then check 1–255 chars
     let trimmed_name = req.name.trim().to_string();
     if trimmed_name.is_empty() || trimmed_name.len() > 255 {
@@ -2912,21 +3000,21 @@ pub fn rename_palette(
 
     // 2. Validate palette exists
     {
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         if !snapshot.palettes.iter().any(|p| p.id == req.palette_id) {
             return Err(format!("Palette {} not found", req.palette_id));
         }
     }
 
     // 3. Mutate document: update palette name (no invalidation)
-    crate::undo::with_document_undo(&state, Some(&app_handle), || {
-        state.document_handle.mutate(|doc| {
+    crate::undo::with_document_undo(&state, Some(&app_handle), doc_id, || {
+        state.require_session(doc_id)?.document_handle.mutate(|doc| {
             if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id) {
                 palette.name = trimmed_name;
             }
         });
 
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         let palette = snapshot
             .palettes
             .iter()
@@ -2939,6 +3027,8 @@ pub fn rename_palette(
 /// Request body for creating a new empty palette.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreatePaletteRequest {
+    #[serde(alias = "docId")]
+    pub doc_id: u32,
     pub name: String,
 }
 
@@ -2949,6 +3039,7 @@ pub fn create_palette(
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<PaletteDto, String> {
+    let doc_id = req.doc_id;
     // Trim and validate name: 1–255 characters after trimming
     let trimmed_name = req.name.trim().to_string();
     if trimmed_name.is_empty() || trimmed_name.len() > 255 {
@@ -2957,14 +3048,14 @@ pub fn create_palette(
 
     // Mutate document: add palette with empty color list
     let mut palette_id_raw = 0u32;
-    crate::undo::with_document_undo(&state, Some(&app_handle), || {
-        state.document_handle.mutate(|doc| {
+    crate::undo::with_document_undo(&state, Some(&app_handle), doc_id, || {
+        state.require_session(doc_id)?.document_handle.mutate(|doc| {
             let pid = doc.add_palette(trimmed_name.clone(), vec![]);
             palette_id_raw = pid.0;
             doc.increment_generation();
         });
 
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         let palette = snapshot
             .palettes
             .iter()
@@ -2977,6 +3068,8 @@ pub fn create_palette(
 /// Request body for exporting a palette to a file.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ExportPaletteRequest {
+    #[serde(alias = "docId")]
+    pub doc_id: u32,
     pub palette_id: u32,
     pub path: String,
     pub format: String, // "ase", "gpl", "json", "aco", "pal", "csv"
@@ -2988,10 +3081,11 @@ pub fn export_palette(
     req: ExportPaletteRequest,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
+    let doc_id = req.doc_id;
     use engine_color::palette::{export_palette as do_export, PaletteFormat};
 
     // 1. Validate palette exists
-    let snapshot = state.document_handle.snapshot();
+    let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
     let palette = snapshot
         .palettes
         .iter()
@@ -3031,6 +3125,8 @@ pub fn export_palette(
 /// Request body for adding a color to an existing palette.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AddColorRequest {
+    #[serde(alias = "docId")]
+    pub doc_id: u32,
     pub palette_id: u32,
     pub hex: String, // 6-char hex, e.g. "FF0000"
 }
@@ -3044,6 +3140,7 @@ pub fn add_color_to_palette(
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<PaletteDto, String> {
+    let doc_id = req.doc_id;
     use engine_project::types::PaletteId;
 
     // 1. Parse hex to linear color
@@ -3051,7 +3148,7 @@ pub fn add_color_to_palette(
 
     // 2. Validate palette exists and size < 65536
     {
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         let palette = snapshot
             .palettes
             .iter()
@@ -3063,8 +3160,8 @@ pub fn add_color_to_palette(
     }
 
     // 3. Mutate document: push color, increment revision
-    crate::undo::with_document_undo(&state, Some(&app_handle), || {
-        state.document_handle.mutate(|doc| {
+    crate::undo::with_document_undo(&state, Some(&app_handle), doc_id, || {
+        state.require_session(doc_id)?.document_handle.mutate(|doc| {
             if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id) {
                 palette.colors.push(color);
                 palette.revision += 1;
@@ -3073,7 +3170,7 @@ pub fn add_color_to_palette(
 
         invalidate_palette_changed(PaletteId::new(req.palette_id), &state);
 
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         let palette = snapshot
             .palettes
             .iter()
@@ -3090,6 +3187,8 @@ pub fn add_color_to_palette(
 /// Request body for updating a single color in a palette.
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateColorRequest {
+    #[serde(alias = "docId")]
+    pub doc_id: u32,
     pub palette_id: u32,
     pub index: usize,
     pub hex: String,
@@ -3104,6 +3203,7 @@ pub fn update_palette_color(
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<PaletteDto, String> {
+    let doc_id = req.doc_id;
     use engine_project::types::PaletteId;
 
     // 1. Parse hex to linear color
@@ -3111,7 +3211,7 @@ pub fn update_palette_color(
 
     // 2. Validate palette exists and index is in bounds
     {
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         let palette = snapshot
             .palettes
             .iter()
@@ -3128,8 +3228,8 @@ pub fn update_palette_color(
     }
 
     // 3. Mutate document: replace color at index, increment revision
-    crate::undo::with_document_undo(&state, Some(&app_handle), || {
-        state.document_handle.mutate(|doc| {
+    crate::undo::with_document_undo(&state, Some(&app_handle), doc_id, || {
+        state.require_session(doc_id)?.document_handle.mutate(|doc| {
             if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id) {
                 palette.colors[req.index] = color;
                 palette.revision += 1;
@@ -3138,7 +3238,7 @@ pub fn update_palette_color(
 
         invalidate_palette_changed(PaletteId::new(req.palette_id), &state);
 
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         let palette = snapshot
             .palettes
             .iter()
@@ -3155,6 +3255,8 @@ pub fn update_palette_color(
 /// Request body for removing a color from a palette by index.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RemoveColorRequest {
+    #[serde(alias = "docId")]
+    pub doc_id: u32,
     pub palette_id: u32,
     pub index: usize,
 }
@@ -3169,11 +3271,12 @@ pub fn remove_palette_color(
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<PaletteDto, String> {
+    let doc_id = req.doc_id;
     use engine_project::types::PaletteId;
 
     // 1. Validate palette exists and index is in bounds
     {
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         let palette = snapshot
             .palettes
             .iter()
@@ -3201,8 +3304,8 @@ pub fn remove_palette_color(
     }
 
     // 3. Mutate document: remove color at index, increment revision
-    crate::undo::with_document_undo(&state, Some(&app_handle), || {
-        state.document_handle.mutate(|doc| {
+    crate::undo::with_document_undo(&state, Some(&app_handle), doc_id, || {
+        state.require_session(doc_id)?.document_handle.mutate(|doc| {
             if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id) {
                 palette.colors.remove(req.index);
                 palette.revision += 1;
@@ -3211,7 +3314,7 @@ pub fn remove_palette_color(
 
         invalidate_palette_changed(PaletteId::new(req.palette_id), &state);
 
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         let palette = snapshot
             .palettes
             .iter()
@@ -3228,6 +3331,8 @@ pub fn remove_palette_color(
 /// Request body for reordering a color within a palette.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReorderColorRequest {
+    #[serde(alias = "docId")]
+    pub doc_id: u32,
     pub palette_id: u32,
     pub from_index: usize,
     pub to_index: usize,
@@ -3241,11 +3346,12 @@ pub fn reorder_palette_color(
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<PaletteDto, String> {
+    let doc_id = req.doc_id;
     use engine_project::types::PaletteId;
 
     // 1. Validate palette exists and both indices are in bounds
     {
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         let palette = snapshot
             .palettes
             .iter()
@@ -3260,7 +3366,7 @@ pub fn reorder_palette_color(
 
     // 2. If from == to, return current PaletteDto unchanged (no-op)
     if req.from_index == req.to_index {
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         let palette = snapshot
             .palettes
             .iter()
@@ -3270,8 +3376,8 @@ pub fn reorder_palette_color(
     }
 
     // 3. Mutate document: remove at from_index, insert at to_index, increment revision
-    crate::undo::with_document_undo(&state, Some(&app_handle), || {
-        state.document_handle.mutate(|doc| {
+    crate::undo::with_document_undo(&state, Some(&app_handle), doc_id, || {
+        state.require_session(doc_id)?.document_handle.mutate(|doc| {
             if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id) {
                 let color = palette.colors.remove(req.from_index);
                 palette.colors.insert(req.to_index, color);
@@ -3281,7 +3387,7 @@ pub fn reorder_palette_color(
 
         invalidate_palette_changed(PaletteId::new(req.palette_id), &state);
 
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         let palette = snapshot
             .palettes
             .iter()
@@ -3314,6 +3420,7 @@ pub struct DeletePaletteResponse {
 /// 7. Returns the list of affected filter IDs
 #[tauri::command]
 pub fn delete_palette(
+    doc_id: u32,
     palette_id: u32,
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
@@ -3324,7 +3431,7 @@ pub fn delete_palette(
 
     // 1. Verify palette exists
     {
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
         if !snapshot.palettes.iter().any(|p| p.id == palette_id) {
             return Err(format!("Palette {} not found", palette_id));
         }
@@ -3332,11 +3439,11 @@ pub fn delete_palette(
 
     // 2. Find all filter references and clear them, collecting affected filter IDs
     //    Also track affected layer IDs for invalidation.
-    crate::undo::with_document_undo(&state, Some(&app_handle), || {
+    crate::undo::with_document_undo(&state, Some(&app_handle), doc_id, || {
         let mut affected_filter_ids: Vec<String> = Vec::new();
         let mut affected_layer_ids: Vec<u32> = Vec::new();
 
-        state.document_handle.mutate(|doc| {
+        state.require_session(doc_id)?.document_handle.mutate(|doc| {
         // Recursive helper to walk layers and clear palette references
         fn clear_palette_refs(
             nodes: &mut Vec<engine_project::layer::LayerNode>,
@@ -3403,15 +3510,15 @@ pub fn delete_palette(
     });
 
     // 4. Evict from PaletteKdCache and PaletteLutCache
-    state.palette_cache.evict(palette_id);
-    state.palette_lut_cache.evict(palette_id);
+    let doc = state.require_session(doc_id)?.document_handle.snapshot().id.0;
+    state.palette_cache.evict(doc, palette_id);
+    state.palette_lut_cache.evict(doc, palette_id);
 
     // 5. Invalidate affected layers
     for layer_id in &affected_layer_ids {
         engine_tiles::invalidation::invalidate(
             &state.tile_cache,
-            engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
-                layer: *layer_id,
+            engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { doc, layer: *layer_id,
             },
         );
     }
@@ -3466,44 +3573,90 @@ pub fn is_release_build() -> bool {
     !cfg!(debug_assertions)
 }
 
+/// Industrial-gate T10: Preferences GPU preview opt-in status.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuPreviewStatus {
+    /// Effective gate (`gpu_preview_enabled`).
+    pub enabled: bool,
+    /// Adapter + resident executor present.
+    pub available: bool,
+    /// `DITHER_GPU_PREVIEW` env is set (overrides Preferences for soak/CI).
+    pub env_forced: bool,
+}
+
+#[tauri::command]
+pub fn get_gpu_preview_status(state: State<'_, Arc<AppState>>) -> GpuPreviewStatus {
+    GpuPreviewStatus {
+        enabled: engine_gpu::gpu_preview_enabled(),
+        available: state.gpu.is_some() && state.gpu_executor.is_some(),
+        env_forced: std::env::var("DITHER_GPU_PREVIEW").is_ok(),
+    }
+}
+
+/// Preferences: set Path B GPU preview authorship (UI override). Env still wins when set.
+#[tauri::command]
+pub fn set_gpu_preview_enabled(
+    enabled: bool,
+    state: State<'_, Arc<AppState>>,
+) -> Result<GpuPreviewStatus, String> {
+    engine_gpu::set_gpu_preview_ui_override(Some(enabled));
+    // Re-author visible Composite under the new gate (CPU or GPU).
+    if let Ok(session) = state.active_session() {
+        let doc = session.document_handle.snapshot().id.0;
+        let viewport = state.viewport.lock().unwrap().clone();
+        for coord in &viewport.visible_tiles {
+            state.tile_cache.mark_dirty(engine_tiles::TileKey {
+                doc,
+                layer: 0,
+                coord: *coord,
+                stage: engine_tiles::CacheStage::Composite,
+            });
+        }
+        schedule_dirty_viewport_tiles(&state);
+    }
+    Ok(get_gpu_preview_status(state))
+}
+
+#[tauri::command]
+pub fn list_open_documents(state: State<'_, Arc<AppState>>) -> OpenDocumentsPayload {
+    state.tab_list()
+}
+
+#[tauri::command]
+pub fn set_active_document(
+    doc_id: u32,
+    app_handle: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<DocumentResponse, String> {
+    state.activate(doc_id)?;
+    emit_document_changed(&app_handle, "document_activated", None, Some(doc_id));
+    emit_tabs_changed(Some(&app_handle), &state);
+    schedule_dirty_viewport_tiles(&state);
+    get_document_snapshot(state)
+}
+
+#[tauri::command]
+pub fn close_document(
+    doc_id: u32,
+    app_handle: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<OpenDocumentsPayload, String> {
+    state.close_session(doc_id)?;
+    emit_document_changed(&app_handle, "document_closed", None, Some(doc_id));
+    emit_tabs_changed(Some(&app_handle), &state);
+    Ok(state.tab_list())
+}
+
 /// Minimal AppState for unit/integration tests (commands + undo).
+#[cfg(test)]
 pub(crate) fn make_test_app_state() -> Arc<AppState> {
     use engine_project::Document;
     use engine_project::types::DocumentId;
 
-    let document = Document::new(DocumentId::new(1), 800, 600);
-    let doc_handle = DocumentHandle::new(document);
-    let tile_cache = TileCache::new(256 * 1024 * 1024);
-    let scheduler = Scheduler::new();
-
-    Arc::new(AppState {
-        document_handle: doc_handle,
-        tile_cache,
-        scheduler,
-        viewport: Mutex::new(ViewportState::default()),
-        worker_wake: WorkerWake::new(),
-        palette_cache: engine_color::palette_cache::PaletteKdCache::new(),
-        palette_lut_cache: engine_color::palette_lut::PaletteLutCache::new(),
-        threshold_cache: engine_color::threshold_map::ThresholdMapCache::new(),
-        error_residuals: engine_project::filters::ErrorResidualsStore::new(),
-        block_representatives: engine_tiles::BlockRepresentativeCache::new(),
-        diffusion_skip_counter: crate::diffusion_waiters::DiffusionSkipCounter::new(),
-        pending_diffusion_waiters: crate::diffusion_waiters::PendingDiffusionWaiters::new(),
-        gpu: None,
-        panel_manager: Mutex::new(crate::panel_manager::PanelManager::new()),
-        selection: Mutex::new(SelectionState::default()),
-        dock_affinity: Mutex::new(crate::dock_affinity::DockAffinityController::new(true)),
-        float_drag_mouseup_cancel: std::sync::Arc::new(
-            std::sync::atomic::AtomicBool::new(true),
-        ),
-        float_drag_mouseup_hook: Mutex::new(None),
-        project_path: Mutex::new(None),
-        undo_manager: Mutex::new(crate::undo::UndoManager::new()),
-        saved_snapshot: Mutex::new(None),
-        preview_pass_inflight: AtomicUsize::new(0),
-        pending_preview_refresh: Mutex::new(None),
-        ed_prefix_lock: Mutex::new(()),
-    })
+    let state = AppState::empty_process(None, 512 * 1024 * 1024, true);
+    state.spawn_session(Document::new(DocumentId::new(1), 800, 600));
+    Arc::new(state)
 }
 
 #[cfg(test)]
@@ -3803,7 +3956,7 @@ mod tests {
     #[test]
     fn get_palette_oklab_missing_palette_errors() {
         let state = make_test_app_state();
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.must_active().document_handle.snapshot();
         assert!(snapshot.palettes.iter().all(|p| p.id != 9999));
         drop(snapshot);
         let err = snapshot_palette_oklab(&state, 9999).unwrap_err();
@@ -3828,7 +3981,7 @@ mod tests {
 
         let state = make_test_app_state();
         let mut palette_id = 0u32;
-        state.document_handle.mutate(|doc| {
+        state.must_active().document_handle.mutate(|doc| {
             let pid = doc.add_palette("Game Boy".to_string(), linear);
             palette_id = pid.0;
         });
@@ -3852,7 +4005,7 @@ mod tests {
         state: &AppState,
         palette_id: u32,
     ) -> Result<Vec<OklabPointDto>, String> {
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.must_active().document_handle.snapshot();
         let palette = snapshot
             .palettes
             .iter()
@@ -4144,14 +4297,14 @@ mod tests {
         let name = "Test Palette".to_string();
         let trimmed_name = name.trim().to_string();
         let mut palette_id_raw = 0u32;
-        state.document_handle.mutate(|doc| {
+        state.must_active().document_handle.mutate(|doc| {
             let pid = doc.add_palette(trimmed_name.clone(), vec![]);
             palette_id_raw = pid.0;
             doc.increment_generation();
         });
 
         // Verify palette was created
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.must_active().document_handle.snapshot();
         let palette = snapshot.palettes.iter().find(|p| p.id == palette_id_raw);
         assert!(palette.is_some());
         let palette = palette.unwrap();
@@ -4161,12 +4314,12 @@ mod tests {
         drop(snapshot);
 
         // === RENAME ===
-        state.document_handle.mutate(|doc| {
+        state.must_active().document_handle.mutate(|doc| {
             if let Some(p) = doc.palettes.iter_mut().find(|p| p.id == palette_id_raw) {
                 p.name = "Renamed Palette".to_string();
             }
         });
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.must_active().document_handle.snapshot();
         let palette = snapshot.palettes.iter().find(|p| p.id == palette_id_raw).unwrap();
         assert_eq!(palette.name, "Renamed Palette");
         drop(snapshot);
@@ -4176,26 +4329,26 @@ mod tests {
         let green = hex_to_linear("00FF00").unwrap();
         let blue = hex_to_linear("0000FF").unwrap();
 
-        state.document_handle.mutate(|doc| {
+        state.must_active().document_handle.mutate(|doc| {
             if let Some(p) = doc.palettes.iter_mut().find(|p| p.id == palette_id_raw) {
                 p.colors.push(red);
                 p.revision += 1;
             }
         });
-        state.document_handle.mutate(|doc| {
+        state.must_active().document_handle.mutate(|doc| {
             if let Some(p) = doc.palettes.iter_mut().find(|p| p.id == palette_id_raw) {
                 p.colors.push(green);
                 p.revision += 1;
             }
         });
-        state.document_handle.mutate(|doc| {
+        state.must_active().document_handle.mutate(|doc| {
             if let Some(p) = doc.palettes.iter_mut().find(|p| p.id == palette_id_raw) {
                 p.colors.push(blue);
                 p.revision += 1;
             }
         });
 
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.must_active().document_handle.snapshot();
         let palette = snapshot.palettes.iter().find(|p| p.id == palette_id_raw).unwrap();
         assert_eq!(palette.colors.len(), 3);
         assert_eq!(palette.revision, 4); // initial 1 + 3 adds
@@ -4204,14 +4357,14 @@ mod tests {
         // === UPDATE COLOR ===
         // Change green (index 1) to yellow FF FF 00
         let yellow = hex_to_linear("FFFF00").unwrap();
-        state.document_handle.mutate(|doc| {
+        state.must_active().document_handle.mutate(|doc| {
             if let Some(p) = doc.palettes.iter_mut().find(|p| p.id == palette_id_raw) {
                 p.colors[1] = yellow;
                 p.revision += 1;
             }
         });
 
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.must_active().document_handle.snapshot();
         let palette = snapshot.palettes.iter().find(|p| p.id == palette_id_raw).unwrap();
         assert_eq!(palette.revision, 5);
         // Verify the color at index 1 changed (via hex round-trip)
@@ -4221,14 +4374,14 @@ mod tests {
 
         // === REMOVE COLOR ===
         // Remove index 0 (red)
-        state.document_handle.mutate(|doc| {
+        state.must_active().document_handle.mutate(|doc| {
             if let Some(p) = doc.palettes.iter_mut().find(|p| p.id == palette_id_raw) {
                 p.colors.remove(0);
                 p.revision += 1;
             }
         });
 
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.must_active().document_handle.snapshot();
         let palette = snapshot.palettes.iter().find(|p| p.id == palette_id_raw).unwrap();
         assert_eq!(palette.colors.len(), 2);
         assert_eq!(palette.revision, 6);
@@ -4240,7 +4393,7 @@ mod tests {
 
         // === REORDER ===
         // Move index 0 (yellow) to index 1 → [blue, yellow]
-        state.document_handle.mutate(|doc| {
+        state.must_active().document_handle.mutate(|doc| {
             if let Some(p) = doc.palettes.iter_mut().find(|p| p.id == palette_id_raw) {
                 let color = p.colors.remove(0);
                 p.colors.insert(1, color);
@@ -4248,7 +4401,7 @@ mod tests {
             }
         });
 
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.must_active().document_handle.snapshot();
         let palette = snapshot.palettes.iter().find(|p| p.id == palette_id_raw).unwrap();
         assert_eq!(palette.colors.len(), 2);
         assert_eq!(palette.revision, 7);
@@ -4257,12 +4410,12 @@ mod tests {
         drop(snapshot);
 
         // === DELETE ===
-        state.document_handle.mutate(|doc| {
+        state.must_active().document_handle.mutate(|doc| {
             doc.palettes.retain(|p| p.id != palette_id_raw);
             doc.increment_generation();
         });
 
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.must_active().document_handle.snapshot();
         assert!(snapshot.palettes.iter().find(|p| p.id == palette_id_raw).is_none());
         drop(snapshot);
     }
@@ -4287,7 +4440,7 @@ mod tests {
 
         // 1. Create a palette with one color
         let mut palette_id_raw = 0u32;
-        state.document_handle.mutate(|doc| {
+        state.must_active().document_handle.mutate(|doc| {
             let color = engine_color::palette::LinearColor {
                 r: 1.0, g: 0.0, b: 0.0,
             };
@@ -4297,7 +4450,7 @@ mod tests {
 
         // 2. Add a layer with a DitherV2 filter referencing this palette
         let layer_id = 42u32;
-        state.document_handle.mutate(|doc| {
+        state.must_active().document_handle.mutate(|doc| {
             let mut layer = Layer::new(
                 LayerId::new(layer_id),
                 LayerKind::Raster,
@@ -4321,11 +4474,13 @@ mod tests {
 
         // 3. Insert clean Processed and Composite tiles for this layer
         let processed_key = TileKey {
+            doc: 1,
             layer: layer_id,
             coord: TileCoord { level: 0, x: 0, y: 0 },
             stage: CacheStage::Processed,
         };
         let composite_key = TileKey {
+            doc: 1,
             layer: layer_id,
             coord: TileCoord { level: 0, x: 0, y: 0 },
             stage: CacheStage::Composite,
@@ -4343,7 +4498,7 @@ mod tests {
         drop(entry_c);
 
         // 4. Modify the palette (add a color) and trigger invalidation
-        state.document_handle.mutate(|doc| {
+        state.must_active().document_handle.mutate(|doc| {
             if let Some(p) = doc.palettes.iter_mut().find(|p| p.id == palette_id_raw) {
                 let green = engine_color::palette::LinearColor {
                     r: 0.0, g: 1.0, b: 0.0,
@@ -4384,20 +4539,21 @@ mod tests {
 
         // Create a palette (not referenced by any filter)
         let mut palette_id_raw = 0u32;
-        state.document_handle.mutate(|doc| {
+        state.must_active().document_handle.mutate(|doc| {
             let pid = doc.add_palette("Unused".to_string(), vec![]);
             palette_id_raw = pid.0;
         });
 
         // Add a layer with NO filters referencing the palette
         let layer_id = 10u32;
-        state.document_handle.mutate(|doc| {
+        state.must_active().document_handle.mutate(|doc| {
             let layer = Layer::new(LayerId::new(layer_id), LayerKind::Raster, 800, 600);
             doc.root.push(LayerNode::Leaf(layer));
         });
 
         // Insert a clean Processed tile for this layer
         let key = TileKey {
+            doc: 1,
             layer: layer_id,
             coord: TileCoord { level: 0, x: 0, y: 0 },
             stage: CacheStage::Processed,
@@ -4435,7 +4591,7 @@ mod tests {
 
         // 1. Create a palette with colors
         let mut palette_id_raw = 0u32;
-        state.document_handle.mutate(|doc| {
+        state.must_active().document_handle.mutate(|doc| {
             let colors = vec![
                 engine_color::palette::LinearColor { r: 1.0, g: 0.0, b: 0.0 },
                 engine_color::palette::LinearColor { r: 0.0, g: 1.0, b: 0.0 },
@@ -4449,7 +4605,7 @@ mod tests {
         //    - Layer B with PaletteQuantize referencing this palette
         let layer_a_id = 100u32;
         let layer_b_id = 200u32;
-        state.document_handle.mutate(|doc| {
+        state.must_active().document_handle.mutate(|doc| {
             // Layer A: DitherV2 with palette_id
             let mut layer_a = Layer::new(
                 LayerId::new(layer_a_id), LayerKind::Raster, 800, 600,
@@ -4484,11 +4640,13 @@ mod tests {
 
         // 3. Insert clean tiles for both layers
         let key_a = TileKey {
+            doc: 1,
             layer: layer_a_id,
             coord: TileCoord { level: 0, x: 0, y: 0 },
             stage: CacheStage::Processed,
         };
         let key_b = TileKey {
+            doc: 1,
             layer: layer_b_id,
             coord: TileCoord { level: 0, x: 0, y: 0 },
             stage: CacheStage::Processed,
@@ -4502,7 +4660,7 @@ mod tests {
         let mut affected_filter_ids: Vec<String> = Vec::new();
         let mut affected_layer_ids: Vec<u32> = Vec::new();
 
-        state.document_handle.mutate(|doc| {
+        state.must_active().document_handle.mutate(|doc| {
             // Clear palette references
             for node in doc.root.iter_mut() {
                 if let LayerNode::Leaf(layer) = node {
@@ -4548,21 +4706,20 @@ mod tests {
         });
 
         // Evict from palette cache
-        state.palette_cache.evict(palette_id_raw);
-        state.palette_lut_cache.evict(palette_id_raw);
+        state.palette_cache.evict(1, palette_id_raw);
+        state.palette_lut_cache.evict(1, palette_id_raw);
 
         // Invalidate affected layers
         for layer_id in &affected_layer_ids {
             engine_tiles::invalidation::invalidate(
                 &state.tile_cache,
-                engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
-                    layer: *layer_id,
+                engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { doc: 1, layer: *layer_id,
                 },
             );
         }
 
         // 5. Verify: palette removed
-        let snapshot = state.document_handle.snapshot();
+        let snapshot = state.must_active().document_handle.snapshot();
         assert!(
             snapshot.palettes.iter().find(|p| p.id == palette_id_raw).is_none(),
             "Palette should be removed from document"
@@ -4635,7 +4792,7 @@ mod tests {
     #[test]
     fn invalid_create_size_leaves_document_unchanged() {
         let state = make_test_app_state();
-        let before = state.document_handle.snapshot();
+        let before = state.must_active().document_handle.snapshot();
         let before_w = before.width;
         let before_h = before.height;
         let before_len = before.root.len();
@@ -4644,7 +4801,7 @@ mod tests {
         assert!(validate_document_dimensions(0, 8).is_err());
         assert!(validate_document_dimensions(8193, 8).is_err());
 
-        let after = state.document_handle.snapshot();
+        let after = state.must_active().document_handle.snapshot();
         assert_eq!(after.width, before_w);
         assert_eq!(after.height, before_h);
         assert_eq!(after.root.len(), before_len);
@@ -4661,16 +4818,16 @@ mod tests {
     #[test]
     fn create_blank_document_one_leaf_project_path_none() {
         let state = make_test_app_state();
-        *state.project_path.lock().unwrap() = Some(std::path::PathBuf::from("/tmp/old.dyproj"));
+        *state.must_active().project_path.lock().unwrap() = Some(std::path::PathBuf::from("/tmp/old.dyproj"));
 
         let buf = blank_rgba_f32(8, 8, BlankBackground::White);
         let response = install_raster_document(&state, 8, 8, &buf, None).unwrap();
-        assert_eq!(response.doc_id, 1);
+        assert_eq!(response.doc_id, 2);
         assert_eq!(response.width, 8);
         assert_eq!(response.height, 8);
         assert!(response.tile_count >= 1);
 
-        let snap = state.document_handle.snapshot();
+        let snap = state.must_active().document_handle.snapshot();
         assert_eq!(snap.root.len(), 1);
         match &snap.root[0] {
             engine_project::layer::LayerNode::Leaf(layer) => {
@@ -4680,7 +4837,7 @@ mod tests {
             }
             _ => panic!("expected a single raster leaf"),
         }
-        assert!(state.project_path.lock().unwrap().is_none());
+        assert!(state.must_active().project_path.lock().unwrap().is_none());
         assert!(
             !state.tile_cache.entries.is_empty(),
             "decompose should insert at least one Raw tile"
@@ -4705,20 +4862,99 @@ mod tests {
     #[test]
     fn install_raster_document_clears_undo_stacks() {
         let state = make_test_app_state();
-        crate::undo::with_document_undo(&state, None, || {
-            state.document_handle.mutate(|doc| {
+        crate::undo::with_document_undo(&state, None, state.active_id().unwrap(), || {
+            state.must_active().document_handle.mutate(|doc| {
                 doc.increment_generation();
             });
             Ok::<(), String>(())
         })
         .unwrap();
-        assert!(state.undo_manager.lock().unwrap().state_dto().can_undo);
+        assert!(state.must_active().undo_manager.lock().unwrap().state_dto().can_undo);
 
         let buf = blank_rgba_f32(8, 8, BlankBackground::White);
         install_raster_document(&state, 8, 8, &buf, None).unwrap();
-        let dto = state.undo_manager.lock().unwrap().state_dto();
+        let dto = state.must_active().undo_manager.lock().unwrap().state_dto();
         assert!(!dto.can_undo);
         assert!(!dto.can_redo);
+    }
+
+    #[test]
+    fn two_sessions_keep_separate_handles() {
+        let state = make_test_app_state();
+        let first = state.active_id().unwrap();
+        let buf = blank_rgba_f32(8, 8, BlankBackground::White);
+        let response = install_raster_document(&state, 8, 8, &buf, None).unwrap();
+        assert_ne!(response.doc_id, first);
+        assert!(state.session(first).is_ok());
+        assert!(state.session(response.doc_id).is_ok());
+        assert_eq!(state.active_id(), Some(response.doc_id));
+        state.activate(first).unwrap();
+        assert_eq!(state.active_id(), Some(first));
+        state.close_session(first).unwrap();
+        assert!(state.session(first).is_err());
+        assert_eq!(state.active_id(), Some(response.doc_id));
+    }
+
+    #[test]
+    fn second_session_composite_reads_own_raw_not_doc_one() {
+        use engine_tiles::{CacheStage, TileCoord, TileKey};
+        use std::sync::Arc;
+
+        let state = make_test_app_state();
+        // Doc 1 leftover: opaque red Raw under doc=1 (must not leak into doc=2 composite).
+        {
+            let mut red = engine_tiles::PixelTile::new();
+            for i in 0..red.data.len() / 4 {
+                red.data[i * 4] = 1.0;
+                red.data[i * 4 + 3] = 1.0;
+            }
+            state.tile_cache.insert_fresh_gen(
+                TileKey {
+                    doc: 1,
+                    layer: 1,
+                    coord: TileCoord {
+                        level: 0,
+                        x: 0,
+                        y: 0,
+                    },
+                    stage: CacheStage::Raw,
+                },
+                Arc::new(red),
+                1,
+            );
+        }
+
+        let blue = blank_rgba_f32(8, 8, BlankBackground::White);
+        // Make buffer distinctly non-red: already white via blank helper.
+        let installed = install_raster_document(&state, 8, 8, &blue, None).unwrap();
+        assert_ne!(installed.doc_id, 1);
+
+        let key = TileKey {
+            doc: installed.doc_id,
+            layer: 0,
+            coord: TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            },
+            stage: CacheStage::Composite,
+        };
+        let tile = crate::tile_pipeline::compute_composite_tile(key, &state)
+            .expect("composite for second session");
+        // White blank (or near-white), not the red planted under doc=1.
+        assert!(
+            tile.at(engine_tiles::HALO, engine_tiles::HALO, 0) < 0.1
+                || (tile.at(engine_tiles::HALO, engine_tiles::HALO, 0) - 1.0).abs() < 0.05,
+            "r={}",
+            tile.at(engine_tiles::HALO, engine_tiles::HALO, 0)
+        );
+        assert!(
+            (tile.at(engine_tiles::HALO, engine_tiles::HALO, 0)
+                - tile.at(engine_tiles::HALO, engine_tiles::HALO, 1))
+            .abs()
+                < 0.05,
+            "second-doc composite must not pick up doc=1 red Raw"
+        );
     }
 
     // ========================================================================
@@ -4736,6 +4972,7 @@ mod tests {
     fn raw_pixel_at(state: &AppState, layer: u32, x: u32, y: u32) -> [f32; 4] {
         use engine_tiles::{HALO, TILE_SIZE, TileCoord};
         let key = TileKey {
+            doc: state.active_id().expect("active document"),
             layer,
             coord: TileCoord {
                 level: 0,
@@ -4772,11 +5009,12 @@ mod tests {
         use engine_tiles::{TileCoord, HALO};
 
         let state = make_test_app_state();
-        state.document_handle.mutate(|doc| {
+        state.must_active().document_handle.mutate(|doc| {
             doc.generations.set_document_gen(40);
         });
 
         let leftover = TileKey {
+            doc: 1,
             layer: 1,
             coord: TileCoord {
                 level: 0,
@@ -4786,6 +5024,7 @@ mod tests {
             stage: CacheStage::Raw,
         };
         let raw00 = TileKey {
+            doc: 1,
             layer: 1,
             coord: TileCoord {
                 level: 0,
@@ -4795,6 +5034,7 @@ mod tests {
             stage: CacheStage::Raw,
         };
         let composite = TileKey {
+            doc: 1,
             layer: 0,
             coord: TileCoord {
                 level: 0,
@@ -4822,11 +5062,12 @@ mod tests {
         ));
 
         let blue = solid_rgba(8, 8, 0.0, 0.0, 1.0, 1.0);
-        install_raster_document(&state, 8, 8, &blue, None).unwrap();
+        let installed = install_raster_document(&state, 8, 8, &blue, None).unwrap();
+        let new_doc = installed.doc_id;
 
         assert!(
-            state.tile_cache.entries.get(&leftover).is_none(),
-            "tiles outside the new grid must be gone"
+            state.tile_cache.entries.get(&leftover).is_some(),
+            "previous document tiles stay until that session is closed"
         );
         let px = raw_pixel_at(&state, 1, 0, 0);
         assert!(
@@ -4834,18 +5075,37 @@ mod tests {
             "expected blue Image Source, got {px:?}"
         );
 
-        let live_gen = state
-            .document_handle
+        let live_gen = state.must_active().document_handle
             .snapshot()
             .generations
             .current_document_gen();
-        assert_eq!(live_gen, 41);
-        let raw_entry = state.tile_cache.entries.get(&raw00).unwrap();
-        assert_eq!(raw_entry.generation, 41);
+        assert_eq!(live_gen, 1);
+        let new_raw = TileKey {
+            doc: new_doc,
+            layer: 1,
+            coord: TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            },
+            stage: CacheStage::Raw,
+        };
+        let raw_entry = state.tile_cache.entries.get(&new_raw).unwrap();
+        assert_eq!(raw_entry.generation, 1);
         drop(raw_entry);
 
+        let new_composite = TileKey {
+            doc: new_doc,
+            layer: 0,
+            coord: TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            },
+            stage: CacheStage::Composite,
+        };
         assert!(state.tile_cache.insert_fresh_gen(
-            composite,
+            new_composite,
             Arc::new(PixelTile::new()),
             live_gen
         ));
@@ -4869,8 +5129,11 @@ mod tests {
     fn import_raster_layer_requires_open_document() {
         let state = make_test_app_state();
         let src = solid_rgba(2, 2, 1.0, 0.0, 0.0, 1.0);
-        let err = import_raster_layer(&state, 2, 2, &src, None).unwrap_err();
-        assert!(err.contains("No document open"));
+        let err = import_raster_layer(&state, 1, 2, 2, &src, None).unwrap_err();
+        assert!(
+            err.contains("No document") || err.contains("closed") || err.contains("session"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -4880,10 +5143,10 @@ mod tests {
         install_raster_document(&state, 16, 16, &bg, None).unwrap();
 
         let src = solid_rgba(4, 4, 1.0, 0.0, 0.0, 1.0);
-        let resp = import_raster_layer(&state, 4, 4, &src, None).unwrap();
+        let resp = import_raster_layer(&state, state.active_id().unwrap(), 4, 4, &src, None).unwrap();
         assert_eq!(resp.layer_id, 2);
 
-        let snap = state.document_handle.snapshot();
+        let snap = state.must_active().document_handle.snapshot();
         assert_eq!(snap.root.len(), 2);
         assert_eq!(snap.width, 16);
         assert_eq!(snap.height, 16);
@@ -4910,12 +5173,12 @@ mod tests {
         let i11 = 11 * 4;
         src[i11..i11 + 4].copy_from_slice(&[0.0, 1.0, 0.0, 1.0]);
 
-        let resp = import_raster_layer(&state, 12, 8, &src, None).unwrap();
+        let resp = import_raster_layer(&state, state.active_id().unwrap(), 12, 8, &src, None).unwrap();
         let red = raw_pixel_at(&state, resp.layer_id, 0, 0);
         let blue = raw_pixel_at(&state, resp.layer_id, 7, 0);
         assert!((red[0] - 1.0).abs() < 1e-5);
         assert!((blue[2] - 1.0).abs() < 1e-5);
-        let snap = state.document_handle.snapshot();
+        let snap = state.must_active().document_handle.snapshot();
         assert_eq!(snap.width, 8);
         assert_eq!(snap.height, 8);
     }
@@ -4931,7 +5194,7 @@ mod tests {
         let bg = blank_rgba_f32(8, 8, BlankBackground::White);
         install_raster_document(&state, 8, 8, &bg, None).unwrap();
 
-        state.document_handle.mutate(|doc| {
+        state.must_active().document_handle.mutate(|doc| {
             if let engine_project::layer::LayerNode::Leaf(layer) = &mut doc.root[0] {
                 layer.filters.push(FilterInstance::new(
                     FilterKind::Dither,
@@ -4949,9 +5212,9 @@ mod tests {
         });
 
         let src = solid_rgba(2, 2, 0.0, 1.0, 0.0, 1.0);
-        import_raster_layer(&state, 2, 2, &src, None).unwrap();
+        import_raster_layer(&state, state.active_id().unwrap(), 2, 2, &src, None).unwrap();
 
-        let snap = state.document_handle.snapshot();
+        let snap = state.must_active().document_handle.snapshot();
         match &snap.root[0] {
             engine_project::layer::LayerNode::Leaf(layer) => match &layer.filters[0].params {
                 FilterParams::DitherV2(p) => {

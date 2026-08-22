@@ -2,10 +2,13 @@ import { listen, emit, emitTo, type UnlistenFn, type Event } from '@tauri-apps/a
 import type { SelectionDto } from './selection';
 import type { PanelInfo, PanelStateSnapshot } from '../../types/panels';
 import type { ColorLabDraftSnapshot } from '../../features/color-lab/types';
+import type { OpenDocumentsPayload } from './document';
 
 export interface DocumentChangedPayload {
   kind: string;
   layer_id?: number | null;
+  /** Runtime document id when the event was emitted; ignore if ≠ current docId. */
+  doc_id?: number | null;
 }
 
 export type SelectionChangedPayload = SelectionDto;
@@ -18,6 +21,12 @@ export async function onDocumentChanged(
   handler: (event: Event<DocumentChangedPayload>) => void
 ): Promise<UnlistenFn> {
   return listen<DocumentChangedPayload>('document-changed', handler);
+}
+
+export async function onTabsChanged(
+  handler: (event: Event<OpenDocumentsPayload>) => void
+): Promise<UnlistenFn> {
+  return listen<OpenDocumentsPayload>('tabs-changed', handler);
 }
 
 export async function onSelectionChanged(

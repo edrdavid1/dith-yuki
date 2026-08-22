@@ -157,7 +157,7 @@ fn cross_tile_propagation_affects_neighbor_output() {
 
     // Verify top residuals from (0,0) exist — if they contain non-zero values,
     // then tile (0,1) must differ from isolated processing
-    let top_residuals = store.get_top(layer_id, tc(0, 1));
+    let top_residuals = store.get_top(1, layer_id, tc(0, 1));
     assert!(
         top_residuals.is_some(),
         "Top residuals from (0,0) should be stored"
@@ -262,23 +262,23 @@ fn residuals_stored_and_retrievable_for_2x2_grid() {
     // After processing, residuals should exist for all 4 tiles:
     // - (0,0)'s right residuals readable by (1,0) via get_left
     assert!(
-        store.get_left(layer_id, tc(1, 0)).is_some(),
+        store.get_left(1, layer_id, tc(1, 0)).is_some(),
         "Tile (1,0) should find left residuals from (0,0)"
     );
     // - (0,0)'s bottom residuals readable by (0,1) via get_top
     assert!(
-        store.get_top(layer_id, tc(0, 1)).is_some(),
+        store.get_top(1, layer_id, tc(0, 1)).is_some(),
         "Tile (0,1) should find top residuals from (0,0)"
     );
     // - (1,0)'s right residuals (would be (2,0) neighbor, not tested here)
     // - (1,0)'s bottom residuals readable by (1,1) via get_top
     assert!(
-        store.get_top(layer_id, tc(1, 1)).is_some(),
+        store.get_top(1, layer_id, tc(1, 1)).is_some(),
         "Tile (1,1) should find top residuals from (1,0)"
     );
     // - (0,1)'s right residuals readable by (1,1) via get_left
     assert!(
-        store.get_left(layer_id, tc(1, 1)).is_some(),
+        store.get_left(1, layer_id, tc(1, 1)).is_some(),
         "Tile (1,1) should find left residuals from (0,1)"
     );
 }
@@ -310,7 +310,7 @@ fn minimal_left_propagation_test() {
         .unwrap();
 
     // Verify residuals were stored
-    let left_residuals = store.get_left(layer_id, tc(1, 0));
+    let left_residuals = store.get_left(1, layer_id, tc(1, 0));
     assert!(left_residuals.is_some(), "Residuals from (0,0) should be available");
 
     // Step 2: Check that stored residuals have non-zero values

@@ -189,7 +189,7 @@ pub fn save_project_to_bytes(
     let rasters = collect_raster_layers(&doc.root);
     let mut layer_pngs: HashMap<u32, Vec<u8>> = HashMap::new();
     for layer in rasters {
-        let png = assemble_layer_png(cache, layer, doc.width, doc.height)?;
+        let png = assemble_layer_png(cache, layer, doc.width, doc.height, doc.id.0)?;
         layer_pngs.insert(layer.id.0, png);
     }
 
@@ -339,7 +339,7 @@ pub fn open_project_from_bytes(
         let width = remapped.document.width.max(w);
         let height = remapped.document.height.max(h);
         let _ = (width, height); // dims on document already set
-        decompose_image_to_tiles(&rgba, w, h, new_id.0, staging_cache).map_err(|e| {
+        decompose_image_to_tiles(&rgba, w, h, runtime_doc_id.0, new_id.0, staging_cache).map_err(|e| {
             ProjectError::Codec(format!("decompose failed for layer {}: {e}", new_id.0))
         })?;
     }
@@ -428,7 +428,7 @@ mod tests {
         }
 
         let cache = TileCache::new(50_000_000);
-        decompose_image_to_tiles(&rgba, w, h, 1, &cache).unwrap();
+        decompose_image_to_tiles(&rgba, w, h, 1, 1, &cache).unwrap();
 
         let mut doc = Document::new(DocumentId::new(1), w, h);
         let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, w, h);
@@ -467,6 +467,7 @@ mod tests {
         // Raw tile present under remapped id
         let new_id = opened.layer_remap[&LayerId::new(1)];
         let key = engine_tiles::TileKey {
+            doc: 1,
             layer: new_id.0,
             coord: engine_tiles::TileCoord { level: 0, x: 0, y: 0 },
             stage: engine_tiles::CacheStage::Raw,
@@ -482,7 +483,7 @@ mod tests {
         let h = 16u32;
         let rgba = vec![0.3f32; (w * h * 4) as usize];
         let cache = TileCache::new(20_000_000);
-        decompose_image_to_tiles(&rgba, w, h, 1, &cache).unwrap();
+        decompose_image_to_tiles(&rgba, w, h, 1, 1, &cache).unwrap();
 
         // Write a grayscale threshold PNG, then embed via save.
         let mut png_buf = Vec::new();
@@ -543,7 +544,7 @@ mod tests {
         let h = 16u32;
         let rgba = vec![1.0f32; (w * h * 4) as usize];
         let cache = TileCache::new(20_000_000);
-        decompose_image_to_tiles(&rgba, w, h, 1, &cache).unwrap();
+        decompose_image_to_tiles(&rgba, w, h, 1, 1, &cache).unwrap();
         let mut doc = Document::new(DocumentId::new(1), w, h);
         doc.root
             .push(LayerNode::Leaf(Layer::new(LayerId::new(1), LayerKind::Raster, w, h)));
@@ -607,15 +608,21 @@ mod tests {
         let h = 300u32;
         let rgba = vec![0.5f32; (w * h * 4) as usize];
         let cache = TileCache::new(50_000_000);
-        decompose_image_to_tiles(&rgba, w, h, 1, &cache).unwrap();
-        force_drop_raw_tile(&cache, LayerId::new(1), 0, 0);
+        decompose_image_to_tiles(&rgba, w, h, 1, 1, &cache).unwrap();
+        force_drop_raw_tile(&cache, 1, LayerId::new(1), 0, 0);
 
         let mut doc = Document::new(DocumentId::new(1), w, h);
         doc.root
             .push(LayerNode::Leaf(Layer::new(LayerId::new(1), LayerKind::Raster, w, h)));
 
         let err = save_project_to_bytes(&doc, &cache, "0.1.0", |_| unreachable!()).unwrap_err();
-        assert!(matches!(err, ProjectError::IncompleteRaw { layer_id: 1 }));
+        assert!(matches!(
+            err,
+            ProjectError::IncompleteRaw {
+                doc_id: 1,
+                layer_id: 1
+            }
+        ));
     }
 
     #[test]
@@ -625,7 +632,7 @@ mod tests {
         let h = 16u32;
         let rgba = vec![1.0f32; (w * h * 4) as usize];
         let cache = TileCache::new(20_000_000);
-        decompose_image_to_tiles(&rgba, w, h, 1, &cache).unwrap();
+        decompose_image_to_tiles(&rgba, w, h, 1, 1, &cache).unwrap();
         let mut doc = Document::new(DocumentId::new(1), w, h);
         doc.root
             .push(LayerNode::Leaf(Layer::new(LayerId::new(1), LayerKind::Raster, w, h)));

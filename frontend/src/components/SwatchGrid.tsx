@@ -11,6 +11,7 @@ import { bind } from '../shared/ui/cn';
 const cn = bind(styles);
 
 interface SwatchGridProps {
+  docId: number;
   paletteId: number;
   colors: string[]; // hex colors (6-char, no "#")
   onColorAdded: () => void;
@@ -20,6 +21,7 @@ interface SwatchGridProps {
 }
 
 function SwatchGrid({
+  docId,
   paletteId,
   colors,
   onColorAdded,
@@ -57,7 +59,7 @@ function SwatchGrid({
     if (selectedIndex === null) return;
     setError(null);
     try {
-      await removePaletteColor(paletteId, selectedIndex);
+      await removePaletteColor(docId, paletteId, selectedIndex);
       setSelectedIndex(null);
       onColorRemoved();
     } catch (e) {
@@ -71,10 +73,10 @@ function SwatchGrid({
       setError(null);
       try {
         if (pickerMode === 'add') {
-          await addColorToPalette(paletteId, hex);
+          await addColorToPalette(docId, paletteId, hex);
           onColorAdded();
         } else if (pickerMode === 'edit' && selectedIndex !== null) {
-          await updatePaletteColor(paletteId, selectedIndex, hex);
+          await updatePaletteColor(docId, paletteId, selectedIndex, hex);
           onColorUpdated();
         }
       } catch (e) {
@@ -118,7 +120,7 @@ function SwatchGrid({
 
       setError(null);
       try {
-        await reorderPaletteColor(paletteId, fromIndex, toIndex);
+        await reorderPaletteColor(docId, paletteId, fromIndex, toIndex);
         // Update selection to follow the dragged item
         setSelectedIndex(toIndex);
         onColorReordered();

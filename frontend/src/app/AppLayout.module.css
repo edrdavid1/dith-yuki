@@ -2,12 +2,12 @@
 
 .app-layout {
   display: grid;
-  grid-template-rows: 27px 1fr;
+  grid-template-rows: 22px 1fr;
   grid-template-columns: 0px 1fr 332px;
   grid-template-areas:
     "menubar menubar menubar"
     "left    canvas  right";
-  height: 100vh;
+  height: 100%;
   min-width: 800px;
   min-height: 600px;
   background: var(--color-dark-gray);

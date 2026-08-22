@@ -4,6 +4,7 @@ import { useRecentFiles } from './useRecentFiles';
 import { useUnsavedGuard } from './useUnsavedGuard';
 import { openRecentByKind, type RecentFileEntry } from '../shared/ipc/recent';
 import type { BlankBackground } from '../shared/ipc/document';
+import type { OpenDocumentTab } from '../shared/ipc/document';
 
 export interface WelcomeActions {
   recentEntries: RecentFileEntry[];
@@ -21,12 +22,7 @@ export function useWelcomeScreen() {
   const doc = useDocument();
   const { entries, refresh } = useRecentFiles();
   const [newProjectOpen, setNewProjectOpen] = useState(false);
-  const { confirmReplace, dialog: unsavedDialog } = useUnsavedGuard({
-    hasDocument: doc.hasDocument,
-    dirty: doc.dirty,
-    projectPath: doc.projectPath,
-    save: doc.saveProject,
-  });
+  const { confirmQuit, confirmCloseTab, dialog: unsavedDialog } = useUnsavedGuard();
 
   const runAndRefresh = useCallback(
     async (op: () => Promise<unknown>) => {
@@ -37,36 +33,27 @@ export function useWelcomeScreen() {
   );
 
   const onNewProject = useCallback(() => {
-    void confirmReplace().then((ok) => {
-      if (ok) setNewProjectOpen(true);
-    });
-  }, [confirmReplace]);
+    setNewProjectOpen(true);
+  }, []);
 
   const onOpenImage = useCallback(() => {
-    void confirmReplace().then((ok) => {
-      if (ok) void runAndRefresh(doc.openImage);
-    });
-  }, [confirmReplace, doc.openImage, runAndRefresh]);
+    void runAndRefresh(doc.openImage);
+  }, [doc.openImage, runAndRefresh]);
 
   const onOpenProject = useCallback(() => {
-    void confirmReplace().then((ok) => {
-      if (ok) void runAndRefresh(doc.openProject);
-    });
-  }, [confirmReplace, doc.openProject, runAndRefresh]);
+    void runAndRefresh(doc.openProject);
+  }, [doc.openProject, runAndRefresh]);
 
   const onOpenRecent = useCallback(
     (entry: RecentFileEntry) => {
-      void confirmReplace().then((ok) => {
-        if (!ok) return;
-        void runAndRefresh(async () => {
-          await openRecentByKind(entry, {
-            openImageAt: doc.openImageAt,
-            openProjectAt: doc.openProjectAt,
-          });
+      void runAndRefresh(async () => {
+        await openRecentByKind(entry, {
+          openImageAt: doc.openImageAt,
+          openProjectAt: doc.openProjectAt,
         });
       });
     },
-    [confirmReplace, doc.openImageAt, doc.openProjectAt, runAndRefresh]
+    [doc.openImageAt, doc.openProjectAt, runAndRefresh]
   );
 
   const onSaveImage = useCallback(() => {
@@ -92,6 +79,13 @@ export function useWelcomeScreen() {
     [doc.createDocument, refresh]
   );
 
+  const requestCloseTab = useCallback(
+    (tab: OpenDocumentTab) => {
+      void confirmCloseTab(tab);
+    },
+    [confirmCloseTab]
+  );
+
   const welcome: WelcomeActions = {
     recentEntries: entries,
     onNewProject,
@@ -109,7 +103,8 @@ export function useWelcomeScreen() {
     onSaveImage,
     onSaveProject,
     onSaveProjectAs,
-    confirmReplace,
+    confirmQuit,
+    confirmCloseTab: requestCloseTab,
     unsavedDialog,
   };
 }

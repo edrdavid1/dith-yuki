@@ -45,7 +45,7 @@ describe('importImageLayer', () => {
       },
     });
 
-    const result = await store.dispatch(importImageLayer('/tmp/icon.png'));
+    const result = await store.dispatch(importImageLayer({ docId: 1, path: '/tmp/icon.png' }));
     expect(importImageLayer.fulfilled.match(result)).toBe(true);
     const state = store.getState().document;
     expect(state.layerId).toBe(2);

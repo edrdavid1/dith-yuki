@@ -57,11 +57,11 @@ export const refreshFilters = createAsyncThunk(
 export const removeFilter = createAsyncThunk(
   'filters/remove',
   async (
-    args: { layerId: number; filterId: string },
+    args: { docId: number; layerId: number; filterId: string },
     { dispatch, rejectWithValue }
   ) => {
     try {
-      await removeFilterIPC(args.layerId, args.filterId);
+      await removeFilterIPC(args.docId, args.layerId, args.filterId);
       await dispatch(refreshFilters());
       return args.filterId;
     } catch (err) {
@@ -74,7 +74,7 @@ export const removeFilter = createAsyncThunk(
 export const toggleFilterEnabled = createAsyncThunk(
   'filters/toggleEnabled',
   async (
-    args: { layerId: number; filterId: string },
+    args: { docId: number; layerId: number; filterId: string },
     { getState, dispatch, rejectWithValue }
   ) => {
     const state = getState() as { filters: FiltersState };
@@ -83,7 +83,7 @@ export const toggleFilterEnabled = createAsyncThunk(
     const record = filter.params as unknown as Record<string, unknown>;
     const { type: _type, ...params } = record;
     try {
-      await updateFilterIPC(args.layerId, args.filterId, params, {
+      await updateFilterIPC(args.docId, args.layerId, args.filterId, params, {
         enabled: !filter.enabled,
       });
       await dispatch(refreshFilters());
@@ -97,11 +97,11 @@ export const toggleFilterEnabled = createAsyncThunk(
 export const reorderFilter = createAsyncThunk(
   'filters/reorder',
   async (
-    args: { layerId: number; filterId: string; newIndex: number },
+    args: { docId: number; layerId: number; filterId: string; newIndex: number },
     { dispatch, rejectWithValue }
   ) => {
     try {
-      await reorderFilterIPC(args.layerId, args.filterId, args.newIndex);
+      await reorderFilterIPC(args.docId, args.layerId, args.filterId, args.newIndex);
       await dispatch(refreshFilters());
     } catch (err) {
       logIpcError('filters.reorder', err);

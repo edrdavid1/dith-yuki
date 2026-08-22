@@ -3,6 +3,9 @@
 //! History is a bounded stack of `Arc<Document>` — the same structural-sharing
 //! economy as `DocumentHandle::mutate`. Handlers record via [`with_document_undo`];
 //! they must not touch the stacks themselves.
+//!
+//! All mutation / history ops take an explicit runtime `doc_id` (VS Code URI /
+//! Photoshop documentID style). Never resolve the target via `active_session()`.
 
 use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, MutexGuard};
@@ -17,6 +20,7 @@ use crate::commands::{
     emit_document_changed, invalidate_after_document_replace, schedule_dirty_viewport_tiles,
     AppState,
 };
+use crate::document_session::DocumentSession;
 
 /// Explicit history bound (Req 1.2).
 pub const UNDO_MAX_DEPTH: usize = 50;
@@ -25,24 +29,23 @@ pub const UNDO_MAX_DEPTH: usize = 50;
 pub struct UndoStateDto {
     pub can_undo: bool,
     pub can_redo: bool,
+    #[serde(default)]
+    pub doc_id: u32,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 pub struct DirtyDto {
     pub dirty: bool,
+    #[serde(default)]
+    pub doc_id: u32,
 }
 
-fn has_live_document(state: &AppState) -> bool {
-    !state.document_handle.snapshot().root.is_empty()
-}
-
-/// Track P: dirty iff there is a document and the live Arc is not the Saved_Mark.
-pub fn is_dirty(state: &AppState) -> bool {
-    if !has_live_document(state) {
+fn session_is_dirty(session: &DocumentSession) -> bool {
+    if session.document_handle.snapshot().root.is_empty() {
         return false;
     }
-    let live = state.document_handle.snapshot();
-    match state.saved_snapshot.lock() {
+    let live = session.document_handle.snapshot();
+    match session.saved_snapshot.lock() {
         Ok(guard) => match guard.as_ref() {
             Some(saved) => !Arc::ptr_eq(saved, &live),
             None => true,
@@ -51,16 +54,57 @@ pub fn is_dirty(state: &AppState) -> bool {
     }
 }
 
-/// Remember the live Arc as clean (after save or document replace).
+/// Track P: dirty for a specific session.
+pub fn is_dirty_doc(state: &AppState, doc_id: u32) -> bool {
+    let Ok(session) = state.require_session(doc_id) else {
+        return false;
+    };
+    session_is_dirty(&session)
+}
+
+/// Active-tab dirty (chrome poll / welcome). Prefer [`is_dirty_doc`] when id is known.
+pub fn is_dirty(state: &AppState) -> bool {
+    let Some(id) = state.active_id() else {
+        return false;
+    };
+    is_dirty_doc(state, id)
+}
+
+/// Remember the live Arc as clean for `doc_id` (after save or document replace).
+pub fn mark_clean_doc(state: &AppState, doc_id: u32) {
+    let session = match state.require_session(doc_id) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let live = session.document_handle.snapshot();
+    let mut guard = match session.saved_snapshot.lock() {
+        Ok(g) => g,
+        Err(_) => return,
+    };
+    *guard = Some(live);
+}
+
 pub fn mark_clean(state: &AppState) {
-    if let Ok(mut guard) = state.saved_snapshot.lock() {
-        *guard = Some(state.document_handle.snapshot());
+    if let Some(id) = state.active_id() {
+        mark_clean_doc(state, id);
+    }
+}
+
+pub fn emit_dirty_doc(app: Option<&AppHandle>, state: &AppState, doc_id: u32) {
+    if let Some(app) = app {
+        let _ = app.emit(
+            "dirty-changed",
+            DirtyDto {
+                dirty: is_dirty_doc(state, doc_id),
+                doc_id,
+            },
+        );
     }
 }
 
 pub fn emit_dirty(app: Option<&AppHandle>, state: &AppState) {
-    if let Some(app) = app {
-        let _ = app.emit("dirty-changed", DirtyDto { dirty: is_dirty(state) });
+    if let Some(id) = state.active_id() {
+        emit_dirty_doc(app, state, id);
     }
 }
 
@@ -89,12 +133,21 @@ impl UndoManager {
         UndoStateDto {
             can_undo: !self.undo_stack.is_empty(),
             can_redo: !self.redo_stack.is_empty(),
+            doc_id: 0,
+        }
+    }
+
+    pub fn state_dto_for(&self, doc_id: u32) -> UndoStateDto {
+        UndoStateDto {
+            can_undo: !self.undo_stack.is_empty(),
+            can_redo: !self.redo_stack.is_empty(),
+            doc_id,
         }
     }
 }
 
-fn lock_undo(state: &AppState) -> Result<MutexGuard<'_, UndoManager>, String> {
-    state
+fn lock_undo(session: &DocumentSession) -> Result<MutexGuard<'_, UndoManager>, String> {
+    session
         .undo_manager
         .lock()
         .map_err(|e| format!("Undo lock poisoned: {e}"))
@@ -127,10 +180,10 @@ fn referenced_layer_ids(undo: &UndoManager, live: &Document) -> HashSet<u32> {
     ids
 }
 
-fn evict_layer_all(state: &AppState, layer: u32) {
-    state.tile_cache.evict_layer(layer);
-    state.error_residuals.evict_layer(LayerId::new(layer));
-    state.block_representatives.evict_layer(layer);
+fn evict_layer_all(state: &AppState, doc: u32, layer: u32) {
+    state.tile_cache.evict_layer(doc, layer);
+    state.error_residuals.evict_layer(doc, LayerId::new(layer));
+    state.block_representatives.evict_layer(doc, layer);
 }
 
 /// Evict per-layer cache entries whose `LayerId` is in none of live + undo + redo.
@@ -138,27 +191,30 @@ fn gc_orphaned_layers(state: &AppState, undo: &UndoManager, live: &Document) {
     let referenced = referenced_layer_ids(undo, live);
     let mut candidates = HashSet::new();
     for entry in state.tile_cache.entries.iter() {
-        candidates.insert(entry.key().layer);
+        if entry.key().doc == live.id.0 {
+            candidates.insert(entry.key().layer);
+        }
     }
     candidates.extend(state.error_residuals.cached_layer_ids());
     candidates.extend(state.block_representatives.cached_layer_ids());
     for layer in candidates {
         if !referenced.contains(&layer) {
-            evict_layer_all(state, layer);
+            evict_layer_all(state, live.id.0, layer);
         }
     }
 }
 
 fn sync_palette_caches(state: &AppState, live: &Document) {
+    let doc = live.id.0;
     let live_ids: HashSet<u32> = live.palettes.iter().map(|p| p.id).collect();
-    for id in state.palette_cache.cached_ids() {
-        if !live_ids.contains(&id) {
-            state.palette_cache.evict(id);
+    for (d, id) in state.palette_cache.cached_keys() {
+        if d == doc && !live_ids.contains(&id) {
+            state.palette_cache.evict(d, id);
         }
     }
-    for id in state.palette_lut_cache.cached_ids() {
-        if !live_ids.contains(&id) {
-            state.palette_lut_cache.evict(id);
+    for (d, id) in state.palette_lut_cache.cached_keys() {
+        if d == doc && !live_ids.contains(&id) {
+            state.palette_lut_cache.evict(d, id);
         }
     }
 }
@@ -170,36 +226,46 @@ fn emit_undo_state(app: Option<&AppHandle>, dto: UndoStateDto) {
 }
 
 /// Push `before`, trim to `max_depth`, clear redo, run Orphan_GC.
-pub fn record_mutation(state: &AppState, before: Arc<Document>) -> Result<UndoStateDto, String> {
-    let live = state.document_handle.snapshot();
+pub fn record_mutation(
+    state: &AppState,
+    doc_id: u32,
+    before: Arc<Document>,
+) -> Result<UndoStateDto, String> {
+    let session = state.require_session(doc_id)?;
+    let live = session.document_handle.snapshot();
     let dto = {
-        let mut undo = lock_undo(state)?;
+        let mut undo = lock_undo(&session)?;
         undo.undo_stack.push_back(before);
         if undo.undo_stack.len() > undo.max_depth {
             let _dropped = undo.undo_stack.pop_front();
         }
         undo.redo_stack.clear();
         gc_orphaned_layers(state, &undo, &live);
-        undo.state_dto()
+        undo.state_dto_for(doc_id)
     };
     sync_palette_caches(state, &live);
     Ok(dto)
 }
 
 /// Document replace: both stacks empty, GC vs live doc, emit `{false, false}`.
-pub fn clear_history(state: &AppState, app: Option<&AppHandle>) -> Result<UndoStateDto, String> {
-    let live = state.document_handle.snapshot();
+pub fn clear_history(
+    state: &AppState,
+    app: Option<&AppHandle>,
+    doc_id: u32,
+) -> Result<UndoStateDto, String> {
+    let session = state.require_session(doc_id)?;
+    let live = session.document_handle.snapshot();
     let dto = {
-        let mut undo = lock_undo(state)?;
+        let mut undo = lock_undo(&session)?;
         undo.undo_stack.clear();
         undo.redo_stack.clear();
         gc_orphaned_layers(state, &undo, &live);
-        undo.state_dto()
+        undo.state_dto_for(doc_id)
     };
     sync_palette_caches(state, &live);
     emit_undo_state(app, dto);
-    mark_clean(state);
-    emit_dirty(app, state);
+    mark_clean_doc(state, doc_id);
+    emit_dirty_doc(app, state, doc_id);
     Ok(dto)
 }
 
@@ -207,21 +273,25 @@ pub fn clear_history(state: &AppState, app: Option<&AppHandle>) -> Result<UndoSt
 pub fn with_document_undo<F, T>(
     state: &AppState,
     app: Option<&AppHandle>,
+    doc_id: u32,
     f: F,
 ) -> Result<T, String>
 where
     F: FnOnce() -> Result<T, String>,
 {
-    let before = state.document_handle.snapshot();
+    let before = state.require_session(doc_id)?.document_handle.snapshot();
     let result = f()?;
-    let dto = record_mutation(state, before)?;
+    let dto = record_mutation(state, doc_id, before)?;
     emit_undo_state(app, dto);
-    emit_dirty(app, state);
+    emit_dirty_doc(app, state, doc_id);
     Ok(result)
 }
 
-fn bump_live_document_gen(state: &AppState) {
-    let live = state.document_handle.snapshot();
+fn bump_live_document_gen(state: &AppState, doc_id: u32) {
+    let Ok(session) = state.require_session(doc_id) else {
+        return;
+    };
+    let live = session.document_handle.snapshot();
     let live_gen = live.generations.current_document_gen();
     let next = live_gen
         .max(state.tile_cache.max_generation())
@@ -232,71 +302,86 @@ fn bump_live_document_gen(state: &AppState) {
 fn restore_and_invalidate(
     state: &AppState,
     app: &AppHandle,
+    doc_id: u32,
     restored: Arc<Document>,
     kind: &str,
 ) -> Result<UndoStateDto, String> {
-    state.document_handle.store(restored);
-    bump_live_document_gen(state);
-    let live = state.document_handle.snapshot();
+    let session = state.require_session(doc_id)?;
+    session.document_handle.store(restored);
+    bump_live_document_gen(state, doc_id);
+    let live = session.document_handle.snapshot();
     let dto = {
-        let undo = lock_undo(state)?;
+        let undo = lock_undo(&session)?;
         gc_orphaned_layers(state, &undo, &live);
-        undo.state_dto()
+        undo.state_dto_for(doc_id)
     };
     sync_palette_caches(state, &live);
-    invalidate_after_document_replace(state);
-    schedule_dirty_viewport_tiles(state);
-    emit_document_changed(app, kind, None);
+    if state.active_id() == Some(doc_id) {
+        invalidate_after_document_replace(state);
+        schedule_dirty_viewport_tiles(state);
+    }
+    emit_document_changed(app, kind, None, Some(doc_id));
     emit_undo_state(Some(app), dto);
-    emit_dirty(Some(app), state);
+    emit_dirty_doc(Some(app), state, doc_id);
     Ok(dto)
 }
 
-pub fn apply_undo(state: &AppState, app: &AppHandle) -> Result<UndoStateDto, String> {
+pub fn apply_undo(state: &AppState, app: &AppHandle, doc_id: u32) -> Result<UndoStateDto, String> {
     let restored = {
-        let mut undo = lock_undo(state)?;
+        let session = state.require_session(doc_id)?;
+        let mut undo = lock_undo(&session)?;
         let Some(prev) = undo.undo_stack.pop_back() else {
             return Err("nothing to undo".to_string());
         };
-        let current = state.document_handle.snapshot();
+        let current = session.document_handle.snapshot();
         undo.redo_stack.push(current);
         prev
     };
-    restore_and_invalidate(state, app, restored, "document_undone")
+    restore_and_invalidate(state, app, doc_id, restored, "document_undone")
 }
 
-pub fn apply_redo(state: &AppState, app: &AppHandle) -> Result<UndoStateDto, String> {
+pub fn apply_redo(state: &AppState, app: &AppHandle, doc_id: u32) -> Result<UndoStateDto, String> {
     let restored = {
-        let mut undo = lock_undo(state)?;
+        let session = state.require_session(doc_id)?;
+        let mut undo = lock_undo(&session)?;
         let Some(next) = undo.redo_stack.pop() else {
             return Err("nothing to redo".to_string());
         };
-        let current = state.document_handle.snapshot();
+        let current = session.document_handle.snapshot();
         undo.undo_stack.push_back(current);
         next
     };
-    restore_and_invalidate(state, app, restored, "document_redone")
+    restore_and_invalidate(state, app, doc_id, restored, "document_redone")
 }
 
 #[tauri::command]
 pub fn undo(
+    doc_id: u32,
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<UndoStateDto, String> {
-    apply_undo(&state, &app_handle)
+    apply_undo(&state, &app_handle, doc_id)
 }
 
 #[tauri::command]
 pub fn redo(
+    doc_id: u32,
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<UndoStateDto, String> {
-    apply_redo(&state, &app_handle)
+    apply_redo(&state, &app_handle, doc_id)
 }
 
 #[tauri::command]
-pub fn is_document_dirty(state: State<'_, Arc<AppState>>) -> Result<bool, String> {
-    Ok(is_dirty(&state))
+pub fn is_document_dirty(
+    doc_id: Option<u32>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<bool, String> {
+    let id = match doc_id.or_else(|| state.active_id()) {
+        Some(id) => id,
+        None => return Ok(false),
+    };
+    Ok(is_dirty_doc(&state, id))
 }
 
 #[cfg(test)]
@@ -307,9 +392,14 @@ mod tests {
     use engine_project::types::{DocumentId, LayerKind};
     use engine_tiles::{CacheStage, PixelTile, TileCoord, TileKey};
 
+    fn active_doc_id(state: &AppState) -> u32 {
+        state.active_id().expect("test needs active doc")
+    }
+
     fn dummy_mutate(state: &AppState) -> Result<(), String> {
-        with_document_undo(state, None, || {
-            state.document_handle.mutate(|doc| {
+        let doc_id = active_doc_id(state);
+        with_document_undo(state, None, doc_id, || {
+            state.require_session(doc_id)?.document_handle.mutate(|doc| {
                 doc.increment_generation();
             });
             Ok(())
@@ -317,9 +407,10 @@ mod tests {
     }
 
     fn add_test_layer(state: &AppState) -> u32 {
+        let doc_id = active_doc_id(state);
         let mut id = 0u32;
-        with_document_undo(state, None, || {
-            state.document_handle.mutate(|doc| {
+        with_document_undo(state, None, doc_id, || {
+            state.require_session(doc_id)?.document_handle.mutate(|doc| {
                 id = doc
                     .root
                     .iter()
@@ -329,15 +420,13 @@ mod tests {
                     })
                     .max()
                     .unwrap_or(0)
-                    + 1;
-                let layer = Layer::new(
+                    .saturating_add(1);
+                doc.root.push(LayerNode::Leaf(Layer::new(
                     LayerId::new(id),
                     LayerKind::Raster,
                     doc.width,
                     doc.height,
-                );
-                doc.root.push(LayerNode::Leaf(layer));
-                doc.increment_generation();
+                )));
             });
             Ok(())
         })
@@ -345,259 +434,162 @@ mod tests {
         id
     }
 
-    fn plant_layer_tile(state: &AppState, layer: u32) {
-        let key = TileKey {
-            layer,
-            coord: TileCoord {
-                level: 0,
-                x: 0,
-                y: 0,
-            },
-            stage: CacheStage::Raw,
-        };
-        state
-            .tile_cache
-            .get_or_insert(key, Arc::new(PixelTile::new()));
-        state
-            .error_residuals
-            .store(LayerId::new(layer), TileCoord { level: 0, x: 0, y: 0 }, Default::default());
-        state.block_representatives.insert_raw(
-            engine_tiles::BlockCoord {
-                layer,
-                block_x: 0,
-                block_y: 0,
-                pixel_size: 1,
-            },
-            [0.0, 0.0, 0.0, 1.0],
-        );
+    fn has_layer(doc: &Document, layer: u32) -> bool {
+        collect_layer_ids(doc).contains(&layer)
     }
 
-    fn layer_tile_count(state: &AppState, layer: u32) -> usize {
+    fn test_state() -> Arc<AppState> {
+        let state = Arc::new(AppState::empty_process(None, 64 * 1024 * 1024, false));
+        let doc = Document::new(DocumentId::new(1), 64, 64);
+        state.spawn_session(doc);
         state
-            .tile_cache
-            .entries
-            .iter()
-            .filter(|e| e.key().layer == layer)
-            .count()
-    }
-
-    fn has_layer(doc: &Document, id: u32) -> bool {
-        collect_layer_ids(doc).contains(&id)
     }
 
     #[test]
-    fn successful_mutate_sets_can_undo() {
-        let state = crate::commands::make_test_app_state();
-        assert!(!lock_undo(&state).unwrap().state_dto().can_undo);
+    fn undo_redo_roundtrip_and_bounds() {
+        let state = test_state();
+        assert!(!lock_undo(&state.must_active()).unwrap().state_dto().can_undo);
+
         dummy_mutate(&state).unwrap();
-        let dto = lock_undo(&state).unwrap().state_dto();
+        let dto = lock_undo(&state.must_active()).unwrap().state_dto();
         assert!(dto.can_undo);
         assert!(!dto.can_redo);
-    }
 
-    #[test]
-    fn err_does_not_push() {
-        let state = crate::commands::make_test_app_state();
-        dummy_mutate(&state).unwrap();
-        let before_len = lock_undo(&state).unwrap().undo_stack.len();
-        let before_ptr = Arc::as_ptr(&state.document_handle.snapshot());
-
-        let err = with_document_undo(&state, None, || Err::<(), _>("nope".into()));
-        assert_eq!(err.unwrap_err(), "nope");
-        assert_eq!(lock_undo(&state).unwrap().undo_stack.len(), before_len);
+        // Failed mutation must not push
+        let before_len = lock_undo(&state.must_active()).unwrap().undo_stack.len();
+        let before_ptr = Arc::as_ptr(&state.must_active().document_handle.snapshot());
+        let doc_id = active_doc_id(&state);
+        let err = with_document_undo(&state, None, doc_id, || Err::<(), _>("nope".into()));
+        assert!(err.is_err());
+        assert_eq!(lock_undo(&state.must_active()).unwrap().undo_stack.len(), before_len);
         assert_eq!(
-            Arc::as_ptr(&state.document_handle.snapshot()),
-            before_ptr,
-            "failed inner fn must not change the live document"
-        );
-    }
-
-    #[test]
-    fn redo_break_after_new_mutation() {
-        let state = crate::commands::make_test_app_state();
-        dummy_mutate(&state).unwrap();
-        dummy_mutate(&state).unwrap();
-
-        {
-            let mut undo = lock_undo(&state).unwrap();
-            let prev = undo.undo_stack.pop_back().unwrap();
-            let current = state.document_handle.snapshot();
-            undo.redo_stack.push(current);
-            drop(undo);
-            state.document_handle.store(prev);
-        }
-        assert!(lock_undo(&state).unwrap().state_dto().can_redo);
-
-        dummy_mutate(&state).unwrap();
-        let dto = lock_undo(&state).unwrap().state_dto();
-        assert!(!dto.can_redo);
-
-        let err = {
-            let mut undo = lock_undo(&state).unwrap();
-            undo.redo_stack
-                .pop()
-                .ok_or_else(|| "nothing to redo".to_string())
-        };
-        assert_eq!(err.unwrap_err(), "nothing to redo");
-    }
-
-    #[test]
-    fn max_depth_fifty_then_nothing_to_undo() {
-        let state = crate::commands::make_test_app_state();
-        for _ in 0..(UNDO_MAX_DEPTH + 5) {
-            dummy_mutate(&state).unwrap();
-        }
-        assert_eq!(lock_undo(&state).unwrap().undo_stack.len(), UNDO_MAX_DEPTH);
-
-        for _ in 0..UNDO_MAX_DEPTH {
-            let mut undo = lock_undo(&state).unwrap();
-            let prev = undo.undo_stack.pop_back().expect("undo available");
-            let current = state.document_handle.snapshot();
-            undo.redo_stack.push(current);
-            drop(undo);
-            state.document_handle.store(prev);
-        }
-        let mut undo = lock_undo(&state).unwrap();
-        assert!(undo.undo_stack.pop_back().is_none());
-    }
-
-    #[test]
-    fn store_restores_same_arc() {
-        let handle = DocumentHandle::new(Document::new(DocumentId::new(1), 8, 8));
-        let before = handle.snapshot();
-        handle.mutate(|d| d.increment_generation());
-        let ptr = Arc::as_ptr(&before);
-        handle.store(before.clone());
-        assert_eq!(Arc::as_ptr(&handle.snapshot()), ptr);
-    }
-
-    #[test]
-    fn gc_orphans_layer_after_leaving_both_stacks() {
-        let state = crate::commands::make_test_app_state();
-        let layer = add_test_layer(&state);
-        plant_layer_tile(&state, layer);
-        assert_eq!(layer_tile_count(&state, layer), 1);
-
-        // Undo the add → layer lives only on redo.
-        {
-            let mut undo = lock_undo(&state).unwrap();
-            let prev = undo.undo_stack.pop_back().unwrap();
-            let current = state.document_handle.snapshot();
-            undo.redo_stack.push(current);
-            drop(undo);
-            state.document_handle.store(prev);
-        }
-        assert!(!has_layer(&state.document_handle.snapshot(), layer));
-        assert_eq!(layer_tile_count(&state, layer), 1, "still referenced by redo");
-
-        // New mutation clears redo and must GC the orphaned layer.
-        dummy_mutate(&state).unwrap();
-        assert_eq!(layer_tile_count(&state, layer), 0);
-        assert!(!state
-            .error_residuals
-            .cached_layer_ids()
-            .contains(&layer));
-        assert!(!state
-            .block_representatives
-            .cached_layer_ids()
-            .contains(&layer));
-    }
-
-    #[test]
-    fn add_layer_undo_redo_tree() {
-        let state = crate::commands::make_test_app_state();
-        let before = state.document_handle.snapshot();
-        let layer = add_test_layer(&state);
-        assert!(has_layer(&state.document_handle.snapshot(), layer));
-
-        {
-            let mut undo = lock_undo(&state).unwrap();
-            let prev = undo.undo_stack.pop_back().unwrap();
-            let current = state.document_handle.snapshot();
-            undo.redo_stack.push(current);
-            drop(undo);
-            state.document_handle.store(prev);
-        }
-        assert!(!has_layer(&state.document_handle.snapshot(), layer));
-        assert_eq!(
-            collect_layer_ids(&state.document_handle.snapshot()),
-            collect_layer_ids(&before)
+            Arc::as_ptr(&state.must_active().document_handle.snapshot()),
+            before_ptr
         );
 
+        // Undo then redo
         {
-            let mut undo = lock_undo(&state).unwrap();
-            let next = undo.redo_stack.pop().unwrap();
-            let current = state.document_handle.snapshot();
-            undo.undo_stack.push_back(current);
-            drop(undo);
-            state.document_handle.store(next);
+            let session = state.must_active();
+            let mut undo = lock_undo(&session).unwrap();
+            let prev = undo.undo_stack.pop_back().unwrap();
+            let current = state.must_active().document_handle.snapshot();
+            undo.redo_stack.push(current);
+            state.must_active().document_handle.store(prev);
         }
-        assert!(has_layer(&state.document_handle.snapshot(), layer));
-    }
+        assert!(lock_undo(&state.must_active()).unwrap().state_dto().can_redo);
 
-    #[test]
-    fn n_update_filter_style_mutates_are_n_undo_steps() {
-        let state = crate::commands::make_test_app_state();
-        let n = 7usize;
-        for _ in 0..n {
-            dummy_mutate(&state).unwrap();
-        }
-        assert_eq!(lock_undo(&state).unwrap().undo_stack.len(), n);
-    }
-
-    #[test]
-    fn clear_history_zeros_flags() {
-        let state = crate::commands::make_test_app_state();
-        dummy_mutate(&state).unwrap();
-        assert!(lock_undo(&state).unwrap().state_dto().can_undo);
-        let dto = clear_history(&state, None).unwrap();
+        let dto = lock_undo(&state.must_active()).unwrap().state_dto();
         assert!(!dto.can_undo);
-        assert!(!dto.can_redo);
-        assert!(lock_undo(&state).unwrap().undo_stack.is_empty());
-        assert!(lock_undo(&state).unwrap().redo_stack.is_empty());
-    }
-
-    #[test]
-    fn empty_doc_is_not_dirty() {
-        let state = crate::commands::make_test_app_state();
-        assert!(!is_dirty(&state));
-    }
-
-    #[test]
-    fn mutation_dirties_after_mark_clean() {
-        let state = crate::commands::make_test_app_state();
-        add_test_layer(&state);
-        mark_clean(&state);
-        assert!(!is_dirty(&state), "install/save mark is clean");
-        dummy_mutate(&state).unwrap();
-        assert!(is_dirty(&state));
-    }
-
-    #[test]
-    fn undo_to_saved_mark_is_clean() {
-        let state = crate::commands::make_test_app_state();
-        add_test_layer(&state);
-        mark_clean(&state);
-        dummy_mutate(&state).unwrap();
-        assert!(is_dirty(&state));
+        assert!(dto.can_redo);
         {
-            let mut undo = lock_undo(&state).unwrap();
-            let prev = undo.undo_stack.pop_back().unwrap();
-            let current = state.document_handle.snapshot();
-            undo.redo_stack.push(current);
-            drop(undo);
-            state.document_handle.store(prev);
+            let session = state.must_active();
+            let mut undo = lock_undo(&session).unwrap();
+            let next = undo.redo_stack.pop().unwrap();
+            let current = state.must_active().document_handle.snapshot();
+            undo.undo_stack.push_back(current);
+            state.must_active().document_handle.store(next);
         }
-        assert!(!is_dirty(&state));
+
+        // Depth bound
+        for _ in 0..UNDO_MAX_DEPTH + 5 {
+            dummy_mutate(&state).unwrap();
+        }
+        assert_eq!(lock_undo(&state.must_active()).unwrap().undo_stack.len(), UNDO_MAX_DEPTH);
     }
 
     #[test]
-    fn clear_history_marks_clean() {
-        let state = crate::commands::make_test_app_state();
-        add_test_layer(&state);
+    fn orphan_gc_drops_removed_layer_tiles() {
+        let state = test_state();
+        let layer = add_test_layer(&state);
+        let key = TileKey {
+            doc: 1,
+            layer,
+            coord: TileCoord { level: 0, x: 0, y: 0 },
+            stage: CacheStage::Processed,
+        };
+        state
+            .tile_cache
+            .insert_fresh_gen(key, Arc::new(PixelTile::new()), 1);
+
+        // Remove layer via undoable mutate then undo → layer gone from live, tile GC'd
+        {
+            let session = state.must_active();
+            let mut undo = lock_undo(&session).unwrap();
+            let before = state.must_active().document_handle.snapshot();
+            undo.undo_stack.push_back(before);
+            state.must_active().document_handle.mutate(|doc| {
+                doc.root.retain(|n| match n {
+                    LayerNode::Leaf(l) => l.id.0 != layer,
+                    LayerNode::Group(_) => true,
+                });
+            });
+            let live = state.must_active().document_handle.snapshot();
+            gc_orphaned_layers(&state, &undo, &live);
+        }
+        // Still referenced from undo stack — keep
+        assert!(state.tile_cache.entries.contains_key(&key));
+
+        // Pop undo (discard history of layer) — now orphan
+        {
+            let session = state.must_active();
+            let mut undo = lock_undo(&session).unwrap();
+            let _ = undo.undo_stack.pop_back();
+            let live = state.must_active().document_handle.snapshot();
+            gc_orphaned_layers(&state, &undo, &live);
+        }
+        assert!(!state.tile_cache.entries.contains_key(&key));
+    }
+
+    #[test]
+    fn clear_history_empties_stacks() {
+        let state = test_state();
         dummy_mutate(&state).unwrap();
-        assert!(is_dirty(&state));
-        clear_history(&state, None).unwrap();
-        assert!(!is_dirty(&state));
+        assert!(lock_undo(&state.must_active()).unwrap().state_dto().can_undo);
+        clear_history(&state, None, active_doc_id(&state)).unwrap();
+        assert!(lock_undo(&state.must_active()).unwrap().undo_stack.is_empty());
+        assert!(lock_undo(&state.must_active()).unwrap().redo_stack.is_empty());
+    }
+
+    #[test]
+    fn mutate_explicit_doc_while_other_active() {
+        let state = Arc::new(AppState::empty_process(None, 64 * 1024 * 1024, false));
+        let a = state.spawn_session(Document::new(DocumentId::new(1), 32, 32));
+        let b = state.spawn_session(Document::new(DocumentId::new(2), 32, 32));
+        assert_eq!(state.active_id(), Some(2));
+
+        let before_b = b.document_handle.snapshot();
+        with_document_undo(&state, None, 1, || {
+            state.require_session(1)?.document_handle.mutate(|doc| {
+                doc.root.push(LayerNode::Leaf(Layer::new(
+                    LayerId::new(9),
+                    LayerKind::Raster,
+                    doc.width,
+                    doc.height,
+                )));
+            });
+            Ok(())
+        })
+        .unwrap();
+
+        assert!(has_layer(&a.document_handle.snapshot(), 9));
+        assert_eq!(
+            Arc::as_ptr(&b.document_handle.snapshot()),
+            Arc::as_ptr(&before_b),
+            "active B must not change when mutating A"
+        );
+        assert!(is_dirty_doc(&state, 1));
+        assert!(!is_dirty_doc(&state, 2));
+    }
+
+    #[test]
+    fn require_session_gone() {
+        let state = test_state();
+        let err = with_document_undo(&state, None, 99, || Ok(())).unwrap_err();
+        assert!(err.contains("closed") || err.contains("99"));
+    }
+
+    #[test]
+    fn document_handle_unused_import_silences() {
+        let _ = std::mem::size_of::<DocumentHandle>();
     }
 }

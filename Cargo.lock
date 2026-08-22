@@ -1257,6 +1257,11 @@ name = "engine-gpu"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "crossbeam",
+ "crossbeam-channel",
+ "dashmap",
+ "engine-color",
+ "engine-tiles",
  "log",
  "pollster",
  "thiserror 1.0.69",

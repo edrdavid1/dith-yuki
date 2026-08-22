@@ -336,8 +336,16 @@ pub fn set_viewport(
     // Validate zoom range
     let zoom = zoom.clamp(0.01, 64.0);
 
+    // Welcome / no live document — ignore viewport IPC (panels may still mount).
+    let Ok(session) = state.active_session() else {
+        return Ok(SetViewportResponse {
+            level: 0,
+            tile_count: 0,
+        });
+    };
+
     // Get document dimensions
-    let snapshot = state.document_handle.snapshot();
+    let snapshot = session.document_handle.snapshot();
     let doc_width = snapshot.width;
     let doc_height = snapshot.height;
     drop(snapshot);
@@ -364,13 +372,15 @@ pub fn set_viewport(
     // staleness check handles outdated tasks naturally.
 
     // Read current generation values for task scheduling
-    let snapshot = state.document_handle.snapshot();
+    let snapshot = state.active_session()?.document_handle.snapshot();
+    let doc_id = snapshot.id.0;
     let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
     drop(snapshot);
 
     // Schedule missing/dirty visible tiles with classified priorities
     for coord in &visible {
         let key = TileKey {
+            doc: doc_id,
             layer: 0, // Composite layer sentinel
             coord: *coord,
             stage: CacheStage::Composite,
@@ -391,6 +401,7 @@ pub fn set_viewport(
     // Schedule missing/dirty prefetch tiles with Prefetch priority
     for coord in &prefetch {
         let key = TileKey {
+            doc: doc_id,
             layer: 0, // Composite layer sentinel
             coord: *coord,
             stage: CacheStage::Composite,

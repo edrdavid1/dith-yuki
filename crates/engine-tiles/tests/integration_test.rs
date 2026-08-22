@@ -42,6 +42,7 @@ fn test_cache_pyramid_integration() {
 
     // Insert parent at Layer 0, Level 0, as Raw
     let parent_key = TileKey {
+        doc: 1,
         layer: 0,
         coord: TileCoord { level: 0, x: 0, y: 0 },
         stage: CacheStage::Raw,
@@ -66,6 +67,7 @@ fn test_cache_pyramid_integration() {
 
     // Insert child at Layer 0, Level 1 (pyramid level), as Raw
     let child_key = TileKey {
+        doc: 1,
         layer: 0,
         coord: TileCoord { level: 1, x: 0, y: 0 },
         stage: CacheStage::Raw,
@@ -108,16 +110,19 @@ fn test_invalidation_cascade() {
 
     // Insert 3 tiles: Raw, Processed, Composite for same layer and coordinate
     let raw_key = TileKey {
+        doc: 1,
         layer,
         coord,
         stage: CacheStage::Raw,
     };
     let processed_key = TileKey {
+        doc: 1,
         layer,
         coord,
         stage: CacheStage::Processed,
     };
     let composite_key = TileKey {
+        doc: 1,
         layer,
         coord,
         stage: CacheStage::Composite,
@@ -143,6 +148,7 @@ fn test_invalidation_cascade() {
 
     // Call invalidate() with LayerRawChanged event
     let event = InvalidationEvent::LayerRawChanged {
+        doc: 1,
         layer,
         coords: vec![coord],
     };
@@ -186,6 +192,7 @@ fn test_scheduler_priority() {
     let tasks = vec![
         RecomputeTask {
             key: TileKey {
+                doc: 1,
                 layer: 0,
                 coord: TileCoord { level: 0, x: 0, y: 0 },
                 stage: CacheStage::Raw,
@@ -196,6 +203,7 @@ fn test_scheduler_priority() {
         },
         RecomputeTask {
             key: TileKey {
+                doc: 1,
                 layer: 0,
                 coord: TileCoord { level: 0, x: 1, y: 1 },
                 stage: CacheStage::Raw,
@@ -206,6 +214,7 @@ fn test_scheduler_priority() {
         },
         RecomputeTask {
             key: TileKey {
+                doc: 1,
                 layer: 0,
                 coord: TileCoord { level: 0, x: 2, y: 2 },
                 stage: CacheStage::Raw,
@@ -216,6 +225,7 @@ fn test_scheduler_priority() {
         },
         RecomputeTask {
             key: TileKey {
+                doc: 1,
                 layer: 0,
                 coord: TileCoord { level: 0, x: 3, y: 3 },
                 stage: CacheStage::Raw,
@@ -226,6 +236,7 @@ fn test_scheduler_priority() {
         },
         RecomputeTask {
             key: TileKey {
+                doc: 1,
                 layer: 0,
                 coord: TileCoord { level: 0, x: 4, y: 4 },
                 stage: CacheStage::Raw,
@@ -236,6 +247,7 @@ fn test_scheduler_priority() {
         },
         RecomputeTask {
             key: TileKey {
+                doc: 1,
                 layer: 0,
                 coord: TileCoord { level: 0, x: 5, y: 5 },
                 stage: CacheStage::Raw,

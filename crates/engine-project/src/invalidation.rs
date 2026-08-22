@@ -40,24 +40,18 @@ pub fn invalidate_layer_structure_changed(
 ///
 /// Updates to layer opacity, blend mode, visibility, or offset require Composite
 /// recomputation.
-pub fn invalidate_layer_props_changed(cache: &TileCache, layer_id: LayerId) {
-    let event = InvalidationEvent::LayerPropsChanged { layer: layer_id.0 };
+pub fn invalidate_layer_props_changed(cache: &TileCache, doc: u32, layer_id: LayerId) {
+    let event = InvalidationEvent::LayerPropsChanged { doc, layer: layer_id.0 };
     engine_tiles::invalidation::invalidate(cache, event);
 }
 
-/// Handle invalidation for layer filter changes.
-///
-/// Updates to layer filter stack require Processed and Composite recomputation.
-pub fn invalidate_layer_filter_changed(cache: &TileCache, layer_id: LayerId) {
-    let event = InvalidationEvent::LayerFilterChanged { layer: layer_id.0 };
+pub fn invalidate_layer_filter_changed(cache: &TileCache, doc: u32, layer_id: LayerId) {
+    let event = InvalidationEvent::LayerFilterChanged { doc, layer: layer_id.0 };
     engine_tiles::invalidation::invalidate(cache, event);
 }
 
-/// Handle invalidation for layer visibility change.
-///
-/// Visibility is a layer property, so only Composite needs invalidation.
-pub fn invalidate_layer_visibility_changed(cache: &TileCache, layer_id: LayerId) {
-    invalidate_layer_props_changed(cache, layer_id);
+pub fn invalidate_layer_visibility_changed(cache: &TileCache, doc: u32, layer_id: LayerId) {
+    invalidate_layer_props_changed(cache, doc, layer_id);
 }
 
 /// Validate document consistency before mutation.
@@ -118,6 +112,7 @@ mod tests {
     fn invalidate_layer_props_marked_dirty() {
         let cache = TileCache::new(10_000_000);
         let key = engine_tiles::TileKey {
+            doc: 1,
             layer: 0,
             coord: engine_tiles::types::TileCoord {
                 level: 0,
@@ -129,7 +124,7 @@ mod tests {
         let tile = std::sync::Arc::new(engine_tiles::tile::PixelTile::new());
         cache.get_or_insert(key, tile);
 
-        invalidate_layer_props_changed(&cache, LayerId::new(0));
+        invalidate_layer_props_changed(&cache, 1, LayerId::new(0));
 
         // Composite tile should be marked dirty
         assert!(cache

@@ -53,6 +53,7 @@ export function startEngineEventBridge(store: AppStore): EngineBridgeCleanup {
     if (cancelled) return;
     const { kind } = event.payload;
     const docId = store.getState().document.docId;
+    const eventDocId = event.payload.doc_id;
 
     if (
       kind === 'layer_changed' ||
@@ -66,8 +67,10 @@ export function startEngineEventBridge(store: AppStore): EngineBridgeCleanup {
       kind === 'document_undone' ||
       kind === 'document_redone'
     ) {
-      if (docId !== null) {
-        void dispatch(refreshLayers(docId));
+      const refreshId =
+        typeof eventDocId === 'number' && eventDocId > 0 ? eventDocId : docId;
+      if (refreshId !== null) {
+        void dispatch(refreshLayers(refreshId));
       }
     }
 
@@ -87,6 +90,17 @@ export function startEngineEventBridge(store: AppStore): EngineBridgeCleanup {
       dispatch(bumpDocumentEpoch());
     }
 
+    // Open / create / activate — force TileCanvas identity refresh even when
+    // runtime docId already matches (avoids blank canvas after 2nd+ open).
+    if (
+      kind === 'image_loaded' ||
+      kind === 'document_created' ||
+      kind === 'project_opened' ||
+      kind === 'document_activated'
+    ) {
+      dispatch(bumpDocumentEpoch());
+    }
+
     // Document open / structural changes — refresh meta
     void dispatch(refreshDocument());
   }).then((fn) => {
@@ -96,6 +110,11 @@ export function startEngineEventBridge(store: AppStore): EngineBridgeCleanup {
 
   onUndoStateChanged((event) => {
     if (cancelled) return;
+    const active = store.getState().document.docId;
+    const eventDoc = event.payload.doc_id;
+    if (typeof eventDoc === 'number' && eventDoc > 0 && active != null && eventDoc !== active) {
+      return;
+    }
     dispatch(applyUndoState(event.payload));
   }).then((fn) => {
     if (cancelled) fn();
@@ -104,6 +123,11 @@ export function startEngineEventBridge(store: AppStore): EngineBridgeCleanup {
 
   onDirtyChanged((event) => {
     if (cancelled) return;
+    const active = store.getState().document.docId;
+    const eventDoc = event.payload.doc_id;
+    if (typeof eventDoc === 'number' && eventDoc > 0 && active != null && eventDoc !== active) {
+      return;
+    }
     dispatch(setDirty(event.payload.dirty));
   }).then((fn) => {
     if (cancelled) fn();
