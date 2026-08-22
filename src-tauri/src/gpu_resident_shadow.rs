@@ -41,7 +41,7 @@ pub fn enqueue_resident_shadow_viewport(state: &AppState) {
     let snapshot = session.document_handle.snapshot();
     let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
     let doc = snapshot.id.0;
-    let viewport = state.viewport.lock().unwrap().clone();
+    let viewport = state.ui.viewport.lock().unwrap().clone();
 
     let mut layers: Vec<&Layer> = Vec::new();
     collect_visible_layers(&snapshot.root, &mut layers);
@@ -130,7 +130,7 @@ pub fn try_publish_gpu_preview_viewport(state: &AppState) -> std::collections::H
     let snapshot = session.document_handle.snapshot();
     let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
     let doc = snapshot.id.0;
-    let viewport = state.viewport.lock().unwrap().clone();
+    let viewport = state.ui.viewport.lock().unwrap().clone();
 
     let mut layers: Vec<&Layer> = Vec::new();
     collect_visible_layers(&snapshot.root, &mut layers);
@@ -250,7 +250,7 @@ pub fn try_publish_gpu_preview_viewport(state: &AppState) -> std::collections::H
     }
     drop(executor);
 
-    let viewport_level = state.viewport.lock().unwrap().level;
+    let viewport_level = state.ui.viewport.lock().unwrap().level;
     let app = state.app_handle.lock().ok().and_then(|g| g.clone());
     let mut published = HashSet::new();
 

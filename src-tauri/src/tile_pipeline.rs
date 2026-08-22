@@ -348,7 +348,7 @@ fn enqueue_coarser_parent(state: &AppState, child: TileKey) {
     if child.stage != CacheStage::Composite || child.layer != 0 {
         return;
     }
-    let viewport_level = state.viewport.lock().unwrap().level;
+    let viewport_level = state.ui.viewport.lock().unwrap().level;
     if child.coord.level >= viewport_level {
         return;
     }
@@ -465,7 +465,7 @@ pub fn schedule_ed_prefix_closure(
 
 /// Schedule ED prefix for every visible ED leaf toward each viewport coord.
 pub fn schedule_ed_for_viewport(state: &AppState) {
-    let viewport = state.viewport.lock().unwrap().clone();
+    let viewport = state.ui.viewport.lock().unwrap().clone();
     let Ok(session) = state.active_session() else {
         return;
     };
@@ -1273,7 +1273,7 @@ mod tests {
         doc.root.push(LayerNode::Leaf(layer));
         let mut state = make_app_state_with_layer(1, false);
         state.must_active().document_handle.store(std::sync::Arc::new(doc));
-        state.viewport.lock().unwrap().level = 1;
+        state.ui.viewport.lock().unwrap().level = 1;
 
         let mut buffer = vec![0.0f32; (512 * 512 * 4) as usize];
         for px in buffer.chunks_exact_mut(4) {
@@ -1386,7 +1386,7 @@ mod tests {
         doc.root.push(LayerNode::Leaf(layer));
         let mut state = make_app_state_with_layer(1, false);
         state.must_active().document_handle.store(std::sync::Arc::new(doc));
-        state.viewport.lock().unwrap().level = 1;
+        state.ui.viewport.lock().unwrap().level = 1;
 
         let mut buffer = vec![0.0f32; (512 * 512 * 4) as usize];
         for px in buffer.chunks_exact_mut(4) {
@@ -1431,7 +1431,7 @@ mod tests {
         doc.root.push(LayerNode::Leaf(layer));
         let mut state = make_app_state_with_layer(1, false);
         state.must_active().document_handle.store(std::sync::Arc::new(doc));
-        state.viewport.lock().unwrap().level = 2;
+        state.ui.viewport.lock().unwrap().level = 2;
 
         let mut buffer = vec![0.0f32; (1024 * 1024 * 4) as usize];
         for px in buffer.chunks_exact_mut(4) {

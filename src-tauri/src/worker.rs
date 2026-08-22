@@ -212,7 +212,7 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
                         }
                         // Processed / Composite: pipeline already published a single Arc.
                         CacheStage::Processed | CacheStage::Composite => {
-                            let viewport_level = state.viewport.lock().unwrap().level;
+                            let viewport_level = state.ui.viewport.lock().unwrap().level;
                             if task.key.stage == CacheStage::Composite
                                 && task.key.coord.level == viewport_level
                                 && state.tile_cache.get_entry(task.key).is_some()
