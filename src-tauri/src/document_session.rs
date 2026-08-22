@@ -101,7 +101,6 @@ impl AppState {
             active_id: Mutex::new(None),
             tile_cache: engine_tiles::TileCache::new(cache_bytes),
             scheduler: engine_tiles::Scheduler::new(),
-            viewport: Mutex::new(crate::viewport::ViewportState::default()),
             worker_wake: crate::worker::WorkerWake::new(),
             palette_cache: engine_color::palette_cache::PaletteKdCache::new(),
             palette_lut_cache: engine_color::palette_lut::PaletteLutCache::new(),
@@ -258,6 +257,7 @@ impl AppState {
             return;
         }
         let viewport_coords: HashSet<engine_tiles::TileCoord> = self
+            .ui
             .viewport
             .lock()
             .map(|v| v.visible_tiles.iter().copied().collect())
@@ -392,7 +392,7 @@ mod pressure_tests {
         assert!(state.tile_cache.used_bytes_count() > state.tile_cache.budget_bytes_count());
 
         {
-            let mut vp = state.viewport.lock().unwrap();
+            let mut vp = state.ui.viewport.lock().unwrap();
             vp.visible_tiles = vec![TileCoord {
                 level: 0,
                 x: 0,
@@ -483,7 +483,7 @@ mod pressure_tests {
         fill_stage(&state.tile_cache, 1, CacheStage::Raw, 1);
         fill_stage(&state.tile_cache, 1, CacheStage::Composite, 3);
         {
-            let mut vp = state.viewport.lock().unwrap();
+            let mut vp = state.ui.viewport.lock().unwrap();
             vp.visible_tiles = vec![TileCoord {
                 level: 0,
                 x: 0,

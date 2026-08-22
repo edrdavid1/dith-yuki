@@ -385,7 +385,7 @@ fn main() {
             commands::get_selection,
             
             // Viewport commands
-            viewport::set_viewport,
+            commands::viewport::set_viewport,
             
             // Panel commands
             commands::panels::get_panels_state,

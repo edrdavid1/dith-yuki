@@ -10,6 +10,8 @@ pub mod panels;
 pub use panels::*;
 pub mod selection;
 pub use selection::*;
+pub mod viewport;
+pub use viewport::*;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -124,7 +126,6 @@ pub struct AppState {
     pub active_id: Mutex<Option<u32>>,
     pub tile_cache: TileCache,
     pub scheduler: Scheduler,
-    pub viewport: Mutex<ViewportState>,
     pub worker_wake: WorkerWake,
     pub palette_cache: engine_color::palette_cache::PaletteKdCache,
     pub palette_lut_cache: engine_color::palette_lut::PaletteLutCache,
@@ -1961,7 +1962,7 @@ pub(crate) fn invalidate_after_document_replace(state: &AppState) {
 pub(crate) fn schedule_dirty_viewport_tiles(state: &AppState) {
     use std::sync::atomic::Ordering;
 
-    let viewport = state.viewport.lock().unwrap().clone();
+    let viewport = state.ui.viewport.lock().unwrap().clone();
     let Ok(snapshot) = state.active_session().map(|s| s.document_handle.snapshot()) else {
         return;
     };

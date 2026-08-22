@@ -16,3 +16,6 @@ pub enum AppError {
 
 pub mod panel_service;
 pub use panel_service::PanelService;
+
+pub mod viewport_service;
+pub use viewport_service::ViewportService;
