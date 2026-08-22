@@ -7,7 +7,6 @@ mod global_mouseup;
 mod gpu_resident_shadow;
 mod macos_title;
 mod native_menu;
-mod panel_commands;
 mod panel_manager;
 mod panel_persistence;
 mod recent_files;
@@ -125,7 +124,7 @@ fn main() {
                             width: size.width as f64 / scale,
                             height: size.height as f64 / scale,
                         };
-                        panel_commands::handle_panel_moved(&app_handle, state.inner(), logical);
+                        commands::panels::handle_panel_moved(&app_handle, state.inner(), logical);
                     }
                 }
                 WindowEvent::CloseRequested { api, .. } => {
@@ -151,7 +150,7 @@ fn main() {
                         // Save current window bounds before docking.
                         if let Ok(position) = window.outer_position() {
                             if let Ok(size) = window.inner_size() {
-                                let mut pm = state.panel_manager.lock().unwrap();
+                                let mut pm = state.ui.panel_manager.lock().unwrap();
                                 let _ = pm.update_bounds(
                                     &panel_id,
                                     panel_manager::SavedBounds {
@@ -166,7 +165,7 @@ fn main() {
 
                         // Dock the panel (sets docked=true, clears window_label).
                         let panels_snapshot = {
-                            let mut pm = state.panel_manager.lock().unwrap();
+                            let mut pm = state.ui.panel_manager.lock().unwrap();
                             let side = pm.remembered_dock_side(&panel_id);
                             let _ = pm.dock(&panel_id, side, usize::MAX);
                             pm.get_state_with_orders()
@@ -232,7 +231,7 @@ fn main() {
             if let Some(loaded) =
                 panel_persistence::load_panel_state(&app_handle, fallback_side)
             {
-                let mut pm = state.panel_manager.lock().unwrap();
+                let mut pm = state.ui.panel_manager.lock().unwrap();
                 *pm = PanelManager::from_persisted(
                     loaded.panels,
                     Some(loaded.left_order),
@@ -242,11 +241,11 @@ fn main() {
 
             // Restore floating windows for panels that were undocked at last exit.
             {
-                let pm = state.panel_manager.lock().unwrap();
+                let pm = state.ui.panel_manager.lock().unwrap();
                 let panels = pm.get_state();
 
                 // Get monitor info for off-screen bounds correction.
-                let (monitors, primary) = panel_commands::get_monitor_rects(&app_handle);
+                let (monitors, primary) = commands::panels::get_monitor_rects(&app_handle);
 
                 for panel in &panels {
                     if !panel.docked && panel.visible {
@@ -258,7 +257,7 @@ fn main() {
                         let url = tauri::WebviewUrl::App(url_path.into());
 
                         // Correct bounds for off-screen positions (logical px / Retina-safe).
-                        let bounds = panel_commands::resolve_undock_bounds(
+                        let bounds = commands::panels::resolve_undock_bounds(
                             &panel.id,
                             panel.saved_bounds.clone(),
                             &monitors,
@@ -288,7 +287,7 @@ fn main() {
                                 .decorations(false)
                                 .title_bar_style(tauri::TitleBarStyle::Overlay)
                                 .min_inner_size(280.0, 200.0);
-                        let (max_w, max_h) = panel_commands::panel_max_inner_size(&panel.id);
+                        let (max_w, max_h) = commands::panels::panel_max_inner_size(&panel.id);
                         let builder = builder.max_inner_size(max_w, max_h);
 
                         if let Err(e) = builder.build() {
@@ -389,21 +388,21 @@ fn main() {
             viewport::set_viewport,
             
             // Panel commands
-            panel_commands::get_panels_state,
-            panel_commands::undock_panel,
-            panel_commands::undock_panel_with_size,
-            panel_commands::dock_panel,
-            panel_commands::hide_panel,
-            panel_commands::show_panel,
-            panel_commands::save_panel_bounds,
-            panel_commands::reorder_sidebar,
-            panel_commands::move_panel_to_side,
-            panel_commands::move_all_panels_to_side,
-            panel_commands::swap_sidebars,
-            panel_commands::update_dock_zone,
-            panel_commands::begin_float_drag,
-            panel_commands::cancel_float_drag,
-            panel_commands::dock_panel_at,
+            commands::panels::get_panels_state,
+            commands::panels::undock_panel,
+            commands::panels::undock_panel_with_size,
+            commands::panels::dock_panel,
+            commands::panels::hide_panel,
+            commands::panels::show_panel,
+            commands::panels::save_panel_bounds,
+            commands::panels::reorder_sidebar,
+            commands::panels::move_panel_to_side,
+            commands::panels::move_all_panels_to_side,
+            commands::panels::swap_sidebars,
+            commands::panels::update_dock_zone,
+            commands::panels::begin_float_drag,
+            commands::panels::cancel_float_drag,
+            commands::panels::dock_panel_at,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -420,7 +419,7 @@ fn main() {
             // Save full dual-sidebar panel state (panels + side orders) before exit.
             let state = app_handle.state::<Arc<AppState>>();
             let snapshot = {
-                let pm = state.panel_manager.lock().unwrap();
+                let pm = state.ui.panel_manager.lock().unwrap();
                 pm.serialize()
             };
             panel_persistence::save_panel_state(app_handle, &snapshot);
