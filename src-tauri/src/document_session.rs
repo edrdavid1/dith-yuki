@@ -18,8 +18,7 @@ use crate::undo::UndoManager;
 pub struct DocumentSession {
     pub id: DocumentId,
     pub document_handle: DocumentHandle,
-    pub undo_manager: Mutex<UndoManager>,
-    pub saved_snapshot: Mutex<Option<Arc<Document>>>,
+    pub history: crate::state::HistoryState,
     pub project_path: Mutex<Option<PathBuf>>,
     /// In-flight save/export assemble count — close refuses while > 0.
     io_inflight: AtomicUsize,
@@ -148,8 +147,7 @@ impl AppState {
         let session = Arc::new(DocumentSession {
             id,
             document_handle: DocumentHandle::new(doc),
-            undo_manager: Mutex::new(UndoManager::new()),
-            saved_snapshot: Mutex::new(None),
+            history: crate::state::HistoryState::new(),
             project_path: Mutex::new(None),
             io_inflight: AtomicUsize::new(0),
         });
@@ -330,7 +328,7 @@ impl AppState {
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| format!("Untitled {}", s.id.0));
                 let live = s.document_handle.snapshot();
-                let dirty = match s.saved_snapshot.lock() {
+                let dirty = match s.history.saved_snapshot.lock() {
                     Ok(guard) => match guard.as_ref() {
                         Some(saved) => !Arc::ptr_eq(saved, &live),
                         None => !live.root.is_empty(),

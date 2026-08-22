@@ -45,7 +45,7 @@ fn session_is_dirty(session: &DocumentSession) -> bool {
         return false;
     }
     let live = session.document_handle.snapshot();
-    match session.saved_snapshot.lock() {
+    match session.history.saved_snapshot.lock() {
         Ok(guard) => match guard.as_ref() {
             Some(saved) => !Arc::ptr_eq(saved, &live),
             None => true,
@@ -77,7 +77,7 @@ pub fn mark_clean_doc(state: &AppState, doc_id: u32) {
         Err(_) => return,
     };
     let live = session.document_handle.snapshot();
-    let mut guard = match session.saved_snapshot.lock() {
+    let mut guard = match session.history.saved_snapshot.lock() {
         Ok(g) => g,
         Err(_) => return,
     };
@@ -148,6 +148,7 @@ impl UndoManager {
 
 fn lock_undo(session: &DocumentSession) -> Result<MutexGuard<'_, UndoManager>, String> {
     session
+        .history
         .undo_manager
         .lock()
         .map_err(|e| format!("Undo lock poisoned: {e}"))
@@ -354,35 +355,7 @@ pub fn apply_redo(state: &AppState, app: &AppHandle, doc_id: u32) -> Result<Undo
     restore_and_invalidate(state, app, doc_id, restored, "document_redone")
 }
 
-#[tauri::command]
-pub fn undo(
-    doc_id: u32,
-    app_handle: AppHandle,
-    state: State<'_, Arc<AppState>>,
-) -> Result<UndoStateDto, String> {
-    apply_undo(&state, &app_handle, doc_id)
-}
 
-#[tauri::command]
-pub fn redo(
-    doc_id: u32,
-    app_handle: AppHandle,
-    state: State<'_, Arc<AppState>>,
-) -> Result<UndoStateDto, String> {
-    apply_redo(&state, &app_handle, doc_id)
-}
-
-#[tauri::command]
-pub fn is_document_dirty(
-    doc_id: Option<u32>,
-    state: State<'_, Arc<AppState>>,
-) -> Result<bool, String> {
-    let id = match doc_id.or_else(|| state.active_id()) {
-        Some(id) => id,
-        None => return Ok(false),
-    };
-    Ok(is_dirty_doc(&state, id))
-}
 
 #[cfg(test)]
 mod tests {

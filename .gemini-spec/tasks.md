@@ -50,14 +50,14 @@ This implementation plan breaks down the structural refactoring of `src-tauri/sr
   - [x] Remove `set_viewport` from `commands.rs`
   - [x] Verify: `cargo build --all && cargo test --all`
 
-- [ ] **Phase 5: Undo / Redo Domain Extraction**
-  - [ ] Create `src-tauri/src/services/undo_service.rs` with `UndoService` struct
-  - [ ] Migrate `undo_manager` and `saved_snapshot` fields into `HistoryState`
-  - [ ] Move `undo` and `redo` execution logic to `UndoService`
-  - [ ] **BEFORE COMMITTING**: Diff against `pre-refactor-commands` baseline to verify exact sequence: `DocumentHandle::store` → `increment_document_gen` → `invalidate_after_document_replace` → `schedule_dirty_viewport_tiles` → emit `document-changed`
-  - [ ] Create `src-tauri/src/commands/undo.rs` delegating to `UndoService`
-  - [ ] Remove `undo` and `redo` from `commands.rs`
-  - [ ] Verify: `cargo build --all && cargo test --all`
+- [x] **Phase 5: Undo / Redo Domain Extraction**
+  - [x] Create `src-tauri/src/services/undo_service.rs` with `UndoService` struct
+  - [x] Migrate `undo_manager` and `saved_snapshot` fields into `HistoryState`
+  - [x] Move `undo` and `redo` execution logic to `UndoService`
+  - [x] **BEFORE COMMITTING**: Diff against `pre-refactor-commands` baseline to verify exact sequence: `DocumentHandle::store` → `increment_document_gen` → `invalidate_after_document_replace` → `schedule_dirty_viewport_tiles` → emit `document-changed`
+  - [x] Create `src-tauri/src/commands/undo.rs` delegating to `UndoService`
+  - [x] Remove `undo` and `redo` from `commands.rs`
+  - [x] Verify: `cargo build --all && cargo test --all`
 
 - [ ] **Phase 6: Layers & Filters Domain Extraction**
   - [ ] Create `src-tauri/src/services/layer_service.rs` and `src-tauri/src/services/filter_service.rs`
