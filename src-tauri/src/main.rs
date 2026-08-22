@@ -11,6 +11,8 @@ mod panel_commands;
 mod panel_manager;
 mod panel_persistence;
 mod recent_files;
+mod services;
+mod state;
 mod tile_pipeline;
 mod tile_protocol;
 mod undo;
