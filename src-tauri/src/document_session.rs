@@ -114,7 +114,6 @@ impl AppState {
             gpu_executor,
             app_handle: Mutex::new(None),
             ui: crate::state::UiState::new(),
-            selection: Mutex::new(crate::commands::SelectionState::default()),
             dock_affinity: Mutex::new(crate::dock_affinity::DockAffinityController::new(
                 dock_affinity_enabled,
             )),

@@ -8,6 +8,8 @@ pub mod diagnostics;
 pub use diagnostics::*;
 pub mod panels;
 pub use panels::*;
+pub mod selection;
+pub use selection::*;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -108,19 +110,6 @@ pub struct DocumentResponse {
 // ViewportState is defined in the viewport module.
 pub use crate::viewport::ViewportState;
 
-/// Cross-window selection state. Updated via selection-changed events.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SelectionState {
-    pub selected_layer_id: Option<u32>,
-    pub selected_filter_id: Option<String>,
-}
-
-/// Payload emitted with the `selection-changed` Tauri event.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SelectionChangedPayload {
-    pub selected_layer_id: Option<u32>,
-    pub selected_filter_id: Option<String>,
-}
 
 /// Coalesced preview refresh requested while a tile pass is still in-flight.
 pub(crate) struct PendingPreviewRefresh {
@@ -153,7 +142,6 @@ pub struct AppState {
     /// Set once in app setup — used to emit `tile-ready` from GPU preview publish.
     pub app_handle: Mutex<Option<tauri::AppHandle>>,
     pub ui: crate::state::UiState,
-    pub selection: Mutex<SelectionState>,
     pub dock_affinity: Mutex<crate::dock_affinity::DockAffinityController>,
     /// Cancels the active global mouseup watcher (set on end/cancel).
     pub float_drag_mouseup_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -3537,40 +3525,6 @@ pub fn delete_palette(
 }
 
 // ============================================================================
-// Selection Commands
-// ============================================================================
-
-/// Update selection state and broadcast to all windows.
-#[tauri::command]
-pub fn set_selection(
-    layer_id: Option<u32>,
-    filter_id: Option<String>,
-    app_handle: AppHandle,
-    state: State<'_, Arc<AppState>>,
-) -> Result<(), String> {
-    let mut sel = state.selection.lock().map_err(|e| e.to_string())?;
-    sel.selected_layer_id = layer_id;
-    sel.selected_filter_id = filter_id.clone();
-    drop(sel);
-
-    let _ = app_handle.emit_to(
-        tauri::EventTarget::Any,
-        "selection-changed",
-        SelectionChangedPayload {
-            selected_layer_id: layer_id,
-            selected_filter_id: filter_id,
-        },
-    );
-
-    Ok(())
-}
-
-/// Get current selection state (for initial fetch on window mount).
-#[tauri::command]
-pub fn get_selection(state: State<'_, Arc<AppState>>) -> Result<SelectionState, String> {
-    let sel = state.selection.lock().map_err(|e| e.to_string())?;
-    Ok(sel.clone())
-}
 
 
 #[tauri::command]
