@@ -45,7 +45,7 @@ fn session_is_dirty(session: &DocumentSession) -> bool {
         return false;
     }
     let live = session.document_handle.snapshot();
-    match session.saved_snapshot.lock() {
+    match session.history.saved_snapshot.lock() {
         Ok(guard) => match guard.as_ref() {
             Some(saved) => !Arc::ptr_eq(saved, &live),
             None => true,
@@ -77,7 +77,7 @@ pub fn mark_clean_doc(state: &AppState, doc_id: u32) {
         Err(_) => return,
     };
     let live = session.document_handle.snapshot();
-    let mut guard = match session.saved_snapshot.lock() {
+    let mut guard = match session.history.saved_snapshot.lock() {
         Ok(g) => g,
         Err(_) => return,
     };
@@ -148,6 +148,7 @@ impl UndoManager {
 
 fn lock_undo(session: &DocumentSession) -> Result<MutexGuard<'_, UndoManager>, String> {
     session
+        .history
         .undo_manager
         .lock()
         .map_err(|e| format!("Undo lock poisoned: {e}"))
@@ -181,22 +182,22 @@ fn referenced_layer_ids(undo: &UndoManager, live: &Document) -> HashSet<u32> {
 }
 
 fn evict_layer_all(state: &AppState, doc: u32, layer: u32) {
-    state.tile_cache.evict_layer(doc, layer);
-    state.error_residuals.evict_layer(doc, LayerId::new(layer));
-    state.block_representatives.evict_layer(doc, layer);
+    state.tiles.tile_cache.evict_layer(doc, layer);
+    state.tiles.error_residuals.evict_layer(doc, LayerId::new(layer));
+    state.tiles.block_representatives.evict_layer(doc, layer);
 }
 
 /// Evict per-layer cache entries whose `LayerId` is in none of live + undo + redo.
 fn gc_orphaned_layers(state: &AppState, undo: &UndoManager, live: &Document) {
     let referenced = referenced_layer_ids(undo, live);
     let mut candidates = HashSet::new();
-    for entry in state.tile_cache.entries.iter() {
+    for entry in state.tiles.tile_cache.entries.iter() {
         if entry.key().doc == live.id.0 {
             candidates.insert(entry.key().layer);
         }
     }
-    candidates.extend(state.error_residuals.cached_layer_ids());
-    candidates.extend(state.block_representatives.cached_layer_ids());
+    candidates.extend(state.tiles.error_residuals.cached_layer_ids());
+    candidates.extend(state.tiles.block_representatives.cached_layer_ids());
     for layer in candidates {
         if !referenced.contains(&layer) {
             evict_layer_all(state, live.id.0, layer);
@@ -207,14 +208,14 @@ fn gc_orphaned_layers(state: &AppState, undo: &UndoManager, live: &Document) {
 fn sync_palette_caches(state: &AppState, live: &Document) {
     let doc = live.id.0;
     let live_ids: HashSet<u32> = live.palettes.iter().map(|p| p.id).collect();
-    for (d, id) in state.palette_cache.cached_keys() {
+    for (d, id) in state.tiles.palette_cache.cached_keys() {
         if d == doc && !live_ids.contains(&id) {
-            state.palette_cache.evict(d, id);
+            state.tiles.palette_cache.evict(d, id);
         }
     }
-    for (d, id) in state.palette_lut_cache.cached_keys() {
+    for (d, id) in state.tiles.palette_lut_cache.cached_keys() {
         if d == doc && !live_ids.contains(&id) {
-            state.palette_lut_cache.evict(d, id);
+            state.tiles.palette_lut_cache.evict(d, id);
         }
     }
 }
@@ -294,7 +295,7 @@ fn bump_live_document_gen(state: &AppState, doc_id: u32) {
     let live = session.document_handle.snapshot();
     let live_gen = live.generations.current_document_gen();
     let next = live_gen
-        .max(state.tile_cache.max_generation())
+        .max(state.tiles.tile_cache.max_generation())
         .saturating_add(1);
     live.generations.set_document_gen(next);
 }
@@ -354,35 +355,7 @@ pub fn apply_redo(state: &AppState, app: &AppHandle, doc_id: u32) -> Result<Undo
     restore_and_invalidate(state, app, doc_id, restored, "document_redone")
 }
 
-#[tauri::command]
-pub fn undo(
-    doc_id: u32,
-    app_handle: AppHandle,
-    state: State<'_, Arc<AppState>>,
-) -> Result<UndoStateDto, String> {
-    apply_undo(&state, &app_handle, doc_id)
-}
 
-#[tauri::command]
-pub fn redo(
-    doc_id: u32,
-    app_handle: AppHandle,
-    state: State<'_, Arc<AppState>>,
-) -> Result<UndoStateDto, String> {
-    apply_redo(&state, &app_handle, doc_id)
-}
-
-#[tauri::command]
-pub fn is_document_dirty(
-    doc_id: Option<u32>,
-    state: State<'_, Arc<AppState>>,
-) -> Result<bool, String> {
-    let id = match doc_id.or_else(|| state.active_id()) {
-        Some(id) => id,
-        None => return Ok(false),
-    };
-    Ok(is_dirty_doc(&state, id))
-}
 
 #[cfg(test)]
 mod tests {
@@ -508,6 +481,7 @@ mod tests {
             stage: CacheStage::Processed,
         };
         state
+            .tiles
             .tile_cache
             .insert_fresh_gen(key, Arc::new(PixelTile::new()), 1);
 
@@ -527,7 +501,7 @@ mod tests {
             gc_orphaned_layers(&state, &undo, &live);
         }
         // Still referenced from undo stack — keep
-        assert!(state.tile_cache.entries.contains_key(&key));
+        assert!(state.tiles.tile_cache.entries.contains_key(&key));
 
         // Pop undo (discard history of layer) — now orphan
         {
@@ -537,7 +511,7 @@ mod tests {
             let live = state.must_active().document_handle.snapshot();
             gc_orphaned_layers(&state, &undo, &live);
         }
-        assert!(!state.tile_cache.entries.contains_key(&key));
+        assert!(!state.tiles.tile_cache.entries.contains_key(&key));
     }
 
     #[test]

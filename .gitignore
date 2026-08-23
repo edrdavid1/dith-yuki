@@ -14,9 +14,11 @@ Cargo.lock.old
 npm-debug.log*
 
 # Local agent specs (not published)
+.gemini-spec/
 .cursor-spec/
 .kiro/
 .github/
+
 
 # IDE
 .vscode/
