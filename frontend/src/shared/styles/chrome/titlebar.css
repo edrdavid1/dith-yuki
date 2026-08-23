@@ -6,7 +6,7 @@
 /* src/styles/titlebar.css */
 
 :root {
-  --titlebar-height: 26px; /* logical CSS pixels — NOT device pixels */
+  --titlebar-height: 30px; /* logical CSS pixels — classic retro Mac height */
 }
 
 /* ─── WindowShell ─────────────────────────────────────────────────────────── */
@@ -41,12 +41,12 @@
   flex-direction: row;
   flex-wrap: nowrap;
   flex-shrink: 0;
-  align-items: stretch;
+  align-items: center;
   padding: 0;
-  /* content-box so a bottom rule does not shrink menu buttons away from the edge */
-  box-sizing: content-box;
+  /* border-box prevents padding/border from expanding height beyond 30px */
+  box-sizing: border-box;
   background: var(--color-gray);
-  /* drawn outside the content height — vertical button borders stay edge-to-edge */
+  /* 1.5px border at bottom for classic retro appearance */
   border-bottom: var(--border);
   user-select: none;
   position: relative;
@@ -55,8 +55,9 @@
 }
 
 html[data-platform='macos'] .app-titlebar {
-  /* room for tao trafficLightPosition x=12 + native button cluster */
-  padding-left: 78px;
+  /* use env(titlebar-area-x) from Tauri/WKWebView for native traffic light inset;
+     fallback to 78px if not available */
+  padding-left: env(titlebar-area-x, 78px);
 }
 
 .titlebar-filename {
@@ -64,7 +65,7 @@ html[data-platform='macos'] .app-titlebar {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: 13px;
   font-family: var(--font-family, 'ChicagoFLF', monospace);
   pointer-events: none;
   overflow: hidden;
@@ -79,7 +80,7 @@ html[data-platform='macos'] .app-titlebar {
 .app-titlebar > [data-tauri-drag-region="false"] {
   height: 100%;
   display: flex;
-  align-items: stretch;
+  align-items: center;
 }
 
 .app-titlebar button,
@@ -90,7 +91,7 @@ html[data-platform='macos'] .app-titlebar {
 }
 
 .app-titlebar-title {
-  font-size: 12px;
+  font-size: 13px;
   font-family: var(--font-family, 'ChicagoFLF', monospace);
   flex: 1;
   text-align: center;

@@ -462,13 +462,6 @@ export default function AppLayout() {
 
   const gridTemplateColumns = `${leftW}px 1fr ${rightW}px`;
 
-  const chromeTitle = windowChromeTitle({
-    dirty: doc.dirty,
-    hasDocument: doc.hasDocument,
-    projectPath: doc.projectPath,
-    sourcePath: doc.sourcePath,
-  });
-
   return (
     <WindowShell
       titlebarContent={
@@ -500,7 +493,12 @@ export default function AppLayout() {
               }}
             />
           </div>
-          <div className="titlebar-filename">{chromeTitle}</div>
+          <div className="titlebar-filename">{windowChromeTitle({
+            dirty: false,
+            hasDocument: false,
+            projectPath: null,
+            sourcePath: null,
+          })}</div>
           <div className={cn('toolbar-icon-group')} data-tauri-drag-region="false">
             <button
               type="button"
@@ -529,7 +527,10 @@ export default function AppLayout() {
       }
     >
     <div className={cn('app-layout', 'app-layout-dual')} style={{ gridTemplateColumns }}>
-      <DocumentTabBar onNewProject={welcome.onNewProject} onCloseTab={confirmCloseTab} />
+      <DocumentTabBar 
+        onOpenFile={welcome.onOpenImage} 
+        onCloseTab={confirmCloseTab}
+      />
 
       {!focusMode && (
         <DockedSidebar

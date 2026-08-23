@@ -20,6 +20,7 @@ pub struct DocumentSession {
     pub document_handle: DocumentHandle,
     pub history: crate::state::HistoryState,
     pub project_path: Mutex<Option<PathBuf>>,
+    pub source_path: Mutex<Option<PathBuf>>,
     /// In-flight save/export assemble count — close refuses while > 0.
     io_inflight: AtomicUsize,
 }
@@ -142,6 +143,7 @@ impl AppState {
             document_handle: DocumentHandle::new(doc),
             history: crate::state::HistoryState::new(),
             project_path: Mutex::new(None),
+            source_path: Mutex::new(None),
             io_inflight: AtomicUsize::new(0),
         });
         if let Ok(mut map) = self.sessions.lock() {
@@ -311,11 +313,18 @@ impl AppState {
         let mut tabs: Vec<OpenDocumentTabDto> = map
             .values()
             .map(|s| {
+                // Try project_path first, then source_path for loaded images
                 let path = s
                     .project_path
                     .lock()
                     .ok()
-                    .and_then(|p| p.as_ref().map(|p| p.to_string_lossy().into_owned()));
+                    .and_then(|p| p.as_ref().map(|p| p.to_string_lossy().into_owned()))
+                    .or_else(|| {
+                        s.source_path
+                            .lock()
+                            .ok()
+                            .and_then(|p| p.as_ref().map(|p| p.to_string_lossy().into_owned()))
+                    });
                 let title = path
                     .as_deref()
                     .and_then(|p| std::path::Path::new(p).file_name())
