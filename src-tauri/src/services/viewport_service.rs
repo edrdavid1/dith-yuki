@@ -77,7 +77,7 @@ impl ViewportService {
                     layer_generation: 0,
                     priority,
                 };
-                self.state.scheduler.enqueue(task);
+                self.state.tiles.scheduler.enqueue(task);
                 self.state.worker_wake.notify_one();
             }
         }
@@ -96,7 +96,7 @@ impl ViewportService {
                     layer_generation: 0,
                     priority: Priority::Prefetch,
                 };
-                self.state.scheduler.enqueue(task);
+                self.state.tiles.scheduler.enqueue(task);
                 self.state.worker_wake.notify_one();
             }
         }

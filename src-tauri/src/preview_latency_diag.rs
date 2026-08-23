@@ -109,7 +109,7 @@ fn fill_raw_tiles_for_layer(state: &AppState, layer: u32, coords: &[TileCoord]) 
                 tile.set(x, y, 3, 1.0);
             }
         }
-        state.tile_cache.insert_fresh(
+        state.tiles.tile_cache.insert_fresh(
             TileKey {
                 doc: 1,
                 layer,
@@ -175,7 +175,7 @@ fn count_fresh(state: &AppState, layer: u32, stage: CacheStage, coords: &[TileCo
                 coord: **coord,
                 stage,
             };
-            match state.tile_cache.entries.get(&key) {
+            match state.tiles.tile_cache.entries.get(&key) {
                 Some(e) => !e.dirty.load(Ordering::Acquire),
                 None => false,
             }
@@ -184,8 +184,8 @@ fn count_fresh(state: &AppState, layer: u32, stage: CacheStage, coords: &[TileCo
 }
 
 fn simulate_invalidate_only(state: &AppState) {
-    state.error_residuals.clear();
-    state.block_representatives.clear_dithered();
+    state.tiles.error_residuals.clear();
+    state.tiles.block_representatives.clear_dithered();
     state.must_active().document_handle.mutate(|doc| {
         doc.increment_generation();
     });
@@ -194,7 +194,7 @@ fn simulate_invalidate_only(state: &AppState) {
         snapshot.generations.increment_layer_gen(LAYER);
     }
     engine_tiles::invalidation::invalidate(
-        &state.tile_cache,
+        &state.tiles.tile_cache,
         InvalidationEvent::LayerFilterChanged { doc: 1, layer: LAYER },
     );
 }
@@ -241,7 +241,7 @@ fn drain_until_visible(
                         stop.store(true, Ordering::Relaxed);
                         break;
                     }
-                    match state.scheduler.dequeue() {
+                    match state.tiles.scheduler.dequeue() {
                         Some(task) => match task.key.stage {
                             CacheStage::Processed => {
                                 processed_calls.fetch_add(1, Ordering::Relaxed);
@@ -351,7 +351,7 @@ fn run_viewport_scenario(
     simulate_update_filter(&state);
     let dirty_processed = {
         let mut n = 0u64;
-        for e in state.tile_cache.entries.iter() {
+        for e in state.tiles.tile_cache.entries.iter() {
             if e.key().stage == CacheStage::Processed && e.dirty.load(Ordering::Acquire) {
                 n += 1;
             }
@@ -608,7 +608,7 @@ fn build_resident_frame_job(
             coord: *coord,
             stage: CacheStage::Raw,
         };
-        let raw = state.tile_cache.get_entry(raw_key)?;
+        let raw = state.tiles.tile_cache.get_entry(raw_key)?;
         let processed_key = TileKey {
             stage: CacheStage::Processed,
             ..raw_key
@@ -728,10 +728,11 @@ fn build_resident_composite_job(
                 stage: CacheStage::Processed,
             };
             let pixels = state
+                .tiles
                 .tile_cache
                 .get_entry(processed_key)
                 .or_else(|| {
-                    state.tile_cache.get_entry(TileKey {
+                    state.tiles.tile_cache.get_entry(TileKey {
                         stage: CacheStage::Raw,
                         ..processed_key
                     })
@@ -1546,7 +1547,7 @@ fn preview_latency_diag_industrial_gate() {
         for layer in [1u32, 2, 3] {
             for coord in &origin {
                 let raw = state
-                    .tile_cache
+                    .tiles.tile_cache
                     .get_entry(TileKey {
                         doc: 1,
                         layer,
@@ -1554,7 +1555,7 @@ fn preview_latency_diag_industrial_gate() {
                         stage: CacheStage::Raw,
                     })
                     .expect("raw");
-                state.tile_cache.insert_fresh(
+                state.tiles.tile_cache.insert_fresh(
                     TileKey {
                         doc: 1,
                         layer,

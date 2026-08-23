@@ -298,7 +298,7 @@ pub fn classify_priority(coord: &TileCoord, visible: &[TileCoord]) -> Priority {
 ///
 /// `true` if the tile is missing or marked dirty, `false` if cached and clean.
 pub(crate) fn needs_recompute(state: &AppState, key: &TileKey) -> bool {
-    match state.tile_cache.entries.get(key) {
+    match state.tiles.tile_cache.entries.get(key) {
         None => true,
         Some(entry) => entry.dirty.load(Ordering::Acquire),
     }

@@ -14,6 +14,18 @@ pub enum AppError {
     Io(#[from] std::io::Error),
 }
 
+impl From<String> for AppError {
+    fn from(s: String) -> Self {
+        AppError::Generic(s)
+    }
+}
+
+pub mod filter_service;
+pub use filter_service::FilterService;
+
+pub mod layer_service;
+pub use layer_service::LayerService;
+
 pub mod panel_service;
 pub use panel_service::PanelService;
 
@@ -22,3 +34,9 @@ pub use undo_service::UndoService;
 
 pub mod viewport_service;
 pub use viewport_service::ViewportService;
+
+pub mod palette_service;
+pub use palette_service::PaletteService;
+
+pub mod document_service;
+pub use document_service::DocumentService;

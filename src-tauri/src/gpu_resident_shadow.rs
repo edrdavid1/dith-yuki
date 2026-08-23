@@ -63,7 +63,7 @@ pub fn enqueue_resident_shadow_viewport(state: &AppState) {
                 coord: *coord,
                 stage: CacheStage::Raw,
             };
-            let Some(raw) = state.tile_cache.get_entry(raw_key) else {
+            let Some(raw) = state.tiles.tile_cache.get_entry(raw_key) else {
                 continue;
             };
             let processed_key = TileKey {
@@ -151,7 +151,7 @@ pub fn try_publish_gpu_preview_viewport(state: &AppState) -> std::collections::H
                 coord: *coord,
                 stage: CacheStage::Composite,
             };
-            match state.tile_cache.entries.get(&key) {
+            match state.tiles.tile_cache.entries.get(&key) {
                 Some(entry) => entry.dirty.load(Ordering::Acquire),
                 None => true,
             }
@@ -170,7 +170,7 @@ pub fn try_publish_gpu_preview_viewport(state: &AppState) -> std::collections::H
                 coord: *coord,
                 stage: CacheStage::Raw,
             };
-            if state.tile_cache.get_entry(raw_key).is_none() {
+            if state.tiles.tile_cache.get_entry(raw_key).is_none() {
                 return empty;
             }
         }
@@ -196,7 +196,7 @@ pub fn try_publish_gpu_preview_viewport(state: &AppState) -> std::collections::H
                 coord: *coord,
                 stage: CacheStage::Raw,
             };
-            let Some(raw) = state.tile_cache.get_entry(raw_key) else {
+            let Some(raw) = state.tiles.tile_cache.get_entry(raw_key) else {
                 return empty;
             };
             tiles.push(GpuTileWork {
@@ -256,7 +256,7 @@ pub fn try_publish_gpu_preview_viewport(state: &AppState) -> std::collections::H
 
     for (key, tile) in pending {
         let inserted = state
-            .tile_cache
+            .tiles.tile_cache
             .insert_fresh_gen(key, Arc::new(tile), doc_gen);
         if !inserted {
             continue;
@@ -355,10 +355,11 @@ fn build_composite_job(
                 stage: CacheStage::Processed,
             };
             let pixels = state
+                .tiles
                 .tile_cache
                 .get_entry(processed_key)
                 .or_else(|| {
-                    state.tile_cache.get_entry(TileKey {
+                    state.tiles.tile_cache.get_entry(TileKey {
                         stage: CacheStage::Raw,
                         ..processed_key
                     })

@@ -531,7 +531,7 @@ fn handle_tile_request(
     };
 
     let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
-    if let Some(entry) = state.tile_cache.entries.get(&key) {
+    if let Some(entry) = state.tiles.tile_cache.entries.get(&key) {
         let dirty = entry.dirty.load(Ordering::Acquire);
         if TileCache::tile_entry_is_ready(dirty, entry.generation, doc_gen) {
             let gen = entry.generation;
@@ -548,7 +548,7 @@ fn handle_tile_request(
         layer_generation: layer_gen,
         priority: Priority::Immediate,
     };
-    state.scheduler.enqueue_dedup(task);
+    state.tiles.scheduler.enqueue_dedup(task);
     state.worker_wake.notify_one();
 
     tile_response(202, "application/octet-stream", Vec::new(), None)

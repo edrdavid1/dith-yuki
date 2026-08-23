@@ -39,9 +39,9 @@ pub fn set_gpu_preview_enabled(
     // Re-author visible Composite under the new gate (CPU or GPU).
     if let Ok(session) = state.active_session() {
         let doc = session.document_handle.snapshot().id.0;
-        let viewport = state.viewport.lock().unwrap().clone();
+        let viewport = state.ui.viewport.lock().unwrap().clone();
         for coord in &viewport.visible_tiles {
-            state.tile_cache.mark_dirty(engine_tiles::TileKey {
+            state.tiles.tile_cache.mark_dirty(engine_tiles::TileKey {
                 doc,
                 layer: 0,
                 coord: *coord,
