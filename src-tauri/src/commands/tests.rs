@@ -807,7 +807,7 @@ fn install_raster_document_clears_undo_stacks() {
     let state = make_test_app_state();
     let bg = blank_rgba_f32(50, 50, BlankBackground::White);
 
-    install_raster_document(&state, 50, 50, &bg, None).unwrap();
+    install_raster_document(&state, 50, 50, &bg, None, None).unwrap();
 
     let session = state.must_active();
     let undo_size = session.undo_manager.lock().unwrap().stack_size();
@@ -900,7 +900,7 @@ fn solid_rgba(w: u32, h: u32, r: f32, g: f32, b: f32, a: f32) -> Vec<f32> {
 fn install_raster_replaces_high_gen_source_tiles() {
     let state = make_test_app_state();
     let src = solid_rgba(8, 8, 1.0, 0.0, 0.0, 1.0);
-    let resp = install_raster_document(&state, 8, 8, &src, None).unwrap();
+    let resp = install_raster_document(&state, 8, 8, &src, None, None).unwrap();
 
     let snap = state.must_active().document_handle.snapshot();
     let layer_gen = match &snap.root[0] {
@@ -941,7 +941,7 @@ fn import_raster_layer_requires_open_document() {
 fn import_smaller_image_leaves_transparent_remainder() {
     let state = make_test_app_state();
     let bg = blank_rgba_f32(8, 8, BlankBackground::Transparent);
-    install_raster_document(&state, 8, 8, &bg, None).unwrap();
+    install_raster_document(&state, 8, 8, &bg, None, None).unwrap();
 
     let src = solid_rgba(4, 4, 1.0, 0.0, 0.0, 1.0);
     let resp = import_raster_layer(&state, state.active_id().unwrap(), 4, 4, &src, None).unwrap();
@@ -958,7 +958,7 @@ fn import_smaller_image_leaves_transparent_remainder() {
 fn import_larger_image_clips_to_document() {
     let state = make_test_app_state();
     let bg = blank_rgba_f32(8, 8, BlankBackground::Transparent);
-    install_raster_document(&state, 8, 8, &bg, None).unwrap();
+    install_raster_document(&state, 8, 8, &bg, None, None).unwrap();
 
     let src = solid_rgba(20, 20, 0.0, 1.0, 0.0, 1.0);
     let resp = import_raster_layer(&state, state.active_id().unwrap(), 20, 20, &src, None).unwrap();
@@ -980,7 +980,7 @@ fn import_raster_layer_does_not_rewrite_existing_filter_palette_id() {
 
     let state = make_test_app_state();
     let bg = blank_rgba_f32(8, 8, BlankBackground::White);
-    install_raster_document(&state, 8, 8, &bg, None).unwrap();
+    install_raster_document(&state, 8, 8, &bg, None, None).unwrap();
 
     state.must_active().document_handle.mutate(|doc| {
         if let engine_project::layer::LayerNode::Leaf(layer) = &mut doc.root[0] {

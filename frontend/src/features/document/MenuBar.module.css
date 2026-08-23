@@ -3,12 +3,14 @@
 .app-toolbar {
   grid-area: menubar;
   display: flex;
-  align-items: stretch;
+  align-items: center;
   padding: 0;
   background: var(--color-gray);
   border-top: var(--border);
   border-bottom: var(--border);
   gap: 0;
+  height: 100%;
+  box-sizing: border-box;
 }
 
 .toolbar-spacer {
@@ -17,21 +19,22 @@
 
 .toolbar-icon-group {
   display: flex;
-  align-items: stretch;
+  align-items: center;
   flex-shrink: 0;
-  border-left: var(--border);
-  border-right: var(--border);
+  height: 100%;
+  box-sizing: border-box;
+  gap: 0;
+  margin-right: 12px; /* измени это значение на нужное */
 }
 
 .sidebar-changer-icon-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 27px;
+  width: 26px;
   height: 100%;
   padding: 0;
   border: none;
-  border-right: var(--border);
   border-radius: 0;
   background: transparent;
   color: var(--color-black);
@@ -40,23 +43,19 @@
   box-sizing: border-box;
 }
 
-.toolbar-icon-group .sidebar-changer-icon-btn:last-child {
-  border-right: none;
-}
-
 .sidebar-changer-icon-btn:hover {
-  background: var(--bg-hover-accent);
-  color: var(--color-hover-inverted);
+  background: transparent;
+  color: var(--color-primary);
 }
 
 .sidebar-changer-icon-btn-active {
-  background: var(--color-black);
-  color: var(--color-white);
+  background: transparent;
+  color: var(--color-primary);
 }
 
 .sidebar-changer-icon-btn-active:hover {
-  background: var(--color-black);
-  color: var(--color-white);
+  background: transparent;
+  color: var(--color-primary);
 }
 
 .toolbar-btn {
@@ -65,7 +64,7 @@
   background: transparent;
   color: var(--text-color);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 13px;
   font-family: var(--font-family);
   height: 100%;
   line-height: 1;
@@ -99,12 +98,17 @@
   display: flex;
   align-items: stretch;
   height: 100%;
-  border-left: var(--border);
 }
 
 .menubar-item {
   position: relative;
   height: 100%;
+  display: flex;
+  align-items: center;
+  border-right: var(--border);
+}
+
+.menubar-item:last-child {
   border-right: var(--border);
 }
 
@@ -130,7 +134,7 @@
   border: none;
   background: transparent;
   color: var(--text-color);
-  font-size: 12px;
+  font-size: 13px;
   font-family: var(--font-family);
   text-align: left;
   cursor: pointer;
@@ -179,4 +183,9 @@
 .menubar-submenu-wrap:hover .menubar-submenu,
 .menubar-submenu-wrap:focus-within .menubar-submenu {
   display: block;
+}
+
+/* Hide "New Project" menu item */
+.menubar-dropdown-item:first-child {
+  display: none;
 }
