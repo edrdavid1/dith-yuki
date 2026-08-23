@@ -105,7 +105,7 @@ pub struct TileReadyPayload {
 /// * `app_handle` - Tauri AppHandle for emitting events to the frontend
 pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
     loop {
-        if let Some(task) = state.scheduler.dequeue() {
+        if let Some(task) = state.tiles.scheduler.dequeue() {
             state
                 .preview_pass_inflight
                 .fetch_add(1, Ordering::AcqRel);
@@ -141,9 +141,9 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
                     if crate::tile_pipeline::layer_has_error_diffusion(
                         &snapshot.root,
                         task.key.layer,
-                    ) && !engine_tiles::ed_ready(&state.tile_cache, task.key, true)
+                    ) && !engine_tiles::ed_ready(&state.tiles.tile_cache, task.key, true)
                     {
-                        state.ed_frontier.block(task, &state.tile_cache);
+                        state.tiles.ed_frontier.block(task, &state.tiles.tile_cache);
                         state
                             .preview_pass_inflight
                             .fetch_sub(1, Ordering::AcqRel);
@@ -161,10 +161,10 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
                             task.key.coord,
                         );
                         if deps.is_empty() {
-                            state.scheduler.enqueue_or_bump(task);
+                            state.tiles.scheduler.enqueue_or_bump(task);
                             state.worker_wake.notify_one();
                         } else {
-                            state.ed_frontier.block_on(task, deps);
+                            state.tiles.ed_frontier.block_on(task, deps);
                         }
                         state
                             .preview_pass_inflight
@@ -194,7 +194,7 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
                     match task.key.stage {
                         // Raw is already in cache; load_raw_tile returns the shared Arc.
                         CacheStage::Raw => {
-                            let inserted = state.tile_cache.insert_fresh_gen(
+                            let inserted = state.tiles.tile_cache.insert_fresh_gen(
                                 task.key,
                                 tile,
                                 task.generation,
@@ -215,7 +215,7 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
                             let viewport_level = state.ui.viewport.lock().unwrap().level;
                             if task.key.stage == CacheStage::Composite
                                 && task.key.coord.level == viewport_level
-                                && state.tile_cache.get_entry(task.key).is_some()
+                                && state.tiles.tile_cache.get_entry(task.key).is_some()
                             {
                                 let payload = TileReadyPayload {
                                     doc_id: snapshot.id.0,
@@ -275,7 +275,7 @@ fn load_raw_tile(
     key: TileKey,
     state: &AppState,
 ) -> Result<Arc<PixelTile>, engine_project::error::EngineError> {
-    state.tile_cache.get_entry(key).ok_or_else(|| {
+    state.tiles.tile_cache.get_entry(key).ok_or_else(|| {
         engine_project::error::EngineError::invalid_state(format!(
             "Raw tile not found in cache: layer={}, level={}, ({}, {})",
             key.layer, key.coord.level, key.coord.x, key.coord.y
