@@ -18,8 +18,7 @@ use crate::undo::UndoManager;
 pub struct DocumentSession {
     pub id: DocumentId,
     pub document_handle: DocumentHandle,
-    pub undo_manager: Mutex<UndoManager>,
-    pub saved_snapshot: Mutex<Option<Arc<Document>>>,
+    pub history: crate::state::HistoryState,
     pub project_path: Mutex<Option<PathBuf>>,
     /// In-flight save/export assemble count — close refuses while > 0.
     io_inflight: AtomicUsize,
@@ -99,22 +98,13 @@ impl AppState {
             sessions: Mutex::new(HashMap::new()),
             next_doc_id: AtomicU32::new(1),
             active_id: Mutex::new(None),
-            tile_cache: engine_tiles::TileCache::new(cache_bytes),
-            scheduler: engine_tiles::Scheduler::new(),
-            viewport: Mutex::new(crate::viewport::ViewportState::default()),
+            tiles: crate::state::TileState::new(cache_bytes),
             worker_wake: crate::worker::WorkerWake::new(),
-            palette_cache: engine_color::palette_cache::PaletteKdCache::new(),
-            palette_lut_cache: engine_color::palette_lut::PaletteLutCache::new(),
-            threshold_cache: engine_color::threshold_map::ThresholdMapCache::new(),
-            error_residuals: engine_project::filters::ErrorResidualsStore::new(),
-            block_representatives: engine_tiles::BlockRepresentativeCache::new(),
-            ed_frontier: engine_tiles::EdFrontier::new(),
             gpu,
             gpu_resident,
             gpu_executor,
             app_handle: Mutex::new(None),
-            panel_manager: Mutex::new(crate::panel_manager::PanelManager::new()),
-            selection: Mutex::new(crate::commands::SelectionState::default()),
+            ui: crate::state::UiState::new(),
             dock_affinity: Mutex::new(crate::dock_affinity::DockAffinityController::new(
                 dock_affinity_enabled,
             )),
@@ -150,8 +140,7 @@ impl AppState {
         let session = Arc::new(DocumentSession {
             id,
             document_handle: DocumentHandle::new(doc),
-            undo_manager: Mutex::new(UndoManager::new()),
-            saved_snapshot: Mutex::new(None),
+            history: crate::state::HistoryState::new(),
             project_path: Mutex::new(None),
             io_inflight: AtomicUsize::new(0),
         });
@@ -240,12 +229,13 @@ impl AppState {
     /// Pressure with empty viewport protect set (inactive-only when active is set).
     /// Open-session Raw is always pinned via `open_docs`.
     pub fn evict_inactive_for_pressure_if_needed(&self) {
-        if self.tile_cache.used_bytes_count() <= self.tile_cache.budget_bytes_count() {
+        if self.tiles.tile_cache.used_bytes_count() <= self.tiles.tile_cache.budget_bytes_count() {
             return;
         }
         let empty = HashSet::new();
         let open_docs = self.open_doc_ids();
-        self.tile_cache
+        self.tiles
+            .tile_cache
             .evict_for_pressure(&engine_tiles::EvictContext {
                 active_doc: self.active_id(),
                 open_docs: &open_docs,
@@ -255,16 +245,18 @@ impl AppState {
 
     /// Build `EvictContext` from active tab + viewport + open sessions.
     pub fn evict_for_pressure_if_needed(&self) {
-        if self.tile_cache.used_bytes_count() <= self.tile_cache.budget_bytes_count() {
+        if self.tiles.tile_cache.used_bytes_count() <= self.tiles.tile_cache.budget_bytes_count() {
             return;
         }
         let viewport_coords: HashSet<engine_tiles::TileCoord> = self
+            .ui
             .viewport
             .lock()
             .map(|v| v.visible_tiles.iter().copied().collect())
             .unwrap_or_default();
         let open_docs = self.open_doc_ids();
-        self.tile_cache
+        self.tiles
+            .tile_cache
             .evict_for_pressure(&engine_tiles::EvictContext {
                 active_doc: self.active_id(),
                 open_docs: &open_docs,
@@ -288,15 +280,15 @@ impl AppState {
             map.remove(&doc)
                 .ok_or_else(|| format!("No document session {doc}"))?;
         }
-        self.tile_cache.evict_document(doc);
+        self.tiles.tile_cache.evict_document(doc);
         if let Some(gpu_cache) = &self.gpu_resident {
             gpu_cache.evict_document(doc);
         }
-        self.error_residuals.evict_document(doc);
-        self.block_representatives.evict_document(doc);
-        self.ed_frontier.evict_document(doc);
-        self.palette_cache.evict_document(doc);
-        self.palette_lut_cache.evict_document(doc);
+        self.tiles.error_residuals.evict_document(doc);
+        self.tiles.block_representatives.evict_document(doc);
+        self.tiles.ed_frontier.evict_document(doc);
+        self.tiles.palette_cache.evict_document(doc);
+        self.tiles.palette_lut_cache.evict_document(doc);
 
         let mut active = self.active_id.lock().map_err(|e| e.to_string())?;
         if *active == Some(doc) {
@@ -331,7 +323,7 @@ impl AppState {
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| format!("Untitled {}", s.id.0));
                 let live = s.document_handle.snapshot();
-                let dirty = match s.saved_snapshot.lock() {
+                let dirty = match s.history.saved_snapshot.lock() {
                     Ok(guard) => match guard.as_ref() {
                         Some(saved) => !Arc::ptr_eq(saved, &live),
                         None => !live.root.is_empty(),
@@ -387,13 +379,13 @@ mod pressure_tests {
         let state = AppState::empty_process(None, TILE_BYTES, true);
         state.spawn_session(Document::new(DocumentId::new(1), 64, 64));
         state.spawn_session(Document::new(DocumentId::new(2), 64, 64));
-        fill_stage(&state.tile_cache, 1, CacheStage::Raw, 1);
-        fill_stage(&state.tile_cache, 1, CacheStage::Composite, 1);
-        fill_stage(&state.tile_cache, 2, CacheStage::Raw, 1);
-        assert!(state.tile_cache.used_bytes_count() > state.tile_cache.budget_bytes_count());
+        fill_stage(&state.tiles.tile_cache, 1, CacheStage::Raw, 1);
+        fill_stage(&state.tiles.tile_cache, 1, CacheStage::Composite, 1);
+        fill_stage(&state.tiles.tile_cache, 2, CacheStage::Raw, 1);
+        assert!(state.tiles.tile_cache.used_bytes_count() > state.tiles.tile_cache.budget_bytes_count());
 
         {
-            let mut vp = state.viewport.lock().unwrap();
+            let mut vp = state.ui.viewport.lock().unwrap();
             vp.visible_tiles = vec![TileCoord {
                 level: 0,
                 x: 0,
@@ -404,7 +396,7 @@ mod pressure_tests {
         state.evict_for_pressure_if_needed();
 
         assert!(
-            !state.tile_cache.entries.contains_key(&TileKey {
+            !state.tiles.tile_cache.entries.contains_key(&TileKey {
                 doc: 1,
                 layer: 1,
                 coord: TileCoord {
@@ -417,7 +409,7 @@ mod pressure_tests {
             "inactive Composite should be dropped"
         );
         assert!(
-            state.tile_cache.entries.contains_key(&TileKey {
+            state.tiles.tile_cache.entries.contains_key(&TileKey {
                 doc: 1,
                 layer: 1,
                 coord: TileCoord {
@@ -429,7 +421,7 @@ mod pressure_tests {
             }),
             "open-session Raw must stay pinned"
         );
-        assert!(state.tile_cache.entries.contains_key(&TileKey {
+        assert!(state.tiles.tile_cache.entries.contains_key(&TileKey {
             doc: 2,
             layer: 1,
             coord: TileCoord {
@@ -456,7 +448,7 @@ mod pressure_tests {
             CacheStage::Processed,
             CacheStage::Composite,
         ] {
-            state.tile_cache.get_or_insert(
+            state.tiles.tile_cache.get_or_insert(
                 TileKey {
                     doc: 1,
                     layer: 1,
@@ -469,7 +461,7 @@ mod pressure_tests {
         state.activate(1).unwrap();
         state.activate(2).unwrap();
 
-        assert!(state.tile_cache.entries.contains_key(&TileKey {
+        assert!(state.tiles.tile_cache.entries.contains_key(&TileKey {
             doc: 1,
             layer: 1,
             coord,
@@ -481,10 +473,10 @@ mod pressure_tests {
     fn single_doc_pressure_pins_open_raw_drops_off_viewport_composite() {
         let state = AppState::empty_process(None, TILE_BYTES, true);
         state.spawn_session(Document::new(DocumentId::new(1), 1024, 1024));
-        fill_stage(&state.tile_cache, 1, CacheStage::Raw, 1);
-        fill_stage(&state.tile_cache, 1, CacheStage::Composite, 3);
+        fill_stage(&state.tiles.tile_cache, 1, CacheStage::Raw, 1);
+        fill_stage(&state.tiles.tile_cache, 1, CacheStage::Composite, 3);
         {
-            let mut vp = state.viewport.lock().unwrap();
+            let mut vp = state.ui.viewport.lock().unwrap();
             vp.visible_tiles = vec![TileCoord {
                 level: 0,
                 x: 0,
@@ -492,7 +484,7 @@ mod pressure_tests {
             }];
         }
         state.evict_for_pressure_if_needed();
-        assert!(state.tile_cache.entries.contains_key(&TileKey {
+        assert!(state.tiles.tile_cache.entries.contains_key(&TileKey {
             doc: 1,
             layer: 1,
             coord: TileCoord {
@@ -502,7 +494,7 @@ mod pressure_tests {
             },
             stage: CacheStage::Raw,
         }));
-        assert!(state.tile_cache.entries.contains_key(&TileKey {
+        assert!(state.tiles.tile_cache.entries.contains_key(&TileKey {
             doc: 1,
             layer: 1,
             coord: TileCoord {
@@ -512,7 +504,7 @@ mod pressure_tests {
             },
             stage: CacheStage::Composite,
         }));
-        assert!(!state.tile_cache.entries.contains_key(&TileKey {
+        assert!(!state.tiles.tile_cache.entries.contains_key(&TileKey {
             doc: 1,
             layer: 1,
             coord: TileCoord {

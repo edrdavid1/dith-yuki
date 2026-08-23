@@ -109,7 +109,7 @@ fn fill_raw_tiles_for_layer(state: &AppState, layer: u32, coords: &[TileCoord]) 
                 tile.set(x, y, 3, 1.0);
             }
         }
-        state.tile_cache.insert_fresh(
+        state.tiles.tile_cache.insert_fresh(
             TileKey {
                 doc: 1,
                 layer,
@@ -175,7 +175,7 @@ fn count_fresh(state: &AppState, layer: u32, stage: CacheStage, coords: &[TileCo
                 coord: **coord,
                 stage,
             };
-            match state.tile_cache.entries.get(&key) {
+            match state.tiles.tile_cache.entries.get(&key) {
                 Some(e) => !e.dirty.load(Ordering::Acquire),
                 None => false,
             }
@@ -184,8 +184,8 @@ fn count_fresh(state: &AppState, layer: u32, stage: CacheStage, coords: &[TileCo
 }
 
 fn simulate_invalidate_only(state: &AppState) {
-    state.error_residuals.clear();
-    state.block_representatives.clear_dithered();
+    state.tiles.error_residuals.clear();
+    state.tiles.block_representatives.clear_dithered();
     state.must_active().document_handle.mutate(|doc| {
         doc.increment_generation();
     });
@@ -194,7 +194,7 @@ fn simulate_invalidate_only(state: &AppState) {
         snapshot.generations.increment_layer_gen(LAYER);
     }
     engine_tiles::invalidation::invalidate(
-        &state.tile_cache,
+        &state.tiles.tile_cache,
         InvalidationEvent::LayerFilterChanged { doc: 1, layer: LAYER },
     );
 }
@@ -241,7 +241,7 @@ fn drain_until_visible(
                         stop.store(true, Ordering::Relaxed);
                         break;
                     }
-                    match state.scheduler.dequeue() {
+                    match state.tiles.scheduler.dequeue() {
                         Some(task) => match task.key.stage {
                             CacheStage::Processed => {
                                 processed_calls.fetch_add(1, Ordering::Relaxed);
@@ -302,7 +302,7 @@ fn set_viewport(state: &AppState, zoom: f64, x: f64, y: f64) -> Vec<TileCoord> {
     let max_level = crate::viewport::compute_max_level(DOC, DOC);
     let level = compute_pyramid_level(zoom, max_level);
     let visible = compute_visible_tiles(zoom, x, y, VP_W, VP_H, level, DOC, DOC);
-    let mut vp = state.viewport.lock().unwrap();
+    let mut vp = state.ui.viewport.lock().unwrap();
     vp.zoom = zoom;
     vp.x = x;
     vp.y = y;
@@ -351,7 +351,7 @@ fn run_viewport_scenario(
     simulate_update_filter(&state);
     let dirty_processed = {
         let mut n = 0u64;
-        for e in state.tile_cache.entries.iter() {
+        for e in state.tiles.tile_cache.entries.iter() {
             if e.key().stage == CacheStage::Processed && e.dirty.load(Ordering::Acquire) {
                 n += 1;
             }
@@ -365,7 +365,7 @@ fn run_viewport_scenario(
     println!(
         "SCENARIO {label}\n  workers={workers} visible={} (level={}) dirty_processed_after_invalidate={dirty_processed} scheduled_composites={queued}\n  wall={}  first_visible_ok={}  processed_calls={}  composite_ok={}  composite_retry={}  fresh={}/{}\n",
         visible.len(),
-        state.viewport.lock().unwrap().level,
+        state.ui.viewport.lock().unwrap().level,
         fmt_ms(stats.wall),
         stats
             .first_ok
@@ -595,7 +595,7 @@ fn build_resident_frame_job(
     let snapshot = state.must_active().document_handle.snapshot();
     let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
     let doc = snapshot.id.0;
-    let viewport = state.viewport.lock().unwrap().clone();
+    let viewport = state.ui.viewport.lock().unwrap().clone();
 
     let mut tiles = Vec::new();
     for coord in &viewport.visible_tiles {
@@ -608,7 +608,7 @@ fn build_resident_frame_job(
             coord: *coord,
             stage: CacheStage::Raw,
         };
-        let raw = state.tile_cache.get_entry(raw_key)?;
+        let raw = state.tiles.tile_cache.get_entry(raw_key)?;
         let processed_key = TileKey {
             stage: CacheStage::Processed,
             ..raw_key
@@ -712,7 +712,7 @@ fn build_resident_composite_job(
     let snapshot = state.must_active().document_handle.snapshot();
     let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
     let doc = snapshot.id.0;
-    let viewport = state.viewport.lock().unwrap().clone();
+    let viewport = state.ui.viewport.lock().unwrap().clone();
 
     let mut tiles = Vec::new();
     for coord in &viewport.visible_tiles {
@@ -728,10 +728,11 @@ fn build_resident_composite_job(
                 stage: CacheStage::Processed,
             };
             let pixels = state
+                .tiles
                 .tile_cache
                 .get_entry(processed_key)
                 .or_else(|| {
-                    state.tile_cache.get_entry(TileKey {
+                    state.tiles.tile_cache.get_entry(TileKey {
                         stage: CacheStage::Raw,
                         ..processed_key
                     })
@@ -1546,7 +1547,7 @@ fn preview_latency_diag_industrial_gate() {
         for layer in [1u32, 2, 3] {
             for coord in &origin {
                 let raw = state
-                    .tile_cache
+                    .tiles.tile_cache
                     .get_entry(TileKey {
                         doc: 1,
                         layer,
@@ -1554,7 +1555,7 @@ fn preview_latency_diag_industrial_gate() {
                         stage: CacheStage::Raw,
                     })
                     .expect("raw");
-                state.tile_cache.insert_fresh(
+                state.tiles.tile_cache.insert_fresh(
                     TileKey {
                         doc: 1,
                         layer,
@@ -1658,7 +1659,7 @@ fn preview_latency_diag_industrial_gate() {
     set_viewport(&c_state, 1.0, 0.0, 0.0);
     // Restrict visible to preset tiles for a fair small-footprint compare
     {
-        let mut vp = c_state.viewport.lock().unwrap();
+        let mut vp = c_state.ui.viewport.lock().unwrap();
         vp.visible_tiles = preset_tiles.clone();
     }
     let c_layer = c_state
