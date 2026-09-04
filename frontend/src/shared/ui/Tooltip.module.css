@@ -11,18 +11,31 @@
   min-width: 0;
 }
 
+.tooltip-host-fill {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+}
+
+.tooltip-host-fill > * {
+  flex: 0 0 auto;
+}
+
 .tooltip {
   position: fixed;
   z-index: 20000;
   pointer-events: none;
   max-width: 240px;
-  padding: 3px 7px;
-  background: var(--color-black);
-  color: var(--color-white);
-  border: var(--border);
-  font-family: var(--font-family);
-  font-size: 11px;
-  line-height: 1.3;
+  padding: 3px 8px;
+  background: var(--bg-window, #CDCDCD);
+  color: var(--text-color, #000);
+  border: var(--border, 1.5px solid #000);
+  border-radius: 0;
+  font-family: var(--font-family, 'ChicagoFLF', 'Geneva', 'Chicago', monospace);
+  font-size: 12px;
+  line-height: 1.25;
   white-space: pre-wrap;
-  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light);
 }

@@ -5,6 +5,7 @@ import { startEngineEventBridge } from './listeners';
 import { ShellProvider } from './shell/ShellContext';
 import { ShortcutsProvider } from '../features/shortcuts/ShortcutsContext';
 import { useAppShortcuts } from '../features/shortcuts/useAppShortcuts';
+import { LayoutProvider } from '../contexts/LayoutContext';
 
 function ShortcutEngine() {
   useAppShortcuts();
@@ -25,7 +26,9 @@ export function Providers({ children }: { children: ReactNode }) {
       <ShellProvider>
         <ShortcutsProvider>
           <ShortcutEngine />
-          {children}
+          <LayoutProvider>
+            {children}
+          </LayoutProvider>
         </ShortcutsProvider>
       </ShellProvider>
     </Provider>

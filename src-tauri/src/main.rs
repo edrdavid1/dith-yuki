@@ -3,7 +3,7 @@
 mod commands;
 mod document_session;
 mod dock_affinity;
-mod global_mouseup;
+mod flexlayout_persistence;
 mod gpu_resident_shadow;
 mod macos_title;
 mod native_menu;
@@ -20,7 +20,7 @@ mod worker;
 #[cfg(test)]
 mod preview_latency_diag;
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use engine_project::document::DocumentHandle;
@@ -32,16 +32,15 @@ use commands::{AppState, ViewportState};
 use panel_manager::PanelManager;
 use worker::WorkerWake;
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
-use tauri::webview::WebviewWindowBuilder;
+use tauri::webview::{NewWindowResponse, WebviewWindowBuilder};
 #[cfg(target_os = "macos")]
 use objc::{msg_send, sel, sel_impl, class};
 use tile_protocol::{f32_tile_to_rgba8, parse_tile_url, LayerTarget};
 
 fn main() {
-    let dock_affinity_enabled = global_mouseup::mouseup_backend_available();
-    if !dock_affinity_enabled {
-        log::warn!("Dock affinity unavailable on this platform (no mouseup backend)");
-    }
+    // B4c: affinity enabled on all platforms — Flex popout completes via JS mouseup,
+    // not global_mouseup (which was unavailable on Linux).
+    let dock_affinity_enabled = true;
 
     // Track D: optional GPU. Force-CPU via DITHER_FORCE_CPU=1; prefer via DITHER_GPU=1
     // (runtime or compile-time). Finder-launched .app has no shell env.
@@ -97,6 +96,7 @@ fn main() {
         .on_window_event(|window, event| {
             let label = window.label().to_string();
             let is_panel = label.starts_with("panel-");
+            let is_flex_popout = label.starts_with("flex-popout-");
 
             match event {
                 WindowEvent::Resized(_) if !is_panel => {
@@ -112,7 +112,7 @@ fn main() {
                         // after live resize was a major source of the jump.
                     }
                 }
-                WindowEvent::Moved(_) if is_panel => {
+                WindowEvent::Moved(_) if is_panel || is_flex_popout => {
                     let app_handle = window.app_handle().clone();
                     let state = app_handle.state::<Arc<AppState>>();
                     if let (Ok(pos), Ok(size), Ok(scale)) =
@@ -140,9 +140,6 @@ fn main() {
                         let state = app_handle.state::<Arc<AppState>>();
 
                         // Drop any in-flight float-drag session.
-                        state
-                            .float_drag_mouseup_cancel
-                            .store(true, Ordering::SeqCst);
                         if let Ok(mut ctrl) = state.dock_affinity.lock() {
                             let _ = ctrl.cancel();
                         }
@@ -187,10 +184,155 @@ fn main() {
             }
         })
         .setup(move |app| {
+            // Main window is create:false in tauri.conf — build here so we can
+            // allow FlexLayout's window.open() popouts (denied by default in Tauri).
+            let main_conf = app
+                .config()
+                .app
+                .windows
+                .iter()
+                .find(|w| w.label == "main")
+                .cloned()
+                .expect("main window config missing");
+            // FlexLayout popouts via window.open — create Color Lab–style windows
+            // (frameless + Overlay), not default decorated OS chrome.
+            // FlexLayout's screen rect (screenX + layout rect) is often wrong in
+            // WKWebView/Retina; clamp like Color Lab undock so the window is visible.
+            let app_for_popout = app.handle().clone();
+            static FLEX_POPOUT_SEQ: AtomicU64 = AtomicU64::new(1);
+            let main_window = WebviewWindowBuilder::from_config(app, &main_conf)?
+                .on_new_window(move |url, features| {
+                    let n = FLEX_POPOUT_SEQ.fetch_add(1, Ordering::Relaxed);
+                    let label = format!("flex-popout-{n}");
+
+                    let req_pos = features.position();
+                    let req_size = features.size();
+
+                    let builder = WebviewWindowBuilder::new(
+                        &app_for_popout,
+                        &label,
+                        tauri::WebviewUrl::External(url),
+                    )
+                    .window_features(features)
+                    .title("Dither")
+                    .resizable(true)
+                    .decorations(false)
+                    .title_bar_style(tauri::TitleBarStyle::Overlay)
+                    .min_inner_size(280.0, 200.0);
+
+                    match builder.build() {
+                        Ok(window) => {
+                            let (monitors, primary) =
+                                commands::panels::get_monitor_rects(&app_for_popout);
+
+                            let width = req_size
+                                .map(|s| s.width.round().max(280.0) as u32)
+                                .unwrap_or(350);
+                            let height = req_size
+                                .map(|s| s.height.round().max(200.0) as u32)
+                                .unwrap_or(500);
+
+                            let (x, y) = match req_pos {
+                                Some(p) => (p.x.round() as i32, p.y.round() as i32),
+                                None => {
+                                    // Fall back beside the main window.
+                                    if let Some(main) = app_for_popout.get_webview_window("main") {
+                                        if let (Ok(pos), Ok(scale)) =
+                                            (main.outer_position(), main.scale_factor())
+                                        {
+                                            let lx = (pos.x as f64 / scale).round() as i32 + 40;
+                                            let ly = (pos.y as f64 / scale).round() as i32 + 60;
+                                            (lx, ly)
+                                        } else {
+                                            (80, 80)
+                                        }
+                                    } else {
+                                        (80, 80)
+                                    }
+                                }
+                            };
+
+                            let raw = panel_manager::SavedBounds {
+                                x,
+                                y,
+                                width,
+                                height,
+                            };
+                            let fixed = commands::panels::resolve_undock_bounds(
+                                "layers",
+                                Some(raw),
+                                &monitors,
+                                primary.as_ref(),
+                            );
+
+                            let _ = window.set_size(tauri::Size::Logical(
+                                tauri::LogicalSize::new(
+                                    fixed.width as f64,
+                                    fixed.height as f64,
+                                ),
+                            ));
+                            let _ = window.set_position(tauri::Position::Logical(
+                                tauri::LogicalPosition::new(
+                                    fixed.x as f64,
+                                    fixed.y as f64,
+                                ),
+                            ));
+                            let _ = window.set_focus();
+
+                            #[cfg(target_os = "macos")]
+                            {
+                                macos_title::apply_overlay_csd(&window);
+                                if let Ok(ns_window) = window.ns_window() {
+                                    use cocoa::appkit::NSWindow;
+                                    use cocoa::base::id;
+                                    let ns_window = ns_window as id;
+                                    unsafe {
+                                        let bg_color: id = msg_send![
+                                            class!(NSColor),
+                                            colorWithRed: (0xCD as f64) / 255.0
+                                            green: (0xCD as f64) / 255.0
+                                            blue: (0xCD as f64) / 255.0
+                                            alpha: 1.0f64
+                                        ];
+                                        ns_window.setBackgroundColor_(bg_color);
+                                    }
+                                }
+                            }
+                            NewWindowResponse::Create { window }
+                        }
+                        Err(err) => {
+                            eprintln!("[flex-popout] window create failed: {err}");
+                            NewWindowResponse::Deny
+                        }
+                    }
+                })
+                .build()?;
+
             native_menu::install(app)?;
             let app_handle = app.handle().clone();
             if let Ok(mut slot) = state.app_handle.lock() {
                 *slot = Some(app_handle.clone());
+            }
+
+            // Initialize FlexLayout persistence with real app_data_dir (B3)
+            if let Ok(app_data_dir) = app_handle.path().app_data_dir() {
+                let new_persistence = crate::flexlayout_persistence::FlexLayoutPersistence::new(app_data_dir.clone());
+                if let Ok(mut persistence_slot) = state.flexlayout_persistence.lock() {
+                    *persistence_slot = new_persistence;
+                }
+                // B4a: per-side persistence
+                let left_persistence = crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
+                    app_data_dir.clone(), "flexlayout_left.json",
+                );
+                let right_persistence = crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
+                    app_data_dir, "flexlayout_right.json",
+                );
+                if let Ok(mut slot) = state.flexlayout_left.lock() {
+                    *slot = left_persistence;
+                }
+                if let Ok(mut slot) = state.flexlayout_right.lock() {
+                    *slot = right_persistence;
+                }
             }
 
             // Set native titlebar color on macOS
@@ -199,7 +341,6 @@ fn main() {
                 use cocoa::appkit::NSWindow;
                 use cocoa::base::id;
 
-                let main_window = app.get_webview_window("main").unwrap();
                 // decorations stay true so traffic lights exist; Overlay+fullSize
                 // puts them on the same row as File/Edit (not a second native strip).
                 macos_title::apply_overlay_csd(&main_window);
@@ -219,9 +360,7 @@ fn main() {
 
             #[cfg(not(target_os = "macos"))]
             {
-                if let Some(main_window) = app.get_webview_window("main") {
-                    let _ = main_window.set_decorations(false);
-                }
+                let _ = main_window.set_decorations(false);
             }
 
             // Load persisted panel state (if available) and replace the default.
@@ -402,7 +541,18 @@ fn main() {
             commands::panels::update_dock_zone,
             commands::panels::begin_float_drag,
             commands::panels::cancel_float_drag,
+            commands::panels::complete_float_drag,
             commands::panels::dock_panel_at,
+            
+            // FlexLayout commands
+            commands::flexlayout::save_layout,
+            commands::flexlayout::load_layout,
+            commands::flexlayout::reset_layout_to_default,
+            // B4a: per-side FlexLayout commands
+            commands::flexlayout::load_layout_left,
+            commands::flexlayout::save_layout_left,
+            commands::flexlayout::load_layout_right,
+            commands::flexlayout::save_layout_right,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

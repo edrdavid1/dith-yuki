@@ -30,6 +30,10 @@ export interface EffectSettingsPanelProps {
   onTitleBarMouseDown?: (e: React.MouseEvent) => void;
   dockSide?: DockSide;
   onMoveToSide?: (side: DockSide) => void;
+  /** When true, omit WindowTitlebar — FlexLayout tab strip is the chrome. */
+  hideChrome?: boolean;
+  onPopOut?: () => void;
+  onDockBack?: () => void;
   /** Leaf layer to export/import a `.dyuki` pattern against. */
   targetLayerId?: number | null;
   onExportPattern?: () => void;
@@ -85,6 +89,9 @@ export default function EffectSettingsPanel({
   onTitleBarMouseDown,
   dockSide,
   onMoveToSide,
+  hideChrome = false,
+  onPopOut,
+  onDockBack,
   targetLayerId = null,
   onExportPattern,
   onImportPattern,
@@ -120,12 +127,16 @@ export default function EffectSettingsPanel({
   if (!selectedLayer || selectedLayer.filters.length === 0) {
     return (
       <div className={cn('effect-settings-panel', 'effect-chooser-panel')}>
-        <WindowTitlebar
-          title="Effect"
-          onMouseDown={onTitleBarMouseDown}
-          dockSide={dockSide}
-          onMoveToSide={onMoveToSide}
-        />
+        {!hideChrome && (
+          <WindowTitlebar
+            title="Effect"
+            onMouseDown={onTitleBarMouseDown}
+            dockSide={dockSide}
+            onMoveToSide={onMoveToSide}
+            onPopOut={onPopOut}
+            onDockBack={onDockBack}
+          />
+        )}
         <div className={cn("effect-settings-scroll")}>
           <SimpleBar style={{ height: '100%' }}>
             <div className={cn("effect-chooser-list")} role="listbox" aria-label="Choose effect type">
@@ -185,12 +196,16 @@ export default function EffectSettingsPanel({
 
   return (
     <div className={cn("effect-settings-panel")}>
-      <WindowTitlebar
-        title={effectType || 'Dithering'}
-        onMouseDown={onTitleBarMouseDown}
-        dockSide={dockSide}
-        onMoveToSide={onMoveToSide}
-      />
+      {!hideChrome && (
+        <WindowTitlebar
+          title={effectType || 'Dithering'}
+          onMouseDown={onTitleBarMouseDown}
+          dockSide={dockSide}
+          onMoveToSide={onMoveToSide}
+          onPopOut={onPopOut}
+          onDockBack={onDockBack}
+        />
+      )}
       <div className={cn("effect-settings-scroll")}>
         <SimpleBar style={{ height: '100%' }}>
           <div className={cn("effect-settings-body")}>

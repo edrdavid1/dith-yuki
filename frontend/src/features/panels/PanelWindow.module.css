@@ -15,7 +15,7 @@
 }
 
 .panel-window-titlebar-affinity {
-  background: color-mix(in srgb, var(--bg-titlebar) 70%, var(--color-primary));
+  background: color-mix(in srgb, var(--bg-titlebar) 70%, var(--color-primary)) !important;
 }
 
 /* Native-decorated variant (preview): no border, fills viewport */

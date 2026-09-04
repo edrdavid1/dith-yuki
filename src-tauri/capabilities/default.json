@@ -1,11 +1,17 @@
 {
   "identifier": "default",
   "description": "Default permissions",
-  "windows": ["main", "panel-effect", "panel-layers", "panel-colorlab", "panel-preview", "panel-preferences"],
+  "windows": [
+    "main",
+    "panel-*",
+    "flex-popout-*",
+    "*"
+  ],
   "permissions": [
     "core:default",
     "core:app:allow-version",
     "core:window:allow-start-dragging",
+    "core:window:allow-set-position",
     "core:window:allow-minimize",
     "core:window:allow-close",
     "core:window:allow-set-focus",

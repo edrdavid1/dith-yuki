@@ -18,6 +18,7 @@ import PreviewFeature from '../features/preview/PreviewFeature';
 import PreferencesFeature from '../features/preferences/PreferencesFeature';
 import NewProjectDialog from './NewProjectDialog';
 import { useWelcomeScreen } from '../hooks/useWelcomeScreen';
+import WindowTitlebar from '../shared/ui/WindowTitlebar';
 import styles from '../features/panels/PanelWindow.module.css';
 import { bind } from '../shared/ui/cn';
 const cn = bind(styles);
@@ -67,6 +68,16 @@ function PanelWindow({ panelId }: PanelWindowProps): JSX.Element {
       await getCurrentWindow().minimize();
     } catch (err) {
       console.error(`[PanelWindow] Failed to minimize panel "${panelId}":`, err);
+    }
+  }, [panelId]);
+
+  const handleMaximize = useCallback(async () => {
+    try {
+      const win = getCurrentWindow();
+      if (await win.isMaximized()) await win.unmaximize();
+      else await win.maximize();
+    } catch (err) {
+      console.error(`[PanelWindow] Failed to maximize panel "${panelId}":`, err);
     }
   }, [panelId]);
 
@@ -228,45 +239,23 @@ function PanelWindow({ panelId }: PanelWindowProps): JSX.Element {
       className={cn('panel-window', affinityArmed && 'panel-window-affinity')}
       data-panel-id={panelId}
     >
-      <div
-        className={cn('panel-window-titlebar', affinityArmed && 'panel-window-titlebar-affinity')}
+      <WindowTitlebar
+        variant="floating"
+        title={displayName}
+        className={affinityArmed ? cn('panel-window-titlebar-affinity') : undefined}
         onMouseDown={handleTitlebarMouseDown}
-      >
-        <div className={cn("panel-window-titlebar-actions")}>
-          <button
-            className={cn("panel-window-btn", "panel-window-btn-close")}
-            onClick={handleClose}
-            onMouseDown={(e) => e.stopPropagation()}
-            title={
-              panelId === 'preferences'
-                ? 'Close'
-                : panelId === 'preview'
-                  ? 'Return preview to main window'
-                  : 'Dock panel back to sidebar'
-            }
-            type="button"
-          >
-            <img src="/icons/clouse-window-icon.svg" width="14" height="14" alt="" />
-          </button>
-          <button
-            className={cn("panel-window-btn", "panel-window-btn-minimize")}
-            onClick={handleMinimize}
-            onMouseDown={(e) => e.stopPropagation()}
-            title="Minimize"
-            type="button"
-          >
-            <img src="/icons/hide-window-icon.svg" width="14" height="14" alt="" />
-          </button>
-        </div>
-        <div className={cn("panel-window-titlebar-drag")}>
-          <div className={cn("panel-window-titlebar-lines")}></div>
-          <span className={cn("panel-window-title")}>
-            {displayName}
-          </span>
-          <div className={cn("panel-window-titlebar-lines")}></div>
-        </div>
-      </div>
-      <div className={cn("panel-window-content")} data-floating-panel-content>
+        onClose={handleClose}
+        onMinimize={handleMinimize}
+        onMaximize={handleMaximize}
+        closeLabel={
+          panelId === 'preferences'
+            ? 'Close'
+            : panelId === 'preview'
+              ? 'Return preview to main window'
+              : 'Dock panel back to sidebar'
+        }
+      />
+      <div className={cn('panel-window-content')} data-floating-panel-content>
         {renderPanelContent()}
       </div>
     </div>
