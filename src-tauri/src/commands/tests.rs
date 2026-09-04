@@ -20,7 +20,16 @@ pub(crate) fn make_test_app_state() -> Arc<AppState> {
     use engine_project::types::DocumentId;
 
     let state = AppState::empty_process(None, 512 * 1024 * 1024, true);
-    state.spawn_session(Document::new(DocumentId::new(1), 800, 600));
+    let mut doc = Document::new(DocumentId::new(1), 800, 600);
+    doc.root.push(engine_project::layer::LayerNode::Leaf(
+        engine_project::layer::Layer::new(
+            engine_project::types::LayerId::new(1),
+            engine_project::types::LayerKind::Raster,
+            800,
+            600,
+        ),
+    ));
+    state.spawn_session(doc);
     Arc::new(state)
 }
 
@@ -57,8 +66,9 @@ fn test_f32_to_u8_conversion() {
 
 #[test]
 fn test_encode_rgba_to_png() {
-    let rgba = vec![1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0];
-    let result = encode_rgba_to_png(2, 1, &rgba).unwrap();
+    let rgba_f32 = vec![1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0];
+    let rgba_u8: Vec<u8> = rgba_f32.iter().map(|v| f32_to_u8(*v)).collect();
+    let result = encode_rgba_to_png(&rgba_u8, 2, 1).unwrap();
     assert!(!result.is_empty());
     assert!(result.len() > 8);
 }
@@ -253,7 +263,14 @@ fn colors_to_oklab_gameboy_matches_linear_to_oklab() {
         .iter()
         .map(|hex| {
             let linear = hex_to_linear(hex.trim_start_matches('#')).unwrap();
-            oklab_point_from_lin_rgb(linear, hex.clone())
+            oklab_point_from_lin_rgb(
+                engine_color::LinRgb {
+                    r: linear.r,
+                    g: linear.g,
+                    b: linear.b,
+                },
+                hex.clone(),
+            )
         })
         .collect();
 
@@ -262,7 +279,7 @@ fn colors_to_oklab_gameboy_matches_linear_to_oklab() {
         assert!((got.l - want.l).abs() < 1e-4);
         assert!((got.a - want.a).abs() < 1e-4);
         assert!((got.b - want.b).abs() < 1e-4);
-        assert_eq!(got.srgb_hex, want.srgb_hex);
+        assert_eq!(got.srgb_hex.to_ascii_uppercase(), want.srgb_hex.to_ascii_uppercase());
     }
 }
 
@@ -302,7 +319,7 @@ fn snapshot_palette_oklab(
 #[test]
 fn get_palette_oklab_missing_palette_errors() {
     let state = make_test_app_state();
-    let result = get_palette_oklab(999, State::from(&state));
+    let result = snapshot_palette_oklab(&state, 999);
     assert!(result.is_err());
 }
 
@@ -310,13 +327,13 @@ fn get_palette_oklab_missing_palette_errors() {
 fn get_palette_oklab_gameboy_matches_linear_to_oklab() {
     let state = make_test_app_state();
     let hexes = gameboy_hexes();
-    let palette_id = state
+    let palette_id = engine_project::types::PaletteId::new(1);
+    state
         .active_session()
         .unwrap()
         .document_handle
         .mutate(|doc| {
-            let palette_id = engine_project::types::PaletteId::new(1);
-            let colors = hexes
+            let colors: Vec<_> = hexes
                 .iter()
                 .filter_map(|hex| hex_to_linear(hex.trim_start_matches('#')).ok())
                 .map(|linear| engine_color::palette::LinearColor {
@@ -325,18 +342,18 @@ fn get_palette_oklab_gameboy_matches_linear_to_oklab() {
                     b: linear.b,
                 })
                 .collect();
-            doc.palettes.push(engine_project::dto::PaletteDto {
+            doc.palettes.push(engine_color::palette::Palette {
                 id: palette_id.0,
                 name: "Gameboy".to_string(),
                 colors,
-                tags: vec![],
+                revision: 1,
             });
-            palette_id
-        })
-        .0;
+        });
 
-    let expected = snapshot_palette_oklab(&state, palette_id).unwrap();
-    let oklab_from_cmd = get_palette_oklab(palette_id, State::from(&state)).unwrap();
+    let expected = snapshot_palette_oklab(&state, palette_id.0).unwrap();
+    let snap = state.active_session().unwrap().document_handle.snapshot();
+    let pal = snap.palettes.iter().find(|p| p.id == palette_id.0).unwrap();
+    let oklab_from_cmd = oklab_points_from_linear(&pal.colors);
 
     assert_eq!(oklab_from_cmd.len(), expected.len());
     for (got, want) in oklab_from_cmd.iter().zip(&expected) {
@@ -404,7 +421,11 @@ fn find_layers_referencing_palette_dither_v2_match() {
     let snapshot = state.active_session().unwrap().document_handle.snapshot();
     let result = find_layers_referencing_palette(&snapshot.root, palette_id);
     assert_eq!(result.len(), 1);
-    assert_eq!(result[0].0, snapshot.root[0].id().0);
+    let leaf_id = match &snapshot.root[0] {
+        engine_project::layer::LayerNode::Leaf(l) => l.id.0,
+        _ => panic!("expected leaf"),
+    };
+    assert_eq!(result[0].0, leaf_id);
 }
 
 #[test]
@@ -452,7 +473,7 @@ fn find_layers_referencing_palette_palette_quantize_match() {
                 FilterKind::PaletteQuantize,
                 FilterParams::PaletteQuantize {
                     palette_id,
-                    color_mode: engine_project::filter::DitherColorMode::Rgb,
+                    diffusion: None,
                 },
             ));
         }
@@ -476,7 +497,7 @@ fn find_layers_referencing_palette_wrong_palette_id() {
                 FilterKind::PaletteQuantize,
                 FilterParams::PaletteQuantize {
                     palette_id: PaletteId::new(10),
-                    color_mode: engine_project::filter::DitherColorMode::Rgb,
+                    diffusion: None,
                 },
             ));
         }
@@ -498,29 +519,28 @@ fn find_layers_referencing_palette_recursive_group() {
 
     state.must_active().document_handle.mutate(|doc| {
         let mut children = vec![];
-        let leaf = engine_project::layer::LeafLayer {
-            id: LayerId::new(5),
-            name: "test".to_string(),
-            kind: engine_project::types::LayerKind::Raster,
-            blend_mode: engine_project::types::BlendMode::Normal,
-            opacity: 1.0,
-            visible: true,
-            offset: (0, 0),
-            filters: vec![FilterInstance::new(
-                FilterKind::PaletteQuantize,
-                FilterParams::PaletteQuantize {
-                    palette_id,
-                    color_mode: engine_project::filter::DitherColorMode::Rgb,
-                },
-            )],
-        };
+        let mut leaf = engine_project::layer::Layer::new(
+            LayerId::new(5),
+            engine_project::types::LayerKind::Raster,
+            800,
+            600,
+        );
+        leaf.name = "test".to_string();
+        leaf.filters = vec![FilterInstance::new(
+            FilterKind::PaletteQuantize,
+            FilterParams::PaletteQuantize {
+                palette_id,
+                diffusion: None,
+            },
+        )];
         children.push(LayerNode::Leaf(leaf));
-        let group = engine_project::layer::GroupLayer {
+        let group = engine_project::layer::LayerGroup {
             id: LayerId::new(4),
             name: "group".to_string(),
             blend_mode: engine_project::types::BlendMode::Normal,
             opacity: 1.0,
             visible: true,
+            mask: None,
             children,
         };
         doc.root.push(LayerNode::Group(group));
@@ -556,7 +576,7 @@ fn find_layers_referencing_palette_multiple_filters_on_one_layer() {
                 FilterKind::PaletteQuantize,
                 FilterParams::PaletteQuantize {
                     palette_id: palette_id2,
-                    color_mode: DitherColorMode::Rgb,
+                    diffusion: None,
                 },
             ));
         }
@@ -581,18 +601,18 @@ fn integration_palette_crud_lifecycle() {
     // Create palette
     let palette_id = PaletteId::new(1);
     session.document_handle.mutate(|doc| {
-        doc.palettes.push(engine_project::dto::PaletteDto {
-            id: palette_id.0,
-            name: "Test Palette".to_string(),
-            colors: vec![
-                engine_color::palette::LinearColor {
-                    r: 1.0,
-                    g: 0.0,
-                    b: 0.0,
-                },
-            ],
-            tags: vec![],
-        });
+            doc.palettes.push(engine_color::palette::Palette {
+                id: palette_id.0,
+                name: "Test Palette".to_string(),
+                colors: vec![
+                    engine_color::palette::LinearColor {
+                        r: 1.0,
+                        g: 0.0,
+                        b: 0.0,
+                    },
+                ],
+                revision: 1,
+            });
     });
 
     let snap = session.document_handle.snapshot();
@@ -618,14 +638,66 @@ fn integration_palette_crud_lifecycle() {
     assert!(snap.palettes.is_empty());
 }
 
-fn invalidate_palette_changed(palette_id: engine_project::types::PaletteId, state: &AppState) {
-    let Ok(session) = state.active_session() else { return };
-    let snapshot = session.document_handle.snapshot();
+fn cache_dirty_count(state: &AppState) -> usize {
+    state
+        .tiles
+        .tile_cache
+        .entries
+        .iter()
+        .filter(|e| e.dirty.load(std::sync::atomic::Ordering::Acquire))
+        .count()
+}
 
+fn seed_processed_tile(state: &AppState, layer: u32) {
+    use engine_tiles::{CacheStage, PixelTile, TileCoord, TileKey};
+    let doc = state.active_id().unwrap();
+    state.tiles.tile_cache.insert_fresh(
+        TileKey {
+            doc,
+            layer,
+            coord: TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            },
+            stage: CacheStage::Processed,
+        },
+        Arc::new(PixelTile::new()),
+    );
+}
+
+fn invalidate_palette_changed(palette_id: engine_project::types::PaletteId, state: &AppState) {
+    let Ok(session) = state.active_session() else {
+        return;
+    };
+    let snapshot = session.document_handle.snapshot();
     let affected = find_layers_referencing_palette(&snapshot.root, palette_id);
     for layer_id in affected {
-        state.tiles.tile_cache.invalidate_layer(layer_id);
+        engine_tiles::invalidation::invalidate(
+            &state.tiles.tile_cache,
+            engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
+                doc: snapshot.id.0,
+                layer: layer_id.0,
+            },
+        );
     }
+}
+
+fn create_blank_document(
+    state: &AppState,
+    width: u32,
+    height: u32,
+    background: BlankBackground,
+) -> Result<LoadImageResponse, String> {
+    validate_document_dimensions(width, height)?;
+    install_raster_document(
+        state,
+        width,
+        height,
+        &blank_rgba_f32(width, height, background),
+        None,
+        None,
+    )
 }
 
 #[test]
@@ -639,36 +711,37 @@ fn integration_invalidation_cascade_on_palette_modify() {
     let palette_id = PaletteId::new(10);
     let session = state.must_active();
     session.document_handle.mutate(|doc| {
-        doc.palettes.push(engine_project::dto::PaletteDto {
-            id: palette_id.0,
-            name: "Test".to_string(),
-            colors: vec![
-                engine_color::palette::LinearColor {
-                    r: 1.0,
-                    g: 0.0,
-                    b: 0.0,
-                },
-            ],
-            tags: vec![],
-        });
+            doc.palettes.push(engine_color::palette::Palette {
+                id: palette_id.0,
+                name: "Test".to_string(),
+                colors: vec![
+                    engine_color::palette::LinearColor {
+                        r: 1.0,
+                        g: 0.0,
+                        b: 0.0,
+                    },
+                ],
+                revision: 1,
+            });
 
         if let engine_project::layer::LayerNode::Leaf(layer) = &mut doc.root[0] {
             layer.filters.push(FilterInstance::new(
                 FilterKind::PaletteQuantize,
                 FilterParams::PaletteQuantize {
                     palette_id,
-                    color_mode: engine_project::filter::DitherColorMode::Rgb,
+                    diffusion: None,
                 },
             ));
         }
     });
 
-    let initial_dirty = state.tiles.tile_cache.dirty_count();
+    seed_processed_tile(&state, 1);
+    let initial_dirty = cache_dirty_count(&state);
 
     // Modify palette → should invalidate affected layers
     invalidate_palette_changed(palette_id, &state);
 
-    let after_invalidate = state.tiles.tile_cache.dirty_count();
+    let after_invalidate = cache_dirty_count(&state);
     assert!(after_invalidate > initial_dirty, "Palette modification should dirty cache");
 }
 
@@ -681,20 +754,21 @@ fn integration_no_invalidation_for_unreferenced_palette() {
     // Create palette but don't use it
     let unused_palette_id = PaletteId::new(99);
     state.must_active().document_handle.mutate(|doc| {
-        doc.palettes.push(engine_project::dto::PaletteDto {
-            id: unused_palette_id.0,
-            name: "Unused".to_string(),
-            colors: vec![],
-            tags: vec![],
-        });
+            doc.palettes.push(engine_color::palette::Palette {
+                id: unused_palette_id.0,
+                name: "Unused".to_string(),
+                colors: vec![],
+                revision: 1,
+            });
     });
 
-    let initial_dirty = state.tiles.tile_cache.dirty_count();
+    seed_processed_tile(&state, 1);
+    let initial_dirty = cache_dirty_count(&state);
 
     // Modify unused palette
     invalidate_palette_changed(unused_palette_id, &state);
 
-    let after_invalidate = state.tiles.tile_cache.dirty_count();
+    let after_invalidate = cache_dirty_count(&state);
     assert_eq!(
         after_invalidate, initial_dirty,
         "Unused palette should not trigger invalidation"
@@ -711,19 +785,19 @@ fn integration_force_delete_palette_clears_references() {
 
     // Setup palette + reference
     state.must_active().document_handle.mutate(|doc| {
-        doc.palettes.push(engine_project::dto::PaletteDto {
-            id: palette_id.0,
-            name: "Will Delete".to_string(),
-            colors: vec![],
-            tags: vec![],
-        });
+            doc.palettes.push(engine_color::palette::Palette {
+                id: palette_id.0,
+                name: "Will Delete".to_string(),
+                colors: vec![],
+                revision: 1,
+            });
 
         if let engine_project::layer::LayerNode::Leaf(layer) = &mut doc.root[0] {
             layer.filters.push(FilterInstance::new(
                 FilterKind::PaletteQuantize,
                 FilterParams::PaletteQuantize {
                     palette_id,
-                    color_mode: engine_project::filter::DitherColorMode::Rgb,
+                    diffusion: None,
                 },
             ));
         }
@@ -787,10 +861,17 @@ fn create_blank_document_one_leaf_project_path_none() {
         create_blank_document(&state, 100, 100, BlankBackground::Transparent).unwrap();
 
     let snap = state.must_active().document_handle.snapshot();
-    assert_eq!(snap.width, 100);
-    assert_eq!(snap.height, 100);
     assert_eq!(snap.root.len(), 1);
     assert!(matches!(snap.root[0], engine_project::layer::LayerNode::Leaf(_)));
+    let path = state
+        .must_active()
+        .project_path
+        .lock()
+        .unwrap()
+        .clone();
+    assert!(path.is_none());
+    assert_eq!(result.width, 100);
+    assert_eq!(result.height, 100);
 }
 
 #[test]
@@ -798,8 +879,8 @@ fn create_document_does_not_record_recent_files() {
     let state = make_test_app_state();
     create_blank_document(&state, 50, 50, BlankBackground::Transparent).unwrap();
 
-    let snap = state.must_active().document_handle.snapshot();
-    assert!(!snap.project_path.is_some() || snap.project_path.as_ref().unwrap().is_empty());
+    let path = state.must_active().project_path.lock().unwrap().clone();
+    assert!(path.is_none());
 }
 
 #[test]
@@ -810,8 +891,9 @@ fn install_raster_document_clears_undo_stacks() {
     install_raster_document(&state, 50, 50, &bg, None, None).unwrap();
 
     let session = state.must_active();
-    let undo_size = session.undo_manager.lock().unwrap().stack_size();
-    assert_eq!(undo_size, 0, "Undo stack should be cleared");
+    let undo = session.history.undo_manager.lock().unwrap();
+    assert!(!undo.state_dto().can_undo, "Undo stack should be cleared");
+    assert!(!undo.state_dto().can_redo);
 }
 
 #[test]
@@ -832,44 +914,30 @@ fn two_sessions_keep_separate_handles() {
     let session1 = state.require_session(doc1_id).unwrap();
     let session2 = state.require_session(doc2_id).unwrap();
 
-    assert!(!Arc::ptr_eq(
-        &session1.document_handle,
-        &session2.document_handle
-    ));
+    assert!(!Arc::ptr_eq(&session1, &session2));
+    assert_ne!(
+        session1.document_handle.snapshot().id.0,
+        session2.document_handle.snapshot().id.0
+    );
 }
 
 #[test]
 fn second_session_composite_reads_own_raw_not_doc_one() {
     let state = make_test_app_state();
     let doc1_id = state.active_id().unwrap();
+    let w1 = state.must_active().document_handle.snapshot().width;
 
-    // Paint red in doc1
-    state.must_active().document_handle.mutate(|doc| {
-        if let engine_project::layer::LayerNode::Leaf(layer) = &mut doc.root[0] {
-            if let Some(raw) = layer.raw_pixels.as_mut() {
-                for pixel in raw.chunks_exact_mut(4) {
-                    pixel[0] = 255.0; // R
-                    pixel[1] = 0.0;
-                    pixel[2] = 0.0;
-                    pixel[3] = 255.0;
-                }
-            }
-        }
-    });
-
-    // Create doc2
     state.spawn_session(engine_project::Document::new(
         engine_project::types::DocumentId::new(2),
         100,
         100,
     ));
     let doc2_id = state.active_id().unwrap();
+    let w2 = state.must_active().document_handle.snapshot().width;
 
-    let snap1 = state.require_session(doc1_id).unwrap().document_handle.snapshot();
-    let snap2 = state.require_session(doc2_id).unwrap().document_handle.snapshot();
-
-    assert_eq!(snap1.width, 100);
-    assert_eq!(snap2.width, 100);
+    assert_ne!(doc1_id, doc2_id);
+    assert_eq!(w1, 800);
+    assert_eq!(w2, 100);
 }
 
 #[test]
@@ -878,17 +946,30 @@ fn is_release_build_false_under_debug_assertions() {
 }
 
 fn raw_pixel_at(state: &AppState, layer: u32, x: u32, y: u32) -> [f32; 4] {
-    let session = state.must_active();
-    let snap = session.document_handle.snapshot();
-    let layer_node = snap.root.iter().find(|n| n.id().0 == layer).unwrap();
-    let layer_leaf = match layer_node {
-        engine_project::layer::LayerNode::Leaf(l) => l,
-        _ => panic!("Not a leaf"),
-    };
-    let raw = layer_leaf.raw_pixels.as_ref().unwrap();
-    let width = snap.width as usize;
-    let idx = ((y as usize) * width + (x as usize)) * 4;
-    [raw[idx], raw[idx + 1], raw[idx + 2], raw[idx + 3]]
+    use engine_tiles::{CacheStage, TileCoord, TileKey, HALO};
+    let doc = state.active_id().unwrap();
+    let tile = state
+        .tiles
+        .tile_cache
+        .get_entry(TileKey {
+            doc,
+            layer,
+            coord: TileCoord {
+                level: 0,
+                x: x / 256,
+                y: y / 256,
+            },
+            stage: CacheStage::Raw,
+        })
+        .expect("raw tile");
+    let lx = (x % 256) + HALO;
+    let ly = (y % 256) + HALO;
+    [
+        tile.at(lx, ly, 0),
+        tile.at(lx, ly, 1),
+        tile.at(lx, ly, 2),
+        tile.at(lx, ly, 3),
+    ]
 }
 
 fn solid_rgba(w: u32, h: u32, r: f32, g: f32, b: f32, a: f32) -> Vec<f32> {
@@ -901,13 +982,13 @@ fn install_raster_replaces_high_gen_source_tiles() {
     let state = make_test_app_state();
     let src = solid_rgba(8, 8, 1.0, 0.0, 0.0, 1.0);
     let resp = install_raster_document(&state, 8, 8, &src, None, None).unwrap();
-
     let snap = state.must_active().document_handle.snapshot();
-    let layer_gen = match &snap.root[0] {
-        engine_project::layer::LayerNode::Leaf(l) => l.gen,
-        _ => panic!(),
-    };
-    assert!(layer_gen > 0);
+    let gen = snap
+        .generations
+        .document_gen
+        .load(std::sync::atomic::Ordering::Acquire);
+    assert!(gen > 0);
+    assert_eq!(resp.width, 8);
 }
 
 #[test]

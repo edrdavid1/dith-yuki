@@ -91,6 +91,13 @@ impl Scheduler {
         self.queued_count.load(Ordering::Acquire)
     }
 
+    /// True if any pending task is ViewportCenter or Immediate (do not steal GPU for A2).
+    pub fn has_urgent_work(&self) -> bool {
+        self.pending
+            .iter()
+            .any(|t| t.priority >= Priority::ViewportCenter)
+    }
+
     fn push_hint(&self, key: TileKey, priority: Priority) {
         match priority {
             Priority::Immediate => self.immediate.push(key),
@@ -196,6 +203,16 @@ mod tests {
     fn scheduler_new_creates_empty_scheduler() {
         let scheduler = Scheduler::new();
         assert_eq!(scheduler.dequeue(), None);
+    }
+
+    #[test]
+    fn has_urgent_work_ignores_prefetch() {
+        let scheduler = Scheduler::new();
+        assert!(!scheduler.has_urgent_work());
+        scheduler.enqueue(make_task(Priority::Prefetch, 0, 0, 0));
+        assert!(!scheduler.has_urgent_work());
+        scheduler.enqueue(make_task(Priority::Immediate, 0, 1, 0));
+        assert!(scheduler.has_urgent_work());
     }
 
     #[test]

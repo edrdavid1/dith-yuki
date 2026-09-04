@@ -1,8 +1,8 @@
 # ADR: GPU Path B — GPU-resident tiles & compute graph
 
-Status: **Accepted (Phase 0, revised)** — implement per [`.cursor-spec/gpu-path-b/`](../.cursor-spec/gpu-path-b/SPEC.md)  
-Supersedes: Path A (v1 buffer pool); does not remove v1 until preview gate  
-Date: 2026-08-22 (rev. 2)
+Status: **Accepted and implemented** — as-built [gpu-as-built.md](./gpu-as-built.md); spec [`.cursor-spec/gpu-path-b/`](../.cursor-spec/gpu-path-b/SPEC.md)  
+Supersedes: Path A (v1). v1 dispatch retired (T9).  
+Date: 2026-08-22 (rev. 2); as-built note 2026-09-04
 
 ---
 

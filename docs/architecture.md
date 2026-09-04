@@ -1,7 +1,7 @@
 # Архитектура Dither Yuki 2
 
 > Комплексный архитектурный документ. As-built **0.2.0**.
-> Последнее обновление: 14 августа 2026.
+> Последнее обновление: 4 сентября 2026.
 >
 > Оптимизация: начинать с **§13** (стоимость тайла / где теряется время) и
 > [tile-pipeline.md](./tile-pipeline.md) §11. Не трогать фильтры, пока не ясно,
@@ -10,6 +10,8 @@
 > **См. также:**
 > - [multi-doc-tabs.md](./multi-doc-tabs.md) — вкладки, мультипроектность, shared TileCache, save/export
 > - [tile-pipeline.md](./tile-pipeline.md) — тайловый pipeline, координаты, ED, GPU, стоимость тайла
+> - [gpu-as-built.md](./gpu-as-built.md) — Path B resident + auto-dispatch
+> - [FLEXLAYOUT_DOCKING.md](./FLEXLAYOUT_DOCKING.md) — Layers / Effect / Color Lab
 > - [color-lab.md](./color-lab.md) — цвет, палитры, Color Lab
 > - [palette-dither.md](./palette-dither.md) — Strict / Guided / Mixed / Simple
 
@@ -23,7 +25,7 @@
 - **Push-based tile rendering** — backend вычисляет тайлы инкрементально и уведомляет frontend о готовности
 - **Lock-free конкурентность** — ArcSwap для документа, DashMap для кэшей, SegQueue для scheduling
 - **Perceptually-uniform color** — Oklab space для палитровой квантизации, linear RGB f32 как внутреннее представление
-- **Multi-window UI** — панели могут быть undocked в отдельные OS-окна (Tauri WebView)
+- **Dockable UI** — Layers / Effect / Color Lab на FlexLayout (float = `flex-popout-*`); Preview — отдельный floating-only путь
 
 ### 1.1 Стек технологий
 
@@ -38,6 +40,7 @@
 | Test (backend) | proptest + criterion + built-in #[test] | 1.4 / 0.5 |
 | Color dialogs | react-colorful | ^5.8 |
 | Custom scrollbars | simplebar-react | ^3.3 |
+| Docking | flexlayout-react | 0.7.15 (pin; ADR ~0.10.x open) |
 | Oklab volume (Color Lab) | three | ^0.185 |
 | In-app updates | tauri-plugin-updater + process | 2 |
 
@@ -50,15 +53,17 @@ dither-yuki-2/
 │   ├── tauri.conf.json         # version 0.2.0, updater pubkey, icons, file assoc
 │   └── src/
 │       ├── main.rs             # Entry, tile://, GpuContext, worker spawn
-│       ├── commands.rs         # AppState + IPC (document / filters / palettes / dirty)
+│       ├── commands/           # IPC modules + AppState (document / filters / palettes / …)
+│       ├── services/           # document / viewport / layer / filter / palette / panel
+│       ├── document_session.rs # multi-doc registry
 │       ├── tile_protocol.rs    # tile:// URL → RGBA8
 │       ├── tile_pipeline.rs    # compute_processed_tile / compute_composite_tile
 │       ├── viewport.rs         # set_viewport, visible + prefetch
 │       ├── worker.rs           # WorkerWake (Condvar) + tile_worker_loop
 │       ├── undo.rs             # UndoManager (Arc<Document> stacks)
-│       ├── diffusion_waiters.rs
-│       ├── dock_affinity.rs / global_mouseup.rs
-│       ├── panel_*.rs          # dock/undock/persist
+│       ├── dock_affinity.rs    # dock-zone hit-test (Flex redock complete = JS)
+│       ├── flexlayout_persistence.rs
+│       ├── panel_manager.rs    # Preview / Preferences leftover
 │       └── recent_files.rs
 ├── crates/
 │   ├── engine-core/            # Phase 0 stub (не используется)
@@ -69,23 +74,22 @@ dither-yuki-2/
 │   │       ├── compositor.rs / simd.rs
 │   │       ├── serialize/      # .dyproj / .dyuki (zip + assets + migrate)
 │   │       └── filters/
-│   │           ├── apply.rs            # stack + Full_Then_Blend + GPU try
-│   │           ├── gpu_bridge.rs       # extract_core / write_core / eligibility
+│   │           ├── apply.rs            # stack + Full_Then_Blend
+│   │           ├── gpu_graph.rs        # Path B compile from FilterStack
 │   │           ├── dither_ordered.rs   # Bayer, CustomPng, Halftone, Wave
 │   │           ├── dither_diffusion.rs # FS, Atkinson, JJN, Stucki, Burkes, Sierra
 │   │           ├── dither_residuals.rs
 │   │           ├── palette_quantize.rs # LUT nearest (не KD на hot path)
 │   │           └── curves / levels / glow / crt / glitch
-│   ├── engine-gpu/             # wgpu compute (Bayer / Halftone / CRT), opt-in
-│   │   └── src/dispatch.rs     # upload → dispatch → map; submit_lock; no buffer pool
+│   ├── engine-gpu/             # Path B resident (cache, graph, executor, decision)
 │   ├── engine-color/           # Oklab, KdTree (build LUT), PaletteLut3D 64³
 │   └── engine-io/              # sandbox + svg_export (meshing / contour)
 ├── frontend/
 │   └── src/
 │       ├── main.tsx / App.tsx
-│       ├── app/                # AppLayout, RTK store, slices
+│       ├── app/                # AppLayout, RTK store, slices, LayoutProvider
 │       ├── features/           # preview, effects, layers, color-lab, panels, document
-│       ├── components/         # MenuBar, dialogs, shared widgets
+│       ├── components/         # MenuBar, FlexLayoutContainer, dialogs
 │       ├── hooks/              # useDocument, useViewport, useAppUpdates, …
 │       ├── workers/tileWorker.ts
 │       └── shared/ipc/         # canonical invoke wrappers
@@ -143,7 +147,7 @@ graph LR
 ```mermaid
 graph TB
     subgraph Frontend ["Frontend (React + RTK)"]
-        AppLayout[AppLayout: dual sidebar + preview]
+        AppLayout[AppLayout: FlexLayout columns + preview]
         MenuBar[MenuBar: File / Edit / Help]
         TileCanvas[TileCanvas: canvas + Web Worker]
         EffectPanel[EffectsFeature]
@@ -183,7 +187,7 @@ graph TB
         EngProject[engine-project: Document, Layers, Filters, Compositor]
         EngTiles[engine-tiles: PixelTile, Cache, Scheduler, Decompose]
         EngColor[engine-color: Oklab, KD-tree, Palette, ThresholdMap]
-        EngGpu[engine-gpu: wgpu Bayer / Halftone / CRT]
+        EngGpu[engine-gpu: Path B resident + auto-dispatch]
     end
 
     MenuBar -->|invoke| load_image
@@ -270,9 +274,9 @@ pub struct AppState {
     pub error_residuals: ErrorResidualsStore,
     pub block_representatives: BlockRepresentativeCache,
     pub ed_frontier: EdFrontier,             // ED/Composite blocked-on-deps (wavefront)
-    /// Track D: optional wgpu device (None = CPU-only / no adapter)
+    /// Optional wgpu (None = CPU-only / no adapter)
     pub gpu: Option<Arc<engine_gpu::GpuContext>>,
-    pub panel_manager: Mutex<PanelManager>,  // Multi-window panel state
+    pub panel_manager: Mutex<PanelManager>,  // Preview / Preferences leftover
     pub undo_manager: Mutex<UndoManager>,    // Track N: snapshot Arc<Document> stacks, max_depth=50
     pub saved_snapshot: Mutex<Option<Arc<Document>>>, // Track P: Saved_Mark; dirty = !ptr_eq(live, mark)
     pub worker_wake: WorkerWake,             // Condvar; notify_one on enqueue
@@ -286,7 +290,7 @@ pub struct AppState {
 - `Scheduler::new()` — пустые очереди задач
 - `ViewportState::default()` — zoom 1.0, pan (0,0)
 - Palette / threshold / residuals caches — empty
-- **GPU:** `GpuContext::try_new_blocking()` unless `DITHER_FORCE_CPU=1`; on failure → `gpu = None` + one warn (app continues CPU-only)
+- **GPU:** `GpuContext::try_new_blocking()` unless `DITHER_FORCE_CPU=1`; on failure → `gpu = None` + one warn (app continues CPU-only). Warm download + A2 warmup on by default; cold GPU compute only if `DITHER_GPU_PREVIEW=1`.
 - `PanelManager` — загрузка persisted state или defaults
 - State оборачивается в `Arc<AppState>` для sharing с worker threads
 - Worker pool spawn: N = `available_parallelism` или 4
@@ -325,7 +329,7 @@ pub struct DocumentHandle {
 
 ### 3.2.2 Dirty flag (Track P)
 
-`saved_snapshot` is the live `Arc<Document>` at the last clean point (successful save, or `clear_history` after open / load / create). Dirty is `!Arc::ptr_eq(live, saved_mark)` — not `Document.revision`. Empty / welcome (no layers) is not dirty. Frontend title: `{• }{basename | Untitled} — Dither Engine`. One Unsaved_Guard (Save / Don’t Save / Cancel) on main-window close and File New/Open. GPU filters stay opt-in (`DITHER_GPU=1`). In-app updates start at **0.2.0** (`tauri-plugin-updater` + GitHub `latest.json`); **0.1.0 cannot self-update** — install the 0.2.0 DMG once. Minisign pubkey is in `tauri.conf.json`; the private key is a CI secret, never git. Apple notarization is optional (Gatekeeper warning on first DMG open is a known beta limit). File → Import Image as Layer places at origin, clips, no scale.
+`saved_snapshot` is the live `Arc<Document>` at the last clean point (successful save, or `clear_history` after open / load / create). Dirty is `!Arc::ptr_eq(live, saved_mark)` — not `Document.revision`. Empty / welcome (no layers) is not dirty. Frontend title: `{• }{basename | Untitled} — Dither Engine`. One Unsaved_Guard (Save / Don’t Save / Cancel) on main-window close and File New/Open. GPU: auto-dispatch (warm download + A2); cold compute `DITHER_GPU_PREVIEW=1`; force CPU `DITHER_FORCE_CPU=1`. In-app updates start at **0.2.0** (`tauri-plugin-updater` + GitHub `latest.json`); **0.1.0 cannot self-update** — install the 0.2.0 DMG once. Minisign pubkey is in `tauri.conf.json`; the private key is a CI secret, never git. Apple notarization is optional (Gatekeeper warning on first DMG open is a known beta limit). File → Import Image as Layer places at origin, clips, no scale.
 
 ### 3.3 Tile Protocol Handler (tile://)
 
@@ -410,20 +414,11 @@ loop {
 
 **Inline Processed:** если при композитинге Processed тайл отсутствует — вычисляется inline.
 
-### 3.7 Panel Manager (multi-window)
+### 3.7 Layout (FlexLayout) + leftover PanelManager
 
-```rust
-pub struct PanelManager {
-    panels: Vec<PanelInfo>,          // effect, layers, colorlab, preview
-    panel_order: Vec<PanelId>,       // Sidebar order (docked panels)
-}
-```
+**Dockable panels** (`layers`, `effect`, `colorlab`) живут в двух FlexLayout `Model` (left / right). Persist: `flexlayout_left.json` / `flexlayout_right.json`. Float: `flex-popout-*` + JS `setPosition` (B4c). Подробно: [FLEXLAYOUT_DOCKING.md](./FLEXLAYOUT_DOCKING.md).
 
-- IPC commands: `undock_panel`, `dock_panel`, `show_panel`, `hide_panel`, `reorder_panels`
-- Floating panels → отдельные Tauri WebviewWindow (`index.html?panel=<id>`)
-- Синхронизация через `panel-state-changed` Tauri event (fan-out ко всем окнам)
-- Persistence → JSON в app data directory, загружается при старте
-  (`panel_state.json`; рядом — `recent_files.json`, см. §3.9)
+`PanelManager` остаётся для **Preview / Preferences** (floating-only) и старых `panel-*` окон. Affinity hit-test (`dock_affinity.rs` + `update_dock_zone`) — тонкий мост для redock Flex popout. `global_mouseup.rs` **удалён**.
 
 ### 3.8 IPC-команды (сводка)
 
@@ -438,7 +433,7 @@ pub struct PanelManager {
 | `save_project` / `save_project_as` | Write `.dyproj`; record Recent (Project) |
 | `export_pattern` / `import_pattern` | `.dyuki` pack/unpack (Track F) |
 | `export_image` | Full-res composite → PNG/JPEG encode → fs::write |
-| `get_gpu_preview_status` / `set_gpu_preview_enabled` | Preferences UI toggle & status for Path B GPU preview |
+| `is_release_build` | Launch auto-check skip in debug |
 | `is_release_build` | Check release profile status for diagnostics |
 | `set_viewport` | Update viewport → schedule dirty tiles |
 | `get_layer_tree` | Snapshot → serialize LayerNodeDto[] |
@@ -455,9 +450,9 @@ pub struct PanelManager {
 | `generate_palette` | Async MedianCut/KMeans from layer tiles → new Palette |
 | `list_builtin_palettes` / `import_builtin_palette` | Built-in retro presets → Document palette |
 | `generate_ramp_palette` / `generate_harmony_palette` / `colors_to_oklab` / `get_palette_oklab` | Color Lab & Oklab conversion utilities |
-| `undock_panel` / `undock_panel_with_size` / `dock_panel` / `show_panel` / `hide_panel` | Floating panel window management |
-| `move_panel_to_side` / `move_all_panels_to_side` / `swap_sidebars` / `update_dock_zone` | Advanced sidebar docking layout |
-| `begin_float_drag` / `cancel_float_drag` / `dock_panel_at` | Drag-and-drop window docking interactions |
+| `save_layout_left` / `save_layout_right` / `load_layout_*` | FlexLayout persist (per side) |
+| `undock_panel` / `dock_panel` / `show_panel` / `hide_panel` | Leftover Preview / Preferences windows |
+| `update_dock_zone` / `begin_float_drag` / `complete_float_drag` / `cancel_float_drag` | Affinity hit-test + JS redock complete |
 
 ### 3.9 Welcome Screen и Recent Files (Track G)
 
@@ -831,42 +826,21 @@ pub fn resolve_user_path(raw: &str, allowed_ext: &[&str]) -> Result<PathBuf, San
 
 ### 4.5 engine-gpu
 
-Optional **wgpu** compute path for per-tile pattern filters (Track D). Preview remains Canvas2D; GPU accelerates **backend apply**, not display.
-
-```rust
-pub struct GpuContext {
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
-    pub map_timeout_counter: AtomicU64,  // silent-path observability
-    // cached compute pipelines: Bayer2/4/8, Halftone, CRT
-    // submit_lock: Mutex<()> — serialize encode/submit/map across workers
-}
-```
+**Path B resident** wgpu path. Preview remains Canvas2D; GPU keeps tiles in VRAM (`GpuTileCache`) and readbacks once per frame. Per-tile v1 upload/download is retired (T9). `dispatch.rs` remains only as shared shader I/O helpers, not the product path.
 
 | Concern | Detail |
 |---------|--------|
 | Init | `GpuContext::try_new()` → `None` on no adapter (no panic) |
 | Hold | `AppState.gpu: Option<Arc<GpuContext>>` |
-| I/O | **RGBA32 float** core `256×256` only (locked; not RGBA8) |
-| Uniform | `tile_offset = (tile.x×256, tile.y×256)` ≡ `GlobalCoord::from_local` |
-| Workgroup | `16×16` → dispatch `(16,16,1)` |
-| Sync | upload → dispatch → staging → `map_async` + poll w/ timeout |
-| Timeout | inc `map_timeout_counter` → caller CPU-fallback |
-| Env | `DITHER_FORCE_CPU=1` force CPU; `DITHER_GPU_PREVIEW=1` or Preferences UI toggle enables Path B GPU preview |
+| Executor | Dedicated `GpuExecutor` thread (`submit_lock` on workers **gone**) |
+| Atlas | `Rgba32Float` 260×260 slots (~256 MiB budget) |
+| Routing | `decide_tile_dispatch` — warm slot → GPU download; cold → CPU unless `DITHER_GPU_PREVIEW=1` |
+| Warmup | A2 prefetch promote; `DITHER_GPU_WARMUP=0` disables |
+| Env | `DITHER_FORCE_CPU=1`; `DITHER_GPU_PREVIEW=1` (cold compute). No Preferences toggle (A4). `DITHER_GPU=1` aliases preview-enabled. |
 
-**GpuEligible (Path B Resident Graph Executor, CPU = source of truth):**
-- Bayer2/4/8: `pixel_size==1`, no palette, `threshold_bias==0`, `pattern_angle==0`
-- CMYK Halftone: `pixel_size==1`, no palette, `threshold_bias==0`
-- CRT (period / strength / mask)
-- Palette Guided / Mixed / Quantize (когда допустимо)
-- `dither_alpha` **не** снимает eligibility: шейдер кодирует mode 0–3 (rgb/gray ± alpha)
-
-**Never GPU:** Error Diffusion (все ядра Track M), CustomPng, Wave, Glow, `pixel_size>1`, слои с чекпоинтами.
-
-**Режим вычислений GPU:**
-Устаревший потайловый v1 `dispatch_rgba32` полностью удалён (задача T9). GPU ускорение работает исключительно через **Path B Resident Executor** на VRAM-атласе (`GpuTileCache`). По умолчанию GPU **выключен** (режим **OPT_IN ONLY**, управляемый в Preferences UI или через `DITHER_GPU_PREVIEW=1`). Подробности — §13.4 и [gpu-as-built.md](./gpu-as-built.md).
-
-**Parity:** Bayer exact (`f32 ==`); Halftone/CRT max abs ≤ `1/255` per channel.
+**Eligible:** Bayer (ps=1, bias/angle 0), Halftone, CRT, Palette Guided/Mixed/Quantize (A7 LUT).  
+**Never GPU:** ED, CustomPng, Wave, Glow, `pixel_size>1`.  
+**Parity:** Bayer exact; Halftone/CRT ≤ `1/255`. As-built: [gpu-as-built.md](./gpu-as-built.md).
 
 ### 4.6 engine-core (Phase 0 stub)
 
@@ -888,7 +862,7 @@ pub fn apply_filter_to_tile(tile: &PixelTile, layer: &Layer, coord: TileCoord)
 3. Для каждого enabled: `apply_filter_with_blend` → `apply_single_filter` на 100%, затем
    если `opacity < 1` или `blend_mode != Normal` — ещё один тайл + `blend_tile`
 4. Disabled пропускаются
-5. Optional `gpu` — Bayer/Halftone/CRT when `DITHER_GPU=1` **и** eligibility
+5. Optional `gpu` — Path B graph / eligibility; routing is auto-dispatch, not a global toggle
 
 Вызывается из: `compute_processed_tile` (worker, passes `state.gpu`) и export paths (`gpu = None` OK).
 
@@ -968,7 +942,7 @@ SIMD-ускорение: `levels_row_simd` (wide f32x4) для batch processing 
 
 ### 5.7 CRT / Glow
 
-- **CRT:** scanlines + optional RGB triad mask; phase from `GlobalCoordSigned` (global Y/X). CPU always; GPU when `DITHER_GPU=1` + adapter.
+- **CRT:** scanlines + optional RGB triad mask; phase from `GlobalCoordSigned` (global Y/X). CPU always; GPU when Path B eligible + warm/opt-in.
 - **Glow:** soft bloom, radius ≤ HALO — **CPU-only** in Track D (GPU deferred).
 
 ### 5.8 SIMD Module (simd.rs)
@@ -981,7 +955,7 @@ Portable SIMD через `wide` crate (stable Rust):
 ### 5.9 GPU path (optional)
 
 See §4.5 `engine-gpu`. Pattern filters only; same cache keys / generations as CPU.
-**Default routing is CPU.** GPU is opt-in (`DITHER_GPU=1`) and serialized (`submit_lock`).
+**Default routing is CPU for cold tiles.** Warm resident slots download on GPU without a UI toggle. Cold GPU compute stays env opt-in (`DITHER_GPU_PREVIEW=1`).
 
 ---
 
@@ -1059,15 +1033,15 @@ graph TD
     App --> AppLayout
     AppLayout --> MenuBar
     AppLayout --> PreviewSlot
-    AppLayout --> DockedSidebar
+    AppLayout --> FlexLayoutContainer
 
     PreviewSlot --> PreviewFeature
     PreviewFeature --> TileCanvas
     TileCanvas --> tileWorker["tileWorker.ts (Web Worker)"]
 
-    DockedSidebar --> EffectsFeature
-    DockedSidebar --> LayersFeature
-    DockedSidebar --> ColorLabFeature
+    FlexLayoutContainer --> EffectsFeature
+    FlexLayoutContainer --> LayersFeature
+    FlexLayoutContainer --> ColorLabFeature
 
     EffectsFeature --> DitherSettings
     EffectsFeature --> CurvesSettings
@@ -1108,7 +1082,7 @@ graph TD
 
 | Компонент | Ответственность |
 |-----------|----------------|
-| `App` / `AppLayout` | Root: dual sidebars, preview slot, title dirty-dot, Guard, updates |
+| `App` / `AppLayout` | Root: FlexLayout columns + preview, title dirty-dot, Guard, updates |
 | `MenuBar` | File / Edit / Help: New, Open, Recent, Save, Import Layer, Undo, Check for Updates |
 | `PreviewSlot` / `PreviewFeature` | Viewport wrapper + zoom (integer/free) |
 | `TileCanvas` | HTML5 `<canvas>` + Web Worker, tile fetch/decode/render |
@@ -1155,24 +1129,15 @@ graph TD
 | `useUndoShortcuts` | ⌘Z / Ctrl+Z → undo/redo IPC |
 | `useCloseRequested` | Window close handling (floating panels) |
 
-### 7.6 Multi-Window Panel System
+### 7.6 Docking (FlexLayout)
 
-- Panels: `effect`, `layers`, `colorlab`, `preview`
-- Docked: rendered in main window sidebar (dynamic order)
-- Floating: separate Tauri WebviewWindow (`index.html?panel=<id>`)
-- Sync: `panel-state-changed` event fan-out to all windows
-- State: PanelManager (Rust) → persisted to JSON → restored on startup
-- UI: undock button on panel headers, dock via OS window close / explicit dock command
+Canonical: [FLEXLAYOUT_DOCKING.md](./FLEXLAYOUT_DOCKING.md).
 
-#### Dock Affinity (drag-to-redock)
-
-- Rust `DockAffinityController` owns hit-test + float-drag session (`dock_affinity.rs`)
-- Main reports sidebar zone + slot midpoints via `update_dock_zone` (rAF-coalesced)
-- Float titlebar calls `begin_float_drag` before `startDragging()`; session ends on
-  polled left-button release (`global_mouseup.rs`) or `cancel_float_drag`
-- Armed release → atomic `dock_panel_at` (insert index + dock); UI listens to
-  edge-triggered `dock-affinity` for sidebar highlight / float chrome cue
-- `preview` / `preferences` are floating-only (affinity never arms)
+- Dockable: `layers`, `effect`, `colorlab` — two FlexLayout models (left / right)
+- Float: patched FloatingWindow → `flex-popout-*` + `FlexPopoutChrome`
+- Redock: JS `setPosition` + in-WebView mouseup → `complete_float_drag`; hit-test via `dock_affinity`
+- Persist: `save_layout_{left,right}` (raw `Model.toJson()`)
+- **Not FL:** `preview`, `preferences` (PanelManager leftover; Preview still OS `startDragging`)
 
 ### 7.7 Обработка ошибок и debouncing
 
@@ -1200,7 +1165,7 @@ graph TD
 │  ├── Idle: WorkerWake Condvar (not 1ms sleep)    │
 │  ├── compute_processed_tile / composite_tile     │
 │  ├── PaletteLutCache lookups (lock-free)         │
-│  ├── GPU: serialized on GpuContext.submit_lock   │
+│  ├── GPU: GpuExecutor thread (no worker submit_lock) │
 │  └── Emit tile-ready events to frontend          │
 ├──────────────────────────────────────────────────┤
 │  Blocking Thread Pool (tokio)                    │
@@ -1221,7 +1186,7 @@ graph TD
 | Scheduler queues | `SegQueue<RecomputeTask>` × 4 | Lock-free concurrent FIFO |
 | PaletteLutCache | `DashMap<PaletteId, (u64, Arc<PaletteLut3D>)>` | Lock-free, 64³ grid |
 | PaletteKdCache | `DashMap<PaletteId, (u64, Arc<KdTree>)>` | Build LUT + tests |
-| GpuContext.submit_lock | `Mutex<()>` | Serializes all GPU tiles across workers |
+| GpuExecutor | dedicated thread | Frame jobs; workers do not hold GPU submit lock |
 | WorkerWake | `Mutex<bool> + Condvar` | Idle wait / enqueue notify |
 | ErrorResiduals | `DashMap<(LayerId, TileCoord), ErrorResiduals>` | Per-tile error buffers |
 | Generation counters | `AtomicU64` / `AtomicBool` | Lock-free increments/flags |
@@ -1374,6 +1339,7 @@ GPU adapter tests: `cargo test -p engine-gpu -- --ignored` (Metal/Vulkan/DX12). 
 | @tauri-apps/plugin-updater / process | ^2.10 / ^2.3 | Check / download / relaunch |
 | three | ^0.185 | Color Lab Oklab volume |
 | react-colorful | ^5.8 | Color picker |
+| flexlayout-react | 0.7.15 | Dockable Layers / Effect / Color Lab |
 | simplebar-react | ^3.3 | Custom scrollbars |
 | typescript | ^5.0 | Type checking |
 | vite | ^4.4 | Build/dev server |
@@ -1612,11 +1578,11 @@ busy-wait воркеров; отсутствие SIMD на blend/levels/u8.
 
 ### 13.4 GPU path: Path B Resident Executor и статус Industrial Gate
 
-GPU ускорение работает исключительно через **Path B Resident Executor** (режим **OPT_IN ONLY**, включается в Preferences UI или через `DITHER_GPU_PREVIEW=1`). Устаревший v1 потайловый `dispatch_rgba32` полностью удалён (задача T9).
+GPU ускорение работает исключительно через **Path B Resident Executor**. Холодный compute — `DITHER_GPU_PREVIEW=1`; auto-dispatch без UI-тоггла. Устаревший v1 потайловый `dispatch_rgba32` полностью удалён (задача T9).
 
 1. **Резидентный VRAM-атлас (`GpuTileCache`)**: Память выделяется под граф вычислений слоя без перенарезки и повторного создания буферов на каждый тайл.
 2. **Границы (E4)**: Ускоряются Bayer, Halftone, CRT и палитровые фильтры на прогретом видовом окне. Слои с Error Diffusion (ED) и `pixel_size > 1` всегда рассчитываются на CPU.
-3. **Причина Opt-In (R1)**: Холодный старт (первое касание/панорамирование по новым тайлам) у GPU медленнее CPU (~30.9 ms против ~10.4 ms), а также фильтры с ED требуют чекпоинта на CPU. Подробности см. в [gpu-as-built.md](./gpu-as-built.md).
+3. **Причина cold opt-in (R1)**: первое касание новых тайлов на GPU медленнее CPU (~30.9 ms vs ~10.4 ms); ED всегда CPU. Auto-dispatch (A1–A4) качает уже тёплые слоты без UI-тоггла. См. [gpu-as-built.md](./gpu-as-built.md).
 
 ### 13.5 Параллелизм и что его ломает
 
@@ -1629,7 +1595,7 @@ Immediate > ViewportCenter > ViewportEdge > Prefetch
 - **ED (`requires_full_row`):** тайл (x,y) ждёт (x-1,y), (x,y-1), (x-1,y-1).
   Рекурсия в `compute_processed_tile` на одном воркере. Соседние воркеры могут
   дублировать работу или стоять. Viewport «заливается» с угла, не от центра.
-- GPU `submit_lock`: тот же эффект даже для Bayer.
+- GPU executor: один submit/frame; cold promote всё ещё дороже CPU.
 - `scheduler.clear_all()` на `set_viewport` выкидывает prefetch; pan/zoom дешёвый
   только пока тайлы ещё в кэше (dirty=false).
 
@@ -1653,7 +1619,7 @@ Immediate > ViewportCenter > ViewportEdge > Prefetch
 ### 13.8 Как профилировать, прежде чем менять код
 
 1. Один слой, один Bayer, ps=1, без палитры, zoom 100% — baseline ordered.
-2. Тот же кадр + `DITHER_GPU=1` — сравнить wall-clock viewport, не один тайл.
+2. Тот же кадр после warmup (или `DITHER_GPU_PREVIEW=1`) — сравнить wall-clock viewport, не один тайл.
 3. Переключить на FS — увидеть wavefront (это не «медленный CPU», это зависимость).
 4. `cargo bench -p engine-project` (`filter_bench`, `compositor_bench`) + Instruments
    time profiler на `tile_worker_loop`.
@@ -1671,10 +1637,10 @@ Halftone/CRT ≤ 1/255), debounce undo = 100ms в `useEffectLayer`.
 
 | Ограничение | Описание |
 |-------------|---------|
-| Single document | Один документ (doc_id=1) |
+| Multi-doc | Вкладки + runtime `DocumentId`; один viewport = active session |
 | Max 8192×8192 | Больше — reject |
-| GPU opt-in + serialized | `DITHER_GPU=1`; `submit_lock`; нет buffer pool. Default = CPU |
-| ED wavefront | Рекурсия left/top/diag на воркере; нет отдельного row-major scheduler |
+| GPU cold opt-in | Warm download + A2 default; cold compute `DITHER_GPU_PREVIEW=1`; ED / ps>1 always CPU |
+| ED wavefront | `EdFrontier` + row-major deps; still sequential across tiles |
 | Oklab = sRGB primaries | RGB→LMS под Rec.709 |
 | No mask editing UI | `MaskRef` + `apply_mask` есть, UI нет |
 | Luminance simplified | `CurveChannel::Luminance` ≠ Oklab L* |
@@ -1685,7 +1651,7 @@ Halftone/CRT ≤ 1/255), debounce undo = 100ms в `useEffectLayer`.
 
 - [x] Pyramid display (level > 0) — box-filter of L0 Composite; filters always L0
 - [x] In-place / ping-pong `PixelTile` в filter stack (peak live temps ≤2 Normal / ≤3 Track I; park)
-- [ ] GPU v2: buffer pool, batched tiles, без глобального `submit_lock`, memcpy core
+- [x] Path B resident + auto-dispatch A1–A4; A5 export NO-GO; A8 f16 not started
 - [ ] SIMD Bayer / Oklab; LUT для Curves
 - [ ] Не blend'ить halo в preview composite
 - [x] Undo/redo snapshot (Track N); paint-aware out of scope
@@ -1819,5 +1785,5 @@ cargo bench -p engine-project
 
 ---
 
-**Last Updated:** 14 August 2026
+**Last Updated:** 4 September 2026
 **Version:** 0.2.0

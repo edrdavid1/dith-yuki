@@ -397,7 +397,9 @@
   height: 100% !important;
   width: 100% !important;
   max-height: 100% !important;
-  border: none !important;
+  box-sizing: border-box !important;
+  /* Same outer frame as legacy panel-* floating windows. */
+  border: var(--border) !important;
 }
 
 .flexlayout__floating_window_content [data-flex-popout-chrome].panel-window,

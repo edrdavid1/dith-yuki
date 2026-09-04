@@ -39,6 +39,38 @@ pub struct EvictContext<'a> {
     pub viewport_coords: &'a HashSet<TileCoord>,
 }
 
+impl EvictContext<'_> {
+    /// Visible coords plus finer pyramid children that feed those parents.
+    ///
+    /// Fit-to-view on large docs uses L>0 Composite. Those tiles box-filter L0
+    /// children. Exact-coord protect only would evict the children, starve the
+    /// parent, and leave the preview blank (8K + 512 MiB budget).
+    pub fn protects_tile(&self, key: &TileKey) -> bool {
+        if let Some(active) = self.active_doc {
+            if key.doc != active {
+                return false;
+            }
+        }
+        coord_feeds_visible_set(key.coord, self.viewport_coords)
+    }
+}
+
+/// `coord` is in the visible set, or is a finer child of a visible coarser tile.
+pub fn coord_feeds_visible_set(coord: TileCoord, viewport: &HashSet<TileCoord>) -> bool {
+    if viewport.contains(&coord) {
+        return true;
+    }
+    for vis in viewport {
+        if vis.level > coord.level {
+            let d = vis.level - coord.level;
+            if (coord.x >> d) == vis.x && (coord.y >> d) == vis.y {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Estimated size in bytes of a single PixelTile.
 ///
 /// Calculated as: (TILE_SIZE + 2×HALO)² × 4 channels × 4 bytes per f32
@@ -303,13 +335,7 @@ impl TileCache {
     }
 
     fn is_viewport_protected(key: &TileKey, ctx: &EvictContext<'_>) -> bool {
-        if !ctx.viewport_coords.contains(&key.coord) {
-            return false;
-        }
-        match ctx.active_doc {
-            Some(active) => key.doc == active,
-            None => true,
-        }
+        ctx.protects_tile(key)
     }
 
     /// Raw tiles belonging to a still-open session — never dropped by pressure.
@@ -1165,5 +1191,87 @@ mod tests {
             .entries
             .contains_key(&key_doc(1, 0, 0, CacheStage::Composite)));
         assert_eq!(cache.used_bytes_count(), TILE_BYTES);
+    }
+
+    #[test]
+    fn coord_feeds_visible_set_protects_finer_children() {
+        let vis = TileCoord {
+            level: 2,
+            x: 0,
+            y: 0,
+        };
+        let set = HashSet::from([vis]);
+        assert!(coord_feeds_visible_set(
+            TileCoord {
+                level: 2,
+                x: 0,
+                y: 0
+            },
+            &set
+        ));
+        assert!(coord_feeds_visible_set(
+            TileCoord {
+                level: 0,
+                x: 0,
+                y: 0
+            },
+            &set
+        ));
+        assert!(coord_feeds_visible_set(
+            TileCoord {
+                level: 0,
+                x: 3,
+                y: 3
+            },
+            &set
+        ));
+        assert!(!coord_feeds_visible_set(
+            TileCoord {
+                level: 0,
+                x: 4,
+                y: 0
+            },
+            &set
+        ));
+    }
+
+    #[test]
+    fn evict_for_pressure_protects_pyramid_children_of_visible_parent() {
+        let cache = TileCache::new(TILE_BYTES);
+        let child = TileKey {
+            doc: 2,
+            layer: 0,
+            coord: TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            },
+            stage: CacheStage::Composite,
+        };
+        let victim = TileKey {
+            doc: 2,
+            layer: 0,
+            coord: TileCoord {
+                level: 0,
+                x: 4,
+                y: 0,
+            },
+            stage: CacheStage::Composite,
+        };
+        cache.get_or_insert(child, Arc::new(PixelTile::new()));
+        cache.get_or_insert(victim, Arc::new(PixelTile::new()));
+        let viewport = HashSet::from([TileCoord {
+            level: 2,
+            x: 0,
+            y: 0,
+        }]);
+        let open = open_set(&[2]);
+        cache.evict_for_pressure(&EvictContext {
+            active_doc: Some(2),
+            open_docs: &open,
+            viewport_coords: &viewport,
+        });
+        assert!(cache.entries.contains_key(&child));
+        assert!(!cache.entries.contains_key(&victim));
     }
 }

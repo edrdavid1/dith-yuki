@@ -25,11 +25,14 @@ npm test --prefix frontend
 
 Frontend IPC should go through `frontend/src/shared/ipc/` — avoid raw `invoke` outside that layer.
 
+After `npm install`, `patch:flexlayout` must run (postinstall). Without it, FlexLayout popouts are unstable in Tauri.
+
 ## Layout
 
-- **Rust engines** live in `crates/`. Document model and filters: `engine-project`.
+- **Rust engines** live in `crates/`. Document model and filters: `engine-project`. GPU: `engine-gpu` (Path B).
 - **Tauri glue** (commands, workers, `tile://`): `src-tauri/src/`.
-- **UI**: `frontend/src/` (React 18, Redux Toolkit, TypeScript).
+- **UI**: `frontend/src/` (React 18, Redux Toolkit, TypeScript, flexlayout-react 0.7.15).
+- **Docs**: [docs/README.md](./README.md) — as-built vs historical. Do not treat `.cursor-spec/` TZs as current architecture.
 
 Public APIs in Rust should have `///` comments. Match existing naming in the file you edit.
 

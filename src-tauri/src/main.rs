@@ -494,8 +494,7 @@ fn main() {
             commands::undo::redo,
             commands::undo::is_document_dirty,
             commands::is_release_build,
-            commands::get_gpu_preview_status,
-            commands::set_gpu_preview_enabled,
+            commands::get_gpu_vram_status,
             
             // Palette commands
             commands::list_palettes,

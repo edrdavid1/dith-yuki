@@ -23,29 +23,25 @@
 | Нативный display surface — решение "no-go" | `DISPLAY_DECISION.md` |
 | `pixel_size > 1` на GPU — решение "Non-goal" | Industrial Gate H2 |
 | v1 per-tile GPU удалён | `TASKS.md` T9 |
+| **A1. Decision function per-tile** | `.cursor-spec/gpu-auto-dispatch/` |
+| **A2. Speculative warm-up** | `gpu-auto-dispatch/`, фаза 2 |
+| **A3. Benchmark auto-dispatch vs opt-in vs CPU** | `gpu-auto-dispatch/A3_EVIDENCE.md` (Apple M3 n=20 PASS) |
+| **A4. Убрать UI-переключатель GPU** | Preferences GPU section removed |
+| **A5. Export на GPU** | **NO-GO** — `gpu-export-a5/` |
+| **A6. GPU-ярус в multi-doc бюджете** | Same `EvictContext` as CPU RAM |
+| **A7. Session palette LUT на resident** | Bridge: Guided/Mixed/PaletteQuantize (no ED) via `PaletteLutCache`; Strict/Simple remain CPU |
 
 ### Ready — брать в работу сейчас
 
-| Карточка | Размер | Описание |
-|---|---|---|
-| **A1. Decision function per-tile** | S | Заменить глобальный `gpu_preview_enabled()` на per-tile выбор: тёплый+eligible слот → GPU, иначе CPU. Использует существующий slot state, новой архитектуры не требует. `GPU_AUTO_DISPATCH_TZ.md` Фаза 1. |
-| **A2. Speculative warm-up (фоновый прогрев)** | M | Low-priority фоновый promote тайлов вокруг viewport и после открытия документа. Не блокирует основной scheduling, не крадёт VRAM у активного viewport. Фаза 2. |
-| **A3. Benchmark auto-dispatch vs opt-in vs CPU** | S–M | Та же дисциплина: release, n≥20, median/σ/p95/p99. Новый обязательный сценарий "открытие → pan" (cold→warm). Gate: auto-dispatch нигде не хуже CPU. Фаза 3. |
-| **A4. Убрать UI-переключатель GPU** | S | Только после A3 прошёл gate. `DITHER_FORCE_CPU` остаётся debug-флагом, не продуктовой опцией. Фаза 4. |
+Трек A: A1–A7 закрыты (A5 NO-GO). Остался A8 (не приоритет).
 
-**Зависимости внутри Ready:** A1 → A2 → A3 → A4, строго последовательно.
-Не распараллеливать — A2 без A1 бессмысленен (нечего "тепло" использовать
-без decision function), A4 без A3 — это ровно та ошибка, которую уже
-разбирали (снять чекбокс без доказательств).
+**Зависимости (закрыты):** A1 ✅ → A2 ✅ → A3 ✅ → A4 ✅.
 
 ### Needs Spec — сначала решение, потом карточки
 
 | Карточка | Что нужно перед оценкой размера |
 |---|---|
-| **A5. Export на GPU** | Сначала замер: насколько CPU-export реально медленный на больших документах для пользователя. Без этого числа — не заводить карточку с оценкой, это ещё не готовая задача. |
-| **A6. GPU-ярус в multi-doc бюджете — доля на документ** | Проверить: `EvictContext` для GPU-яруса уже использует active/open_docs так же, как CPU RAM ярус, или это осталось декларацией. Если работает как надо — карточки не нужно, закрыть как Done. Если нет — там и там небольшая карточка S. |
-| **A7. Session palette LUT — полный resident-путь** | Отмечено как "leftover" в отчёте — bridge ещё checkpoint при готовых шейдерах. Нужно уточнить объём оставшейся работы у того, кто это писал, прежде чем оценивать. Вероятно S, но не подтверждено. |
-| **A8. f16 VRAM / sparse atlas** | Не заводить карточку вообще, пока нет данных, что VRAM-бюджет реально ограничивает пользователей. Explicitly не приоритет. |
+| **A8. f16 VRAM / sparse atlas** | Occupancy harness: `gpu-vram-a8/`. Preview+A2 ~19% on 3072²/1080p. Full-doc GPU fill saturates (expected). **f16 not started** — need real-file preview peak. |
 
 ---
 
@@ -59,6 +55,9 @@
 | B2. ADR: модель докинга (FlexLayout выбрана) | `docs/B2_ADR_flexlayout_docking.md` |
 | B2 Spike: Path A — flexlayout-react работает нативно | `track-r-docking/SPIKE_EXECUTION_LOG.md` |
 | **B3. Layers на FlexLayout** — Phase 1–4 ✅ | `track-r-docking/B3_tasks.md` |
+| **B4a. Effect на FlexLayout** ✅ | [`FLEXLAYOUT_DOCKING.md`](./FLEXLAYOUT_DOCKING.md) |
+| **B4b. Color Lab на FlexLayout** ✅ | same; dual SoT layout снят |
+| **B4c. JS popout drag** ✅ | `global_mouseup` удалён; spec `B4c_js_popout_drag_spec.md` |
 
 **B3 итог (2026-08-31):**
 - ✅ `flexlayout-react` 0.7.15 установлен
@@ -72,20 +71,18 @@
 
 ### In Progress — текущая работа
 
-*(пусто — B3 закрыт, следующая задача Ready)*
+*(пусто)*
 
 ### Ready — брать в работу сейчас
 
 | Карточка | Размер | Описание |
 |---|---|---|
-| **B4a. Миграция Effect панели** ✅ | M | Effect на FlexLayout. As-built: [`docs/FLEXLAYOUT_DOCKING.md`](./FLEXLAYOUT_DOCKING.md) (§12–13: эволюция vs долг). |
-| **B4b. Миграция ColorLab панели** ✅ | M | Color Lab на FlexLayout. Dual SoT layout снят. |
-| **B4c. JS popout drag / удаление global_mouseup** ✅ | S | Path A: JS `setPosition` + in-WebView mouseup; `global_mouseup` удалён; affinity hit-test оставлен. Spec: `.cursor-spec/track-r-docking/B4c_js_popout_drag_spec.md`. |
+| **B4c manual QA** | S | Feel JS drag vs old OS-drag; negative-origin; Linux smoke; all-floated discoverability |
+| **FL version pin** | S | Явно зафиксировать `0.7.15` или bump → 0.10.x (перепрогнать popout-патч) |
 
-**Зависимости:** B4a → B4b → B4c, строго последовательно.  
-**B4a + B4b + B4c закрыты (код).** Manual QA: feel drag + negative-origin + Linux smoke; discoverability all-floated.
+**B4a + B4b + B4c закрыты (код).**  
+**Открытый не-блоковый долг:** PanelManager ещё для Preview/Preferences.
 
-**Открытый не-блоковый долг:** пин `flexlayout-react@0.7.15` vs ADR ~0.10.x; PanelManager ещё для Preview/presets.
 ### Needs Spec
 
 | Карточка | Размер | Описание |
@@ -99,11 +96,14 @@
 ```
 BACKLOG (Needs Spec)          READY                 IN PROGRESS   DONE
 ─────────────────────         ──────────────────    ───────────   ────────────────────────────────
-A5 Export на GPU               A1 Decision function               GPU-resident архитектура
-A6 GPU multi-doc бюджет        A2 Speculative warm-up             Industrial Gate
-A7 Palette LUT resident        A3 Benchmark dispatch              ED decision (CPU forever)
-A8 f16/sparse (не приоритет)   A4 Убрать GPU-тоггл               Display decision (no-go)
+A8 f16/sparse (не приоритет)                                     Industrial Gate
+                                                                   ED decision (CPU forever)
+                                                                   Display decision (no-go)
                                                                    pixel_size>1 decision
+                                                                   **A1–A4 auto-dispatch** ✅
+                                                                   **A5 GPU export NO-GO**
+                                                                   **A6 GPU EvictContext** ✅
+                                                                   **A7 palette LUT bridge** ✅
 B7 OS-окно мультимонитор                                          B1 Audit докинга
 (опционально, после B4)                                           B2 ADR + Spike (Path A ✅)
                                                                   B3 Layers на FlexLayout ✅
@@ -113,7 +113,7 @@ B7 OS-окно мультимонитор                                       
 ```
 
 **Что брать в работу прямо сейчас:**
-- **A1** — Decision function per-tile (S, независима)
+- Трек A: остался только A8 (не приоритет).
 - Параллельно: QA B4c (feel / negative-origin / Linux) + discoverability all-floated + решить bump FL 0.7.15→0.10.x
 
 **Зависимости трека B:** B4a ✅ → B4b ✅ → B4c ✅ → (B7 опционально)

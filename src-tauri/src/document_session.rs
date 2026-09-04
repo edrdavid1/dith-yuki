@@ -167,6 +167,7 @@ impl AppState {
         if let Ok(mut active) = self.active_id.lock() {
             *active = Some(id.0);
         }
+        self.sync_gpu_evict_policy_from_viewport();
         session
     }
 
@@ -232,6 +233,37 @@ impl AppState {
             .unwrap_or_default()
     }
 
+    fn visible_viewport_coords(&self) -> HashSet<engine_tiles::TileCoord> {
+        self.ui
+            .viewport
+            .lock()
+            .map(|v| v.visible_tiles.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
+    /// Push the same `EvictContext` the CPU RAM tier uses onto the GPU atlas.
+    pub(crate) fn sync_gpu_evict_policy(
+        &self,
+        viewport_coords: &HashSet<engine_tiles::TileCoord>,
+    ) {
+        let Some(gpu) = self.gpu_resident.as_ref() else {
+            return;
+        };
+        let open_docs = self.open_doc_ids();
+        let ctx = engine_tiles::EvictContext {
+            active_doc: self.active_id(),
+            open_docs: &open_docs,
+            viewport_coords,
+        };
+        gpu.set_evict_policy(&ctx);
+        gpu.evict_for_pressure(&ctx);
+    }
+
+    fn sync_gpu_evict_policy_from_viewport(&self) {
+        let vp = self.visible_viewport_coords();
+        self.sync_gpu_evict_policy(&vp);
+    }
+
     pub fn activate(&self, doc: u32) -> Result<Arc<DocumentSession>, String> {
         let session = self.session(doc)?;
         if let Ok(mut active) = self.active_id.lock() {
@@ -246,39 +278,38 @@ impl AppState {
     /// Pressure with empty viewport protect set (inactive-only when active is set).
     /// Open-session Raw is always pinned via `open_docs`.
     pub fn evict_inactive_for_pressure_if_needed(&self) {
-        if self.tiles.tile_cache.used_bytes_count() <= self.tiles.tile_cache.budget_bytes_count() {
-            return;
-        }
         let empty = HashSet::new();
         let open_docs = self.open_doc_ids();
-        self.tiles
-            .tile_cache
-            .evict_for_pressure(&engine_tiles::EvictContext {
-                active_doc: self.active_id(),
-                open_docs: &open_docs,
-                viewport_coords: &empty,
-            });
+        let ctx = engine_tiles::EvictContext {
+            active_doc: self.active_id(),
+            open_docs: &open_docs,
+            viewport_coords: &empty,
+        };
+        if self.tiles.tile_cache.used_bytes_count() > self.tiles.tile_cache.budget_bytes_count() {
+            self.tiles.tile_cache.evict_for_pressure(&ctx);
+        }
+        if let Some(gpu) = self.gpu_resident.as_ref() {
+            gpu.set_evict_policy(&ctx);
+            gpu.evict_for_pressure(&ctx);
+        }
     }
 
     /// Build `EvictContext` from active tab + viewport + open sessions.
     pub fn evict_for_pressure_if_needed(&self) {
-        if self.tiles.tile_cache.used_bytes_count() <= self.tiles.tile_cache.budget_bytes_count() {
-            return;
-        }
-        let viewport_coords: HashSet<engine_tiles::TileCoord> = self
-            .ui
-            .viewport
-            .lock()
-            .map(|v| v.visible_tiles.iter().copied().collect())
-            .unwrap_or_default();
+        let viewport_coords = self.visible_viewport_coords();
         let open_docs = self.open_doc_ids();
-        self.tiles
-            .tile_cache
-            .evict_for_pressure(&engine_tiles::EvictContext {
-                active_doc: self.active_id(),
-                open_docs: &open_docs,
-                viewport_coords: &viewport_coords,
-            });
+        let ctx = engine_tiles::EvictContext {
+            active_doc: self.active_id(),
+            open_docs: &open_docs,
+            viewport_coords: &viewport_coords,
+        };
+        if self.tiles.tile_cache.used_bytes_count() > self.tiles.tile_cache.budget_bytes_count() {
+            self.tiles.tile_cache.evict_for_pressure(&ctx);
+        }
+        if let Some(gpu) = self.gpu_resident.as_ref() {
+            gpu.set_evict_policy(&ctx);
+            gpu.evict_for_pressure(&ctx);
+        }
     }
 
     pub fn close_session(&self, doc: u32) -> Result<(), String> {
@@ -301,6 +332,7 @@ impl AppState {
         if let Some(gpu_cache) = &self.gpu_resident {
             gpu_cache.evict_document(doc);
         }
+        self.sync_gpu_evict_policy_from_viewport();
         self.tiles.error_residuals.evict_document(doc);
         self.tiles.block_representatives.evict_document(doc);
         self.tiles.ed_frontier.evict_document(doc);

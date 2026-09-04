@@ -154,11 +154,22 @@ export default function PreviewWindow({
     return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
   }, []);
 
-  // ─── Wheel forwarding ─────────────────────────────────────────────────
+  // ─── Wheel: native + non-passive so trackpad pan can preventDefault ──
 
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    onWheel(e.nativeEvent);
-  }, [onWheel]);
+  const onWheelRef = useRef(onWheel);
+  onWheelRef.current = onWheel;
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onWheelRef.current(e);
+    };
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => el.removeEventListener('wheel', handleWheel);
+  }, []);
 
   // ─── No-op viewport change handler (useViewport hook manages state) ───
 
@@ -181,7 +192,6 @@ export default function PreviewWindow({
         className={cn("preview-container")}
         style={{ ...inlineStyles.canvasArea, ...previewBackgroundStyle(previewBackground) }}
         tabIndex={0}
-        onWheel={handleWheel}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}

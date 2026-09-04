@@ -70,8 +70,9 @@ export interface UseViewportReturn {
  * Manages viewport state (zoom, pan, canvas dimensions) and communicates
  * changes to the Tauri backend via a debounced `set_viewport` IPC call.
  *
- * Default zoomMode is `'free'` (preserves continuous trackpad zoom).
- * Integer mode snaps on wheel-idle and on explicit setZoom / presets / fit.
+ * Default zoomMode is `'free'` (pinch / Ctrl+wheel is continuous zoom).
+ * Two-finger trackpad scroll pans. Integer mode snaps on pinch-idle and
+ * on explicit setZoom / presets / fit.
  */
 export function useViewport(docWidth: number, docHeight: number): UseViewportReturn {
   const [viewport, setViewport] = useState<ViewportState>({
@@ -176,22 +177,53 @@ export function useViewport(docWidth: number, docHeight: number): UseViewportRet
     [docWidth, docHeight],
   );
 
-  // ─── Zoom centered on cursor position ─────────────────────────────────
+  // ─── Wheel: trackpad pan, pinch / Ctrl+wheel zoom ─────────────────────
 
   const handleWheel = useCallback(
     (e: WheelEvent) => {
-      // Continuous exponential zoom (trackpad-friendly). Discrete ×2/÷2 per
-      // wheel event jumped ~200%→6000% in a single gesture.
+      let dx = e.deltaX;
       let dy = e.deltaY;
-      if (e.deltaMode === 1) dy *= 16; // lines → px
-      if (e.deltaMode === 2) dy *= 400; // pages → px
+      if (e.deltaMode === 1) {
+        dx *= 16;
+        dy *= 16;
+      } else if (e.deltaMode === 2) {
+        dx *= 400;
+        dy *= 400;
+      }
+
+      // macOS pinch-to-zoom is delivered as wheel + ctrlKey. Mouse Ctrl+wheel
+      // zooms the same way. Two-finger trackpad scroll (no ctrl) pans, like
+      // Photoshop / Preview — Space+drag remains available as a hand tool.
+      const isPinchZoom = e.ctrlKey;
+
+      if (!isPinchZoom) {
+        if (e.shiftKey && dx === 0) {
+          dx = dy;
+          dy = 0;
+        }
+        if (dx === 0 && dy === 0) return;
+        setViewport((prev) =>
+          constrainPan(
+            {
+              ...prev,
+              panX: prev.panX + dx / prev.zoom,
+              panY: prev.panY + dy / prev.zoom,
+            },
+            docWidth,
+            docHeight,
+          ),
+        );
+        return;
+      }
+
+      // Continuous exponential zoom. Discrete ×2/÷2 per wheel event jumped
+      // ~200%→6000% in a single gesture.
       const factor = Math.exp(-dy * 0.0012);
 
       setViewport((prev) => {
         const newZoom = clamp(prev.zoom * factor, ZOOM_MIN, ZOOM_MAX);
         if (newZoom === prev.zoom) return prev;
 
-        // Keep document point under cursor stationary
         const cursorDocX = prev.panX + e.offsetX / prev.zoom;
         const cursorDocY = prev.panY + e.offsetY / prev.zoom;
         const newPanX = cursorDocX - e.offsetX / newZoom;

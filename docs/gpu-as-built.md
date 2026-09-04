@@ -1,9 +1,10 @@
 # As-Built: Path B Resident GPU Architecture & Industrial Gate Opt-In Verdict
 
-> **Status:** Shipped (Dither Yuki 0.2.0) — **OPT_IN ONLY**  
-> **Controls:** Preferences UI toggle or `DITHER_GPU_PREVIEW=1` (env overrides UI)  
+> **Status:** Shipped — Path B + auto-dispatch **A1–A4**; A5 export **NO-GO**; A6–A7 shipped; A8 occupancy measured, f16 not started  
+> **Controls:** Warm download + A2 warmup by default. Cold GPU compute: `DITHER_GPU_PREVIEW=1`. Force CPU: `DITHER_FORCE_CPU=1`. No Preferences toggle (A4).  
 > **Primary Specification:** [`.cursor-spec/gpu-path-b/SPEC.md`](../.cursor-spec/gpu-path-b/SPEC.md)  
-> **Industrial Gate Evidence & Verdict:** [`.cursor-spec/gpu-industrial-gate/REPORT.md`](../.cursor-spec/gpu-industrial-gate/REPORT.md) | [`EVIDENCE.md`](../.cursor-spec/gpu-industrial-gate/EVIDENCE.md)
+> **Industrial Gate:** [`.cursor-spec/gpu-industrial-gate/REPORT.md`](../.cursor-spec/gpu-industrial-gate/REPORT.md)  
+> **A8 occupancy:** [`.cursor-spec/gpu-vram-a8/A8_EVIDENCE.md`](../.cursor-spec/gpu-vram-a8/A8_EVIDENCE.md) (preview+A2 ~19% on 3072²/1080p)
 
 ---
 
@@ -88,5 +89,7 @@ GPU acceleration is **NOT default-on** in Dither Yuki 0.2.0 for the following ar
 Per **Task T9**, all legacy per-tile v1 GPU code (`dispatch_rgba32`, `gpu_bridge::try_*`, single-pass buffer uploads) has been **completely removed**.
 
 - **Retired Semantics:** The environment variable `DITHER_GPU=1` no longer invokes legacy v1 dispatch. It is mapped to `gpu_preview_enabled()`.
-- **Primary Control:** `DITHER_GPU_PREVIEW=1` or the Preferences UI toggle (`get_gpu_preview_status` / `set_gpu_preview_enabled`).
-- **Safety Guarantee:** CPU path remains the bit-exact source of truth and default preview engine.
+- **Primary Control:** `DITHER_GPU_PREVIEW=1` = **cold GPU compute** opt-in (debug/soak). Warm resident Composite may download without that flag ([auto-dispatch A1](../.cursor-spec/gpu-auto-dispatch/SPEC.md)). Product UI has no GPU toggle (A4).
+- **Palette (A7):** `compile_layer_graph_with_palettes` emits Guided/Mixed/PaletteQuantize GPU nodes from the session `PaletteLutCache`. Strict/Simple ordered palette dither stays CPU.
+- **Safety Guarantee:** CPU path remains the bit-exact source of truth and default for cold tiles. A2 may fill VRAM slots in the background (`DITHER_GPU_WARMUP=0` to disable).
+- **A8:** Atlas occupancy harness only. Full-doc GPU fill saturates (expected). Do not start f16 until *preview* peak stays ~100% on a real file.

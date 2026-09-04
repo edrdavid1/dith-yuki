@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
-/// UI preference for Path B preview authorship (`0` = unset, `1` = off, `2` = on).
+/// Test/diag override for cold GPU compute (`0` = unset, `1` = off, `2` = on).
 /// Used when `DITHER_GPU_PREVIEW` env is **not** set (env wins for soak/CI).
 static GPU_PREVIEW_UI_OVERRIDE: AtomicU8 = AtomicU8::new(0);
 
@@ -16,20 +16,32 @@ pub fn prefer_gpu() -> bool {
     gpu_preview_enabled()
 }
 
-/// Combined gate: GPU path may run only if `gpu_preview_enabled()` is true.
+/// Combined gate for **cold** GPU filter compute (opt-in). Warm download uses [`crate::decide_tile_dispatch`].
 pub fn gpu_filters_enabled() -> bool {
     gpu_preview_enabled()
 }
 
-/// Path B GPU-resident frame path (shadow/diag until preview gate).
+/// Speculative VRAM warm-up (A2). Default **on** when GPU exists (caller checks adapter).
 ///
-/// Also on when [`gpu_preview_enabled`] — preview authorship needs the resident executor.
+/// `DITHER_GPU_WARMUP=0` disables. `DITHER_FORCE_CPU` wins.
+pub fn gpu_warmup_enabled() -> bool {
+    if force_cpu() {
+        return false;
+    }
+    if let Ok(v) = std::env::var("DITHER_GPU_WARMUP") {
+        return gpu_flag_enabled(Some(v.as_str()));
+    }
+    true
+}
+
+/// Path B GPU-resident frame path (opt-in compute, A2 warm-up, or `DITHER_GPU_RESIDENT`).
 pub fn gpu_resident_enabled() -> bool {
     gpu_preview_enabled()
+        || gpu_warmup_enabled()
         || gpu_flag_enabled(std::env::var("DITHER_GPU_RESIDENT").ok().as_deref())
 }
 
-/// Set Preferences UI override for GPU preview authorship.
+/// Set test/diag override for cold GPU compute (no product UI).
 ///
 /// `None` clears the override (fall through to env / compile-time).
 /// Ignored while `DITHER_GPU_PREVIEW` env is set — env wins for soak/CI.
@@ -42,10 +54,11 @@ pub fn set_gpu_preview_ui_override(enabled: Option<bool>) {
     GPU_PREVIEW_UI_OVERRIDE.store(v, Ordering::Relaxed);
 }
 
-/// G10: GPU-resident path **authors** `tile_cache` Composite for eligible frames.
+/// Opt-in for **cold** GPU compute (promote + graph) on eligible L0 tiles.
 ///
+/// Warm Composite slots may still be downloaded when this is false (A1 auto-dispatch).
 /// Precedence: `DITHER_FORCE_CPU` → off; else explicit `DITHER_GPU_PREVIEW` env;
-/// else Preferences UI override; else compile-time `DITHER_GPU_PREVIEW`; else **off**.
+/// else test/diag override; else compile-time `DITHER_GPU_PREVIEW`; else **off**.
 pub fn gpu_preview_enabled() -> bool {
     if force_cpu() {
         return false;

@@ -111,8 +111,14 @@ impl ViewportService {
             visible_tiles: visible,
             prefetch_tiles: prefetch,
         };
+        let vp_protect: std::collections::HashSet<_> =
+            new_viewport.visible_tiles.iter().copied().collect();
 
         *self.state.ui.viewport.lock().unwrap() = new_viewport;
+
+        self.state.sync_gpu_evict_policy(&vp_protect);
+
+        crate::gpu_resident_shadow::enqueue_resident_shadow_viewport(&self.state);
 
         Ok(SetViewportResponse { level, tile_count })
     }

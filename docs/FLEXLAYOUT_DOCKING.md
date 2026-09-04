@@ -341,8 +341,6 @@ ADR — целевое состояние после **полной** мигра
 | Документ | Назначение |
 |----------|------------|
 | [`B2_ADR_flexlayout_docking.md`](./B2_ADR_flexlayout_docking.md) | Решение «почему FlexLayout» и целевая архитектура |
-| [`FLEXLAYOUT_DOCKING_AS_BUILT.md`](./FLEXLAYOUT_DOCKING_AS_BUILT.md) | Короткий English index → этот файл |
 | [`legal/flexlayout-license-snapshot.md`](./legal/flexlayout-license-snapshot.md) | Снимок MIT LICENSE для 0.7.15 |
 | `.cursor-spec/track-b-infra/AUDIT_docking_current_implementation.md` | B1: affinity / Linux |
 | `.cursor-spec/track-r-docking/SPIKE_EXECUTION_LOG.md` | Spike: Path A + пин 0.7.15 |
-| `frontend/src/FLEXLAYOUT_INTEGRATION_GUIDE.md` | **Устарел** (B3 Layers-only) |

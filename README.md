@@ -13,7 +13,7 @@ Built with **Rust** (Tauri 2) and **React**. Current version: **0.2.0**.
 - Palette dither modes: Strict, Guided, Mixed, Simple
 - Non-destructive layers, blend modes, undo/redo
 - Projects (`.dyproj`) and shareable patterns (`.dyuki`)
-- Dockable / floating panels
+- Dockable / floating panels (FlexLayout: Layers, Effect, Color Lab)
 - In-app updates from GitHub Releases (from 0.2.0)
 
 ## Install
@@ -41,7 +41,7 @@ npm run tauri:build
 
 Artifacts land under `src-tauri/target/release/bundle/` (DMG on macOS).
 
-Optional GPU path for some ordered filters: `DITHER_GPU=1`.
+GPU: warm resident download + background warmup are on when a wgpu adapter exists. Cold GPU compute: `DITHER_GPU_PREVIEW=1`. Force CPU: `DITHER_FORCE_CPU=1`. There is no Preferences GPU toggle.
 
 ## Develop
 
@@ -63,7 +63,7 @@ crates/
   engine-project/   # Document, layers, filters, compositor, .dyproj / .dyuki
   engine-tiles/     # Tile cache, coords, scheduler
   engine-color/     # Oklab, palettes, KD-tree, LUT
-  engine-gpu/       # Optional wgpu compute (opt-in)
+  engine-gpu/       # Path B resident wgpu (auto-dispatch; cold compute opt-in)
   engine-io/        # Image decode / encode
   engine-core/      # Legacy stub
 frontend/           # React + Redux Toolkit UI
@@ -74,8 +74,11 @@ docs/               # Architecture and contributor guides
 
 | Document | Contents |
 |---|---|
+| [docs/README.md](./docs/README.md) | Full index (as-built vs historical) |
 | [docs/architecture.md](./docs/architecture.md) | As-built system map |
 | [docs/tile-pipeline.md](./docs/tile-pipeline.md) | Tiles, coordinates, error-diffusion wavefront, GPU |
+| [docs/gpu-as-built.md](./docs/gpu-as-built.md) | Path B GPU + auto-dispatch |
+| [docs/FLEXLAYOUT_DOCKING.md](./docs/FLEXLAYOUT_DOCKING.md) | Docking as-built |
 | [docs/palette-dither.md](./docs/palette-dither.md) | Strict / Guided / Mixed / Simple |
 | [docs/color-lab.md](./docs/color-lab.md) | Palettes and Color Lab |
 | [docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md) | Setup and conventions |
