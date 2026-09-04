@@ -103,6 +103,11 @@ export async function cancelFloatDrag(): Promise<void> {
   return invoke<void>('cancel_float_drag');
 }
 
+/** End JS-driven float drag; docks if affinity armed (Flex → flex-panel-dock-request). */
+export async function completeFloatDrag(): Promise<void> {
+  return invoke<void>('complete_float_drag');
+}
+
 export async function dockPanelAt(
   panelId: string,
   side: DockSide,

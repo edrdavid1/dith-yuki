@@ -12,6 +12,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "Dither Yuki",
         "width": 1200,
         "height": 800,
@@ -20,7 +21,7 @@
         "decorations": true,
         "hiddenTitle": true,
         "titleBarStyle": "Overlay",
-        "trafficLightPosition": { "x": 12, "y": 14 },
+        "trafficLightPosition": { "x": 12, "y": 17 },
         "backgroundColor": "#CDCDCD"
       }
     ],

@@ -10,13 +10,14 @@ interface ResizeHandleProps {
   /** Called with pixel delta during drag */
   onResize: (delta: number) => void;
   className?: string;
+  style?: React.CSSProperties;
 }
 
 /**
  * A draggable handle for resizing panels.
  * Renders a thin bar that can be dragged to resize adjacent panels.
  */
-export default function ResizeHandle({ direction, onResize, className = '' }: ResizeHandleProps) {
+export default function ResizeHandle({ direction, onResize, className = '', style }: ResizeHandleProps) {
   const startPos = useRef(0);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -48,6 +49,7 @@ export default function ResizeHandle({ direction, onResize, className = '' }: Re
   return (
     <div
       className={cn('resize-handle', cursorClass, className)}
+      style={style}
       onMouseDown={handleMouseDown}
     />
   );

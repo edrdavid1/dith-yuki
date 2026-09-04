@@ -5,6 +5,11 @@
   border: var(--border);
 }
 
+:global(.flexlayout__tab) .effect-chooser-panel,
+:global(.flexlayout__tabset_content) .effect-chooser-panel {
+  border: none;
+}
+
 /* When in floating window, use no border */
 :global([data-floating-panel-content]) .effect-chooser-panel {
   border: none;
@@ -79,6 +84,11 @@
   height: 100%;
   background: var(--bg-window);
   border: var(--border);
+}
+
+:global(.flexlayout__tab) .effect-settings-panel,
+:global(.flexlayout__tabset_content) .effect-settings-panel {
+  border: none;
 }
 
 /* When in floating window, use no border */

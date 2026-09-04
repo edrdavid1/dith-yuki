@@ -149,6 +149,7 @@ pub fn install_raster_document(
     height: u32,
     rgba_f32: &[f32],
     app: Option<&AppHandle>,
+    source_path: Option<&str>,
 ) -> Result<LoadImageResponse, String> {
     use engine_project::types::DocumentId;
     use engine_tiles::decompose::decompose_image_to_tiles_at_generation;
@@ -173,6 +174,14 @@ pub fn install_raster_document(
     new_doc.generations.set_document_gen(live_gen);
 
     let session = state.spawn_session(new_doc);
+    
+    // Set source_path if provided (for loaded images)
+    if let Some(path) = source_path {
+        if let Ok(mut src_path) = session.source_path.lock() {
+            *src_path = Some(std::path::PathBuf::from(path));
+        }
+    }
+    
     state.evict_inactive_for_pressure_if_needed();
     crate::undo::clear_history(state, app, doc_id)?;
     emit_tabs_changed(app, state);
@@ -337,7 +346,7 @@ impl DocumentService {
         app_handle: &AppHandle,
     ) -> Result<LoadImageResponse, AppError> {
         let (width, height, rgba_f32) = decode_image_to_rgba_f32(path)?;
-        let response = install_raster_document(&self.state, width, height, &rgba_f32, Some(app_handle))?;
+        let response = install_raster_document(&self.state, width, height, &rgba_f32, Some(app_handle), Some(path))?;
         emit_document_changed(app_handle, "image_loaded", None, Some(response.doc_id));
         crate::recent_files::record_from_app(
             app_handle,
@@ -356,7 +365,7 @@ impl DocumentService {
     ) -> Result<LoadImageResponse, AppError> {
         validate_document_dimensions(width, height)?;
         let rgba_f32 = blank_rgba_f32(width, height, background);
-        let response = install_raster_document(&self.state, width, height, &rgba_f32, Some(app_handle))?;
+        let response = install_raster_document(&self.state, width, height, &rgba_f32, Some(app_handle), None)?;
         emit_document_changed(app_handle, "document_created", None, Some(response.doc_id));
         Ok(response)
     }

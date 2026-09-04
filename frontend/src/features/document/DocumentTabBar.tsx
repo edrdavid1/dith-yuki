@@ -1,6 +1,7 @@
 import { useAppDispatch, useAppSelector } from '../../app/hooks';
 import { activateTab } from '../../app/slices/tabsSlice';
 import type { OpenDocumentTab } from '../../shared/ipc/document';
+import { projectBasename } from '../../shared/unsavedGuard';
 import styles from './DocumentTabBar.module.css';
 import { bind } from '../../shared/ui/cn';
 
@@ -11,10 +12,10 @@ const cn = bind(styles);
  * (parent) so quit and tab-close share one dialog pipeline.
  */
 export default function DocumentTabBar({
-  onNewProject,
+  onOpenFile,
   onCloseTab,
 }: {
-  onNewProject: () => void;
+  onOpenFile: () => void;
   onCloseTab: (tab: OpenDocumentTab) => void;
 }) {
   const dispatch = useAppDispatch();
@@ -24,6 +25,10 @@ export default function DocumentTabBar({
     <div className={cn('tab-bar')} data-tauri-drag-region>
       {tabs.map((tab) => {
         const active = tab.id === activeId;
+        // Display the actual file name from path, fallback to title for unsaved documents
+        const displayName = tab.path ? projectBasename(tab.path) : tab.title;
+        // Full path for tooltip
+        const fullPath = tab.path || tab.title;
         return (
           <button
             key={tab.id}
@@ -31,19 +36,20 @@ export default function DocumentTabBar({
             className={cn('tab', active && 'tab-active')}
             data-tauri-drag-region="false"
             aria-current={active ? 'page' : undefined}
+            title={fullPath}
             onClick={() => {
               if (!active) void dispatch(activateTab(tab.id));
             }}
           >
             <span className={cn('tab-title')}>
               {tab.dirty ? '* ' : ''}
-              {tab.title}
+              {displayName}
             </span>
             <span
               className={cn('tab-close')}
               role="button"
               tabIndex={0}
-              aria-label={`Close ${tab.title}`}
+              aria-label={`Close ${displayName}`}
               onClick={(e) => {
                 e.stopPropagation();
                 onCloseTab(tab);
@@ -65,8 +71,8 @@ export default function DocumentTabBar({
         type="button"
         className={cn('tab-new')}
         data-tauri-drag-region="false"
-        aria-label="New project"
-        onClick={onNewProject}
+        aria-label="Open file"
+        onClick={onOpenFile}
       >
         +
       </button>
