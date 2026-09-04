@@ -45,4 +45,5 @@ pub struct GpuCompositeTileWork {
 pub struct GpuCompositeFrameJob {
     pub doc_gen: u64,
     pub tiles: Vec<GpuCompositeTileWork>,
+    pub speculative: bool,
 }

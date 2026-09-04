@@ -23,9 +23,14 @@ use engine_tiles::{
     TILE_SIZE,
 };
 
+use engine_project::filters::apply::apply_filter_to_tile;
+
 use crate::commands::AppState;
+use crate::services::document_service::{encode_rgba_to_png, f32_to_u8};
 use crate::tile_pipeline::{compute_composite_tile, compute_processed_tile};
-use crate::viewport::{compute_pyramid_level, compute_visible_tiles, ViewportState};
+use crate::viewport::{
+    compute_prefetch_ring, compute_pyramid_level, compute_visible_tiles, ViewportState,
+};
 use crate::worker::WorkerWake;
 
 const DOC: u32 = 3072;
@@ -627,6 +632,7 @@ fn build_resident_frame_job(
         doc_gen,
         graph: std::sync::Arc::clone(graph),
         tiles,
+        speculative: false,
     })
 }
 
@@ -760,7 +766,11 @@ fn build_resident_composite_job(
     if tiles.is_empty() {
         return None;
     }
-    Some(GpuCompositeFrameJob { doc_gen, tiles })
+    Some(GpuCompositeFrameJob {
+        doc_gen,
+        tiles,
+        speculative: false,
+    })
 }
 
 /// T7.5: multi-layer resident composite p95 (3 layers, no filters — blend only).
@@ -1697,6 +1707,568 @@ fn preview_latency_diag_industrial_gate() {
     std::env::remove_var("DITHER_GPU_RESIDENT_DIAG");
 
     println!("\n=== Industrial gate harness complete — paste rows into EVIDENCE.md ===\n");
+}
+
+fn a3_n() -> usize {
+    std::env::var("DITHER_A3_N")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(INDUSTRIAL_N)
+}
+
+fn env_set(key: &str, val: Option<&str>) {
+    match val {
+        Some(v) => std::env::set_var(key, v),
+        None => std::env::remove_var(key),
+    }
+}
+
+fn set_viewport_with_prefetch(state: &AppState, zoom: f64, x: f64, y: f64) -> Vec<TileCoord> {
+    let max_level = crate::viewport::compute_max_level(DOC, DOC);
+    let level = compute_pyramid_level(zoom, max_level);
+    let visible = compute_visible_tiles(zoom, x, y, VP_W, VP_H, level, DOC, DOC);
+    let prefetch = compute_prefetch_ring(&visible, level, DOC, DOC);
+    *state.ui.viewport.lock().unwrap() = ViewportState {
+        zoom,
+        x,
+        y,
+        width: VP_W,
+        height: VP_H,
+        level,
+        visible_tiles: visible.clone(),
+        prefetch_tiles: prefetch,
+    };
+    visible
+}
+
+fn fill_all_l0_raw(state: &AppState) {
+    fill_raw_tiles(state, &l0_grid());
+}
+
+#[allow(dead_code)]
+fn wait_gpu_slots(state: &AppState, coords: &[TileCoord], timeout: Duration) {
+    let Some(cache) = state.gpu_resident.as_ref() else {
+        return;
+    };
+    let Ok(session) = state.active_session() else {
+        return;
+    };
+    let snapshot = session.document_handle.snapshot();
+    let gen = snapshot.generations.document_gen.load(Ordering::Acquire);
+    let doc = snapshot.id.0;
+    let t0 = Instant::now();
+    while t0.elapsed() < timeout {
+        let warm = coords
+            .iter()
+            .filter(|coord| {
+                cache
+                    .get_slot(
+                        &TileKey {
+                            doc,
+                            layer: 0,
+                            coord: **coord,
+                            stage: CacheStage::Composite,
+                        },
+                        gen,
+                    )
+                    .is_some()
+            })
+            .count();
+        if !coords.is_empty() && warm == coords.len() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(8));
+    }
+}
+
+#[derive(Clone, Copy)]
+enum A3Mode {
+    Cpu,
+    OptIn,
+    Auto,
+}
+
+fn measure_open_then_pan(mode: A3Mode, gpu: Option<Arc<engine_gpu::GpuContext>>) -> (f64, f64) {
+    let workers = n_workers();
+    engine_gpu::set_gpu_preview_ui_override(None);
+    match mode {
+        A3Mode::Cpu => {
+            env_set("DITHER_GPU_PREVIEW", None);
+            env_set("DITHER_GPU_WARMUP", Some("0"));
+        }
+        A3Mode::OptIn => {
+            env_set("DITHER_GPU_PREVIEW", Some("1"));
+            env_set("DITHER_GPU_WARMUP", Some("0"));
+        }
+        A3Mode::Auto => {
+            env_set("DITHER_GPU_PREVIEW", None);
+            env_set("DITHER_GPU_WARMUP", Some("1"));
+        }
+    }
+
+    // Same GPU process for all arms: CPU authorship vs auto must not be
+    // confounded by "no Metal adapter" vs "adapter + executor alive".
+    let state = make_state(DitherModeV2::Bayer4x4, gpu);
+    fill_all_l0_raw(&state);
+
+    let origin = set_viewport_with_prefetch(&state, 1.0, 0.0, 0.0);
+    let t_open = Instant::now();
+    crate::commands::schedule_dirty_viewport_tiles(&state);
+    let _ = drain_until_visible(&state, &origin, workers, Duration::from_secs(120));
+    let open_ms = t_open.elapsed().as_secs_f64() * 1000.0;
+    assert_eq!(
+        count_fresh(&state, 0, CacheStage::Composite, &origin),
+        origin.len(),
+        "open did not finish"
+    );
+
+    // Far pan is outside the origin prefetch ring. Do not kick A2 here: leftover
+    // GPU work only taxes the timed pan (A1 download cannot hit these tiles).
+
+    let far = set_viewport_with_prefetch(&state, 1.0, 2048.0, 2048.0);
+    let t_pan = Instant::now();
+    crate::commands::schedule_dirty_viewport_tiles(&state);
+    let _ = drain_until_visible(&state, &far, workers, Duration::from_secs(120));
+    let pan_ms = t_pan.elapsed().as_secs_f64() * 1000.0;
+    assert_eq!(
+        count_fresh(&state, 0, CacheStage::Composite, &far),
+        far.len(),
+        "pan did not finish"
+    );
+
+    env_set("DITHER_GPU_PREVIEW", None);
+    env_set("DITHER_GPU_WARMUP", None);
+    engine_gpu::set_gpu_preview_ui_override(None);
+    (open_ms, pan_ms)
+}
+
+/// A3: auto-dispatch vs opt-in vs CPU on open → pan (Bayer4, L0).
+///
+/// `cargo test -p dither --release preview_latency_diag_auto_dispatch -- --ignored --nocapture --test-threads=1`
+/// Optional `DITHER_A3_N` (default 20).
+#[test]
+#[ignore = "diagnostic: cargo test -p dither --release preview_latency_diag_auto_dispatch -- --ignored --nocapture --test-threads=1"]
+fn preview_latency_diag_auto_dispatch() {
+    let n = a3_n();
+    println!("\n=== A3 auto-dispatch (n={n}, Bayer4, open origin → pan far) ===\n");
+
+    let gpu = engine_gpu::GpuContext::try_new_blocking().map(Arc::new);
+    if gpu.is_none() {
+        println!("GPU: no adapter — abort A3");
+        return;
+    }
+
+    let mut cpu_open = Vec::with_capacity(n);
+    let mut cpu_pan = Vec::with_capacity(n);
+    let mut opt_open = Vec::with_capacity(n);
+    let mut opt_pan = Vec::with_capacity(n);
+    let mut auto_open = Vec::with_capacity(n);
+    let mut auto_pan = Vec::with_capacity(n);
+
+    for i in 0..n {
+        let (o, p) = measure_open_then_pan(A3Mode::Cpu, gpu.clone());
+        cpu_open.push(o);
+        cpu_pan.push(p);
+        let (o, p) = measure_open_then_pan(A3Mode::OptIn, gpu.clone());
+        opt_open.push(o);
+        opt_pan.push(p);
+        let (o, p) = measure_open_then_pan(A3Mode::Auto, gpu.clone());
+        auto_open.push(o);
+        auto_pan.push(p);
+        if i % 5 == 4 {
+            println!("  round {}/{n}", i + 1);
+        }
+    }
+
+    let rows = [
+        ("open CPU", sample_stats(&cpu_open)),
+        ("open opt-in", sample_stats(&opt_open)),
+        ("open auto", sample_stats(&auto_open)),
+        ("pan CPU", sample_stats(&cpu_pan)),
+        ("pan opt-in", sample_stats(&opt_pan)),
+        ("pan auto", sample_stats(&auto_pan)),
+    ];
+    for (name, s) in &rows {
+        print_industrial_row(name, s);
+    }
+
+    let cpu_o = sample_stats(&cpu_open);
+    let cpu_p = sample_stats(&cpu_pan);
+    let auto_o = sample_stats(&auto_open);
+    let auto_p = sample_stats(&auto_pan);
+    let opt_o = sample_stats(&opt_open);
+    let opt_p = sample_stats(&opt_pan);
+
+    let open_ok = engine_gpu::not_worse_than(auto_o.median, auto_o.sigma, cpu_o.median, cpu_o.sigma, n);
+    let pan_ok = engine_gpu::not_worse_than(auto_p.median, auto_p.sigma, cpu_p.median, cpu_p.sigma, n);
+    println!(
+        "\n  gate auto vs CPU open: {}\n  gate auto vs CPU pan: {}\n  opt-in vs CPU open: {}\n  opt-in vs CPU pan: {}\n",
+        if open_ok { "PASS (not worse)" } else { "FAIL (worse)" },
+        if pan_ok { "PASS (not worse)" } else { "FAIL (worse)" },
+        verdict_faster(&opt_o, &cpu_o, "opt-in open"),
+        verdict_faster(&opt_p, &cpu_p, "opt-in pan"),
+    );
+    println!("=== A3 harness complete — paste into gpu-auto-dispatch/A3_EVIDENCE.md ===\n");
+    assert!(open_ok && pan_ok, "A3 gate: auto-dispatch worse than CPU");
+}
+
+const A5_GPU_BATCH: usize = 32;
+
+fn a5_n() -> usize {
+    std::env::var("DITHER_A5_N")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(5)
+}
+
+fn pack_tile_into_rgba(processed: &PixelTile, col: u32, row: u32, rgba: &mut [u8]) {
+    let tile_origin_x = col * TILE_SIZE;
+    let tile_origin_y = row * TILE_SIZE;
+    for ty in 0..TILE_SIZE {
+        let img_y = tile_origin_y + ty;
+        if img_y >= DOC {
+            break;
+        }
+        for tx in 0..TILE_SIZE {
+            let img_x = tile_origin_x + tx;
+            if img_x >= DOC {
+                break;
+            }
+            let buf_idx = ((img_y * DOC + img_x) * 4) as usize;
+            let tile_x = tx + HALO;
+            let tile_y = ty + HALO;
+            rgba[buf_idx] = f32_to_u8(processed.at(tile_x, tile_y, 0));
+            rgba[buf_idx + 1] = f32_to_u8(processed.at(tile_x, tile_y, 1));
+            rgba[buf_idx + 2] = f32_to_u8(processed.at(tile_x, tile_y, 2));
+            rgba[buf_idx + 3] = f32_to_u8(processed.at(tile_x, tile_y, 3));
+        }
+    }
+}
+
+fn a5_layer_and_doc(state: &AppState) -> (Layer, engine_project::Document) {
+    let snapshot = state.must_active().document_handle.snapshot();
+    let layer = snapshot
+        .root
+        .iter()
+        .find_map(|n| match n {
+            LayerNode::Leaf(l) if l.id.0 == LAYER => Some(l.clone()),
+            _ => None,
+        })
+        .expect("A5 layer");
+    let doc = (*snapshot).clone();
+    (layer, doc)
+}
+
+/// Current `export_image` filter loop: sequential apply + pack (no encode, no disk).
+fn measure_export_cpu_seq(state: &AppState, coords: &[TileCoord]) -> (f64, Vec<u8>) {
+    let (layer, doc) = a5_layer_and_doc(state);
+    let mut rgba = vec![0u8; (DOC * DOC * 4) as usize];
+    let t0 = Instant::now();
+    for coord in coords {
+        let raw = state
+            .tiles
+            .tile_cache
+            .get_entry(TileKey {
+                doc: 1,
+                layer: LAYER,
+                coord: *coord,
+                stage: CacheStage::Raw,
+            })
+            .expect("raw");
+        let processed = apply_filter_to_tile(
+            &raw,
+            &layer,
+            *coord,
+            &state.tiles.palette_cache,
+            &state.tiles.palette_lut_cache,
+            &state.tiles.threshold_cache,
+            &doc,
+        )
+        .expect("apply");
+        pack_tile_into_rgba(&processed, coord.x, coord.y, &mut rgba);
+    }
+    (
+        t0.elapsed().as_secs_f64() * 1000.0,
+        rgba,
+    )
+}
+
+/// Parallel CPU apply (same work as export, N worker threads) then pack.
+fn measure_export_cpu_par(state: &AppState, coords: &[TileCoord]) -> f64 {
+    let (layer, doc) = a5_layer_and_doc(state);
+    let workers = n_workers();
+    let mut rgba = vec![0u8; (DOC * DOC * 4) as usize];
+    let t0 = Instant::now();
+    let processed: Vec<(TileCoord, PixelTile)> = std::thread::scope(|s| {
+        let chunk = (coords.len() + workers - 1) / workers.max(1);
+        let mut joins = Vec::new();
+        for piece in coords.chunks(chunk.max(1)) {
+            let layer = &layer;
+            let doc = &doc;
+            joins.push(s.spawn(move || {
+                let mut out = Vec::with_capacity(piece.len());
+                for coord in piece {
+                    let raw = state
+                        .tiles
+                        .tile_cache
+                        .get_entry(TileKey {
+                            doc: 1,
+                            layer: LAYER,
+                            coord: *coord,
+                            stage: CacheStage::Raw,
+                        })
+                        .expect("raw");
+                    let tile = apply_filter_to_tile(
+                        &raw,
+                        layer,
+                        *coord,
+                        &state.tiles.palette_cache,
+                        &state.tiles.palette_lut_cache,
+                        &state.tiles.threshold_cache,
+                        doc,
+                    )
+                    .expect("apply");
+                    out.push((*coord, tile));
+                }
+                out
+            }));
+        }
+        joins
+            .into_iter()
+            .flat_map(|j| j.join().expect("worker"))
+            .collect()
+    });
+    for (coord, tile) in processed {
+        pack_tile_into_rgba(&tile, coord.x, coord.y, &mut rgba);
+    }
+    let _ = rgba;
+    t0.elapsed().as_secs_f64() * 1000.0
+}
+
+fn measure_export_gpu(
+    state: &AppState,
+    coords: &[TileCoord],
+    graph: &std::sync::Arc<engine_gpu::ComputeGraph>,
+) -> f64 {
+    let snapshot = state.must_active().document_handle.snapshot();
+    let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
+    let doc = snapshot.id.0;
+    let ctx = state.gpu.as_ref().expect("gpu");
+    let cache = state.gpu_resident.as_ref().expect("resident");
+    let executor = state.gpu_executor.as_ref().expect("executor").lock().unwrap();
+    let mut rgba = vec![0u8; (DOC * DOC * 4) as usize];
+    let t0 = Instant::now();
+    for chunk in coords.chunks(A5_GPU_BATCH) {
+        let mut tiles = Vec::with_capacity(chunk.len());
+        for coord in chunk {
+            let raw_key = TileKey {
+                doc,
+                layer: LAYER,
+                coord: *coord,
+                stage: CacheStage::Raw,
+            };
+            let raw = state.tiles.tile_cache.get_entry(raw_key).expect("raw");
+            tiles.push(GpuTileWork {
+                key: TileKey {
+                    stage: CacheStage::Processed,
+                    ..raw_key
+                },
+                coord: *coord,
+                generation: doc_gen,
+                pixels: raw,
+            });
+        }
+        executor
+            .submit_frame_blocking(GpuFrameJob {
+                doc_gen,
+                graph: std::sync::Arc::clone(graph),
+                tiles,
+                speculative: false,
+            })
+            .expect("gpu export frame");
+        for coord in chunk {
+            let key = TileKey {
+                doc,
+                layer: LAYER,
+                coord: *coord,
+                stage: CacheStage::Processed,
+            };
+            let processed = cache
+                .download(ctx, &key)
+                .expect("download")
+                .expect("slot");
+            pack_tile_into_rgba(&processed, coord.x, coord.y, &mut rgba);
+        }
+    }
+    let _ = rgba;
+    t0.elapsed().as_secs_f64() * 1000.0
+}
+
+/// A5: CPU export cost vs GPU full-doc compute+download vs parallel CPU.
+/// No disk. `DITHER_A5_N` (default 5).
+#[test]
+#[ignore = "diagnostic: cargo test -p dither --release preview_latency_diag_export -- --ignored --nocapture --test-threads=1"]
+fn preview_latency_diag_export() {
+    let n = a5_n();
+    let coords = l0_grid();
+    println!(
+        "\n=== A5 export (n={n}, Bayer4, {DOC}², {} tiles, workers={}) ===\n",
+        coords.len(),
+        n_workers()
+    );
+
+    let gpu = engine_gpu::GpuContext::try_new_blocking().map(Arc::new);
+    let state = make_state(DitherModeV2::Bayer4x4, gpu.clone());
+    fill_all_l0_raw(&state);
+
+    let mut seq = Vec::with_capacity(n);
+    let mut par = Vec::with_capacity(n);
+    let mut gpu_ms = Vec::with_capacity(n);
+    let mut png = Vec::with_capacity(n);
+    let mut last_rgba = Vec::new();
+
+    let graph = {
+        let snapshot = state.must_active().document_handle.snapshot();
+        let layer = snapshot
+            .root
+            .iter()
+            .find_map(|n| match n {
+                LayerNode::Leaf(l) if l.id.0 == LAYER => Some(l),
+                _ => None,
+            })
+            .expect("layer");
+        let g = compile_layer_graph(&layer.filters).expect("graph");
+        assert!(g.is_gpu_only(), "A5 Bayer graph must be gpu_only");
+        std::sync::Arc::new(g)
+    };
+
+    for i in 0..n {
+        let (ms, rgba) = measure_export_cpu_seq(&state, &coords);
+        seq.push(ms);
+        last_rgba = rgba;
+        par.push(measure_export_cpu_par(&state, &coords));
+        if gpu.is_some() && state.gpu_executor.is_some() {
+            gpu_ms.push(measure_export_gpu(&state, &coords, &graph));
+        }
+        let t_png = Instant::now();
+        let _ = encode_rgba_to_png(&last_rgba, DOC, DOC).expect("png");
+        png.push(t_png.elapsed().as_secs_f64() * 1000.0);
+        println!("  round {}/{n}", i + 1);
+    }
+
+    let seq_s = sample_stats(&seq);
+    let par_s = sample_stats(&par);
+    let png_s = sample_stats(&png);
+    print_industrial_row("export CPU sequential (current)", &seq_s);
+    print_industrial_row("export CPU parallel", &par_s);
+    print_industrial_row("PNG encode only", &png_s);
+    if gpu_ms.is_empty() {
+        println!("  export GPU: no adapter — skipped");
+    } else {
+        let gpu_s = sample_stats(&gpu_ms);
+        print_industrial_row("export GPU compute+download+pack", &gpu_s);
+        println!(
+            "\n  GPU vs CPU seq: {}\n  GPU vs CPU par: {}\n  CPU par vs seq: {}",
+            verdict_faster(&gpu_s, &seq_s, "GPU"),
+            verdict_faster(&gpu_s, &par_s, "GPU"),
+            verdict_faster(&par_s, &seq_s, "CPU parallel"),
+        );
+        let apply_share = seq_s.median / (seq_s.median + png_s.median);
+        println!(
+            "  sequential apply share of (apply+png): {:.0}%",
+            apply_share * 100.0
+        );
+        let build_gpu = gpu_s.median + 1.0 < seq_s.median
+            && gpu_s.median + 1.0 < par_s.median
+            && apply_share > 0.5;
+        println!(
+            "  A5 build GPU export path: {}\n",
+            if build_gpu {
+                "YES (GPU beats seq and par; apply-bound)"
+            } else {
+                "NO (encode-bound, or CPU parallel/seq already better)"
+            }
+        );
+    }
+
+    let ed_state = make_realistic_stack_state(None);
+    fill_all_l0_raw(&ed_state);
+    let (ed_ms, _) = measure_export_cpu_seq(&ed_state, &coords);
+    println!(
+        "  ED stack CPU sequential (n=1, same grid): {:.1} ms — GPU export N/A (CpuCheckpoint)\n",
+        ed_ms
+    );
+    println!("=== A5 harness complete — paste into gpu-export-a5/A5_EVIDENCE.md ===\n");
+}
+
+fn print_vram_row(label: &str, s: &engine_gpu::GpuVramStats) {
+    println!(
+        "  {label}: live={}/{} ({:.0}%) peak={} ({:.0}%) free={} pressure_evicts={} budget_miB={}",
+        s.live_slots,
+        s.max_slots,
+        s.occupancy() * 100.0,
+        s.peak_live,
+        s.peak_occupancy() * 100.0,
+        s.free_slots,
+        s.pressure_evicts,
+        s.budget_bytes / (1024 * 1024),
+    );
+}
+
+/// A8 input: atlas occupancy under a large Bayer doc (not f16).
+#[test]
+#[ignore = "diagnostic: cargo test -p dither --release preview_latency_diag_vram -- --ignored --nocapture --test-threads=1"]
+fn preview_latency_diag_vram() {
+    println!("\n=== A8 VRAM occupancy (Bayer4, {DOC}², 144 L0 tiles) ===\n");
+    let Some(gpu) = engine_gpu::GpuContext::try_new_blocking().map(Arc::new) else {
+        println!("GPU: no adapter — abort");
+        return;
+    };
+    let state = make_state(DitherModeV2::Bayer4x4, Some(gpu));
+    fill_all_l0_raw(&state);
+    let coords = l0_grid();
+    let graph = {
+        let snapshot = state.must_active().document_handle.snapshot();
+        let layer = snapshot
+            .root
+            .iter()
+            .find_map(|n| match n {
+                LayerNode::Leaf(l) if l.id.0 == LAYER => Some(l),
+                _ => None,
+            })
+            .expect("layer");
+        std::sync::Arc::new(compile_layer_graph(&layer.filters).expect("graph"))
+    };
+
+    let cache = state.gpu_resident.as_ref().expect("resident");
+    print_vram_row("after Raw fill (no GPU jobs)", &cache.vram_stats());
+
+    let origin = set_viewport_with_prefetch(&state, 1.0, 0.0, 0.0);
+    crate::commands::schedule_dirty_viewport_tiles(&state);
+    let workers = n_workers();
+    let _ = drain_until_visible(&state, &origin, workers, Duration::from_secs(60));
+    crate::gpu_resident_shadow::enqueue_resident_shadow_viewport(&state);
+    std::thread::sleep(Duration::from_millis(400));
+    print_vram_row("after origin CPU + A2 prefetch warmup", &cache.vram_stats());
+
+    let _ = measure_export_gpu(&state, &coords, &graph);
+    print_vram_row("after full-doc GPU compute (144 tiles)", &cache.vram_stats());
+
+    let _ = measure_export_gpu(&state, &coords, &graph);
+    print_vram_row("after second full-doc GPU pass", &cache.vram_stats());
+
+    let s = cache.vram_stats();
+    let constrained = s.peak_occupancy() >= 0.95 || s.pressure_evicts > 0;
+    println!(
+        "\n  A8 f16/sparse justified: {}\n=== paste into gpu-vram-a8/A8_EVIDENCE.md ===\n",
+        if constrained {
+            "MAYBE (peak ≥95% or pressure evicts)"
+        } else {
+            "NO (atlas not saturated on this scene)"
+        }
+    );
 }
 
 // Silence unused helpers when only partial industrial runs are compiled in some cfgs.

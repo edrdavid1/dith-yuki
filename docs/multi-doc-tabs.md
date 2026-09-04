@@ -1,7 +1,7 @@
 # Вкладки и мультипроектность
 
 > As-built документация: несколько открытых проектов в одном процессе, tab bar, shared tile cache.  
-> Версия приложения: **0.2.0**. Последнее обновление: 21 августа 2026.
+> Версия приложения: **0.2.0**. Последнее обновление: 4 сентября 2026.
 >
 > **См. также:**
 > - [architecture.md](./architecture.md) — общий стек и IPC
@@ -47,7 +47,7 @@ DocumentSession
   io_inflight: AtomicUsize            // SessionIoGuard (save/export)
 ```
 
-Файл: `src-tauri/src/document_session.rs`. Поля `AppState` — `src-tauri/src/commands.rs`.
+Файл: `src-tauri/src/document_session.rs`. Поля `AppState` — `src-tauri/src/commands/mod.rs`.
 
 ### 2.2 Runtime id ≠ file-local id
 
@@ -140,7 +140,8 @@ Residuals / BlockRepresentativeCache / diffusion waiters — тоже namespace 
 ### 5.2 Бюджет
 
 - Потолок кэша: **512 MiB** (`main.rs`, Decision 0)
-- При превышении: `evict_for_pressure(EvictContext { active_doc, open_docs, viewport_coords })`
+- При превышении RAM: `TileCache::evict_for_pressure`
+- GPU atlas: тот же `EvictContext`; политика пишется в `GpuTileCache::set_evict_policy` (viewport / tab), `promote` больше не эвиктит с пустым `open_docs`
 
 ### 5.3 Политика eviction (критично для вкладок)
 
@@ -280,7 +281,8 @@ close_document(A)
 | Путь | Роль |
 |------|------|
 | `src-tauri/src/document_session.rs` | Registry, alloc/activate/close, pressure helpers, tabs emit, IO guard |
-| `src-tauri/src/commands.rs` | AppState, open/save/export, tab IPC |
+| `src-tauri/src/commands/mod.rs` | AppState |
+| `src-tauri/src/commands/document.rs` | open/save/export, tab IPC |
 | `src-tauri/src/main.rs` | Budget 512 MiB; `handle_tile_request` |
 | `src-tauri/src/worker.rs` / `tile_pipeline.rs` | Compute + pressure после insert |
 | `src-tauri/src/viewport.rs` | Schedule с `doc` active snapshot |
@@ -340,7 +342,7 @@ close_document(A)
 
 1. **Registry + monotonic runtime id** — не второй глобальный handle; id не reuse.
 2. **`TileKey.doc`** — изоляция тайлов / residuals / BRC.
-3. **Budget 512 MiB + pressure** — inactive first; Raw open sessions hard-pinned.
+3. **Budget 512 MiB + pressure** — inactive first; Raw open sessions hard-pinned; viewport protect includes finer pyramid children of visible L>0 tiles (otherwise 8K fit-to-view starves Composite parents).
 4. **Doc-aware assemble + split errors** — SessionGone vs RawIncomplete.
 5. **Palette caches `(doc, palette_id)`** — нет cross-doc LUT collision.
 6. **Tab chrome** — вкладки в title area; registry уже готов до UI.

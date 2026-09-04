@@ -1,74 +1,53 @@
-# Dither Yuki 0.2.0 — где костыли
+# Dither Yuki 0.2.0 — честный снимок продукта
 
-Обзор as-built без правок кода. Движок тайлов и дизера — настоящий; продуктовый каркас вокруг него собран так, чтобы demo и один документ жили, а не как Photoshop / Affinity / Aseprite.
+> Обновлено **2026-09-04**. Движок тайлов и дизера — настоящий. Ниже — что уже закрыто и что всё ещё beta, без продажи «как Photoshop».
 
-| 1 | 8192² | ~250 | ~5000 |
+| Документов | Потолок | Кэш RAM | IPC |
 |---|---|---|---|
-| Документ в процессе | Жёсткий потолок размера | Тайлов в кэше 256 MB | Строк в commands.rs |
+| N вкладок (runtime `DocumentId`) | 8192² | process 512 MiB + Raw pin | `commands/` + `services/` |
 
-> ⚠️ **Вердикт**
-> Как студия дизера на одном холсте до ~4K — работает. Как серьёзный imaging-продукт (много документов, печать, ICC, GPU-превью, paint, большие холсты, предсказуемый ED) — нет: слишком много глобального состояния, поколений кэша и «обнулить всё и пересчитать viewport».
-
----
-
-## Блокеры продукта
-
-| Кастыль | Почему ломает продукт | Где |
-|---|---|---|
-| **Один документ, doc_id всегда 1** | Нет вкладок, нет двух файлов рядом, сериализация ремапит id в 1. Любой multi-doc = переписывать AppState, tile://, undo, dirty. | AppState, serialize/document_dto.rs |
-| **Тайл = 260² × 4 × f32 ≈ 1.03 MB** | Viewport 40 Composite + Processed + Raw ≈ 120 MB на слой (**cache footprint**). Бюджет процесса 512 MiB + eviction — [multi-doc-cache-budget](../.cursor-spec/multi-doc-cache-budget/SPEC.md). **Compute temps** на filter stack: in-place + worker park shipped ([tile-memory-inplace](../.cursor-spec/tile-memory-inplace/SPEC.md); peak ≤2 Normal / ≤3 Track I). | architecture.md §13, TileCache |
-| **Error diffusion через рекурсию соседей** | Снято: wavefront `EdFrontier`, typed pending, DashMap scheduler bump, scoped residual `evict_layer`/`cone` ([ed-scheduler](../.cursor-spec/ed-scheduler/SPEC.md)). Filter change всё ещё полный layer recompute (корректно). | engine-tiles/ed.rs, scheduler.rs |
-| **GPU opt-in и медленнее CPU** | DITHER_GPU=1, submit_lock на все воркеры, нет пула буферов, upload/download 1 MB на тайл. Eligible только Bayer/Halftone/CRT без палитры. На 40 тайлах CPU-пул выигрывает. Нельзя продавать «GPU acceleration». | engine-gpu dispatch.rs |
-| **Инвалидация кэша поколениями** | document_gen монотонно растёт, CAS insert, frontend documentEpoch + tileRev ?g= на tile://. Replace/undo — снести кэш и перезапросить.visible. Это не модель документа, а борьба со stale tiles. | commands.rs, TileCanvas, engine-tiles generation |
+> **Вердикт**  
+> Студия дизера на холсте до ~4K с вкладками, FlexLayout-панелями и Path B GPU **на тёплом viewport** — работает. Не продукт: paint, ICC/print, video/batch, default-on GPU на холодном панорамировании, OS-окно на второй монитор (B7).
 
 ---
 
-## По слоям
+## Что больше не блокер
 
-### Модель документа `блокер`
-**Live — один ArcSwap Document.** Undo — стек до 50 полных `Arc<Document>`, не команды и не pixel-diff. Dirty = `не ptr_eq(live, saved_mark)`. Paint в модели нет.
-
-Слайдер фильтра клонирует документ, помечает все Processed и Composite dirty, чистит residuals, ставит весь viewport. Debounce 100 ms режет IPC, не работу.
-
-### Память и превью `масштаб`
-**Пирамида — box-filter L0 Composite**, фильтры всегда на полном разрешении. Zoom-out рисует 9 display-тайлов, воркеры считают 144 L0. Halo blend'ится в preview.
-
-Потолок 8192² — reject. 16-bit / ICC в типах placeholder (`ColorProfileRef::Other(String)`). Маски в движке, UI нет.
-
-### Backend God-object `архитектура`
-**commands.rs ~5000 строк:** open, tiles, layers, palettes, dirty, install_raster, tests. engine-core — пустой Phase 0 stub в workspace. Dither и DitherV2 живут рядом.
-
-IPC Mutex unwrap на viewport / panel_manager. Кастомный tile:// + Web Worker fetch + ImageBitmap — не shared GPU texture, не SharedArrayBuffer.
-
-### Цвет «почти продакшен» `цвет`
-**Oklab + LUT 64³ (не KD на hot path)** — быстро и с ошибкой на границах ячеек. RGB→LMS под Rec.709. Curve luminance ≠ Oklab L*. CMYK halftone — artistic UCR, не ICC separations.
-
-ASE/GPL/ACO импорт выкидывает не-RGB. Для print-product это не рабочий color pipeline.
-
----
-
-## Что ещё не продукт, а beta
-
-| Тема | Факт |
+| Было (август) | Сейчас |
 |---|---|
-| **Дистрибуция** | Notarization optional; Gatekeeper warning на первом DMG. 0.10 не умеет self-update. |
-| **Лицензия** | Fair Core 1.0 — не Apache/MIT сейчас; для студии/магазина нужна отдельная юридическая история. |
-| **Панели** | Undock = отдельный OS WebView. Dock affinity / global mouseup — обход ограничений webview, не нативный docking. |
-| **Экспорт / batch** | Нет video, ICC, batch export, multi-document. SVG export в engine-io — узкий путь. |
-| **GPU vs обещание** | Документ сам пишет: включить GPU ≠ быстрее. v1 нельзя честно продавать как GPU engine. |
-| **Слайдер = полный invalidate** | Нет tile-local dirty для ordered; нет stale-discard Composite. Последний кадр важнее, чем не считать лишнее. |
+| Один документ, `doc_id = 1` | Вкладки + session registry ([multi-doc-tabs.md](./multi-doc-tabs.md)) |
+| `commands.rs` ~5000 строк | Разнесено (`src-tauri/src/commands/` + `services/`) |
+| GPU v1 `submit_lock` / 1 MB на тайл | Path B resident + auto-dispatch A1–A4 ([gpu-as-built.md](./gpu-as-built.md)) |
+| Undock = только `panel-*` + `global_mouseup` | Layers / Effect / Color Lab на FlexLayout; JS popout drag ([FLEXLAYOUT_DOCKING.md](./FLEXLAYOUT_DOCKING.md)) |
+| ED через голую рекурсию соседей | `EdFrontier` wavefront (incremental residuals — follow-up) |
 
 ---
 
-## Что не кастыль
+## Что всё ещё режет продукт
 
-Тайловый preview, GlobalCoord / rem_euclid, LUT палитры, SIMD blend / levels / f32→u8, WorkerWake Condvar, .dyproj zip, in-app updates с Minisign с 0.2.0 — это реальная инженерия studio-preview, не toy UI. Проблема не в отсутствии кода, а в том, что контракт заточен под один live document и «пересчитать видимое», а не под продукт с сессией, цветом и масштабом.
+| Тема | Почему |
+|---|---|
+| **Тайл ≈ 1.03 MB f32** | Viewport легко ест сотни MB на слой; f16 (A8) не открыт |
+| **ED последователен** | Корректно, но заливает viewport с угла |
+| **Холодный GPU** | ~3× медленнее CPU — поэтому cold compute opt-in, не default-on |
+| **Полный invalidate слайдера** | 100 ms debounce режет IPC, не работу |
+| **Нет paint / ICC / batch** | Модель документа — структура + undo snapshot |
+| **Preview не на FlexLayout** | PanelManager leftover; B7 OS-окно — Needs Spec |
 
-## Если чинить по приоритету
+---
 
-* Планировщик ED — [`.cursor-spec/ed-scheduler/`](../.cursor-spec/ed-scheduler/SPEC.md) (wavefront shipped; incremental residuals — follow-up)
-* Память тайла / in-place — [`.cursor-spec/tile-memory-inplace/`](../.cursor-spec/tile-memory-inplace/SPEC.md) (**shipped** Waves 1–4; follow-up: f16, Adjust blur park, halo-less preview composite)
-* Документ ≠ глобальный синглтон — сделано (tabs / runtime `doc_id`); budget/eviction + Raw pin — cache-budget / save-export-raw
-* GPU v2 / Path B — **opt-in only** (not default-on): [PREVIEW_GATE.md](../.cursor-spec/gpu-path-b/PREVIEW_GATE.md), industrial [REPORT.md](../.cursor-spec/gpu-industrial-gate/REPORT.md); `DITHER_GPU_PREVIEW=1`
-* ICC / bit depth или честный sRGB-only
-* Command-pattern undo
+## GPU (честно)
+
+Не продавать «GPU acceleration» как всегда быстрее. Warm Bayer / CRT / palette — выигрыш. Cold pan и любой ED — CPU. Export на GPU — **A5 NO-GO**.
+
+Env: `DITHER_GPU_PREVIEW=1` (cold compute), `DITHER_FORCE_CPU=1`, `DITHER_GPU_WARMUP=0`. UI-тоггла нет.
+
+---
+
+## Если чинить дальше
+
+* A8 f16/sparse — только если preview occupancy реально упирается (сейчас ~19% на 1080p + A2)
+* B4c QA + pin/bump `flexlayout-react`
+* B7 — отдельное OS-окно, не побочный эффект drag
+* ICC / bit depth или явный sRGB-only
+* Halo-less preview composite; command-pattern undo (не приоритет)

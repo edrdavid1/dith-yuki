@@ -1,18 +1,20 @@
-//! GPU-resident Path B: shadow enqueue + G10 preview authorship.
+//! GPU-resident Path B: A1 authorship + A2 speculative warm-up.
 //!
-//! - `DITHER_GPU_RESIDENT=1` — shadow only (CPU `tile_cache` remains SoT).
-//! - `DITHER_GPU_PREVIEW=1` — exclusive L0 Composite publish via demote/download
-//!   when the viewport stack is fully `is_gpu_only()` and flat (no mask/group).
-//!   Any checkpoint / mask / group → return false and leave CPU schedule alone.
+//! - Auto-dispatch: warm Composite slots → download even when opt-in is off.
+//! - Opt-in: cold eligible L0 may GPU-compute (per-tile).
+//! - A2: low-priority promote of prefetch L0 without evicting viewport VRAM.
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use engine_gpu::{
-    GpuCompositeFrameJob, GpuCompositeLayerOp, GpuCompositeTileWork, GpuFrameJob, GpuTileWork,
-    GraphNode,
+    cap_warmup_coords, decide_tile_dispatch, select_warmup_coords, slots_per_warmup_coord,
+    viewport_vram_reserve, warmup_slot_budget, GpuCompositeFrameJob, GpuCompositeLayerOp,
+    GpuCompositeTileWork, GpuFrameJob, GpuTileWork, GraphNode, TileDispatch, TileDispatchInput,
 };
-use engine_project::filters::gpu_graph::compile_layer_graph;
+use engine_project::filters::gpu_graph::{
+    compile_layer_graph, compile_layer_graph_with_palettes, PaletteGraphCtx,
+};
 use engine_project::layer::{Layer, LayerNode};
 use engine_tiles::{CacheStage, TileCoord, TileKey};
 use tauri::Emitter;
@@ -21,16 +23,24 @@ use crate::commands::AppState;
 use crate::worker::TileReadyPayload;
 
 const FRAME_BATCH: usize = 64;
+const WARMUP_BATCH: usize = 8;
 
-/// Shadow path: fire-and-forget GPU work alongside CPU schedule.
+/// A2: fire-and-forget GPU promote. Skips while CPU preview is urgent; never evicts.
 pub fn enqueue_resident_shadow_viewport(state: &AppState) {
-    // Preview mode owns L0; don't dual-submit.
-    if engine_gpu::gpu_preview_enabled() {
+    if !engine_gpu::gpu_warmup_enabled() {
         return;
     }
-    if !engine_gpu::gpu_resident_enabled() {
+    // TZ A2: do not steal the GPU while CPU Immediate / ViewportCenter (or any
+    // in-flight preview pass) is still authoring the current frame.
+    if state.tiles.scheduler.has_urgent_work()
+        || state.tiles.scheduler.queued_len() > 0
+        || state.preview_pass_inflight.load(Ordering::Acquire) > 0
+    {
         return;
     }
+    let Some(gpu_cache) = state.gpu_resident.as_ref() else {
+        return;
+    };
     let Some(executor_mtx) = state.gpu_executor.as_ref() else {
         return;
     };
@@ -45,18 +55,77 @@ pub fn enqueue_resident_shadow_viewport(state: &AppState) {
 
     let mut layers: Vec<&Layer> = Vec::new();
     collect_visible_layers(&snapshot.root, &mut layers);
+    let palettes = PaletteGraphCtx {
+        document: snapshot.as_ref(),
+        lut_cache: &state.tiles.palette_lut_cache,
+        kd_cache: &state.tiles.palette_cache,
+    };
+    if !preview_stack_eligible(&layers, &snapshot.root, Some(&palettes)) {
+        return;
+    }
+
+    let visible_l0: Vec<TileCoord> = viewport
+        .visible_tiles
+        .iter()
+        .copied()
+        .filter(|c| c.level == 0)
+        .collect();
+    let reserve = viewport_vram_reserve(visible_l0.len(), layers.len());
+    // Visible L0 is CPU or opt-in compute — never dual-submit with speculative promote.
+    let per = slots_per_warmup_coord(layers.len());
+    let free = gpu_cache.free_slot_count();
+    let pre_budget = warmup_slot_budget(free, reserve);
+    if pre_budget == 0 {
+        return;
+    }
+    let prefetch = select_warmup_coords(&[], &viewport.prefetch_tiles, false);
+    let planned = cap_warmup_coords(&prefetch, pre_budget, per);
+
+    let coords: Vec<TileCoord> = planned
+        .into_iter()
+        .filter(|coord| {
+            let composite_key = TileKey {
+                doc,
+                layer: 0,
+                coord: *coord,
+                stage: CacheStage::Composite,
+            };
+            if gpu_cache.get_slot(&composite_key, doc_gen).is_some() {
+                return false;
+            }
+            layers.iter().all(|layer| {
+                state
+                    .tiles
+                    .tile_cache
+                    .get_entry(TileKey {
+                        doc,
+                        layer: layer.id.0,
+                        coord: *coord,
+                        stage: CacheStage::Raw,
+                    })
+                    .is_some()
+            })
+        })
+        .collect();
+
+    if coords.is_empty() {
+        return;
+    }
+
+    let Ok(executor) = executor_mtx.try_lock() else {
+        return;
+    };
 
     for layer in &layers {
-        let graph = match compile_layer_graph(&layer.filters) {
+        if layer.filters.is_empty() {
+            continue;
+        }
+        let graph = match compile_layer_graph_with_palettes(&layer.filters, Some(&palettes)) {
             Ok(g) if g.is_gpu_only() => Arc::new(g),
             _ => continue,
         };
-
         let mut tiles = Vec::new();
-        for coord in &viewport.visible_tiles {
-            if coord.level != 0 {
-                continue;
-            }
+        for coord in &coords {
             let raw_key = TileKey {
                 doc,
                 layer: layer.id.0,
@@ -66,52 +135,63 @@ pub fn enqueue_resident_shadow_viewport(state: &AppState) {
             let Some(raw) = state.tiles.tile_cache.get_entry(raw_key) else {
                 continue;
             };
-            let processed_key = TileKey {
-                stage: CacheStage::Processed,
-                ..raw_key
-            };
             tiles.push(GpuTileWork {
-                key: processed_key,
+                key: TileKey {
+                    stage: CacheStage::Processed,
+                    ..raw_key
+                },
                 coord: *coord,
                 generation: doc_gen,
                 pixels: raw,
             });
         }
-
-        if tiles.is_empty() {
-            continue;
-        }
-
-        for chunk in tiles.chunks(FRAME_BATCH) {
-            let job = GpuFrameJob {
+        for chunk in tiles.chunks(WARMUP_BATCH) {
+            executor.submit_frame(GpuFrameJob {
                 doc_gen,
                 graph: Arc::clone(&graph),
                 tiles: chunk.to_vec(),
-            };
-            if let Ok(executor) = executor_mtx.try_lock() {
-                executor.submit_frame(job);
-            }
+                speculative: true,
+            });
         }
     }
 
-    if let Some(job) = build_composite_job(state, doc, doc_gen, &layers, &viewport.visible_tiles) {
-        for chunk in chunk_composite_job(job) {
-            if let Ok(executor) = executor_mtx.try_lock() {
-                executor.submit_composite(chunk);
-            }
+    if let Some(mut job) = build_composite_job(state, doc, doc_gen, &layers, &coords) {
+        job.speculative = true;
+        for chunk in chunk_composite_job(job, WARMUP_BATCH) {
+            executor.submit_composite(chunk);
         }
     }
 }
 
-/// G10: try to author dirty L0 Composite tiles on GPU.
+/// Classify one dirty L0 coord (unit-testable; no wgpu).
+fn classify_dirty_l0(
+    stack_eligible: bool,
+    opt_in: bool,
+    warm: bool,
+    raws_ready: bool,
+) -> TileDispatch {
+    let decision = decide_tile_dispatch(TileDispatchInput {
+        force_cpu: false,
+        gpu_available: true,
+        preview_opt_in: opt_in,
+        stack_eligible,
+        level: 0,
+        composite_slot_warm: warm,
+    });
+    match decision {
+        TileDispatch::GpuCompute if !raws_ready => TileDispatch::Cpu,
+        other => other,
+    }
+}
+
+/// Author dirty L0 Composite tiles from GPU where the per-tile decision allows it.
 ///
-/// Returns the set of L0 coords successfully published (caller skips CPU for those).
-/// Empty set → full CPU schedule for all dirty tiles.
+/// Returns coords successfully published (caller skips CPU for those only).
 pub fn try_publish_gpu_preview_viewport(state: &AppState) -> std::collections::HashSet<TileCoord> {
     use std::collections::HashSet;
 
     let empty = HashSet::new();
-    if !engine_gpu::gpu_preview_enabled() {
+    if engine_gpu::force_cpu() {
         return empty;
     }
     let Some(ctx) = state.gpu.as_ref() else {
@@ -135,9 +215,13 @@ pub fn try_publish_gpu_preview_viewport(state: &AppState) -> std::collections::H
     let mut layers: Vec<&Layer> = Vec::new();
     collect_visible_layers(&snapshot.root, &mut layers);
 
-    if !preview_stack_eligible(&layers, &snapshot.root) {
-        return empty;
-    }
+    let palettes = PaletteGraphCtx {
+        document: snapshot.as_ref(),
+        lut_cache: &state.tiles.palette_lut_cache,
+        kd_cache: &state.tiles.palette_cache,
+    };
+    let stack_eligible = preview_stack_eligible(&layers, &snapshot.root, Some(&palettes));
+    let opt_in = engine_gpu::gpu_preview_enabled();
 
     let dirty_l0: Vec<TileCoord> = viewport
         .visible_tiles
@@ -162,93 +246,137 @@ pub fn try_publish_gpu_preview_viewport(state: &AppState) -> std::collections::H
         return empty;
     }
 
-    for coord in &dirty_l0 {
-        for layer in &layers {
-            let raw_key = TileKey {
-                doc,
-                layer: layer.id.0,
-                coord: *coord,
-                stage: CacheStage::Raw,
-            };
-            if state.tiles.tile_cache.get_entry(raw_key).is_none() {
-                return empty;
-            }
+    let mut download_coords = Vec::new();
+    let mut compute_coords = Vec::new();
+    for coord in dirty_l0 {
+        let composite_key = TileKey {
+            doc,
+            layer: 0,
+            coord,
+            stage: CacheStage::Composite,
+        };
+        let warm = gpu_cache.get_slot(&composite_key, doc_gen).is_some();
+        let raws_ready = layers.iter().all(|layer| {
+            state
+                .tiles
+                .tile_cache
+                .get_entry(TileKey {
+                    doc,
+                    layer: layer.id.0,
+                    coord,
+                    stage: CacheStage::Raw,
+                })
+                .is_some()
+        });
+        match classify_dirty_l0(stack_eligible, opt_in, warm, raws_ready) {
+            TileDispatch::GpuDownload => download_coords.push(coord),
+            TileDispatch::GpuCompute => compute_coords.push(coord),
+            TileDispatch::Cpu => {}
         }
+    }
+
+    if download_coords.is_empty() && compute_coords.is_empty() {
+        return empty;
     }
 
     let Ok(executor) = executor_mtx.lock() else {
         return empty;
     };
 
-    for layer in &layers {
-        if layer.filters.is_empty() {
-            continue;
-        }
-        let graph = match compile_layer_graph(&layer.filters) {
-            Ok(g) if g.is_gpu_only() => Arc::new(g),
-            _ => return empty,
-        };
-        let mut tiles = Vec::new();
-        for coord in &dirty_l0 {
-            let raw_key = TileKey {
-                doc,
-                layer: layer.id.0,
-                coord: *coord,
-                stage: CacheStage::Raw,
+    let mut compute_ok = !compute_coords.is_empty();
+    if compute_ok {
+        for layer in &layers {
+            if layer.filters.is_empty() {
+                continue;
+            }
+            let graph = match compile_layer_graph_with_palettes(&layer.filters, Some(&palettes)) {
+                Ok(g) if g.is_gpu_only() => Arc::new(g),
+                _ => {
+                    compute_ok = false;
+                    break;
+                }
             };
-            let Some(raw) = state.tiles.tile_cache.get_entry(raw_key) else {
-                return empty;
-            };
-            tiles.push(GpuTileWork {
-                key: TileKey {
-                    stage: CacheStage::Processed,
-                    ..raw_key
-                },
-                coord: *coord,
-                generation: doc_gen,
-                pixels: raw,
-            });
-        }
-        for chunk in tiles.chunks(FRAME_BATCH) {
-            let job = GpuFrameJob {
-                doc_gen,
-                graph: Arc::clone(&graph),
-                tiles: chunk.to_vec(),
-            };
-            if executor.submit_frame_blocking(job).is_err() {
-                return empty;
+            let mut tiles = Vec::new();
+            for coord in &compute_coords {
+                let raw_key = TileKey {
+                    doc,
+                    layer: layer.id.0,
+                    coord: *coord,
+                    stage: CacheStage::Raw,
+                };
+                let Some(raw) = state.tiles.tile_cache.get_entry(raw_key) else {
+                    continue;
+                };
+                tiles.push(GpuTileWork {
+                    key: TileKey {
+                        stage: CacheStage::Processed,
+                        ..raw_key
+                    },
+                    coord: *coord,
+                    generation: doc_gen,
+                    pixels: raw,
+                });
+            }
+            for chunk in tiles.chunks(FRAME_BATCH) {
+                let job = GpuFrameJob {
+                    doc_gen,
+                    graph: Arc::clone(&graph),
+                    tiles: chunk.to_vec(),
+                    speculative: false,
+                };
+                if executor.submit_frame_blocking(job).is_err() {
+                    compute_ok = false;
+                    break;
+                }
+            }
+            if !compute_ok {
+                break;
             }
         }
     }
 
-    let Some(composite_job) =
-        build_composite_job(state, doc, doc_gen, &layers, &dirty_l0)
-    else {
-        return empty;
-    };
+    let mut pending_keys: Vec<TileKey> = download_coords
+        .iter()
+        .map(|coord| TileKey {
+            doc,
+            layer: 0,
+            coord: *coord,
+            stage: CacheStage::Composite,
+        })
+        .collect();
 
-    let mut pending = Vec::new();
-    for chunk in chunk_composite_job(composite_job) {
-        if executor.submit_composite_blocking(chunk.clone()).is_err() {
-            return empty;
-        }
-        let live_gen = session
-            .document_handle
-            .snapshot()
-            .generations
-            .document_gen
-            .load(Ordering::Acquire);
-        if live_gen != doc_gen {
-            return empty;
-        }
-        for work in &chunk.tiles {
-            let Ok(Some(tile)) = gpu_cache.download(ctx, &work.composite_key) else {
-                return empty;
-            };
-            pending.push((work.composite_key, tile));
+    if compute_ok {
+        if let Some(composite_job) =
+            build_composite_job(state, doc, doc_gen, &layers, &compute_coords)
+        {
+            for chunk in chunk_composite_job(composite_job, FRAME_BATCH) {
+                if executor.submit_composite_blocking(chunk.clone()).is_err() {
+                    break;
+                }
+                let live_gen = session
+                    .document_handle
+                    .snapshot()
+                    .generations
+                    .document_gen
+                    .load(Ordering::Acquire);
+                if live_gen != doc_gen {
+                    break;
+                }
+                for work in &chunk.tiles {
+                    pending_keys.push(work.composite_key);
+                }
+            }
         }
     }
     drop(executor);
+
+    let mut pending = Vec::new();
+    for key in pending_keys {
+        let Ok(Some(tile)) = gpu_cache.download(ctx, &key) else {
+            continue;
+        };
+        pending.push((key, tile));
+    }
 
     let viewport_level = state.ui.viewport.lock().unwrap().level;
     let app = state.app_handle.lock().ok().and_then(|g| g.clone());
@@ -256,7 +384,8 @@ pub fn try_publish_gpu_preview_viewport(state: &AppState) -> std::collections::H
 
     for (key, tile) in pending {
         let inserted = state
-            .tiles.tile_cache
+            .tiles
+            .tile_cache
             .insert_fresh_gen(key, Arc::new(tile), doc_gen);
         if !inserted {
             continue;
@@ -282,7 +411,11 @@ pub fn try_publish_gpu_preview_viewport(state: &AppState) -> std::collections::H
 }
 
 /// True when every visible leaf is GPU-previewable (flat, no checkpoint).
-fn preview_stack_eligible(layers: &[&Layer], root: &[LayerNode]) -> bool {
+fn preview_stack_eligible(
+    layers: &[&Layer],
+    root: &[LayerNode],
+    palettes: Option<&PaletteGraphCtx<'_>>,
+) -> bool {
     if layers.is_empty() {
         return false;
     }
@@ -296,7 +429,7 @@ fn preview_stack_eligible(layers: &[&Layer], root: &[LayerNode]) -> bool {
         if layer.filters.is_empty() {
             continue;
         }
-        match compile_layer_graph(&layer.filters) {
+        match compile_layer_graph_with_palettes(&layer.filters, palettes) {
             Ok(g) if g.is_gpu_only() => {}
             _ => return false,
         }
@@ -304,16 +437,18 @@ fn preview_stack_eligible(layers: &[&Layer], root: &[LayerNode]) -> bool {
     true
 }
 
-fn chunk_composite_job(job: GpuCompositeFrameJob) -> Vec<GpuCompositeFrameJob> {
-    if job.tiles.len() <= FRAME_BATCH {
+fn chunk_composite_job(job: GpuCompositeFrameJob, batch: usize) -> Vec<GpuCompositeFrameJob> {
+    if job.tiles.len() <= batch {
         return vec![job];
     }
     let doc_gen = job.doc_gen;
+    let speculative = job.speculative;
     job.tiles
-        .chunks(FRAME_BATCH)
+        .chunks(batch)
         .map(|chunk| GpuCompositeFrameJob {
             doc_gen,
             tiles: chunk.to_vec(),
+            speculative,
         })
         .collect()
 }
@@ -354,16 +489,12 @@ fn build_composite_job(
                 coord: *coord,
                 stage: CacheStage::Processed,
             };
-            let pixels = state
-                .tiles
-                .tile_cache
-                .get_entry(processed_key)
-                .or_else(|| {
-                    state.tiles.tile_cache.get_entry(TileKey {
-                        stage: CacheStage::Raw,
-                        ..processed_key
-                    })
-                });
+            let pixels = state.tiles.tile_cache.get_entry(processed_key).or_else(|| {
+                state.tiles.tile_cache.get_entry(TileKey {
+                    stage: CacheStage::Raw,
+                    ..processed_key
+                })
+            });
             let Some(pixels) = pixels else {
                 incomplete = true;
                 break;
@@ -394,7 +525,11 @@ fn build_composite_job(
     if tiles.is_empty() {
         return None;
     }
-    Some(GpuCompositeFrameJob { doc_gen, tiles })
+    Some(GpuCompositeFrameJob {
+        doc_gen,
+        tiles,
+        speculative: false,
+    })
 }
 
 fn root_has_groups(nodes: &[LayerNode]) -> bool {
@@ -438,10 +573,7 @@ mod tests {
             Some(GraphNode::CpuCheckpoint(CpuCheckpointKind::ErrorDiffusion))
         ));
         assert!(!graph.is_gpu_only());
-        assert!(!preview_stack_eligible(
-            &[],
-            &[]
-        ));
+        assert!(!preview_stack_eligible(&[], &[], None));
     }
 
     #[test]
@@ -460,7 +592,7 @@ mod tests {
             }),
         ));
         let root = vec![LayerNode::Leaf(layer.clone())];
-        assert!(!preview_stack_eligible(&[&layer], &root));
+        assert!(!preview_stack_eligible(&[&layer], &root, None));
     }
 
     #[test]
@@ -479,7 +611,39 @@ mod tests {
             }),
         ));
         let root = vec![LayerNode::Leaf(layer.clone())];
-        assert!(preview_stack_eligible(&[&layer], &root));
+        assert!(preview_stack_eligible(&[&layer], &root, None));
+    }
+
+    #[test]
+    fn classify_hybrid_warm_and_cold() {
+        assert_eq!(
+            classify_dirty_l0(true, false, true, true),
+            TileDispatch::GpuDownload
+        );
+        assert_eq!(
+            classify_dirty_l0(true, false, false, true),
+            TileDispatch::Cpu
+        );
+        assert_eq!(
+            classify_dirty_l0(true, true, false, true),
+            TileDispatch::GpuCompute
+        );
+        assert_eq!(
+            classify_dirty_l0(true, true, false, false),
+            TileDispatch::Cpu
+        );
+        assert_eq!(
+            classify_dirty_l0(false, true, true, true),
+            TileDispatch::Cpu
+        );
+    }
+
+    #[test]
+    fn classify_missing_raw_does_not_block_warm_neighbor() {
+        let a = classify_dirty_l0(true, true, true, false);
+        let b = classify_dirty_l0(true, true, false, true);
+        assert_eq!(a, TileDispatch::GpuDownload);
+        assert_eq!(b, TileDispatch::GpuCompute);
     }
 
     #[test]

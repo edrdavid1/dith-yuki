@@ -4,9 +4,11 @@
 //! `tile_offset` so indexing matches CPU `GlobalCoord`. Error Diffusion is
 //! never GpuEligible.
 //!
-//! Force CPU: `DITHER_FORCE_CPU=1`. Enable GPU preview: runtime `DITHER_GPU_PREVIEW=1` or Preferences UI toggle.
+//! Force CPU: `DITHER_FORCE_CPU=1`. Opt-in cold GPU compute: `DITHER_GPU_PREVIEW=1`.
+//! Warm resident Composite slots may download without opt-in (auto-dispatch A1).
 
 mod bayer;
+mod decision;
 mod composite;
 mod context;
 mod crt;
@@ -19,6 +21,8 @@ mod palette_guided;
 mod palette_quantize;
 mod prefer;
 pub mod resident;
+mod stats;
+mod warmup;
 
 pub use bayer::{apply_bayer_gpu, BayerGpuParams, BayerMatrixSize};
 pub use composite::{
@@ -26,6 +30,7 @@ pub use composite::{
 };
 pub use context::GpuContext;
 pub use crt::{apply_crt_gpu, CrtGpuParams};
+pub use decision::{decide_tile_dispatch, TileDispatch, TileDispatchInput};
 pub use dispatch::{
     core_pixel_count, dispatch_rgba32, map_read_with_timeout, TileUniforms, CORE_SIZE,
     FLOATS_PER_TILE, MAP_TIMEOUT_DEFAULT, WORKGROUP_SIZE,
@@ -40,12 +45,18 @@ pub use halftone::{apply_halftone_gpu, HalftoneGpuParams};
 pub use palette_guided::{palette_guided_params, palette_mixed_params_from_palette};
 pub use palette_quantize::palette_quantize_params_from_lut;
 pub use prefer::{
-    force_cpu, gpu_filters_enabled, gpu_preview_enabled, gpu_resident_enabled, prefer_gpu,
-    set_gpu_preview_ui_override,
+    force_cpu, gpu_filters_enabled, gpu_preview_enabled, gpu_resident_enabled, gpu_warmup_enabled,
+    prefer_gpu, set_gpu_preview_ui_override,
+};
+pub use stats::not_worse_than;
+pub use warmup::{
+    cap_warmup_coords, select_warmup_coords, slots_per_warmup_coord, viewport_vram_reserve,
+    warmup_slot_budget,
 };
 pub use resident::{
-    GpuTileCache, ResidentBayerPipelines, ResidentCompositePipelines, ResidentCrtPipelines,
-    ResidentHalftonePipelines, ResidentPaletteGuidedPipelines, ResidentPalettePipelines,
+    GpuTileCache, GpuVramStats, ResidentBayerPipelines, ResidentCompositePipelines,
+    ResidentCrtPipelines, ResidentHalftonePipelines, ResidentPaletteGuidedPipelines,
+    ResidentPalettePipelines,
 };
 
 /// Errors from a GPU tile dispatch (caller falls back to CPU).

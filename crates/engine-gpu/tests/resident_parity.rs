@@ -208,6 +208,7 @@ fn run_resident_bayer_parity(
     executor.submit_frame_blocking(GpuFrameJob {
         doc_gen: 1,
         graph,
+        speculative: false,
         tiles: vec![GpuTileWork {
             key,
             coord: key.coord,
@@ -305,6 +306,7 @@ fn resident_bayer4_seam_2x2() {
     executor.submit_frame_blocking(GpuFrameJob {
         doc_gen: 1,
         graph,
+        speculative: false,
         tiles: works,
     }).expect("gpu submit");
 
@@ -469,6 +471,7 @@ fn run_resident_halftone_parity(grayscale: bool) {
     executor.submit_frame_blocking(GpuFrameJob {
         doc_gen: 1,
         graph,
+        speculative: false,
         tiles: vec![GpuTileWork {
             key,
             coord: key.coord,
@@ -541,6 +544,7 @@ fn resident_halftone_seam_2x1() {
     executor.submit_frame_blocking(GpuFrameJob {
         doc_gen: 1,
         graph,
+        speculative: false,
         tiles: works,
     }).expect("gpu submit");
 
@@ -666,6 +670,7 @@ fn run_resident_crt_parity(period: u8, strength: f32, mask_strength: f32) {
     executor.submit_frame_blocking(GpuFrameJob {
         doc_gen: 1,
         graph,
+        speculative: false,
         tiles: vec![GpuTileWork {
             key,
             coord: key.coord,
@@ -737,6 +742,7 @@ fn resident_crt_horizontal_seam() {
     executor.submit_frame_blocking(GpuFrameJob {
         doc_gen: 1,
         graph,
+        speculative: false,
         tiles: works,
     }).expect("gpu submit");
 
@@ -893,6 +899,7 @@ fn resident_palette_quantize_matches_cpu() {
     executor.submit_frame_blocking(GpuFrameJob {
         doc_gen: 1,
         graph,
+        speculative: false,
         tiles: vec![GpuTileWork {
             key,
             coord: key.coord,
@@ -1163,6 +1170,7 @@ fn resident_palette_guided_matches_cpu() {
     executor.submit_frame_blocking(GpuFrameJob {
         doc_gen: 1,
         graph,
+        speculative: false,
         tiles: vec![GpuTileWork {
             key,
             coord: key.coord,
@@ -1218,6 +1226,7 @@ fn resident_palette_mixed_matches_cpu() {
     executor.submit_frame_blocking(GpuFrameJob {
         doc_gen: 1,
         graph,
+        speculative: false,
         tiles: vec![GpuTileWork {
             key,
             coord: key.coord,
@@ -1357,6 +1366,7 @@ fn resident_composite_two_layers_normal() {
 
     executor.submit_composite_blocking(GpuCompositeFrameJob {
         doc_gen: 1,
+        speculative: false,
         tiles: vec![GpuCompositeTileWork {
             coord,
             composite_key,
@@ -1425,6 +1435,7 @@ fn resident_composite_three_layers_multiply_screen() {
 
     executor.submit_composite_blocking(GpuCompositeFrameJob {
         doc_gen: 1,
+        speculative: false,
         tiles: vec![GpuCompositeTileWork {
             coord,
             composite_key,

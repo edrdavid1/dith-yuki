@@ -120,7 +120,7 @@ Legacy `FilterParams::Dither` мигрирует в V2 с `palette_id: None`.
 
 ## 5. Tauri-команды палитр и генераторов
 
-Реализация: `src-tauri/src/commands.rs`. Обёртки: `frontend/src/shared/ipc/palettes.ts`.
+Реализация: `src-tauri/src/commands/palette.rs` + `color_lab.rs`. Обёртки: `frontend/src/shared/ipc/palettes.ts`.
 
 | Команда | Поведение |
 |---|---|
@@ -257,7 +257,8 @@ crates/engine-project/src/document.rs
 crates/engine-project/src/palette_gen.rs
 crates/engine-project/src/filters/palette_quantize.rs
 crates/engine-project/src/filters/dither_*.rs
-src-tauri/src/commands.rs            # palette + generate_* IPC
+src-tauri/src/commands/palette.rs    # palette IPC
+src-tauri/src/commands/color_lab.rs  # ramps / harmony / oklab
 frontend/src/features/color-lab/     # UI Color Lab
 frontend/src/app/autoExtract.ts
 frontend/src/app/shell/ShellContext.tsx   # autoExtractPalettes pref

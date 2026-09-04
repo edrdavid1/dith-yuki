@@ -59,7 +59,7 @@ pub struct OklabPointDto {
     pub srgb_hex: String,
 }
 
-fn oklab_point_from_lin_rgb(rgb: engine_color::LinRgb, srgb_hex: String) -> OklabPointDto {
+pub(crate) fn oklab_point_from_lin_rgb(rgb: engine_color::LinRgb, srgb_hex: String) -> OklabPointDto {
     let lab = engine_color::linear_to_oklab(rgb);
     OklabPointDto {
         l: lab.l,

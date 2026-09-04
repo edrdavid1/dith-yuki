@@ -12,7 +12,7 @@ use crate::graph::{ComputeGraph, GraphNode, GpuPipelineKey};
 use crate::resident::{
     GpuTileCache, ReadbackRing, ResidentBayerPipelines, ResidentCompositePipelines,
     ResidentCrtPipelines, ResidentGatherPipelines, ResidentHalftonePipelines,
-    ResidentPaletteGuidedPipelines, ResidentPalettePipelines,
+    ResidentPaletteGuidedPipelines, ResidentPalettePipelines, SlotHandle,
 };
 use crate::GpuError;
 
@@ -42,6 +42,8 @@ pub struct GpuFrameJob {
     pub doc_gen: u64,
     pub graph: Arc<ComputeGraph>,
     pub tiles: Vec<GpuTileWork>,
+    /// A2: never evict other slots; skip tiles that need a new allocation under pressure.
+    pub speculative: bool,
 }
 
 enum ExecutorMsg {
@@ -213,6 +215,21 @@ fn executor_loop(
     }
 }
 
+fn acquire_slot(
+    cache: &GpuTileCache,
+    ctx: &GpuContext,
+    key: engine_tiles::TileKey,
+    pixels: &PixelTile,
+    generation: u64,
+    speculative: bool,
+) -> Result<SlotHandle, GpuError> {
+    if speculative {
+        cache.try_promote(ctx, key, pixels, generation)
+    } else {
+        cache.promote(ctx, key, pixels, generation)
+    }
+}
+
 fn run_frame(
     ctx: &GpuContext,
     cache: &GpuTileCache,
@@ -242,7 +259,11 @@ fn run_frame(
     for (batch_i, work) in job.tiles.iter().enumerate() {
         let slot = match cache.get_slot(&work.key, work.generation) {
             Some(s) => s,
-            None => cache.promote(ctx, work.key, &work.pixels, work.generation)?,
+            None => match acquire_slot(cache, ctx, work.key, &work.pixels, work.generation, job.speculative) {
+                Ok(s) => s,
+                Err(_) if job.speculative => continue,
+                Err(e) => return Err(e),
+            },
         };
         in_flight.push(slot);
 
@@ -410,6 +431,10 @@ fn run_frame(
         }
     }
 
+    if in_flight.is_empty() {
+        return Ok(());
+    }
+
     // Phase 1: gather → staging copy into readback ring (MAP_READ buffers cannot be STORAGE).
     if let Some(gather) = gather {
         use crate::resident::TILE_CORE_RGBA8_BYTES;
@@ -470,31 +495,59 @@ fn run_composite_frame(
     for (batch_i, work) in job.tiles.iter().enumerate() {
         let scratch_layer = batch_i as u32;
         let mut src_layers = Vec::with_capacity(work.layers.len());
+        let mut skip_tile = false;
         for layer in &work.layers {
             let slot = match cache.get_slot(&layer.processed_key, work.generation) {
                 Some(s) => s,
                 None => {
-                    let pixels = layer.pixels.as_ref().ok_or_else(|| {
-                        GpuError::Device(format!(
+                    let Some(pixels) = layer.pixels.as_ref() else {
+                        if job.speculative {
+                            skip_tile = true;
+                            break;
+                        }
+                        return Err(GpuError::Device(format!(
                             "composite: missing resident Processed {:?}",
                             layer.processed_key
-                        ))
-                    })?;
-                    cache.promote(ctx, layer.processed_key, pixels, work.generation)?
+                        )));
+                    };
+                    match acquire_slot(
+                        cache,
+                        ctx,
+                        layer.processed_key,
+                        pixels,
+                        work.generation,
+                        job.speculative,
+                    ) {
+                        Ok(s) => s,
+                        Err(_) if job.speculative => {
+                            skip_tile = true;
+                            break;
+                        }
+                        Err(e) => return Err(e),
+                    }
                 }
             };
             in_flight.push(slot);
             src_layers.push((slot.index, layer.blend_mode, layer.opacity));
         }
+        if skip_tile {
+            continue;
+        }
 
         let out_slot = match cache.get_slot(&work.composite_key, work.generation) {
             Some(s) => s,
-            None => cache.promote(
+            None => match acquire_slot(
+                cache,
                 ctx,
                 work.composite_key,
                 &transparent,
                 work.generation,
-            )?,
+                job.speculative,
+            ) {
+                Ok(s) => s,
+                Err(_) if job.speculative => continue,
+                Err(e) => return Err(e),
+            },
         };
         in_flight.push(out_slot);
 
@@ -515,6 +568,10 @@ fn run_composite_frame(
             cache.resident_texture(),
             out_slot.index,
         );
+    }
+
+    if in_flight.is_empty() {
+        return Ok(());
     }
 
     cache.mark_in_flight(&in_flight);

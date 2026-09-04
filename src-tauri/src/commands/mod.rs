@@ -48,6 +48,7 @@ pub use crate::services::document_service::{
     blank_rgba_f32, MAX_DOCUMENT_DIMENSION, IMAGE_IMPORT_EXTENSIONS, BlankBackground,
     LoadImageResponse, SaveProjectResponse, OpenProjectResponse, ExportPatternRequest,
     ImportPatternRequest, ImportPatternResponse, ExportImageRequest, DocumentResponse,
+    install_raster_document, import_raster_layer,
 };
 pub use crate::services::palette_service::find_layers_referencing_palette;
 pub use crate::commands::color_lab::{oklab_points_from_hexes, oklab_points_from_linear, OklabPointDto};
@@ -264,17 +265,22 @@ pub(crate) fn on_preview_task_finished(state: &AppState) {
     }
 }
 
-pub fn is_release_build() -> bool {
-    !cfg!(debug_assertions)
-}
-
 #[cfg(test)]
 pub(crate) fn make_test_app_state() -> Arc<AppState> {
     use engine_project::Document;
     use engine_project::types::DocumentId;
 
     let state = AppState::empty_process(None, 512 * 1024 * 1024, true);
-    state.spawn_session(Document::new(DocumentId::new(1), 800, 600));
+    let mut doc = Document::new(DocumentId::new(1), 800, 600);
+    doc.root.push(engine_project::layer::LayerNode::Leaf(
+        engine_project::layer::Layer::new(
+            engine_project::types::LayerId::new(1),
+            engine_project::types::LayerKind::Raster,
+            800,
+            600,
+        ),
+    ));
+    state.spawn_session(doc);
     Arc::new(state)
 }
 

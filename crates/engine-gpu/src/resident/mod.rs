@@ -9,7 +9,7 @@ mod pipelines;
 mod readback;
 mod slot;
 
-pub use cache::GpuTileCache;
+pub use cache::{GpuTileCache, GpuVramStats};
 pub use format::{
     compute_vram_layout, create_tile_array_desc, default_vram_config, pack_tile_upload,
     tile_array_bytes, tile_row_bytes_aligned, unpack_tile_download, VramBudgetConfig, VramLayout,
