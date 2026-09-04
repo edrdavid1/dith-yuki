@@ -1,0 +1,35 @@
+.ftp {
+  box-sizing: border-box;
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  background: var(--bg-window);
+  font-family: var(--font-family);
+}
+
+.ftp-btn {
+  min-width: 140px;
+  height: 24px;
+  padding: 0 12px;
+  border: var(--border);
+  border-radius: 0;
+  background: var(--bg-window);
+  color: var(--text-color);
+  font-family: var(--font-family);
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+}
+
+.ftp-btn:hover {
+  background: var(--bg-hover-muted);
+}
+
+.ftp-btn:active {
+  box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light);
+}

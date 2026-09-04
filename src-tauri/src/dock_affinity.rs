@@ -868,6 +868,46 @@ mod tests {
     }
 
     #[test]
+    fn negative_origin_secondary_monitor_left_zone_arms() {
+        // Secondary display to the left of primary: zone at x=-1920.
+        let mut zones = HashMap::new();
+        zones.insert(
+            SidebarSide::Left,
+            zone(
+                SidebarSide::Left,
+                -1920.0,
+                0.0,
+                100.0,
+                1080.0,
+                vec![(540.0, 0.0, 1080.0)],
+            ),
+        );
+        zones.insert(
+            SidebarSide::Right,
+            zone(
+                SidebarSide::Right,
+                800.0,
+                0.0,
+                100.0,
+                1080.0,
+                vec![(540.0, 0.0, 1080.0)],
+            ),
+        );
+
+        let win_on_secondary = Rect {
+            x: -1900.0,
+            y: 0.0,
+            width: 80.0,
+            height: 300.0,
+        };
+        let (inside, armed, _, side) =
+            update_affinity_multi(&zones, win_on_secondary, false, None);
+        assert!(inside);
+        assert!(armed);
+        assert_eq!(side, Some(SidebarSide::Left));
+    }
+
+    #[test]
     fn empty_zone_arms_full_vertical_extent() {
         let mut zones = HashMap::new();
         // No slots — vacant left edge strip.

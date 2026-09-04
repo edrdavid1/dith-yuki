@@ -8,6 +8,12 @@
   border: var(--border);
 }
 
+/* FlexLayout tab strip already draws the window frame — body has no outer border */
+:global(.flexlayout__tab) .lp,
+:global(.flexlayout__tabset_content) .lp {
+  border: none;
+}
+
 /* Floating PanelWindow sets data-floating-panel-content on its content host */
 :global([data-floating-panel-content]) .lp {
   border: none;

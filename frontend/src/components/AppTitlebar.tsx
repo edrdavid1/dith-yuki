@@ -9,7 +9,7 @@ interface AppTitlebarProps {
   title?: string;
 }
 
-export function AppTitlebar({ children, title }: AppTitlebarProps) {
+export const AppTitlebar = React.memo(function AppTitlebar({ children, title }: AppTitlebarProps) {
   // Double-click maximize/restore — only on Windows/Linux
   const handleDoubleClick = useCallback(async (e: React.MouseEvent) => {
     if (isMacOS()) return; // macOS handles this natively via -webkit-app-region
@@ -47,4 +47,4 @@ export function AppTitlebar({ children, title }: AppTitlebarProps) {
       <WindowControls />
     </div>
   );
-}
+});

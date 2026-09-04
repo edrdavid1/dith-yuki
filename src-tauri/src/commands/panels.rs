@@ -1,14 +1,28 @@
 //! Tauri command handlers for panel docking/undocking operations.
+//!
+//! # IMPORTANT: B4c — Flex redock without global_mouseup
+//!
+//! Layers / Effect / Color Lab float as OS `flex-popout-*` windows. Titlebar drag
+//! is JS `setPosition` + in-WebView `mouseup` → `complete_float_drag` (no OS
+//! `startDragging`, no platform mouseup hook). Affinity hit-test stays in
+//! `dock_affinity` (zones from the main window; positions via `WindowEvent::Moved`).
+//!
+//! Preview / Preferences still use PanelManager + OS `startDragging` for move-only
+//! (FLOATING_ONLY — affinity never arms).
+//!
+//! ## Commands still used
+//! DO NOT remove Preview/PanelManager undock/dock paths here.
+//!
+//! Float-drag (Flex): `begin_float_drag` / `cancel_float_drag` / `complete_float_drag`
+//! + `update_dock_zone`. Hit-test: `dock_affinity.rs` (no `global_mouseup`).
 
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 
 use tauri::webview::WebviewWindowBuilder;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::AppState;
 use crate::dock_affinity::{DockAffinityEvent, DockZone, SidebarSide};
-use crate::global_mouseup;
 use crate::panel_manager::{DockSide, PanelInfo, SavedBounds, SerializedPanelState};
 use crate::services::PanelService;
 
@@ -527,6 +541,57 @@ fn sidebar_side_to_dock(side: SidebarSide) -> DockSide {
     }
 }
 
+/// Layers + Effect + Color Lab live in FlexLayout — redock must not go through PanelManager.
+fn is_flex_layout_panel(panel_id: &str) -> bool {
+    matches!(panel_id, "layers" | "effect" | "colorlab")
+}
+
+/// Color Lab uses `panel-{id}`; FlexLayout popouts use `flex-popout-N`.
+fn resolve_float_window(
+    app_handle: &AppHandle,
+    panel_id: &str,
+) -> Option<tauri::WebviewWindow> {
+    let panel_label = format!("panel-{}", panel_id);
+    if let Some(win) = app_handle.get_webview_window(&panel_label) {
+        return Some(win);
+    }
+    let windows = app_handle.webview_windows();
+    let mut flex: Vec<_> = windows
+        .into_iter()
+        .filter(|(label, _)| label.starts_with("flex-popout-"))
+        .map(|(_, w)| w)
+        .collect();
+    if flex.is_empty() {
+        return None;
+    }
+    if let Some(focused) = flex.iter().find(|w| w.is_focused().unwrap_or(false)) {
+        return Some(focused.clone());
+    }
+    flex.pop()
+}
+
+fn poll_panel_affinity(app_handle: &AppHandle, state: &Arc<AppState>, panel_id: &str) {
+    let Some(win) = resolve_float_window(app_handle, panel_id) else {
+        return;
+    };
+    let Ok(pos) = win.outer_position() else {
+        return;
+    };
+    let Ok(size) = win.outer_size() else {
+        return;
+    };
+    let Ok(scale) = win.scale_factor() else {
+        return;
+    };
+    let logical = crate::dock_affinity::Rect {
+        x: pos.x as f64 / scale,
+        y: pos.y as f64 / scale,
+        width: size.width as f64 / scale,
+        height: size.height as f64 / scale,
+    };
+    handle_panel_moved(app_handle, state, logical);
+}
+
 fn parse_sidebar_side(side: &str) -> Result<SidebarSide, String> {
     match side {
         "left" => Ok(SidebarSide::Left),
@@ -585,16 +650,13 @@ pub fn begin_float_drag(
     app_handle: AppHandle,
     state: State<Arc<AppState>>,
 ) -> Result<(), String> {
+    // Cancel any prior session (JS drag restart / Escape).
     {
-        let mut hook = state.float_drag_mouseup_hook.lock().map_err(|e| e.to_string())?;
-        if let Some(h) = hook.take() {
-            let app = app_handle.clone();
-            let _ = app.run_on_main_thread(move || h.cancel());
+        let mut ctrl = state.dock_affinity.lock().map_err(|e| e.to_string())?;
+        if let Some(ev) = ctrl.cancel() {
+            emit_dock_affinity(&app_handle, &ev);
         }
     }
-    state
-        .float_drag_mouseup_cancel
-        .store(true, Ordering::SeqCst);
 
     let started = {
         let mut ctrl = state.dock_affinity.lock().map_err(|e| e.to_string())?;
@@ -608,90 +670,8 @@ pub fn begin_float_drag(
         return Ok(());
     }
 
-    if !global_mouseup::mouseup_backend_available() {
-        let mut ctrl = state.dock_affinity.lock().map_err(|e| e.to_string())?;
-        ctrl.enabled = false;
-        if let Some(ev) = ctrl.cancel() {
-            emit_dock_affinity(&app_handle, &ev);
-        }
-        return Ok(());
-    }
-
     ensure_fallback_dock_zone(&app_handle, &state);
     let _ = app_handle.emit("dock-zones-refresh", ());
-
-    state
-        .float_drag_mouseup_cancel
-        .store(false, Ordering::SeqCst);
-
-    let app_handle_watch = app_handle.clone();
-    let state_arc: Arc<AppState> = Arc::clone(state.inner());
-    let panel_label_tick = format!("panel-{}", panel_id);
-
-    let app_for_install = app_handle.clone();
-    let hook = global_mouseup::install_left_mouseup_hook(
-        move |install_fn| {
-            let _ = app_for_install.run_on_main_thread(move || {
-                install_fn();
-            });
-        },
-        {
-            let app = app_handle_watch.clone();
-            let state = state_arc.clone();
-            move || {
-                let app2 = app.clone();
-                let state2 = state.clone();
-                let _ = app.run_on_main_thread(move || {
-                    if let Some((pid, _, _, _)) = state2
-                        .dock_affinity
-                        .lock()
-                        .ok()
-                        .and_then(|c| c.session_snapshot())
-                    {
-                        poll_panel_affinity(&app2, &state2, &format!("panel-{}", pid));
-                    }
-                    complete_float_drag(&app2, &state2);
-                });
-            }
-        },
-    );
-
-    let tick_cancel = hook.cancel_flag();
-    global_mouseup::spawn_tick_loop(tick_cancel.clone(), {
-        let app = app_handle_watch.clone();
-        let state = state_arc.clone();
-        move || {
-            poll_panel_affinity(&app, &state, &panel_label_tick);
-        }
-    });
-
-    global_mouseup::spawn_hid_mouseup_backup(tick_cancel, {
-        let app = app_handle_watch;
-        let state = state_arc;
-        move || {
-            if let Some((pid, _, _, _)) = state
-                .dock_affinity
-                .lock()
-                .ok()
-                .and_then(|c| c.session_snapshot())
-            {
-                poll_panel_affinity(&app, &state, &format!("panel-{}", pid));
-            }
-            let app2 = app.clone();
-            let state2 = state.clone();
-            if let Err(_) = app.run_on_main_thread(move || {
-                complete_float_drag(&app2, &state2);
-            }) {
-                complete_float_drag(&app, &state);
-            }
-        }
-    });
-
-    *state
-        .float_drag_mouseup_hook
-        .lock()
-        .map_err(|e| e.to_string())? = Some(hook);
-
     Ok(())
 }
 
@@ -751,41 +731,11 @@ fn ensure_fallback_dock_zone(app_handle: &AppHandle, state: &AppState) {
     }
 }
 
-fn poll_panel_affinity(app_handle: &AppHandle, state: &Arc<AppState>, window_label: &str) {
-    let Some(win) = app_handle.get_webview_window(window_label) else {
-        return;
-    };
-    let Ok(pos) = win.outer_position() else {
-        return;
-    };
-    let Ok(size) = win.outer_size() else {
-        return;
-    };
-    let Ok(scale) = win.scale_factor() else {
-        return;
-    };
-    let logical = crate::dock_affinity::Rect {
-        x: pos.x as f64 / scale,
-        y: pos.y as f64 / scale,
-        width: size.width as f64 / scale,
-        height: size.height as f64 / scale,
-    };
-    handle_panel_moved(app_handle, state, logical);
-}
-
 #[tauri::command]
 pub fn cancel_float_drag(
     app_handle: AppHandle,
     state: State<Arc<AppState>>,
 ) -> Result<(), String> {
-    state
-        .float_drag_mouseup_cancel
-        .store(true, Ordering::SeqCst);
-    if let Ok(mut hook) = state.float_drag_mouseup_hook.lock() {
-        if let Some(h) = hook.take() {
-            h.cancel();
-        }
-    }
     let mut ctrl = state.dock_affinity.lock().map_err(|e| e.to_string())?;
     if let Some(ev) = ctrl.cancel() {
         emit_dock_affinity(&app_handle, &ev);
@@ -793,17 +743,25 @@ pub fn cancel_float_drag(
     Ok(())
 }
 
-pub fn complete_float_drag(app_handle: &AppHandle, state: &Arc<AppState>) {
-    state
-        .float_drag_mouseup_cancel
-        .store(true, Ordering::SeqCst);
-
-    let pending_hook = state
-        .float_drag_mouseup_hook
+/// Finish JS-driven float drag: poll last rect, then dock if armed.
+#[tauri::command]
+pub fn complete_float_drag(
+    app_handle: AppHandle,
+    state: State<Arc<AppState>>,
+) -> Result<(), String> {
+    if let Some((pid, _, _, _)) = state
+        .dock_affinity
         .lock()
         .ok()
-        .and_then(|mut h| h.take());
+        .and_then(|c| c.session_snapshot())
+    {
+        poll_panel_affinity(&app_handle, state.inner(), &pid);
+    }
+    finish_float_drag(&app_handle, state.inner());
+    Ok(())
+}
 
+pub fn finish_float_drag(app_handle: &AppHandle, state: &Arc<AppState>) {
     let snapshot = {
         let ctrl = match state.dock_affinity.lock() {
             Ok(c) => c,
@@ -813,9 +771,6 @@ pub fn complete_float_drag(app_handle: &AppHandle, state: &Arc<AppState>) {
     };
 
     let Some((panel_id, armed, insert_index, armed_side)) = snapshot else {
-        if let Some(h) = pending_hook {
-            defer_hook_cancel(app_handle, h);
-        }
         return;
     };
 
@@ -823,7 +778,21 @@ pub fn complete_float_drag(app_handle: &AppHandle, state: &Arc<AppState>) {
         let side = armed_side
             .map(sidebar_side_to_dock)
             .unwrap_or(DockSide::Right);
-        if let Err(e) = dock_panel_at_inner(&panel_id, side, insert_index, app_handle, state) {
+        if is_flex_layout_panel(&panel_id) {
+            // Frontend LayoutContext unfloats / cross-moves; do not touch PanelManager.
+            let side_str = match side {
+                DockSide::Left => "left",
+                DockSide::Right => "right",
+            };
+            let _ = app_handle.emit(
+                "flex-panel-dock-request",
+                serde_json::json!({
+                    "panelId": panel_id,
+                    "side": side_str,
+                }),
+            );
+        } else if let Err(e) = dock_panel_at_inner(&panel_id, side, insert_index, app_handle, state)
+        {
             let _ = app_handle.emit(
                 "panel-error",
                 format!("Failed to dock panel: {}", e),
@@ -841,20 +810,6 @@ pub fn complete_float_drag(app_handle: &AppHandle, state: &Arc<AppState>) {
     if let Some(ev) = end_ev {
         emit_dock_affinity(app_handle, &ev);
     }
-
-    if let Some(h) = pending_hook {
-        defer_hook_cancel(app_handle, h);
-    }
-}
-
-fn defer_hook_cancel(app_handle: &AppHandle, hook: global_mouseup::MouseUpHook) {
-    let app = app_handle.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(16));
-        let _ = app.run_on_main_thread(move || {
-            hook.cancel();
-        });
-    });
 }
 
 pub fn handle_panel_moved(

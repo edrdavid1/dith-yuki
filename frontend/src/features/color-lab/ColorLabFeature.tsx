@@ -61,6 +61,7 @@ export type ColorLabFeatureProps = PanelChromeProps & {
 export default function ColorLabFeature({
   variant,
   showTitlebar = false,
+  hideChrome,
   onTitleBarMouseDown,
   dockSide,
   onMoveToSide,
@@ -403,10 +404,13 @@ export default function ColorLabFeature({
       />
     ) : null;
 
+  // FlexLayout tab strip / FlexPopoutChrome own chrome when hideChrome.
+  const showBar = showTitlebar && !hideChrome;
+
   if (variant === 'sidebar') {
     return (
       <div className={cn('color-lab-sidebar')}>
-        {showTitlebar && (
+        {showBar && (
           <WindowTitlebar
             title="Color Lab"
             onMouseDown={onTitleBarMouseDown}

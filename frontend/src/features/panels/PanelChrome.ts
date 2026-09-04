@@ -7,4 +7,10 @@ export type PanelChromeProps = {
   /** Current dock side when docked in a sidebar (enables Move to other side). */
   dockSide?: DockSide;
   onMoveToSide?: (side: DockSide) => void;
+  /** When true, omit WindowTitlebar — FlexLayout tab strip is the chrome. */
+  hideChrome?: boolean;
+  /** Pop the panel into a FlexLayout OS window. */
+  onPopOut?: () => void;
+  /** Dock a floated panel back into the sidebar. */
+  onDockBack?: () => void;
 };

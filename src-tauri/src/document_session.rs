@@ -20,6 +20,7 @@ pub struct DocumentSession {
     pub document_handle: DocumentHandle,
     pub history: crate::state::HistoryState,
     pub project_path: Mutex<Option<PathBuf>>,
+    pub source_path: Mutex<Option<PathBuf>>,
     /// In-flight save/export assemble count — close refuses while > 0.
     io_inflight: AtomicUsize,
 }
@@ -69,8 +70,6 @@ impl AppState {
         cache_bytes: usize,
         dock_affinity_enabled: bool,
     ) -> Self {
-        use std::sync::atomic::AtomicBool;
-
         let gpu_resident = gpu.as_ref().map(|ctx| {
             // Diag may request a tighter budget, but scratch (2×cap) must still fit and
             // leave room for a full origin viewport (~40 L0 tiles). Undersized budgets
@@ -108,10 +107,27 @@ impl AppState {
             dock_affinity: Mutex::new(crate::dock_affinity::DockAffinityController::new(
                 dock_affinity_enabled,
             )),
-            float_drag_mouseup_cancel: Arc::new(AtomicBool::new(true)),
-            float_drag_mouseup_hook: Mutex::new(None),
             preview_pass_inflight: AtomicUsize::new(0),
             pending_preview_refresh: Mutex::new(None),
+            // B3: FlexLayout persistence (initialized with temp dir, updated in main.rs)
+            flexlayout_persistence: Mutex::new(
+                crate::flexlayout_persistence::FlexLayoutPersistence::new(
+                    std::env::temp_dir(),
+                )
+            ),
+            // B4a: per-side FlexLayout persistence (updated in main.rs)
+            flexlayout_left: Mutex::new(
+                crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
+                    std::env::temp_dir(),
+                    "flexlayout_left.json",
+                )
+            ),
+            flexlayout_right: Mutex::new(
+                crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
+                    std::env::temp_dir(),
+                    "flexlayout_right.json",
+                )
+            ),
         }
     }
 
@@ -142,6 +158,7 @@ impl AppState {
             document_handle: DocumentHandle::new(doc),
             history: crate::state::HistoryState::new(),
             project_path: Mutex::new(None),
+            source_path: Mutex::new(None),
             io_inflight: AtomicUsize::new(0),
         });
         if let Ok(mut map) = self.sessions.lock() {
@@ -311,11 +328,18 @@ impl AppState {
         let mut tabs: Vec<OpenDocumentTabDto> = map
             .values()
             .map(|s| {
+                // Try project_path first, then source_path for loaded images
                 let path = s
                     .project_path
                     .lock()
                     .ok()
-                    .and_then(|p| p.as_ref().map(|p| p.to_string_lossy().into_owned()));
+                    .and_then(|p| p.as_ref().map(|p| p.to_string_lossy().into_owned()))
+                    .or_else(|| {
+                        s.source_path
+                            .lock()
+                            .ok()
+                            .and_then(|p| p.as_ref().map(|p| p.to_string_lossy().into_owned()))
+                    });
                 let title = path
                     .as_deref()
                     .and_then(|p| std::path::Path::new(p).file_name())

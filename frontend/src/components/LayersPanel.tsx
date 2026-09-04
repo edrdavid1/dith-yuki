@@ -45,6 +45,10 @@ export interface LayersPanelProps {
   onTitleBarMouseDown?: (e: React.MouseEvent) => void;
   dockSide?: DockSide;
   onMoveToSide?: (side: DockSide) => void;
+  /** When true, omit WindowTitlebar — FlexLayout tab strip is the chrome. */
+  hideChrome?: boolean;
+  onPopOut?: () => void;
+  onDockBack?: () => void;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -97,6 +101,9 @@ export default function LayersPanel({
   onTitleBarMouseDown,
   dockSide,
   onMoveToSide,
+  hideChrome = false,
+  onPopOut,
+  onDockBack,
 }: LayersPanelProps) {
   const selectedLayer = selectedLayerId !== null
     ? layers.find(l => l.id === selectedLayerId) ?? null
@@ -334,13 +341,17 @@ export default function LayersPanel({
 
   return (
     <div className={cn("lp")} aria-label="Layers panel">
-      <WindowTitlebar
-        title="Layers"
-        className={cn("lp-titlebar")}
-        onMouseDown={onTitleBarMouseDown}
-        dockSide={dockSide}
-        onMoveToSide={onMoveToSide}
-      />
+      {!hideChrome && (
+        <WindowTitlebar
+          title="Layers"
+          className={cn("lp-titlebar")}
+          onMouseDown={onTitleBarMouseDown}
+          dockSide={dockSide}
+          onMoveToSide={onMoveToSide}
+          onPopOut={onPopOut}
+          onDockBack={onDockBack}
+        />
+      )}
 
       {/* Blend mode + Opacity row */}
       <div className={cn("lp-controls")}>

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta http-equiv="Content-type" content="text/html; charset=utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Panel</title>
+  <style>
+    @font-face {
+      font-family: 'ChicagoFLF';
+      src: url('/fonts/ChicagoFLF.ttf') format('truetype');
+      font-weight: normal;
+      font-style: normal;
+    }
+    :root {
+      --color-gray: #CDCDCD;
+      --color-dark-gray: #999;
+      --color-black: #000;
+      --color-white: #FFF;
+      --color-primary: #8181FF;
+      --bg-window: var(--color-gray);
+      --bg-titlebar: var(--color-gray);
+      --bg-input: var(--color-white);
+      --bg-slider-track: var(--color-dark-gray);
+      --border-color: var(--color-black);
+      --text-color: var(--color-black);
+      --border-width: 1.5px;
+      --border: var(--border-width) solid var(--border-color);
+      --bevel-size: var(--border-width);
+      --shadow-inset-dark: inset calc(-1 * var(--bevel-size)) calc(-1 * var(--bevel-size)) 0 0 var(--color-black);
+      --shadow-inset-light: inset var(--bevel-size) var(--bevel-size) 0 0 var(--color-white);
+      --shadow-outset-dark: inset var(--bevel-size) var(--bevel-size) 0 0 var(--color-black);
+      --shadow-outset-light: inset calc(-1 * var(--bevel-size)) calc(-1 * var(--bevel-size)) 0 0 var(--color-white);
+      --font-family: 'ChicagoFLF', 'Geneva', 'Chicago', monospace;
+      --radius: 0px;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      width: 100%;
+      overflow: hidden;
+      background: #CDCDCD;
+      font-family: var(--font-family);
+      font-size: 12px;
+      color: #000;
+    }
+    .flexlayout__floating_window_content {
+      height: 100%;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body>
+  <!-- FlexLayout portals panel content here; app styles are cloned from the main window. -->
+</body>
+</html>
