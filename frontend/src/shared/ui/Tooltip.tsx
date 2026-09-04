@@ -1,4 +1,4 @@
-import { useCallback, useState, type MouseEvent, type ReactNode } from 'react';
+import { useCallback, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import styles from './Tooltip.module.css';
 import { bind } from './cn';
@@ -9,14 +9,19 @@ const OFFSET = 14;
 
 /**
  * Cursor-following label. Use instead of native `title` on icon-only controls.
+ * Portals into the host element's document (works in FlexLayout popout windows).
  */
 export default function Tooltip({
   label,
   children,
+  fill = false,
 }: {
   label: string;
   children: ReactNode;
+  /** Stretch host to fill a flex row (e.g. titlebar square). */
+  fill?: boolean;
 }) {
+  const hostRef = useRef<HTMLSpanElement>(null);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
 
   const onEnter = useCallback((e: MouseEvent) => {
@@ -29,9 +34,14 @@ export default function Tooltip({
 
   const onLeave = useCallback(() => setPos(null), []);
 
+  const portalParent =
+    hostRef.current?.ownerDocument?.body ?? document.body;
+
   return (
     <span
-      className={cn('tooltip-host')}
+      ref={hostRef}
+      data-tooltip-host
+      className={cn('tooltip-host', fill && 'tooltip-host-fill')}
       onMouseEnter={onEnter}
       onMouseMove={onMove}
       onMouseLeave={onLeave}
@@ -46,7 +56,7 @@ export default function Tooltip({
           >
             {label}
           </div>,
-          document.body
+          portalParent
         )}
     </span>
   );

@@ -24,6 +24,9 @@ export default function LayersFeature({
   onTitleBarMouseDown,
   dockSide,
   onMoveToSide,
+  hideChrome,
+  onPopOut,
+  onDockBack,
 }: PanelChromeProps) {
   const dispatch = useAppDispatch();
   const layers = useAppSelector((s) => s.layers.tree);
@@ -152,6 +155,9 @@ export default function LayersFeature({
       onTitleBarMouseDown={onTitleBarMouseDown}
       dockSide={dockSide}
       onMoveToSide={onMoveToSide}
+      hideChrome={hideChrome}
+      onPopOut={onPopOut}
+      onDockBack={onDockBack}
     />
   );
 }

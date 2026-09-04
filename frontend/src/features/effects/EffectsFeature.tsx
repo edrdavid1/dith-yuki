@@ -33,6 +33,9 @@ export default function EffectsFeature({
   onTitleBarMouseDown,
   dockSide,
   onMoveToSide,
+  hideChrome,
+  onPopOut,
+  onDockBack,
 }: PanelChromeProps) {
   const dispatch = useAppDispatch();
   const layers = useAppSelector((s) => s.layers.tree);
@@ -179,6 +182,9 @@ export default function EffectsFeature({
       onTitleBarMouseDown={onTitleBarMouseDown}
       dockSide={dockSide}
       onMoveToSide={onMoveToSide}
+      hideChrome={hideChrome}
+      onPopOut={onPopOut}
+      onDockBack={onDockBack}
       targetLayerId={currentLayerForEffect ?? selectedLayerId}
       onExportPattern={() =>
         void doc.exportPattern(currentLayerForEffect ?? selectedLayerId)

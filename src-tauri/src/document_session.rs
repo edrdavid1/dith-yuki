@@ -70,8 +70,6 @@ impl AppState {
         cache_bytes: usize,
         dock_affinity_enabled: bool,
     ) -> Self {
-        use std::sync::atomic::AtomicBool;
-
         let gpu_resident = gpu.as_ref().map(|ctx| {
             // Diag may request a tighter budget, but scratch (2×cap) must still fit and
             // leave room for a full origin viewport (~40 L0 tiles). Undersized budgets
@@ -109,10 +107,27 @@ impl AppState {
             dock_affinity: Mutex::new(crate::dock_affinity::DockAffinityController::new(
                 dock_affinity_enabled,
             )),
-            float_drag_mouseup_cancel: Arc::new(AtomicBool::new(true)),
-            float_drag_mouseup_hook: Mutex::new(None),
             preview_pass_inflight: AtomicUsize::new(0),
             pending_preview_refresh: Mutex::new(None),
+            // B3: FlexLayout persistence (initialized with temp dir, updated in main.rs)
+            flexlayout_persistence: Mutex::new(
+                crate::flexlayout_persistence::FlexLayoutPersistence::new(
+                    std::env::temp_dir(),
+                )
+            ),
+            // B4a: per-side FlexLayout persistence (updated in main.rs)
+            flexlayout_left: Mutex::new(
+                crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
+                    std::env::temp_dir(),
+                    "flexlayout_left.json",
+                )
+            ),
+            flexlayout_right: Mutex::new(
+                crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
+                    std::env::temp_dir(),
+                    "flexlayout_right.json",
+                )
+            ),
         }
     }
 

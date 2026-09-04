@@ -92,7 +92,6 @@
   min-height: 0;
   overflow: hidden;
   background: var(--bg-window);
-  border: var(--border);
   font-family: var(--font-family);
   user-select: none;
 }

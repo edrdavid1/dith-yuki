@@ -1,4 +1,4 @@
-/* ─── Window Panel (shared for all panels) ─────────────────────────────────── */
+/* Figma `heder-of-window` (DithTom 36:154) — docked + floating panel chrome. */
 
 .window-panel {
   background: var(--bg-window);
@@ -8,121 +8,106 @@
 
 .window-titlebar {
   box-sizing: border-box;
-  background: var(--bg-titlebar);
-  border-bottom: var(--border);
+  flex-shrink: 0;
   height: 20px;
-  line-height: 20px;
+  min-height: 20px;
+  max-height: 20px;
+  background: var(--bg-titlebar);
+  /* Full-weight bottom edge (same --border-width as panel frame). */
+  border: none;
+  border-bottom: var(--border);
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 0 2px;
+  justify-content: flex-start;
+  padding: 0 3px;
+  gap: 2px;
   position: relative;
   user-select: none;
-  gap: 2.5px;
   cursor: grab;
+  z-index: 1;
 }
 
-/* Floating PanelWindow already has chrome — hide inner titlebars */
-:global([data-floating-panel-content]) .window-titlebar {
+.window-titlebar--floating {
+  /* Keep above GPU/canvas layers in Overlay popouts (WKWebView hit-test). */
+  z-index: 9999;
+  transform: translateZ(0);
+  pointer-events: auto;
+}
+
+/* Floating PanelWindow already has chrome — hide nested docked titlebars */
+:global([data-floating-panel-content]) .window-titlebar:not(.window-titlebar--floating) {
   display: none;
 }
 
-.window-titlebar-square {
+.window-titlebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.window-titlebar-square,
+.window-titlebar-close,
+.window-titlebar-min,
+.window-titlebar-zoom {
   width: 14px;
   height: 14px;
   flex-shrink: 0;
+  border: none;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.window-titlebar-square {
   background: url('/icons/header-window-square-icon.svg') no-repeat center;
   background-size: 14px 14px;
   cursor: default;
 }
 
 button.window-titlebar-square {
-  border: none;
-  padding: 0;
-  background-color: transparent;
   cursor: pointer;
 }
 
-button.window-titlebar-square:active {
+.window-titlebar-square:active,
+.window-titlebar-close:active,
+.window-titlebar-min:active,
+.window-titlebar-zoom:active {
   opacity: 0.7;
 }
 
-.window-titlebar-close {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  border: none;
-  padding: 0;
-  background: transparent;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.window-titlebar-close img {
+.window-titlebar-close img,
+.window-titlebar-min img,
+.window-titlebar-zoom img {
   pointer-events: none;
   display: block;
-}
-
-.window-titlebar-close:active {
-  opacity: 0.7;
-}
-
-.window-titlebar-square::after {
-  display: none;
-}
-
-.window-titlebar-lines {
-  flex: 1;
-  min-width: 1px;
+  width: 14px;
   height: 14px;
-  padding: 0 5px;
+}
+
+/* Figma ridges: exactly 4 horizontal lines in the 12px stripe band. */
+.window-titlebar-lines {
+  flex: 1 1 0;
+  min-width: 4px;
+  height: 12px;
+  margin: 0 2px;
+  pointer-events: none;
+  /* 4 × 1.5px strokes with equal gaps across 12px → period 3px */
   background: repeating-linear-gradient(
     to bottom,
-    var(--color-black) 0px,
-    var(--color-black) 0px,
+    var(--color-black) 0,
     var(--color-black) var(--border-width),
     transparent var(--border-width),
-    transparent 4px
-  );
-  background-position: center;
-}
-
-.window-titlebar::before,
-.window-titlebar::after {
-  content: '';
-  position: absolute;
-  top: 3px;
-  height: 14px;
-  width: calc(50% - 50px);
-  background: repeating-linear-gradient(
-    to bottom,
-    transparent 0px,
-    transparent 1px,
-    var(--color-black) 1px,
-    var(--color-black) 2px,
-    transparent 2px,
     transparent 3px
   );
-}
-
-.window-titlebar::before {
-  left: 20px;
-}
-
-.window-titlebar::after {
-  right: 20px;
-}
-
-/* Hide pseudoelement lines when explicit square+lines structure is used */
-.window-titlebar:has(.window-titlebar-square)::before,
-.window-titlebar:has(.window-titlebar-square)::after {
-  display: none;
-}
-
-.window-titlebar:has(.window-titlebar-square) {
-  justify-content: initial;
+  background-position: center top;
+  background-repeat: repeat-y;
+  background-size: 100% 12px;
 }
 
 .window-title {
@@ -130,11 +115,24 @@ button.window-titlebar-square:active {
   font-size: 12px;
   font-weight: normal;
   color: var(--text-color);
-  padding: 0 8px;
+  padding: 0 6px;
   z-index: 1;
   position: relative;
   white-space: nowrap;
   flex-shrink: 0;
+  pointer-events: none;
+  line-height: 1;
+}
+
+/* Tooltip hosts must not distort titlebar flex (controls stay 14×14). */
+.window-titlebar > [data-tooltip-host],
+.window-titlebar-actions > [data-tooltip-host] {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  min-width: 0;
 }
 
 .window-titlebar-menu {
@@ -165,7 +163,7 @@ button.window-titlebar-square:active {
   background: var(--bg-hover);
 }
 
-/* Legacy: keep absolute-positioned btn for backward compat */
+/* Legacy absolute square (older dialogs) */
 .window-titlebar-btn {
   position: absolute;
   left: 3px;
@@ -177,10 +175,6 @@ button.window-titlebar-square:active {
   background-size: 14px 14px;
   cursor: pointer;
   padding: 0;
-}
-
-.window-titlebar-btn::after {
-  display: none;
 }
 
 .window-titlebar-btn:active {

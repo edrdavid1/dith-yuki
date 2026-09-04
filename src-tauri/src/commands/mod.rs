@@ -1,5 +1,7 @@
 pub mod diagnostics;
 pub use diagnostics::*;
+pub mod flexlayout;
+pub use flexlayout::*;
 pub mod panels;
 pub use panels::*;
 pub mod selection;
@@ -69,10 +71,16 @@ pub struct AppState {
     pub app_handle: Mutex<Option<tauri::AppHandle>>,
     pub ui: crate::state::UiState,
     pub dock_affinity: Mutex<crate::dock_affinity::DockAffinityController>,
-    pub float_drag_mouseup_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    pub float_drag_mouseup_hook: Mutex<Option<crate::global_mouseup::MouseUpHook>>,
     pub preview_pass_inflight: AtomicUsize,
     pub pending_preview_refresh: Mutex<Option<PendingPreviewRefresh>>,
+    /// FlexLayout persistence layer (B3: Layers panel on FlexLayout).
+    /// During B3, effect/colorlab panels still use old PanelManager system.
+    /// This persistence handles the new v3 FlexLayout JSON format.
+    /// B4 will remove old PanelManager infrastructure entirely.
+    pub flexlayout_persistence: Mutex<crate::flexlayout_persistence::FlexLayoutPersistence>,
+    /// B4a: per-side FlexLayout persistence.
+    pub flexlayout_left:  Mutex<crate::flexlayout_persistence::FlexLayoutPersistence>,
+    pub flexlayout_right: Mutex<crate::flexlayout_persistence::FlexLayoutPersistence>,
 }
 
 pub struct QuitGuard {

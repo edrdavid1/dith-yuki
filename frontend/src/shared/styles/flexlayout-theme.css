@@ -1,0 +1,412 @@
+/**
+ * App theme overrides for flexlayout-react.
+ * Goal: FL chrome disappears; docked titlebar = same WindowTitlebar as Color Lab.
+ */
+
+.flexlayout__layout {
+  --font-family: 'ChicagoFLF', 'Geneva', 'Chicago', monospace;
+  --font-size: 12px;
+  --color-text: var(--text-color, #000);
+  --color-background: var(--bg-window, #CDCDCD);
+  --color-base: var(--bg-window, #CDCDCD);
+  --color-1: var(--bg-window, #CDCDCD);
+  --color-2: var(--bg-window, #CDCDCD);
+  --color-3: var(--color-gray, #CDCDCD);
+  --color-4: var(--color-dark-gray, #999);
+  --color-5: var(--color-dark-gray, #666);
+  --color-6: var(--color-black, #000);
+  --color-tabset-background: var(--bg-window);
+  --color-tabset-background-selected: var(--bg-window);
+  --color-tabset-background-maximized: var(--bg-window);
+  --color-tabset-divider-line: transparent;
+  --color-tabset-header-background: var(--bg-titlebar);
+  --color-tabset-header: var(--text-color);
+  --color-tab-selected: var(--text-color);
+  --color-tab-selected-background: transparent;
+  --color-tab-unselected: var(--text-color);
+  --color-tab-unselected-background: transparent;
+  --color-splitter: var(--border-color, #000);
+  --color-splitter-hover: var(--color-dark-gray, #999);
+  --color-splitter-drag: var(--color-primary, #8181FF);
+  --color-drag1: var(--color-primary, #8181FF);
+  --color-drag2: var(--color-primary, #8181FF);
+  --color-drag1-background: color-mix(in srgb, var(--color-primary, #8181FF) 18%, transparent);
+  --color-drag2-background: color-mix(in srgb, var(--color-primary, #8181FF) 28%, transparent);
+  --color-drag-rect-border: var(--color-primary, #8181FF);
+  --color-drag-rect-background: var(--bg-window);
+  --color-drag-rect: var(--text-color);
+  --color-icon: var(--text-color);
+  --color-overflow: var(--text-color);
+  --color-popup-border: var(--border-color, #000);
+  --color-popup-unselected: var(--text-color);
+  --color-popup-unselected-background: var(--bg-window);
+  font-family: var(--font-family);
+  background: var(--bg-window) !important;
+  color: var(--text-color);
+}
+
+/* Reserve strip = Figma heder-of-window (20px including bottom border). */
+.flexlayout__tabset_sizer {
+  box-sizing: border-box !important;
+  height: 20px !important;
+  min-height: 20px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  line-height: 20px !important;
+  overflow: hidden !important;
+  font-size: 12px !important;
+}
+
+/* ── Window frame (Color Lab / Figma) ─────────────────────────────────────────
+ * FlexLayout paints tab BODY as absolute `.flexlayout__tab` (sibling overlay),
+ * so a border on `.flexlayout__tabset` only frames the title strip. Split the
+ * frame: tabbar = top+left+right, tab = left+right+bottom, titlebar = divider.
+ */
+.flexlayout__tabset {
+  background: transparent !important;
+  border: none !important;
+  box-sizing: border-box !important;
+  overflow: visible !important;
+}
+
+.flexlayout__tabset_tabbar_outer,
+.flexlayout__tabset_tabbar_outer_top,
+.flexlayout__tabset_tabbar_outer_bottom {
+  background: var(--bg-titlebar) !important;
+  border: var(--border) !important;
+  border-bottom: none !important;
+  box-sizing: border-box !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: visible !important;
+  display: flex !important;
+  align-items: stretch !important;
+}
+
+.flexlayout__tabset_tabbar_inner,
+.flexlayout__tabset_tabbar_inner_top,
+.flexlayout__tabset_tabbar_inner_bottom {
+  position: relative !important;
+  box-sizing: border-box !important;
+  flex: 1 1 auto !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: visible !important;
+  display: flex !important;
+  align-items: stretch !important;
+}
+
+/* dark.css uses position:absolute + 10000px width — that warps our titlebar. */
+.flexlayout__tabset_tabbar_inner_tab_container,
+.flexlayout__tabset_tabbar_inner_tab_container_top,
+.flexlayout__tabset_tabbar_inner_tab_container_bottom {
+  position: relative !important;
+  left: auto !important;
+  top: auto !important;
+  bottom: auto !important;
+  right: auto !important;
+  box-sizing: border-box !important;
+  height: auto !important;
+  min-height: 0 !important;
+  width: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+  display: flex !important;
+  align-items: stretch !important;
+  gap: 0 !important;
+  overflow: visible !important;
+}
+
+.flexlayout__tabset_tab_divider {
+  display: none !important;
+}
+
+.flexlayout__tab_button,
+.flexlayout__tab_button--selected,
+.flexlayout__tab_button--unselected,
+.flexlayout__tab_button_top,
+.flexlayout__tab_button_bottom,
+.flexlayout__tab_button_stretch {
+  flex: 1 1 0 !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  width: 100% !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  overflow: visible !important;
+  display: flex !important;
+  align-items: stretch !important;
+  gap: 0 !important;
+  cursor: default !important;
+}
+
+.flexlayout__tab_button + .flexlayout__tab_button {
+  box-shadow: inset 1.5px 0 0 var(--border-color, #000) !important;
+}
+
+.flexlayout__tab_button:has([data-flex-floating-tab]) {
+  display: none !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
+}
+
+/* Kill FlexLayout chrome chrome (float / overflow / maximize) — native tooltips. */
+.flexlayout__tab_button_leading,
+.flexlayout__tab_button_trailing,
+.flexlayout__tab_toolbar,
+.flexlayout__tab_toolbar_button,
+.flexlayout__tab_toolbar_button_float,
+.flexlayout__tab_toolbar_button_min,
+.flexlayout__tab_toolbar_button_max,
+.flexlayout__tab_toolbar_button_close,
+.flexlayout__tab_button_overflow,
+.flexlayout__tab_toolbar_sticky_buttons_container {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
+}
+
+.flexlayout__tab_button_content {
+  display: flex !important;
+  flex: 1 1 auto !important;
+  align-items: stretch !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: visible !important;
+}
+
+/* WindowTitlebar owns border/height — identical to Color Lab docked chrome. */
+.flexlayout__tab_button_content > * {
+  flex: 1 1 auto !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+  height: auto !important;
+  max-height: none !important;
+}
+
+.flexlayout__tab,
+.flexlayout__tabset_content {
+  font-family: var(--font-family);
+  background: var(--bg-window) !important;
+  color: var(--text-color);
+  /* Real panel body lives on absolute `.flexlayout__tab` — give it the frame. */
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+
+.flexlayout__tab {
+  border-left: var(--border) !important;
+  border-right: var(--border) !important;
+  border-bottom: var(--border) !important;
+  border-top: none !important;
+  background: var(--bg-window) !important;
+}
+
+/* Empty placeholder under the strip (not the absolute tab) — no extra frame. */
+.flexlayout__tabset_content {
+  border: none !important;
+  background: transparent !important;
+}
+
+/* ── Splitters: Color Lab style — layout size 0, hit via splitterExtra ────────
+ * Adjacent tabset frames share one border line (upper bottom + lower top overlap).
+ */
+
+.flexlayout__splitter,
+.flexlayout__splitter_horz,
+.flexlayout__splitter_vert {
+  background: transparent !important;
+  border: none !important;
+  opacity: 1 !important;
+  z-index: 6 !important;
+}
+
+/* Pull lower stack up by one border so frames meet; padding = drag hit band. */
+.flexlayout__splitter_horz {
+  height: 0 !important;
+  min-height: 0 !important;
+  margin-top: calc(var(--border-width, 1.5px) * -1) !important;
+  margin-bottom: calc(var(--border-width, 1.5px) * -1) !important;
+  padding: 4px 0 !important;
+  box-sizing: content-box !important;
+}
+
+/* Vertical splitter (side-by-side — rare; we prefer vertical stacks) */
+.flexlayout__splitter_vert {
+  width: 0 !important;
+  min-width: 0 !important;
+  margin-left: calc(var(--border-width, 1.5px) * -1) !important;
+  margin-right: calc(var(--border-width, 1.5px) * -1) !important;
+  padding: 0 4px !important;
+  box-sizing: content-box !important;
+}
+
+.flexlayout__splitter:hover,
+.flexlayout__splitter_drag,
+.flexlayout__splitter_horz:hover,
+.flexlayout__splitter_vert:hover {
+  background: transparent !important;
+}
+
+.flexlayout__splitter_extra {
+  background: transparent !important;
+}
+
+/* ── Drag / dock outlines ──────────────────────────────────────────────────── */
+
+.flexlayout__outline_rect,
+.flexlayout__outline_rect_edge {
+  border: 2px solid var(--color-primary, #8181FF) !important;
+  background: color-mix(in srgb, var(--color-primary, #8181FF) 16%, transparent) !important;
+  border-radius: 0 !important;
+}
+
+.flexlayout__drag_rect {
+  font-family: var(--font-family) !important;
+  font-size: 12px !important;
+  color: var(--text-color) !important;
+  background: var(--bg-window) !important;
+  border: var(--border) !important;
+  border-radius: 0 !important;
+  box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light) !important;
+}
+
+/* ── Floated-away: never reserve dock space ───────────────────────────────── */
+
+.flexlayout__tab_floating {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
+}
+
+.flexlayout__tab_floating_inner {
+  display: none !important;
+}
+
+/* ── Overflow popup = WindowTitlebar menu look ─────────────────────────────── */
+
+.flexlayout__popup_menu_container {
+  box-sizing: border-box !important;
+  min-width: 180px !important;
+  padding: 2px !important;
+  background: var(--bg-window) !important;
+  color: var(--text-color) !important;
+  border: var(--border) !important;
+  border-radius: 0 !important;
+  box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light) !important;
+  font-family: var(--font-family) !important;
+  font-size: 12px !important;
+  max-height: none !important;
+  z-index: 10000 !important;
+}
+
+.flexlayout__popup_menu {
+  font-family: var(--font-family) !important;
+  font-size: 12px !important;
+  color: var(--text-color) !important;
+}
+
+.flexlayout__popup_menu_item {
+  box-sizing: border-box !important;
+  display: block !important;
+  width: 100% !important;
+  height: 22px !important;
+  padding: 0 10px !important;
+  margin: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: var(--text-color) !important;
+  font-family: var(--font-family) !important;
+  font-size: 12px !important;
+  line-height: 22px !important;
+  text-align: left !important;
+  white-space: nowrap !important;
+  cursor: pointer !important;
+}
+
+@media (hover: hover) {
+  .flexlayout__popup_menu_item:hover {
+    background: var(--bg-hover) !important;
+    color: var(--text-color) !important;
+  }
+}
+
+/* FlexLayout popout host fills the OS window like PanelWindow */
+.flexlayout__floating_window_content,
+.flexlayout__floating_window_tab {
+  box-sizing: border-box;
+  background: var(--bg-window) !important;
+  font-family: var(--font-family) !important;
+  color: var(--text-color) !important;
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.flexlayout__floating_window_tab > * {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+
+.flexlayout__floating_window_tab [data-flex-popout-chrome],
+.flexlayout__floating_window_content [data-flex-popout-chrome] {
+  height: 100% !important;
+  width: 100% !important;
+  max-height: 100% !important;
+  border: none !important;
+}
+
+.flexlayout__floating_window_content [data-flex-popout-chrome].panel-window,
+.flexlayout__floating_window_tab [data-flex-popout-chrome] {
+  height: 100% !important;
+  width: 100% !important;
+}
+
+.flexlayout__border {
+  background: var(--bg-window) !important;
+  color: var(--text-color) !important;
+}

@@ -27,6 +27,12 @@ export type DockedSidebarProps = {
   onCollapsedChange: (collapsed: boolean) => void;
   onWidthChange: (width: number | ((prev: number) => number)) => void;
   onSplitRatioChange: (ratio: number | ((prev: number) => number)) => void;
+  /**
+   * Parent already owns the CSS grid cell (e.g. FlexLayout + legacy stacked in one column).
+   * Skip grid-area / empty-edge / column resize so children don't escape into the outer grid
+   * and overlap the sibling FlexLayout.
+   */
+  embedded?: boolean;
 };
 
 /** Compute effective column width for grid template. */
@@ -55,6 +61,7 @@ export default function DockedSidebar({
   onCollapsedChange,
   onWidthChange,
   onSplitRatioChange,
+  embedded = false,
 }: DockedSidebarProps) {
   const sidebarRef = useRef<HTMLDivElement>(null);
   const collapsedRef = useRef<HTMLDivElement>(null);
@@ -63,7 +70,7 @@ export default function DockedSidebar({
   const oppositeSide: DockSide = side === 'left' ? 'right' : 'left';
 
   const syncHitTarget = useCallback(() => {
-    if (!hasVisible && emptyEdgeRef.current) {
+    if (!embedded && !hasVisible && emptyEdgeRef.current) {
       hitTargetRef.current = emptyEdgeRef.current;
     } else if (collapsed && collapsedRef.current) {
       hitTargetRef.current = collapsedRef.current;
@@ -72,7 +79,7 @@ export default function DockedSidebar({
     } else {
       hitTargetRef.current = null;
     }
-  }, [collapsed, hasVisible, hitTargetRef]);
+  }, [collapsed, embedded, hasVisible, hitTargetRef]);
 
   // Keep parent hit ref current for cross-sidebar drag.
   useLayoutEffect(() => {
@@ -137,7 +144,7 @@ export default function DockedSidebar({
     sidebarCollapsed: collapsed,
     sidebarWidth: width,
     hasDockTargets: hasVisible,
-    reportEmptyEdge: true,
+    reportEmptyEdge: !embedded,
   });
 
   const affinityInsertIndex =
@@ -183,11 +190,86 @@ export default function DockedSidebar({
     [onSplitRatioChange, panelIds.length]
   );
 
-  const areaClass = side === 'left' ? 'sidebar-area-left' : 'sidebar-area-right';
-  const collapsedAreaClass =
-    side === 'left' ? 'sidebar-collapsed-area-left' : 'sidebar-collapsed-area-right';
-  const resizeAreaClass =
-    side === 'left' ? 'sidebar-resize-left' : 'sidebar-resize-right';
+  // Embedded: parent owns the grid cell — never attach grid-area classes.
+  const areaClass = embedded
+    ? undefined
+    : side === 'left'
+      ? 'sidebar-area-left'
+      : 'sidebar-area-right';
+  const collapsedAreaClass = embedded
+    ? undefined
+    : side === 'left'
+      ? 'sidebar-collapsed-area-left'
+      : 'sidebar-collapsed-area-right';
+  const resizeAreaClass = embedded
+    ? undefined
+    : side === 'left'
+      ? 'sidebar-resize-left'
+      : 'sidebar-resize-right';
+
+  const panelStack = panelIds.map((panelId, index) => (
+    <React.Fragment key={panelId}>
+      {showDropIndicator(index) && <div className={cn('panel-drop-indicator')} />}
+      <div
+        data-panel-id={panelId}
+        style={{
+          // Embedded single-panel: fill the flex slot from parent (parent owns split).
+          // Multi-panel or non-embedded: use internal stack flex as before.
+          flex:
+            embedded && panelIds.length === 1
+              ? 1
+              : panelStackFlex(index, panelIds.length, splitRatio),
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          minHeight: 0,
+          ...getPanelStyle(panelId),
+        }}
+      >
+        <div style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
+          <DockedPanelContent
+            panelId={panelId}
+            dockSide={side}
+            onTitleBarMouseDown={(e) => handleMouseDown(panelId, e)}
+            onMoveToSide={(target) => {
+              void movePanelToSide(panelId, target).catch((err) =>
+                console.error('Move panel to side failed:', err)
+              );
+            }}
+          />
+        </div>
+        {!embedded && index < panelIds.length - 1 && (
+          <ResizeHandle direction="vertical" onResize={handleSplit} />
+        )}
+        {embedded && panelIds.length > 1 && index < panelIds.length - 1 && (
+          <ResizeHandle direction="vertical" onResize={handleSplit} />
+        )}
+      </div>
+      {index === panelIds.length - 1 && showDropIndicator(panelIds.length) && (
+        <div className={cn('panel-drop-indicator')} />
+      )}
+    </React.Fragment>
+  ));
+
+  // Embedded expanded: single flex child filling the parent column slot.
+  if (embedded) {
+    if (!hasVisible || collapsed) return null;
+    return (
+      <div
+        className={cn('app-sidebar')}
+        ref={sidebarRef}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          minWidth: 0,
+          width: '100%',
+          height: '100%',
+        }}
+      >
+        {panelStack}
+      </div>
+    );
+  }
 
   return (
     <>
@@ -266,41 +348,7 @@ export default function DockedSidebar({
           display: !hasVisible || collapsed ? 'none' : undefined,
         }}
       >
-        {panelIds.map((panelId, index) => (
-          <React.Fragment key={panelId}>
-            {showDropIndicator(index) && <div className={cn('panel-drop-indicator')} />}
-            <div
-              data-panel-id={panelId}
-              style={{
-                flex: panelStackFlex(index, panelIds.length, splitRatio),
-                display: 'flex',
-                flexDirection: 'column',
-                overflow: 'hidden',
-                minHeight: 0,
-                ...getPanelStyle(panelId),
-              }}
-            >
-              <div style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
-                <DockedPanelContent
-                  panelId={panelId}
-                  dockSide={side}
-                  onTitleBarMouseDown={(e) => handleMouseDown(panelId, e)}
-                  onMoveToSide={(target) => {
-                    void movePanelToSide(panelId, target).catch((err) =>
-                      console.error('Move panel to side failed:', err)
-                    );
-                  }}
-                />
-              </div>
-              {index < panelIds.length - 1 && (
-                <ResizeHandle direction="vertical" onResize={handleSplit} />
-              )}
-            </div>
-            {index === panelIds.length - 1 && showDropIndicator(panelIds.length) && (
-              <div className={cn('panel-drop-indicator')} />
-            )}
-          </React.Fragment>
-        ))}
+        {panelStack}
       </div>
     </>
   );
