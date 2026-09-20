@@ -239,10 +239,7 @@ pub fn save_project_to_path(
     read_threshold_png: impl FnMut(&str) -> Result<Vec<u8>, ProjectError>,
 ) -> Result<SaveProjectResult, ProjectError> {
     let result = save_project_to_bytes(doc, cache, app_version, read_threshold_png)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| ProjectError::Io(e.to_string()))?;
-    }
-    fs::write(path, &result.zip_bytes).map_err(|e| ProjectError::Io(e.to_string()))?;
+    engine_io::atomic_write(path, &result.zip_bytes).map_err(|e| ProjectError::Io(e.to_string()))?;
     Ok(result)
 }
 

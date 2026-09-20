@@ -4,7 +4,6 @@
 //! (greedy meshing) or `<path>` contours with even-odd holes.
 
 use crate::sandbox::{resolve_export_path, SandboxError};
-use std::fs;
 use thiserror::Error;
 
 /// SVG vectorization algorithm.
@@ -87,7 +86,7 @@ pub fn write_svg_file(
 ) -> Result<(), SvgExportError> {
     let svg = raster_to_svg(width, height, rgba, opts)?;
     let out = resolve_export_path(path, &["svg"])?;
-    fs::write(&out, svg).map_err(|e| SvgExportError::Io(e.to_string()))?;
+    crate::atomic_write(&out, svg.as_bytes()).map_err(|e| SvgExportError::Io(e.to_string()))?;
     Ok(())
 }
 

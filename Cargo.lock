@@ -1279,7 +1279,9 @@ dependencies = [
  "engine-core",
  "proptest",
  "roxmltree",
+ "tempfile",
  "thiserror 1.0.69",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1294,6 +1296,7 @@ dependencies = [
  "engine-color",
  "engine-core",
  "engine-gpu",
+ "engine-io",
  "engine-registry",
  "engine-tiles",
  "image",

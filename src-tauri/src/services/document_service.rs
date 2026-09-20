@@ -761,8 +761,8 @@ impl DocumentService {
     pub async fn export_image(&self, req: ExportImageRequest) -> Result<(), AppError> {
         use engine_project::filters::apply::apply_filter_to_tile;
         use engine_tiles::{CacheStage, TileCoord, TileKey, HALO, TILE_SIZE};
-        use std::fs;
         use std::io::Cursor;
+        use std::path::Path;
 
         if req.format != "PNG" && req.format != "JPEG" && req.format != "SVG" {
             return Err(AppError::Generic(
@@ -889,7 +889,8 @@ impl DocumentService {
             match req_format.as_str() {
                 "PNG" => {
                     let png_bytes = encode_rgba_to_png(&rgba_buffer, img_width, img_height)?;
-                    fs::write(&req_path, &png_bytes).map_err(|e| format!("IO error: {}", e))?;
+                    engine_io::atomic_write(Path::new(&req_path), &png_bytes)
+                        .map_err(|e| format!("IO error: {}", e))?;
                 }
                 "JPEG" => {
                     use image::codecs::jpeg::JpegEncoder;
@@ -916,7 +917,8 @@ impl DocumentService {
                         )
                         .map_err(|e| format!("JPEG encoding error: {}", e))?;
 
-                    fs::write(&req_path, &jpeg_data).map_err(|e| format!("IO error: {}", e))?;
+                    engine_io::atomic_write(Path::new(&req_path), &jpeg_data)
+                        .map_err(|e| format!("IO error: {}", e))?;
                 }
                 "SVG" => {
                     use engine_io::{write_svg_file, SvgAlgorithm, SvgExportOptions};
