@@ -59,7 +59,7 @@ npm run tauri signer generate -w ~/.tauri/dither.key
 | `APPLE_PASSWORD` | App-specific password |
 | `APPLE_TEAM_ID` | 10-character Team ID |
 
-When `APPLE_CERTIFICATE` is unset, CI still builds and publishes — first open may need Right-click → Open.
+When `APPLE_CERTIFICATE` is unset, CI creates a **self-signed** identity `L'eco non di Bergamo` (`scripts/macos-self-sign-cert.sh`) so Gatekeeper can offer **Open Anyway**. This is not Apple Developer ID / notarization.
 
 ## Cut a release
 
@@ -76,13 +76,13 @@ git push origin v0.3.0-alpha.1
 5. Smoke: install DMG → Help → Check for Updates (should report up to date).
 6. Optional: `npm run release:verify` after assets are public.
 
-## Gatekeeper (unsigned / not-yet-notarized macOS)
+## Gatekeeper (self-signed macOS alpha)
 
-1. Open the DMG and drag the app to Applications.
-2. Right-click **Dither Yuki** → **Open** → **Open**.
-3. Or System Settings → Privacy & Security → **Open Anyway**.
+1. Drag the app to Applications and **double-click** once (expect a block).
+2. **System Settings → Privacy & Security** → **Open Anyway**.
+3. Confirm **Open**.
 
-After notarization secrets are configured, this step should disappear for new builds.
+Self-signed as **L'eco non di Bergamo**. With Apple Developer secrets + notarization, this prompt goes away.
 
 ## Feedback
 

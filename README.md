@@ -28,10 +28,13 @@ This is a **dither / palette studio**, not a full paint or print app. No paint t
 
 ### macOS Gatekeeper
 
-Unsigned or not-yet-notarized builds may show “cannot be opened because the developer cannot be verified”:
+Alpha DMGs are **self-signed** as **L'eco non di Bergamo** (not Apple Developer ID):
 
-1. Right-click **Dither Yuki** → **Open** → confirm **Open**.
-2. Or System Settings → Privacy & Security → **Open Anyway**.
+1. Install from the DMG, then **double-click** the app once (macOS blocks it).
+2. **System Settings → Privacy & Security** → scroll down → **Open Anyway**.
+3. Confirm **Open**.
+
+When `APPLE_CERTIFICATE` (Developer ID) is set in CI, builds are notarized and this step goes away.
 
 ### Feedback
 
