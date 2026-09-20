@@ -315,8 +315,9 @@ pub fn undock_panel(
         .position(bounds.x as f64, bounds.y as f64)
         .resizable(true)
         .decorations(false)
-        .title_bar_style(tauri::TitleBarStyle::Overlay)
         .min_inner_size(280.0, 200.0);
+    #[cfg(target_os = "macos")]
+    let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay);
     let (max_w, max_h) = panel_max_inner_size(&panel_id);
     let builder = builder.max_inner_size(max_w, max_h);
 
@@ -501,8 +502,9 @@ pub fn undock_panel_with_size(
         .position(corrected_bounds.x as f64, corrected_bounds.y as f64)
         .resizable(true)
         .decorations(false)
-        .title_bar_style(tauri::TitleBarStyle::Overlay)
         .min_inner_size(280.0, 200.0);
+    #[cfg(target_os = "macos")]
+    let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay);
     let (max_w, max_h) = panel_max_inner_size(&panel_id);
     let builder = builder.max_inner_size(max_w, max_h);
 

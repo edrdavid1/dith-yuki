@@ -8,6 +8,7 @@ mod dock_affinity;
 mod document_session;
 mod flexlayout_persistence;
 mod gpu_resident_shadow;
+#[cfg(target_os = "macos")]
 mod macos_title;
 mod memory_budget;
 mod native_menu;
@@ -235,8 +236,9 @@ fn main() {
                     .title("Dither")
                     .resizable(true)
                     .decorations(false)
-                    .title_bar_style(tauri::TitleBarStyle::Overlay)
                     .min_inner_size(280.0, 200.0);
+                    #[cfg(target_os = "macos")]
+                    let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay);
 
                     match builder.build() {
                         Ok(window) => {
@@ -439,8 +441,9 @@ fn main() {
                             .position(bounds.x as f64, bounds.y as f64)
                             .resizable(true)
                             .decorations(false)
-                            .title_bar_style(tauri::TitleBarStyle::Overlay)
                             .min_inner_size(280.0, 200.0);
+                        #[cfg(target_os = "macos")]
+                        let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay);
                         let (max_w, max_h) = commands::panels::panel_max_inner_size(&panel.id);
                         let builder = builder.max_inner_size(max_w, max_h);
 

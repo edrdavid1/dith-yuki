@@ -1,0 +1,73 @@
+name: Windows Release
+
+# Attach an NSIS installer to an existing GitHub Release without rebuilding macOS.
+# Actions → Windows Release → Run workflow → pick the release tag (e.g. v0.3.0-alpha.3).
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to attach the Windows NSIS installer to
+        required: true
+        type: string
+        default: v0.3.0-alpha.3
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Require updater signing secrets
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY is required; refusing to publish unsigned updater artifacts."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: Resolve existing release
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ inputs.release_tag }}"
+          RID=$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" --jq .id)
+          if [ -z "$RID" ] || [ "$RID" = "null" ]; then
+            echo "No GitHub Release found for tag: $TAG"
+            exit 1
+          fi
+          echo "release_id=$RID" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Attaching Windows build to release id=$RID tag=$TAG"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install JS dependencies
+        shell: bash
+        run: |
+          npm install
+          npm install --prefix frontend
+
+      - name: Build and publish (Windows)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ steps.release.outputs.tag }}
+          releaseName: Dither Yuki ${{ steps.release.outputs.tag }}
+          releaseId: ${{ steps.release.outputs.release_id }}
+          releaseDraft: false
+          prerelease: false
+          args: --bundles nsis

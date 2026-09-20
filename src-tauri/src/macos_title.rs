@@ -1,10 +1,8 @@
 //! Center the native macOS window title in the system title bar.
+#![cfg(target_os = "macos")]
 
-#[cfg(target_os = "macos")]
 use cocoa::base::{id, nil, NO, YES};
-#[cfg(target_os = "macos")]
 use cocoa::foundation::{NSPoint, NSRect, NSSize, NSString};
-#[cfg(target_os = "macos")]
 use objc::{class, msg_send, sel, sel_impl};
 
 const FILL_ID: &str = "dy-titlebar-fill";
@@ -15,19 +13,12 @@ const TITLE_INACTIVE: (f64, f64, f64) = (0.22, 0.22, 0.22);
 /// Flexible left+right+top+bottom margins — keeps a fixed-size view centered.
 const CENTER_MASK: u64 = 1 | 4 | 8 | 32;
 
-#[cfg(not(target_os = "macos"))]
-pub fn apply_overlay_csd(_window: &tauri::WebviewWindow) {}
-
-#[cfg(not(target_os = "macos"))]
-pub fn refresh_traffic_lights(_window: &tauri::Window) {}
-
 /// Draw the webview under the traffic lights so File/Edit sit on the same row.
 ///
 /// **Do not** manually `setFrame` the traffic lights on resize. Tauri/tao already
 /// re-applies `trafficLightPosition` from `tauri.conf.json` inside the NSView
 /// `drawRect` path. A second DidResize layout fought that every frame and made
 /// the buttons jump while dragging the window edge.
-#[cfg(target_os = "macos")]
 pub fn apply_overlay_csd(window: &tauri::WebviewWindow) {
     let Ok(ns_window) = window.ns_window() else {
         return;
@@ -64,7 +55,6 @@ pub fn apply_overlay_csd(window: &tauri::WebviewWindow) {
 }
 
 /// Re-apply zoom wiring after exit fullscreen (no traffic-light frame writes).
-#[cfg(target_os = "macos")]
 pub fn refresh_traffic_lights(window: &tauri::Window) {
     let Ok(ns_window) = window.ns_window() else {
         return;
@@ -75,7 +65,6 @@ pub fn refresh_traffic_lights(window: &tauri::Window) {
 }
 
 /// Photoshop-style green button: `zoom:` (fit screen), never Mission Control fullscreen.
-#[cfg(target_os = "macos")]
 unsafe fn install_zoom_not_fullscreen(ns_window: id) {
     use cocoa::appkit::{NSWindow, NSWindowButton, NSWindowCollectionBehavior};
 
@@ -103,7 +92,6 @@ unsafe fn install_zoom_not_fullscreen(ns_window: id) {
 }
 
 /// Keep green-button → zoom: after AppKit fullscreen transitions.
-#[cfg(target_os = "macos")]
 unsafe fn observe_zoom_not_fullscreen(ns_window: id) {
     use block::ConcreteBlock;
 
@@ -163,7 +151,6 @@ unsafe fn observe_zoom_not_fullscreen(ns_window: id) {
     std::mem::forget(block);
 }
 
-#[cfg(target_os = "macos")]
 pub fn install_centered_title(window: &tauri::WebviewWindow) {
     let Ok(ns_window) = window.ns_window() else {
         return;
@@ -173,7 +160,6 @@ pub fn install_centered_title(window: &tauri::WebviewWindow) {
     }));
 }
 
-#[cfg(target_os = "macos")]
 unsafe fn install_on_ns_window(ns_window: id) {
     let Some(titlebar) = titlebar_view(ns_window) else {
         return;
@@ -200,7 +186,6 @@ unsafe fn install_on_ns_window(ns_window: id) {
     layout_views(titlebar, host, fill, label);
 }
 
-#[cfg(target_os = "macos")]
 unsafe fn make_fill() -> id {
     let fill: id = msg_send![class!(NSBox), alloc];
     let fill: id = msg_send![
@@ -224,7 +209,6 @@ unsafe fn make_fill() -> id {
     fill
 }
 
-#[cfg(target_os = "macos")]
 unsafe fn make_label() -> id {
     let label: id = msg_send![class!(NSTextField), alloc];
     let label: id = msg_send![
@@ -247,7 +231,6 @@ unsafe fn make_label() -> id {
     label
 }
 
-#[cfg(target_os = "macos")]
 unsafe fn titlebar_view(ns_window: id) -> Option<id> {
     let close: id = msg_send![ns_window, standardWindowButton: 0];
     if close == nil {
@@ -291,7 +274,6 @@ unsafe fn title_host(ns_window: id, titlebar: id) -> id {
     titlebar
 }
 
-#[cfg(target_os = "macos")]
 unsafe fn find_by_id(parent: id, id_str: &str) -> Option<id> {
     let views: id = msg_send![parent, subviews];
     if views == nil {
@@ -313,7 +295,6 @@ unsafe fn find_by_id(parent: id, id_str: &str) -> Option<id> {
     None
 }
 
-#[cfg(target_os = "macos")]
 unsafe fn layout_views(titlebar: id, host: id, fill: id, label: id) {
     let bar_bounds: NSRect = msg_send![titlebar, bounds];
     let _: () = msg_send![fill, setFrame: bar_bounds];
@@ -345,7 +326,6 @@ unsafe fn layout_views(titlebar: id, host: id, fill: id, label: id) {
     let _: () = msg_send![label, setFrame: rect];
 }
 
-#[cfg(target_os = "macos")]
 unsafe fn sync_label(ns_window: id, label: id) {
     let title: id = msg_send![ns_window, title];
     if title != nil {
@@ -369,7 +349,6 @@ unsafe fn sync_label(ns_window: id, label: id) {
 
 type BOOLISH = i8;
 
-#[cfg(target_os = "macos")]
 unsafe fn observe_window(ns_window: id, label: id) {
     use block::ConcreteBlock;
 
@@ -427,7 +406,6 @@ unsafe fn observe_window(ns_window: id, label: id) {
     }
 }
 
-#[cfg(target_os = "macos")]
 unsafe fn ns_string(s: &str) -> id {
     NSString::alloc(nil).init_str(s)
 }
