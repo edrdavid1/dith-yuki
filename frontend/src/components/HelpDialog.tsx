@@ -66,7 +66,7 @@ export default function HelpDialog({
         <div className={cn('help-body')}>
           <img className={cn('help-logo')} src="/img/dith.png" alt="" />
           <h2 className={cn('help-app-name')}>{APP_NAME}</h2>
-          <p className={cn('help-tagline')}>{APP_TAGLINE}</p>
+          
           <p className={cn('help-version')}>version {version || '…'}</p>
           <p className={cn('help-developer')}>
             <span>Developer:</span>

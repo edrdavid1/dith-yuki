@@ -71,17 +71,15 @@
 }
 
 .lp-dropdown-menu {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
+  position: fixed;
+  transform: none;
   margin: 0;
   padding: 0;
   list-style: none;
   background: var(--bg-window);
   border: var(--border);
   box-shadow: 2px 2px 0px 0px rgba(0, 0, 0, 0.3);
-  z-index: 20;
+  z-index: 10000;
 }
 
 .lp-dropdown-group {

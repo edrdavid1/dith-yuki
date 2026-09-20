@@ -1,15 +1,15 @@
 use std::sync::Arc;
 use tauri::AppHandle;
 
-use serde::{Deserialize, Serialize};
-use engine_tiles::PixelTile;
-use engine_project::types::LayerKind;
 use engine_project::commands as engine_commands;
 use engine_project::commands::AddLayerArgs;
+use engine_project::types::LayerKind;
+use engine_tiles::PixelTile;
+use serde::{Deserialize, Serialize};
 
 use crate::commands::{emit_document_changed, schedule_dirty_viewport_tiles, AppState};
 use crate::document_session::emit_tabs_changed;
-use crate::services::{AppError, layer_service::LayerIdResponse};
+use crate::services::{layer_service::LayerIdResponse, AppError};
 
 pub const MAX_DOCUMENT_DIMENSION: u32 = 8192;
 pub const IMAGE_IMPORT_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp"];
@@ -136,7 +136,9 @@ pub fn place_image_at_origin(
 }
 
 pub fn blank_rgba_f32(width: u32, height: u32, background: BlankBackground) -> Vec<f32> {
-    let n = (width as usize).saturating_mul(height as usize).saturating_mul(4);
+    let n = (width as usize)
+        .saturating_mul(height as usize)
+        .saturating_mul(4);
     match background {
         BlankBackground::Transparent => vec![0.0; n],
         BlankBackground::White => vec![1.0; n],
@@ -158,7 +160,13 @@ pub fn install_raster_document(
     let live_gen = 1u64;
     let layer_id = 1u32;
     let grid = decompose_image_to_tiles_at_generation(
-        rgba_f32, width, height, doc_id, layer_id, &state.tiles.tile_cache, live_gen,
+        rgba_f32,
+        width,
+        height,
+        doc_id,
+        layer_id,
+        &state.tiles.tile_cache,
+        live_gen,
     )
     .map_err(|e| format!("Tile decomposition error: {}", e))?;
 
@@ -169,19 +177,21 @@ pub fn install_raster_document(
         width,
         height,
     );
-    new_doc.root.push(engine_project::layer::LayerNode::Leaf(layer));
+    new_doc
+        .root
+        .push(engine_project::layer::LayerNode::Leaf(layer));
     new_doc.increment_generation();
     new_doc.generations.set_document_gen(live_gen);
 
     let session = state.spawn_session(new_doc);
-    
+
     // Set source_path if provided (for loaded images)
     if let Some(path) = source_path {
         if let Ok(mut src_path) = session.source_path.lock() {
             *src_path = Some(std::path::PathBuf::from(path));
         }
     }
-    
+
     state.evict_inactive_for_pressure_if_needed();
     crate::undo::clear_history(state, app, doc_id)?;
     emit_tabs_changed(app, state);
@@ -243,9 +253,15 @@ pub fn import_raster_layer(
             .generations
             .current_document_gen();
         decompose_image_to_tiles_at_generation(
-            &placed, dst_w, dst_h, doc_id, layer_id.0, &state.tiles.tile_cache, live_gen,
+            &placed,
+            dst_w,
+            dst_h,
+            doc_id,
+            layer_id.0,
+            &state.tiles.tile_cache,
+            live_gen,
         )
-            .map_err(|e| format!("Tile decomposition error: {e}"))?;
+        .map_err(|e| format!("Tile decomposition error: {e}"))?;
 
         state.evict_inactive_for_pressure_if_needed();
 
@@ -316,22 +332,27 @@ impl DocumentService {
         app_handle: &AppHandle,
     ) -> Result<DocumentResponse, AppError> {
         use engine_project::types::DocumentId;
-        
-        let new_doc = engine_project::Document::new(DocumentId::new(self.state.alloc_doc_id()), width, height);
+
+        let new_doc = engine_project::Document::new(
+            DocumentId::new(self.state.alloc_doc_id()),
+            width,
+            height,
+        );
         let session = self.state.spawn_session(new_doc);
         let doc_id = session.id.0;
         crate::undo::clear_history(&self.state, Some(app_handle), doc_id)?;
         emit_tabs_changed(Some(app_handle), &self.state);
-        
+
         let snapshot = session.document_handle.snapshot();
         let dto = engine_project::dto::document_to_dto(&snapshot);
-        
+
         Ok(DocumentResponse { snapshot: dto })
     }
 
     pub fn get_document_snapshot(&self) -> Result<DocumentResponse, AppError> {
         let Ok(session) = self.state.active_session() else {
-            let empty = engine_project::Document::new(engine_project::types::DocumentId::new(0), 0, 0);
+            let empty =
+                engine_project::Document::new(engine_project::types::DocumentId::new(0), 0, 0);
             let dto = engine_project::dto::document_to_dto(&empty);
             return Ok(DocumentResponse { snapshot: dto });
         };
@@ -346,7 +367,14 @@ impl DocumentService {
         app_handle: &AppHandle,
     ) -> Result<LoadImageResponse, AppError> {
         let (width, height, rgba_f32) = decode_image_to_rgba_f32(path)?;
-        let response = install_raster_document(&self.state, width, height, &rgba_f32, Some(app_handle), Some(path))?;
+        let response = install_raster_document(
+            &self.state,
+            width,
+            height,
+            &rgba_f32,
+            Some(app_handle),
+            Some(path),
+        )?;
         emit_document_changed(app_handle, "image_loaded", None, Some(response.doc_id));
         crate::recent_files::record_from_app(
             app_handle,
@@ -365,7 +393,14 @@ impl DocumentService {
     ) -> Result<LoadImageResponse, AppError> {
         validate_document_dimensions(width, height)?;
         let rgba_f32 = blank_rgba_f32(width, height, background);
-        let response = install_raster_document(&self.state, width, height, &rgba_f32, Some(app_handle), None)?;
+        let response = install_raster_document(
+            &self.state,
+            width,
+            height,
+            &rgba_f32,
+            Some(app_handle),
+            None,
+        )?;
         emit_document_changed(app_handle, "document_created", None, Some(response.doc_id));
         Ok(response)
     }
@@ -383,8 +418,15 @@ impl DocumentService {
         let resolved_str = resolved.to_string_lossy().into_owned();
 
         let (width, height, rgba_f32) = decode_image_to_rgba_f32(&resolved_str)?;
-        import_raster_layer(&self.state, doc_id, width, height, &rgba_f32, Some(app_handle))
-            .map_err(|e| AppError::Generic(e))
+        import_raster_layer(
+            &self.state,
+            doc_id,
+            width,
+            height,
+            &rgba_f32,
+            Some(app_handle),
+        )
+        .map_err(|e| AppError::Generic(e))
     }
 
     pub async fn save_project(
@@ -404,7 +446,9 @@ impl DocumentService {
                 guard
                     .as_ref()
                     .map(|p| p.to_string_lossy().into_owned())
-                    .ok_or_else(|| AppError::Generic("Save As required: no project path set".to_string()))?
+                    .ok_or_else(|| {
+                        AppError::Generic("Save As required: no project path set".to_string())
+                    })?
             }
         };
         self.save_project_as(doc_id, target, app_handle).await
@@ -417,8 +461,8 @@ impl DocumentService {
         app_handle: AppHandle,
     ) -> Result<SaveProjectResponse, AppError> {
         use engine_io::sandbox;
-        use engine_project::serialize::{read_png_file, save_project_to_path};
         use engine_project::serialize::ProjectError;
+        use engine_project::serialize::{read_png_file, save_project_to_path};
 
         let resolved = sandbox::resolve_export_path(&path, &["dyproj"])
             .map_err(|e| format!("Path error: {e}"))?;
@@ -507,7 +551,11 @@ impl DocumentService {
         for entry in staging.entries.iter() {
             let key = *entry.key();
             let tile = entry.value().tile.clone();
-            let _ = self.state.tiles.tile_cache.insert_fresh_gen(key, tile, live_gen);
+            let _ = self
+                .state
+                .tiles
+                .tile_cache
+                .insert_fresh_gen(key, tile, live_gen);
         }
 
         let width = opened.document.width;
@@ -545,10 +593,7 @@ impl DocumentService {
         })
     }
 
-    pub fn export_pattern(
-        &self,
-        req: ExportPatternRequest,
-    ) -> Result<(), AppError> {
+    pub fn export_pattern(&self, req: ExportPatternRequest) -> Result<(), AppError> {
         let doc_id = req.doc_id;
         use engine_io::sandbox;
         use engine_project::serialize::{
@@ -576,7 +621,11 @@ impl DocumentService {
             }
         };
 
-        let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+        let snapshot = self
+            .state
+            .require_session(doc_id)?
+            .document_handle
+            .snapshot();
         let zip = export_pattern_from_document(
             &snapshot,
             engine_project::types::LayerId::new(req.layer_id),
@@ -618,75 +667,92 @@ impl DocumentService {
             let mut imported_filters_are_dither = false;
             let mut err: Option<String> = None;
             let mut out: Option<engine_project::serialize::ImportPatternResult> = None;
-            state.require_session(doc_id)?.document_handle.mutate(|doc| {
-            match import_pattern_into_document(
-                &zip_bytes,
-                doc,
-                engine_project::types::LayerId::new(target_layer_id),
-                env!("CARGO_PKG_VERSION"),
-            ) {
-                Ok(r) => {
-                    imported_filters_are_dither = {
-                        fn has_dither(nodes: &[engine_project::LayerNode], layer_id: u32) -> bool {
-                            for node in nodes {
-                                match node {
-                                    engine_project::LayerNode::Leaf(layer) if layer.id.0 == layer_id => {
-                                        return layer
-                                            .filters
-                                            .iter()
-                                            .any(|f| matches!(f.params, FilterParams::DitherV2(_)));
-                                    }
-                                    engine_project::LayerNode::Group(g) => {
-                                        if has_dither(&g.children, layer_id) {
-                                            return true;
+            state
+                .require_session(doc_id)?
+                .document_handle
+                .mutate(|doc| {
+                    match import_pattern_into_document(
+                        &zip_bytes,
+                        doc,
+                        engine_project::types::LayerId::new(target_layer_id),
+                        env!("CARGO_PKG_VERSION"),
+                    ) {
+                        Ok(r) => {
+                            imported_filters_are_dither = {
+                                fn has_dither(
+                                    nodes: &[engine_project::LayerNode],
+                                    layer_id: u32,
+                                ) -> bool {
+                                    for node in nodes {
+                                        match node {
+                                            engine_project::LayerNode::Leaf(layer)
+                                                if layer.id.0 == layer_id =>
+                                            {
+                                                return layer.filters.iter().any(|f| {
+                                                    matches!(f.params, FilterParams::DitherV2(_))
+                                                });
+                                            }
+                                            engine_project::LayerNode::Group(g) => {
+                                                if has_dither(&g.children, layer_id) {
+                                                    return true;
+                                                }
+                                            }
+                                            _ => {}
                                         }
                                     }
-                                    _ => {}
+                                    false
                                 }
-                            }
-                            false
+                                has_dither(&doc.root, target_layer_id)
+                            };
+                            doc.increment_generation();
+                            out = Some(r);
                         }
-                        has_dither(&doc.root, target_layer_id)
-                    };
-                    doc.increment_generation();
-                    out = Some(r);
-                }
-                Err(e) => err = Some(e.to_string()),
+                        Err(e) => err = Some(e.to_string()),
+                    }
+                });
+            if let Some(e) = err {
+                return Err(e);
             }
-        });
-        if let Some(e) = err {
-            return Err(e);
-        }
-        let result = out.ok_or_else(|| "Import failed".to_string())?;
+            let result = out.ok_or_else(|| "Import failed".to_string())?;
 
-        if imported_filters_are_dither {
-            state.tiles.error_residuals.evict_layer(
-                doc_id,
-                engine_project::types::LayerId::new(target_layer_id),
+            if imported_filters_are_dither {
+                state
+                    .tiles
+                    .error_residuals
+                    .evict_layer(doc_id, engine_project::types::LayerId::new(target_layer_id));
+                state.tiles.block_representatives.clear_dithered();
+            }
+
+            {
+                let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
+                snapshot.generations.increment_layer_gen(target_layer_id);
+            }
+
+            let doc = state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot()
+                .id
+                .0;
+            engine_tiles::invalidation::invalidate(
+                &state.tiles.tile_cache,
+                engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
+                    doc,
+                    layer: target_layer_id,
+                },
             );
-            state.tiles.block_representatives.clear_dithered();
-        }
+            schedule_dirty_viewport_tiles(&state);
+            emit_document_changed(
+                &app_handle,
+                "pattern_imported",
+                Some(target_layer_id),
+                Some(doc_id),
+            );
 
-        {
-            let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
-            snapshot
-                .generations
-                .increment_layer_gen(target_layer_id);
-        }
-
-        let doc = state.require_session(doc_id)?.document_handle.snapshot().id.0;
-        engine_tiles::invalidation::invalidate(
-            &state.tiles.tile_cache,
-            engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { doc, layer: target_layer_id,
-            },
-        );
-        schedule_dirty_viewport_tiles(&state);
-        emit_document_changed(&app_handle, "pattern_imported", Some(target_layer_id), Some(doc_id));
-
-        Ok(ImportPatternResponse {
-            filter_ids: result.filter_ids.iter().map(|id| id.to_string()).collect(),
-            palette_ids: result.palette_ids.iter().map(|id| id.0).collect(),
-        })
+            Ok(ImportPatternResponse {
+                filter_ids: result.filter_ids.iter().map(|id| id.to_string()).collect(),
+                palette_ids: result.palette_ids.iter().map(|id| id.0).collect(),
+            })
         })
         .map_err(AppError::Generic)?;
         Ok(result)
@@ -694,12 +760,14 @@ impl DocumentService {
 
     pub async fn export_image(&self, req: ExportImageRequest) -> Result<(), AppError> {
         use engine_project::filters::apply::apply_filter_to_tile;
-        use engine_tiles::{TILE_SIZE, HALO, TileCoord, CacheStage, TileKey};
+        use engine_tiles::{CacheStage, TileCoord, TileKey, HALO, TILE_SIZE};
         use std::fs;
         use std::io::Cursor;
 
         if req.format != "PNG" && req.format != "JPEG" && req.format != "SVG" {
-            return Err(AppError::Generic("Invalid parameters: format must be PNG, JPEG, or SVG".to_string()));
+            return Err(AppError::Generic(
+                "Invalid parameters: format must be PNG, JPEG, or SVG".to_string(),
+            ));
         }
 
         let session = self.state.session(req.doc_id).map_err(|_| {
@@ -724,7 +792,11 @@ impl DocumentService {
                 let key = TileKey {
                     doc: req.doc_id,
                     layer: layer_id,
-                    coord: TileCoord { level: 0, x: col, y: row },
+                    coord: TileCoord {
+                        level: 0,
+                        x: col,
+                        y: row,
+                    },
                     stage: CacheStage::Raw,
                 };
                 match self.state.tiles.tile_cache.get_entry(key) {
@@ -758,7 +830,11 @@ impl DocumentService {
                     let tile = &tiles[row as usize][col as usize];
 
                     let processed_tile = if let Some(ref layer) = layer_clone {
-                        let coord = TileCoord { level: 0, x: col, y: row };
+                        let coord = TileCoord {
+                            level: 0,
+                            x: col,
+                            y: row,
+                        };
                         apply_filter_to_tile(
                             tile,
                             layer,
@@ -768,7 +844,7 @@ impl DocumentService {
                             &state_clone.tiles.threshold_cache,
                             &doc_snapshot,
                         )
-                            .map_err(|e| format!("Render error: {:?}", e))?
+                        .map_err(|e| format!("Render error: {:?}", e))?
                     } else {
                         let mut copy = engine_tiles::PixelTile::new();
                         for y in 0u32..260 {
@@ -799,9 +875,12 @@ impl DocumentService {
                             let buf_idx = ((img_y * img_width + img_x) * 4) as usize;
 
                             rgba_buffer[buf_idx] = f32_to_u8(processed_tile.at(tile_x, tile_y, 0));
-                            rgba_buffer[buf_idx + 1] = f32_to_u8(processed_tile.at(tile_x, tile_y, 1));
-                            rgba_buffer[buf_idx + 2] = f32_to_u8(processed_tile.at(tile_x, tile_y, 2));
-                            rgba_buffer[buf_idx + 3] = f32_to_u8(processed_tile.at(tile_x, tile_y, 3));
+                            rgba_buffer[buf_idx + 1] =
+                                f32_to_u8(processed_tile.at(tile_x, tile_y, 1));
+                            rgba_buffer[buf_idx + 2] =
+                                f32_to_u8(processed_tile.at(tile_x, tile_y, 2));
+                            rgba_buffer[buf_idx + 3] =
+                                f32_to_u8(processed_tile.at(tile_x, tile_y, 3));
                         }
                     }
                 }
@@ -810,14 +889,14 @@ impl DocumentService {
             match req_format.as_str() {
                 "PNG" => {
                     let png_bytes = encode_rgba_to_png(&rgba_buffer, img_width, img_height)?;
-                    fs::write(&req_path, &png_bytes)
-                        .map_err(|e| format!("IO error: {}", e))?;
+                    fs::write(&req_path, &png_bytes).map_err(|e| format!("IO error: {}", e))?;
                 }
                 "JPEG" => {
                     use image::codecs::jpeg::JpegEncoder;
                     use image::ImageEncoder;
 
-                    let mut rgb_buffer: Vec<u8> = Vec::with_capacity((img_width * img_height * 3) as usize);
+                    let mut rgb_buffer: Vec<u8> =
+                        Vec::with_capacity((img_width * img_height * 3) as usize);
                     for pixel in rgba_buffer.chunks_exact(4) {
                         rgb_buffer.push(pixel[0]);
                         rgb_buffer.push(pixel[1]);
@@ -829,11 +908,15 @@ impl DocumentService {
                     let cursor = Cursor::new(&mut jpeg_data);
                     let encoder = JpegEncoder::new_with_quality(cursor, quality);
                     encoder
-                        .write_image(&rgb_buffer, img_width, img_height, image::ExtendedColorType::Rgb8)
+                        .write_image(
+                            &rgb_buffer,
+                            img_width,
+                            img_height,
+                            image::ExtendedColorType::Rgb8,
+                        )
                         .map_err(|e| format!("JPEG encoding error: {}", e))?;
 
-                    fs::write(&req_path, &jpeg_data)
-                        .map_err(|e| format!("IO error: {}", e))?;
+                    fs::write(&req_path, &jpeg_data).map_err(|e| format!("IO error: {}", e))?;
                 }
                 "SVG" => {
                     use engine_io::{write_svg_file, SvgAlgorithm, SvgExportOptions};
@@ -852,7 +935,9 @@ impl DocumentService {
             }
 
             Ok::<(), AppError>(())
-        }).await.map_err(|e| AppError::Generic(format!("Export error: {}", e)))?
+        })
+        .await
+        .map_err(|e| AppError::Generic(format!("Export error: {}", e)))?
     }
 
     pub fn set_active_document(

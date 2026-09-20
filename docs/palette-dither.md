@@ -147,7 +147,7 @@ q_err = (old − pal_srgb) × threshold_scale
 
 **ED:** квантуется только representative. Ядро пишет ошибку на **следующий блок** (`dx × pixel_size`, `dy × pixel_size`), иначе при `ps > 1` FS вырождается в nearest по блокам (плоские пятна). Serpentine считает чётность по ряду блоков (`gy / ps`).
 
-Схема кросс-тайловых residual по-прежнему 2 колонки / 2 ряда: внутри тайла hop полный; на шве широкое ядро (JJN) × большой `ps` может обрезать overflow.
+Кросс-тайловый residual margin: `pixel_size × kernel_max_offset` (FS = 1 клетка ядра; Atkinson/JJN/Stucki/Burkes/Sierra = 2). Внутри тайла hop полный (`dx × ps`); на шве буфер должен покрывать тот же hop, иначе overflow обрезается и шов повторяется каждые 256 px.
 
 Проверка Simple + FS: `ps = 1` даёт мелкое зерно; `ps > 1` после фикса — зерно на сетке блоков.
 

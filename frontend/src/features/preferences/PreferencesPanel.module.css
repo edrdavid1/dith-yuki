@@ -80,6 +80,7 @@
 
 .preferences-hint + .preferences-btn-row,
 .preferences-hint + .preferences-swatch-row,
+.preferences-hint + .preferences-thumb-row,
 .preferences-hint + .preferences-shortcut-list {
   margin-top: 4px;
 }
@@ -87,6 +88,10 @@
 .preferences-label {
   display: block;
   margin-bottom: 6px;
+}
+
+.preferences-label-spaced {
+  margin-top: 10px;
 }
 
 .preferences-checkbox-row {
@@ -223,6 +228,30 @@
 }
 
 .preferences-swatch-active {
+  outline: 2px solid var(--color-black);
+  outline-offset: 2px;
+}
+
+.preferences-thumb-row {
+  display: flex;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px 0 4px;
+}
+
+.preferences-thumb {
+  position: relative;
+  width: 88px;
+  height: 56px;
+  padding: 0;
+  border: var(--border);
+  cursor: pointer;
+  box-shadow: var(--shadow-field);
+  overflow: hidden;
+}
+
+.preferences-thumb-active {
   outline: 2px solid var(--color-black);
   outline-offset: 2px;
 }

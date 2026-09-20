@@ -3,9 +3,9 @@
 //! These tests verify end-to-end document manipulation and invalidation cascades.
 
 use engine_project::{
+    commands::{add_layer, set_layer_props, LayerPropsPatch},
     document::{Document, DocumentHandle},
     types::{DocumentId, LayerKind},
-    commands::{add_layer, set_layer_props, LayerPropsPatch},
 };
 use engine_tiles::TileCache;
 use std::sync::Arc;
@@ -25,7 +25,8 @@ fn test_document_mutation_invalidation() {
         width: 800,
         height: 600,
     };
-    let layer_id = add_layer(&handle, &cache, DocumentId::new(1), args).expect("Failed to add layer");
+    let layer_id =
+        add_layer(&handle, &cache, DocumentId::new(1), args).expect("Failed to add layer");
 
     // Verify layer was added
     let snapshot = handle.snapshot();
@@ -65,8 +66,8 @@ fn test_layer_hierarchy_groups() {
         width: 800,
         height: 600,
     };
-    let _layer1_id = add_layer(&handle, &cache, DocumentId::new(1), args1)
-        .expect("Failed to add layer 1");
+    let _layer1_id =
+        add_layer(&handle, &cache, DocumentId::new(1), args1).expect("Failed to add layer 1");
 
     let snapshot = handle.snapshot();
     assert_eq!(snapshot.root.len(), 1, "First layer should be added");
@@ -80,8 +81,8 @@ fn test_layer_hierarchy_groups() {
         width: 800,
         height: 600,
     };
-    let _layer2_id = add_layer(&handle, &cache, DocumentId::new(1), args2)
-        .expect("Failed to add layer 2");
+    let _layer2_id =
+        add_layer(&handle, &cache, DocumentId::new(1), args2).expect("Failed to add layer 2");
 
     let snapshot = handle.snapshot();
     assert_eq!(snapshot.root.len(), 2, "Second layer should be added");
@@ -132,9 +133,15 @@ fn test_document_snapshot_consistency() {
     let snap1 = handle.snapshot();
     let snap2 = handle.snapshot();
 
-    assert_eq!(snap1.revision, snap2.revision, "Snapshots should have same revision");
+    assert_eq!(
+        snap1.revision, snap2.revision,
+        "Snapshots should have same revision"
+    );
     assert_eq!(snap1.width, snap2.width, "Snapshots should have same width");
-    assert_eq!(snap1.height, snap2.height, "Snapshots should have same height");
+    assert_eq!(
+        snap1.height, snap2.height,
+        "Snapshots should have same height"
+    );
 
     drop(snap1);
     drop(snap2);
@@ -163,8 +170,8 @@ fn test_sequential_mutations() {
         width: 800,
         height: 600,
     };
-    let layer1_id = add_layer(&handle, &cache, DocumentId::new(1), args1)
-        .expect("Failed to add layer 1");
+    let layer1_id =
+        add_layer(&handle, &cache, DocumentId::new(1), args1).expect("Failed to add layer 1");
 
     let snap1 = handle.snapshot();
     assert_eq!(snap1.root.len(), 1);
@@ -179,8 +186,8 @@ fn test_sequential_mutations() {
         width: 800,
         height: 600,
     };
-    let _layer2_id = add_layer(&handle, &cache, DocumentId::new(1), args2)
-        .expect("Failed to add layer 2");
+    let _layer2_id =
+        add_layer(&handle, &cache, DocumentId::new(1), args2).expect("Failed to add layer 2");
 
     let snap2 = handle.snapshot();
     assert_eq!(snap2.root.len(), 2);
@@ -223,5 +230,8 @@ fn test_document_generation_tracking() {
     drop(snap2);
 
     // Verify that mutations incremented generation (implicitly tested via mutations)
-    assert!(true, "Generation tracking verified via increment operations");
+    assert!(
+        true,
+        "Generation tracking verified via increment operations"
+    );
 }

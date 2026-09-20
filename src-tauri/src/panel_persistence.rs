@@ -120,8 +120,7 @@ pub fn parse_panel_state_json(
     contents: &str,
     fallback_side: DockSide,
 ) -> Result<LoadedPanelState, String> {
-    let value: Value =
-        serde_json::from_str(contents).map_err(|e| format!("invalid JSON: {e}"))?;
+    let value: Value = serde_json::from_str(contents).map_err(|e| format!("invalid JSON: {e}"))?;
 
     let version = value
         .get("version")
@@ -130,13 +129,13 @@ pub fn parse_panel_state_json(
 
     match version {
         1 => {
-            let v1: PersistedPanelStateV1 = serde_json::from_value(value)
-                .map_err(|e| format!("v1 schema parse error: {e}"))?;
+            let v1: PersistedPanelStateV1 =
+                serde_json::from_value(value).map_err(|e| format!("v1 schema parse error: {e}"))?;
             Ok(migrate_v1_to_v2(v1.panels, fallback_side))
         }
         2 => {
-            let v2: PersistedPanelStateV2 = serde_json::from_value(value)
-                .map_err(|e| format!("v2 schema parse error: {e}"))?;
+            let v2: PersistedPanelStateV2 =
+                serde_json::from_value(value).map_err(|e| format!("v2 schema parse error: {e}"))?;
             if v2.version != 2 {
                 return Err(format!("inconsistent version field {}", v2.version));
             }
@@ -385,7 +384,8 @@ mod tests {
 
     #[test]
     fn corrupt_json_returns_err() {
-        let err = parse_panel_state_json("{ this is not valid json }", DockSide::Right).unwrap_err();
+        let err =
+            parse_panel_state_json("{ this is not valid json }", DockSide::Right).unwrap_err();
         assert!(err.contains("invalid JSON"));
     }
 

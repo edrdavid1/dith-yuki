@@ -1,0 +1,218 @@
+:root {
+  --ink: #12141a;
+  --paper: #e6e2d8;
+  --muted: #6b6f7a;
+  --accent: #c8ff3d;
+  --accent-ink: #1a2200;
+  --rule: rgba(18, 20, 26, 0.12);
+  --font-display: "Syne", "Avenir Next", "Segoe UI", sans-serif;
+  --font-body: "IBM Plex Sans", "Helvetica Neue", sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  color: var(--ink);
+  font-family: var(--font-body);
+  background: var(--paper);
+  line-height: 1.5;
+}
+
+.atmosphere {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(1200px 700px at 12% -10%, rgba(200, 255, 61, 0.22), transparent 55%),
+    radial-gradient(900px 600px at 100% 0%, rgba(40, 70, 90, 0.18), transparent 50%),
+    linear-gradient(160deg, #f2eee4 0%, #d9d4c8 48%, #cfd6d2 100%);
+}
+
+.atmosphere::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.35;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Crect width='2' height='2' fill='%2312141a' fill-opacity='0.35'/%3E%3C/svg%3E");
+  background-size: 8px 8px;
+  mix-blend-mode: multiply;
+  animation: grain-drift 18s linear infinite;
+}
+
+@keyframes grain-drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-8px, -8px, 0);
+  }
+}
+
+.hero,
+.notes,
+footer {
+  position: relative;
+  z-index: 1;
+}
+
+.hero {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: clamp(2rem, 6vw, 5rem);
+  max-width: 56rem;
+}
+
+.brand {
+  margin: 0 0 1.25rem;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(2.75rem, 9vw, 5.5rem);
+  letter-spacing: -0.04em;
+  line-height: 0.95;
+  animation: rise 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.hero h1 {
+  margin: 0;
+  max-width: 18ch;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(1.5rem, 3.4vw, 2.25rem);
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  animation: rise 0.9s 0.08s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.lede {
+  margin: 1.25rem 0 0;
+  max-width: 36rem;
+  font-size: 1.05rem;
+  color: color-mix(in srgb, var(--ink) 78%, transparent);
+  animation: rise 0.9s 0.14s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 2rem;
+  animation: rise 0.9s 0.2s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
+  padding: 0 1.25rem;
+  border-radius: 0.35rem;
+  font-weight: 600;
+  font-size: 0.95rem;
+  text-decoration: none;
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+}
+
+.btn.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.btn.primary:hover {
+  background: #d6ff6a;
+}
+
+.btn.ghost {
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.btn.ghost:hover {
+  border-color: rgba(18, 20, 26, 0.35);
+}
+
+.meta {
+  margin: 1.25rem 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  animation: rise 0.9s 0.26s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.notes {
+  max-width: 40rem;
+  padding: 0 clamp(2rem, 6vw, 5rem) 4rem;
+  border-top: 1px solid var(--rule);
+  margin-top: -1px;
+  padding-top: 2.5rem;
+}
+
+.notes h2 {
+  margin: 0 0 0.75rem;
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  letter-spacing: -0.02em;
+}
+
+.notes p {
+  margin: 0 0 1rem;
+  color: color-mix(in srgb, var(--ink) 80%, transparent);
+}
+
+.notes a {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+footer {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  padding: 1.25rem clamp(2rem, 6vw, 5rem) 2rem;
+  border-top: 1px solid var(--rule);
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+footer a {
+  color: var(--ink);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .atmosphere::after,
+  .brand,
+  .hero h1,
+  .lede,
+  .cta,
+  .meta {
+    animation: none;
+  }
+}

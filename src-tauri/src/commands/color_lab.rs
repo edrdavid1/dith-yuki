@@ -17,7 +17,9 @@ pub struct GeneratedColorDto {
 fn normalize_hex_arg(hex: &str) -> Result<String, String> {
     let trimmed = hex.trim().trim_start_matches('#').to_uppercase();
     if trimmed.len() != 6 {
-        return Err("Hex color must be exactly 6 characters (optionally prefixed with #)".to_string());
+        return Err(
+            "Hex color must be exactly 6 characters (optionally prefixed with #)".to_string(),
+        );
     }
     if !trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("Hex color contains invalid characters".to_string());
@@ -59,7 +61,10 @@ pub struct OklabPointDto {
     pub srgb_hex: String,
 }
 
-fn oklab_point_from_lin_rgb(rgb: engine_color::LinRgb, srgb_hex: String) -> OklabPointDto {
+pub(crate) fn oklab_point_from_lin_rgb(
+    rgb: engine_color::LinRgb,
+    srgb_hex: String,
+) -> OklabPointDto {
     let lab = engine_color::linear_to_oklab(rgb);
     OklabPointDto {
         l: lab.l,

@@ -67,13 +67,7 @@ fn composite_nodes(
                 let mut group_composite = PixelTile::new();
                 composite_nodes(&group.children, doc, coord, cache, &mut group_composite)?;
                 // Apply group mask if present
-                let masked = apply_layer_mask(
-                    &group.mask,
-                    &group_composite,
-                    doc,
-                    coord,
-                    cache,
-                );
+                let masked = apply_layer_mask(&group.mask, &group_composite, doc, coord, cache);
                 // Blend group result into parent composite
                 blend_tile(dst, &masked, group.blend_mode, group.opacity);
             }
@@ -309,7 +303,11 @@ mod tests {
     }
 
     fn make_coord() -> TileCoord {
-        TileCoord { level: 0, x: 0, y: 0 }
+        TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        }
     }
 
     #[test]
@@ -442,11 +440,21 @@ mod tests {
         let coord = make_coord();
 
         // Bottom: white (1,1,1,1)
-        let key1 = TileKey { doc: 1, layer: 1, coord, stage: CacheStage::Processed };
+        let key1 = TileKey {
+            doc: 1,
+            layer: 1,
+            coord,
+            stage: CacheStage::Processed,
+        };
         cache.insert_fresh(key1, Arc::new(make_solid_tile(1.0, 1.0, 1.0, 1.0)));
 
         // Top: 50% gray with Multiply
-        let key2 = TileKey { doc: 1, layer: 2, coord, stage: CacheStage::Processed };
+        let key2 = TileKey {
+            doc: 1,
+            layer: 2,
+            coord,
+            stage: CacheStage::Processed,
+        };
         cache.insert_fresh(key2, Arc::new(make_solid_tile(0.5, 0.5, 0.5, 1.0)));
 
         let layer1 = Layer::new(LayerId::new(1), LayerKind::Raster, 256, 256);
@@ -547,7 +555,12 @@ mod tests {
         let coord = make_coord();
 
         // Put a red tile in cache for layer 10
-        let key = TileKey { doc: 1, layer: 10, coord, stage: CacheStage::Processed };
+        let key = TileKey {
+            doc: 1,
+            layer: 10,
+            coord,
+            stage: CacheStage::Processed,
+        };
         cache.insert_fresh(key, Arc::new(make_solid_tile(1.0, 0.0, 0.0, 1.0)));
 
         // Create a group with a visible child, but group itself is invisible
@@ -569,11 +582,21 @@ mod tests {
         let coord = make_coord();
 
         // Background layer (layer 1): white
-        let key1 = TileKey { doc: 1, layer: 1, coord, stage: CacheStage::Processed };
+        let key1 = TileKey {
+            doc: 1,
+            layer: 1,
+            coord,
+            stage: CacheStage::Processed,
+        };
         cache.insert_fresh(key1, Arc::new(make_solid_tile(1.0, 1.0, 1.0, 1.0)));
 
         // Group child (layer 10): red
-        let key10 = TileKey { doc: 1, layer: 10, coord, stage: CacheStage::Processed };
+        let key10 = TileKey {
+            doc: 1,
+            layer: 10,
+            coord,
+            stage: CacheStage::Processed,
+        };
         cache.insert_fresh(key10, Arc::new(make_solid_tile(1.0, 0.0, 0.0, 1.0)));
 
         // Background layer
@@ -611,7 +634,6 @@ mod tests {
         assert_eq!(result.at(HALO, HALO, 3), 0.0);
     }
 
-
     #[test]
     fn composite_uses_requested_doc_not_doc_one() {
         let cache = TileCache::new(100_000_000);
@@ -619,11 +641,21 @@ mod tests {
 
         // Doc 1 = red, doc 2 = green — same layer id / coord.
         cache.insert_fresh(
-            TileKey { doc: 1, layer: 1, coord, stage: CacheStage::Raw },
+            TileKey {
+                doc: 1,
+                layer: 1,
+                coord,
+                stage: CacheStage::Raw,
+            },
             Arc::new(make_solid_tile(1.0, 0.0, 0.0, 1.0)),
         );
         cache.insert_fresh(
-            TileKey { doc: 2, layer: 1, coord, stage: CacheStage::Raw },
+            TileKey {
+                doc: 2,
+                layer: 1,
+                coord,
+                stage: CacheStage::Raw,
+            },
             Arc::new(make_solid_tile(0.0, 1.0, 0.0, 1.0)),
         );
 
@@ -705,9 +737,14 @@ mod tests {
         let expected_lum = 0.2126 * 0.5 + 0.7152 * 0.5 + 0.0722 * 0.5;
         for y in HALO..(HALO + TILE_SIZE) {
             for x in HALO..(HALO + TILE_SIZE) {
-                assert!((result.at(x, y, 3) - expected_lum).abs() < 1e-5,
+                assert!(
+                    (result.at(x, y, 3) - expected_lum).abs() < 1e-5,
                     "Expected alpha ~{}, got {} at ({}, {})",
-                    expected_lum, result.at(x, y, 3), x, y);
+                    expected_lum,
+                    result.at(x, y, 3),
+                    x,
+                    y
+                );
                 // RGB unchanged
                 assert_eq!(result.at(x, y, 0), 1.0);
             }
@@ -744,9 +781,14 @@ mod tests {
         let expected_alpha = 1.0 - lum;
         for y in HALO..(HALO + TILE_SIZE) {
             for x in HALO..(HALO + TILE_SIZE) {
-                assert!((result.at(x, y, 3) - expected_alpha).abs() < 1e-5,
+                assert!(
+                    (result.at(x, y, 3) - expected_alpha).abs() < 1e-5,
                     "Expected alpha ~{}, got {} at ({}, {})",
-                    expected_alpha, result.at(x, y, 3), x, y);
+                    expected_alpha,
+                    result.at(x, y, 3),
+                    x,
+                    y
+                );
                 // RGB unchanged
                 assert_eq!(result.at(x, y, 2), 1.0);
             }
@@ -798,7 +840,11 @@ mod tests {
         // alpha = 1.0 * 0.2126 = 0.2126
         let expected_alpha = 0.2126;
         let px = result.at(HALO, HALO, 3);
-        assert!((px - expected_alpha).abs() < 1e-5,
-            "Expected alpha ~{}, got {}", expected_alpha, px);
+        assert!(
+            (px - expected_alpha).abs() < 1e-5,
+            "Expected alpha ~{}, got {}",
+            expected_alpha,
+            px
+        );
     }
 }

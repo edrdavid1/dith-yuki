@@ -1,0 +1,8 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "kind": "Curves",
+  "params": {"Curves": {"curve": [[0.0, 0.0], [1.0, 1.0]], "channel": "All"}},
+  "enabled": true,
+  "algorithm_id": "curves",
+  "schema_version": 1
+}

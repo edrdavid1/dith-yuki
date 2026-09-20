@@ -11,7 +11,7 @@ use crate::document::Document;
 use crate::error::EngineError;
 use crate::filter::{DitherColorMode, DitherParamsV2, PaletteDitherMode};
 use crate::filters::dither_ordered::{OrderedPalettePicker, SimpleRgbPicker};
-use crate::filters::dither_residuals::{ErrorResiduals, ErrorResidualsStore, CORNER_PATCH};
+use crate::filters::dither_residuals::{ErrorResiduals, ErrorResidualsStore};
 use crate::types::LayerId;
 use engine_color::oklab::{linear_to_oklab, LinRgb};
 use engine_color::palette::{linear_to_srgb, Palette};
@@ -79,13 +79,8 @@ fn quantize_ed_rgb(r: f32, g: f32, b: f32, levels: f32, q: &PaletteQuant<'_>) ->
             quantize_uniform(g, levels),
             quantize_uniform(b, levels),
         ),
-        PaletteQuant::Strict { palette, lut } => {
-            snap_rgb_to_palette(r, g, b, palette, lut)
-        }
-        PaletteQuant::Guided {
-            ranges,
-            levels: ch,
-        } => (
+        PaletteQuant::Strict { palette, lut } => snap_rgb_to_palette(r, g, b, palette, lut),
+        PaletteQuant::Guided { ranges, levels: ch } => (
             quantize_channel_guided(r, ranges[0], *ch, 0.5),
             quantize_channel_guided(g, ranges[1], *ch, 0.5),
             quantize_channel_guided(b, ranges[2], *ch, 0.5),
@@ -170,8 +165,10 @@ fn distribute_kernel(
     corner_overflow: &mut [f32],
     row_dir: i32,
     step: i32,
+    margin: usize,
 ) {
     let step = step.max(1);
+    let margin = margin.max(1);
     for &(dx, dy, weight) in offsets {
         let nx = x as i32 + dx * row_dir * step;
         let ny = y as i32 + dy * step;
@@ -184,15 +181,15 @@ fn distribute_kernel(
             error_buf[idx + 2] += weighted[2];
         } else if nx >= SIZE as i32 && ny >= 0 && (ny as usize) < SIZE {
             let col = nx as usize - SIZE;
-            if col < 2 {
-                let idx = (ny as usize * 2 + col) * 3;
+            if col < margin {
+                let idx = (ny as usize * margin + col) * 3;
                 right_overflow[idx] += weighted[0];
                 right_overflow[idx + 1] += weighted[1];
                 right_overflow[idx + 2] += weighted[2];
             }
         } else if ny >= SIZE as i32 && nx >= 0 && (nx as usize) < SIZE {
             let row = ny as usize - SIZE;
-            if row < 2 {
+            if row < margin {
                 let idx = (row * SIZE + nx as usize) * 3;
                 bottom_overflow[idx] += weighted[0];
                 bottom_overflow[idx + 1] += weighted[1];
@@ -201,8 +198,8 @@ fn distribute_kernel(
         } else if nx >= SIZE as i32 && ny >= SIZE as i32 {
             let col = nx as usize - SIZE;
             let row = ny as usize - SIZE;
-            if col < CORNER_PATCH && row < CORNER_PATCH {
-                let idx = (row * CORNER_PATCH + col) * 3;
+            if col < margin && row < margin {
+                let idx = (row * margin + col) * 3;
                 corner_overflow[idx] += weighted[0];
                 corner_overflow[idx + 1] += weighted[1];
                 corner_overflow[idx + 2] += weighted[2];
@@ -215,14 +212,15 @@ fn distribute_kernel(
 
 /// Seed the error buffer from the left neighbor's right-edge residuals.
 ///
-/// Always applied at screen columns 0..2 (the spatial joint with the
+/// Always applied at screen columns `0..margin` (the spatial joint with the
 /// wavefront-**earlier** tile). On an R→L row those pixels are visited last,
 /// so the seed waits in `error_buf` until scan-end — we do **not** seed from
 /// the unprocessed screen-right neighbor.
 fn seed_left_boundary(error_buf: &mut [f32], left_residuals: &ErrorResiduals) {
+    let m = left_residuals.margin.min(SIZE);
     for row in 0..SIZE {
-        for col in 0..2usize {
-            let src_idx = (row * 2 + col) * 3;
+        for col in 0..m {
+            let src_idx = (row * left_residuals.margin + col) * 3;
             let dst_idx = (row * SIZE + col) * 3;
             error_buf[dst_idx] += left_residuals.right[src_idx];
             error_buf[dst_idx + 1] += left_residuals.right[src_idx + 1];
@@ -234,12 +232,13 @@ fn seed_left_boundary(error_buf: &mut [f32], left_residuals: &ErrorResiduals) {
 /// Seed the error buffer from the top neighbor's bottom-edge residuals.
 ///
 /// The top neighbor stored error that propagated past its bottom edge into our
-/// tile's first 2 rows.
+/// tile's first `margin` rows.
 ///
 /// Layout of `top_residuals.bottom`: `[row * TILE_SIZE * 3 + col * 3 + channel]`
-/// where row ∈ {0, 1}, col ∈ [0, TILE_SIZE).
+/// where row ∈ [0, margin), col ∈ [0, TILE_SIZE).
 fn seed_top_boundary(error_buf: &mut [f32], top_residuals: &ErrorResiduals) {
-    for row in 0..2usize {
+    let m = top_residuals.margin.min(SIZE);
+    for row in 0..m {
         for col in 0..SIZE {
             let src_idx = (row * SIZE + col) * 3;
             let dst_idx = (row * SIZE + col) * 3;
@@ -252,13 +251,14 @@ fn seed_top_boundary(error_buf: &mut [f32], top_residuals: &ErrorResiduals) {
 
 /// Seed the top-left of the error buffer from the diagonal neighbor's corner patch.
 ///
-/// Tile `(tx-1, ty-1)` stored FS/Atkinson overflow with both `nx >= SIZE` and
-/// `ny >= SIZE` into `corner`; that energy belongs at our `(0..CORNER_PATCH,
-/// 0..CORNER_PATCH)`.
+/// Tile `(tx-1, ty-1)` stored overflow with both `nx >= SIZE` and
+/// `ny >= SIZE` into `corner`; that energy belongs at our `(0..margin,
+/// 0..margin)`.
 fn seed_diag_corner(error_buf: &mut [f32], diag_residuals: &ErrorResiduals) {
-    for row in 0..CORNER_PATCH {
-        for col in 0..CORNER_PATCH {
-            let src_idx = (row * CORNER_PATCH + col) * 3;
+    let m = diag_residuals.margin.min(SIZE);
+    for row in 0..m {
+        for col in 0..m {
+            let src_idx = (row * diag_residuals.margin + col) * 3;
             let dst_idx = (row * SIZE + col) * 3;
             error_buf[dst_idx] += diag_residuals.corner[src_idx];
             error_buf[dst_idx + 1] += diag_residuals.corner[src_idx + 1];
@@ -335,8 +335,16 @@ pub fn apply_error_diffusion_with_cache(
 ) -> Result<PixelTile, EngineError> {
     let mut out = PixelTile::new();
     apply_error_diffusion_with_cache_into(
-        tile, coord, params, residuals_store, layer_id, palette_cache, lut_cache, document,
-        block_cache, &mut out,
+        tile,
+        coord,
+        params,
+        residuals_store,
+        layer_id,
+        palette_cache,
+        lut_cache,
+        document,
+        block_cache,
+        &mut out,
     )?;
     Ok(out)
 }
@@ -356,12 +364,16 @@ pub fn apply_error_diffusion_with_cache_into(
 ) -> Result<(), EngineError> {
     let levels = params.levels as f32;
     let ps = params.pixel_size as u32;
+    let kernel = params.mode.diffusion_kernel().ok_or_else(|| {
+        EngineError::invalid_filter_params("error diffusion engine called with ordered mode")
+    })?;
+    let margin = kernel.edge_margin(ps);
 
     // Validate and fetch palette path if palette_id is set
     let palette_quant = if let Some(palette_id) = params.palette_id {
-        let palette = document.get_palette(palette_id).ok_or_else(|| {
-            EngineError::palette_not_found(palette_id)
-        })?;
+        let palette = document
+            .get_palette(palette_id)
+            .ok_or_else(|| EngineError::palette_not_found(palette_id))?;
         match params.palette_dither_mode {
             PaletteDitherMode::Guided { channel_levels } => PaletteQuant::Guided {
                 ranges: lut_cache.channel_ranges(document.id.0, palette),
@@ -387,13 +399,10 @@ pub fn apply_error_diffusion_with_cache_into(
     // Initialize error buffer for the core tile area (SIZE × SIZE × 3 channels)
     let mut error_buf = vec![0.0f32; SIZE * SIZE * 3];
 
-    // Overflow buffers for cross-tile residuals:
-    // Right overflow: SIZE rows × 2 cols × 3 channels
-    let mut right_overflow = vec![0.0f32; SIZE * 2 * 3];
-    // Bottom overflow: 2 rows × SIZE cols × 3 channels
-    let mut bottom_overflow = vec![0.0f32; 2 * SIZE * 3];
-    // Diagonal corner → tile (tx+1, ty+1)
-    let mut corner_overflow = vec![0.0f32; CORNER_PATCH * CORNER_PATCH * 3];
+    // Overflow: SIZE × margin / margin × SIZE / margin × margin (× 3 ch)
+    let mut right_overflow = vec![0.0f32; SIZE * margin * 3];
+    let mut bottom_overflow = vec![0.0f32; margin * SIZE * 3];
+    let mut corner_overflow = vec![0.0f32; margin * margin * 3];
 
     let doc = document.id.0;
 
@@ -421,11 +430,7 @@ pub fn apply_error_diffusion_with_cache_into(
     for y in 0..SIZE {
         let tile_y = y as u32 + HALO;
         let gy = GlobalCoordSigned::from_local_with_halo(coord, HALO, tile_y, HALO).y;
-        let scan_parity = if ps > 1 {
-            gy.div_euclid(ps as i32)
-        } else {
-            gy
-        };
+        let scan_parity = if ps > 1 { gy.div_euclid(ps as i32) } else { gy };
         let row_dir = row_direction(params.serpentine, scan_parity);
         for i in 0..SIZE {
             let x = if row_dir > 0 { i } else { SIZE - 1 - i };
@@ -679,9 +684,6 @@ pub fn apply_error_diffusion_with_cache_into(
 
             // Error from the representative is not diffused inside the same
             // block; kernel neighbors are the next block representatives (`ps`).
-            let Some(kernel) = params.mode.diffusion_kernel() else {
-                unreachable!("error diffusion engine called with ordered mode");
-            };
             distribute_kernel(
                 &mut error_buf,
                 x,
@@ -693,12 +695,14 @@ pub fn apply_error_diffusion_with_cache_into(
                 &mut corner_overflow,
                 row_dir,
                 ps.max(1) as i32,
+                margin,
             );
         }
     }
 
     // Store edge + diagonal residuals for cross-tile propagation (Req 3.3 / A1.4)
     let residuals = ErrorResiduals {
+        margin,
         right: right_overflow,
         bottom: bottom_overflow,
         corner: corner_overflow,
@@ -778,9 +782,16 @@ mod tests {
         let layer_id = LayerId::new(1);
 
         let result = apply_error_diffusion(
-            &tile, tc(0, 0), &params, &store, layer_id,
-            &palette_cache, &lut_cache, &doc,
-        ).unwrap();
+            &tile,
+            tc(0, 0),
+            &params,
+            &store,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         let levels = params.levels as f32;
         // Check core area only
@@ -791,7 +802,10 @@ mod tests {
                     assert!(
                         is_valid_level(v, levels),
                         "Invalid level at ({}, {}, {}): {}",
-                        x, y, c, v
+                        x,
+                        y,
+                        c,
+                        v
                     );
                 }
             }
@@ -815,14 +829,28 @@ mod tests {
         let palette_id = doc.add_palette(
             "ed-g".into(),
             vec![
-                LinearColor { r: 0.2, g: 0.1, b: 0.3 },
-                LinearColor { r: 0.7, g: 0.8, b: 0.9 },
+                LinearColor {
+                    r: 0.2,
+                    g: 0.1,
+                    b: 0.3,
+                },
+                LinearColor {
+                    r: 0.7,
+                    g: 0.8,
+                    b: 0.9,
+                },
             ],
         );
         params.palette_id = Some(palette_id);
         let result = apply_error_diffusion(
-            &tile, tc(0, 0), &params, &store, LayerId::new(1),
-            &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &store,
+            LayerId::new(1),
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         let palette = doc.get_palette(palette_id).unwrap();
@@ -831,7 +859,9 @@ mod tests {
             for x in HALO..(HALO + TILE_SIZE) {
                 for c in 0..3 {
                     let v = result.at(x, y, c);
-                    assert!(v >= ranges[c as usize].min - 1e-5 && v <= ranges[c as usize].max + 1e-5);
+                    assert!(
+                        v >= ranges[c as usize].min - 1e-5 && v <= ranges[c as usize].max + 1e-5
+                    );
                 }
             }
         }
@@ -853,14 +883,28 @@ mod tests {
         let palette_id = doc.add_palette(
             "ed-m".into(),
             vec![
-                LinearColor { r: 0.2, g: 0.1, b: 0.3 },
-                LinearColor { r: 0.7, g: 0.8, b: 0.9 },
+                LinearColor {
+                    r: 0.2,
+                    g: 0.1,
+                    b: 0.3,
+                },
+                LinearColor {
+                    r: 0.7,
+                    g: 0.8,
+                    b: 0.9,
+                },
             ],
         );
         params.palette_id = Some(palette_id);
         let result = apply_error_diffusion(
-            &tile, tc(0, 0), &params, &store, LayerId::new(1),
-            &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &store,
+            LayerId::new(1),
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         let palette = doc.get_palette(palette_id).unwrap();
@@ -895,14 +939,28 @@ mod tests {
         let palette_id = doc.add_palette(
             "bw".into(),
             vec![
-                LinearColor { r: 0.0, g: 0.0, b: 0.0 },
-                LinearColor { r: 1.0, g: 1.0, b: 1.0 },
+                LinearColor {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                },
+                LinearColor {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 1.0,
+                },
             ],
         );
         params.palette_id = Some(palette_id);
         let result = apply_error_diffusion(
-            &tile, tc(0, 0), &params, &store, LayerId::new(1),
-            &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &store,
+            LayerId::new(1),
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
 
@@ -948,14 +1006,28 @@ mod tests {
         let palette_id = doc.add_palette(
             "s".into(),
             vec![
-                LinearColor { r: 0.2, g: 0.1, b: 0.3 },
-                LinearColor { r: 0.7, g: 0.8, b: 0.9 },
+                LinearColor {
+                    r: 0.2,
+                    g: 0.1,
+                    b: 0.3,
+                },
+                LinearColor {
+                    r: 0.7,
+                    g: 0.8,
+                    b: 0.9,
+                },
             ],
         );
         params.palette_id = Some(palette_id);
         let result = apply_error_diffusion(
-            &tile, tc(0, 0), &params, &store, LayerId::new(1),
-            &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &store,
+            LayerId::new(1),
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         let palette = doc.get_palette(palette_id).unwrap();
@@ -982,9 +1054,16 @@ mod tests {
         let layer_id = LayerId::new(1);
 
         let result = apply_error_diffusion(
-            &tile, tc(0, 0), &params, &store, layer_id,
-            &palette_cache, &lut_cache, &doc,
-        ).unwrap();
+            &tile,
+            tc(0, 0),
+            &params,
+            &store,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         let levels = params.levels as f32;
         for y in HALO..(HALO + TILE_SIZE) {
@@ -994,7 +1073,10 @@ mod tests {
                     assert!(
                         is_valid_level(v, levels),
                         "Invalid level at ({}, {}, {}): {}",
-                        x, y, c, v
+                        x,
+                        y,
+                        c,
+                        v
                     );
                 }
             }
@@ -1013,17 +1095,21 @@ mod tests {
         let layer_id = LayerId::new(1);
 
         let result = apply_error_diffusion(
-            &tile, tc(0, 0), &params, &store, layer_id,
-            &palette_cache, &lut_cache, &doc,
-        ).unwrap();
+            &tile,
+            tc(0, 0),
+            &params,
+            &store,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         // Alpha preserved in core area
         for y in HALO..(HALO + TILE_SIZE) {
             for x in HALO..(HALO + TILE_SIZE) {
-                assert_eq!(
-                    result.at(x, y, 3), 0.42,
-                    "Alpha mismatch at ({}, {})", x, y
-                );
+                assert_eq!(result.at(x, y, 3), 0.42, "Alpha mismatch at ({}, {})", x, y);
             }
         }
     }
@@ -1040,15 +1126,25 @@ mod tests {
         let layer_id = LayerId::new(1);
 
         let result = apply_error_diffusion(
-            &tile, tc(0, 0), &params, &store, layer_id,
-            &palette_cache, &lut_cache, &doc,
-        ).unwrap();
+            &tile,
+            tc(0, 0),
+            &params,
+            &store,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         for y in HALO..(HALO + TILE_SIZE) {
             for x in HALO..(HALO + TILE_SIZE) {
                 assert_eq!(
-                    result.at(x, y, 3), 0.0,
-                    "0.4 alpha rounds below 0.5 → transparent at ({}, {})", x, y
+                    result.at(x, y, 3),
+                    0.0,
+                    "0.4 alpha rounds below 0.5 → transparent at ({}, {})",
+                    x,
+                    y
                 );
             }
         }
@@ -1066,9 +1162,16 @@ mod tests {
         let layer_id = LayerId::new(1);
 
         let result = apply_error_diffusion(
-            &tile, tc(0, 0), &params, &store, layer_id,
-            &palette_cache, &lut_cache, &doc,
-        ).unwrap();
+            &tile,
+            tc(0, 0),
+            &params,
+            &store,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         for y in HALO..(HALO + TILE_SIZE) {
             for x in HALO..(HALO + TILE_SIZE) {
@@ -1092,9 +1195,16 @@ mod tests {
         let layer_id = LayerId::new(1);
 
         let result = apply_error_diffusion(
-            &tile, tc(0, 0), &params, &store, layer_id,
-            &palette_cache, &lut_cache, &doc,
-        ).unwrap();
+            &tile,
+            tc(0, 0),
+            &params,
+            &store,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         for y in HALO..(HALO + TILE_SIZE) {
             for x in HALO..(HALO + TILE_SIZE) {
@@ -1116,9 +1226,16 @@ mod tests {
         let layer_id = LayerId::new(1);
 
         let result = apply_error_diffusion(
-            &tile, tc(0, 0), &params, &store, layer_id,
-            &palette_cache, &lut_cache, &doc,
-        ).unwrap();
+            &tile,
+            tc(0, 0),
+            &params,
+            &store,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         for y in HALO..(HALO + TILE_SIZE) {
             for x in HALO..(HALO + TILE_SIZE) {
@@ -1140,15 +1257,29 @@ mod tests {
 
         let store1 = ErrorResidualsStore::new();
         let r1 = apply_error_diffusion(
-            &tile, tc(2, 3), &params, &store1, layer_id,
-            &palette_cache, &lut_cache, &doc,
-        ).unwrap();
+            &tile,
+            tc(2, 3),
+            &params,
+            &store1,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         let store2 = ErrorResidualsStore::new();
         let r2 = apply_error_diffusion(
-            &tile, tc(2, 3), &params, &store2, layer_id,
-            &palette_cache, &lut_cache, &doc,
-        ).unwrap();
+            &tile,
+            tc(2, 3),
+            &params,
+            &store2,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         assert_eq!(r1.data, r2.data);
     }
@@ -1164,18 +1295,31 @@ mod tests {
         let layer_id = LayerId::new(1);
 
         apply_error_diffusion(
-            &tile, tc(0, 0), &params, &store, layer_id,
-            &palette_cache, &lut_cache, &doc,
-        ).unwrap();
+            &tile,
+            tc(0, 0),
+            &params,
+            &store,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         // Residuals should have been stored
         // The right neighbor (1, 0) should be able to get left residuals
         let residuals = store.get_left(1, layer_id, tc(1, 0));
-        assert!(residuals.is_some(), "No residuals stored for right neighbor");
+        assert!(
+            residuals.is_some(),
+            "No residuals stored for right neighbor"
+        );
 
         // The bottom neighbor (0, 1) should be able to get top residuals
         let residuals = store.get_top(1, layer_id, tc(0, 1));
-        assert!(residuals.is_some(), "No residuals stored for bottom neighbor");
+        assert!(
+            residuals.is_some(),
+            "No residuals stored for bottom neighbor"
+        );
     }
 
     #[test]
@@ -1195,7 +1339,7 @@ mod tests {
         // Set large error in the right edge that will propagate to tile (1,0)
         for row in 0..SIZE {
             let idx = (row * 2 + 0) * 3;
-            fake_residuals.right[idx] = 0.4;     // R
+            fake_residuals.right[idx] = 0.4; // R
             fake_residuals.right[idx + 1] = 0.4; // G
             fake_residuals.right[idx + 2] = 0.4; // B
         }
@@ -1203,16 +1347,30 @@ mod tests {
 
         // Process tile (1,0) WITH injected left residuals
         let result_with = apply_error_diffusion(
-            &tile, tc(1, 0), &params, &store, layer_id,
-            &palette_cache, &lut_cache, &doc,
-        ).unwrap();
+            &tile,
+            tc(1, 0),
+            &params,
+            &store,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         // Process tile (1,0) WITHOUT any residuals
         let empty_store = ErrorResidualsStore::new();
         let result_without = apply_error_diffusion(
-            &tile, tc(1, 0), &params, &empty_store, layer_id,
-            &palette_cache, &lut_cache, &doc,
-        ).unwrap();
+            &tile,
+            tc(1, 0),
+            &params,
+            &empty_store,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         // First column in core area should differ
         let mut differs = false;
@@ -1238,12 +1396,20 @@ mod tests {
 
         let store = ErrorResidualsStore::new();
         apply_error_diffusion(
-            &tile, tc(0, 0), &params, &store, layer_id,
-            &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &store,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
 
-        let from_00 = store.get_diag(1, layer_id, tc(1, 1)).expect("diag residuals");
+        let from_00 = store
+            .get_diag(1, layer_id, tc(1, 1))
+            .expect("diag residuals");
         let corner_energy: f32 = from_00.corner.iter().map(|v| v.abs()).sum();
         assert!(
             corner_energy > 1e-6,
@@ -1262,14 +1428,26 @@ mod tests {
         seeded.store(1, layer_id, tc(0, 0), fake);
 
         let with_diag = apply_error_diffusion(
-            &soft, tc(1, 1), &soft_params, &seeded, layer_id,
-            &palette_cache, &lut_cache, &doc,
+            &soft,
+            tc(1, 1),
+            &soft_params,
+            &seeded,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         let empty = ErrorResidualsStore::new();
         let without = apply_error_diffusion(
-            &soft, tc(1, 1), &soft_params, &empty, layer_id,
-            &palette_cache, &lut_cache, &doc,
+            &soft,
+            tc(1, 1),
+            &soft_params,
+            &empty,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
 
@@ -1292,26 +1470,42 @@ mod tests {
 
         let store = ErrorResidualsStore::new();
         apply_error_diffusion(
-            &tile, level1(0, 0), &params, &store, layer_id,
-            &palette_cache, &lut_cache, &doc,
+            &tile,
+            level1(0, 0),
+            &params,
+            &store,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         let r10 = apply_error_diffusion(
-            &tile, level1(1, 0), &params, &store, layer_id,
-            &palette_cache, &lut_cache, &doc,
+            &tile,
+            level1(1, 0),
+            &params,
+            &store,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
 
         let isolated = ErrorResidualsStore::new();
         let r10_iso = apply_error_diffusion(
-            &tile, level1(1, 0), &params, &isolated, layer_id,
-            &palette_cache, &lut_cache, &doc,
+            &tile,
+            level1(1, 0),
+            &params,
+            &isolated,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
 
-        let differs = (HALO..(HALO + 8)).any(|y| {
-            r10.at(HALO, y, 0) != r10_iso.at(HALO, y, 0)
-        });
+        let differs = (HALO..(HALO + 8)).any(|y| r10.at(HALO, y, 0) != r10_iso.at(HALO, y, 0));
         assert!(
             differs,
             "level>0 left residuals must seed neighbor like level 0"
@@ -1329,8 +1523,14 @@ mod tests {
         };
         let store_a = ErrorResidualsStore::new();
         apply_error_diffusion(
-            &tile, level1(0, 0), &atk, &store_a, layer_id,
-            &palette_cache, &lut_cache, &doc,
+            &tile,
+            level1(0, 0),
+            &atk,
+            &store_a,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         assert!(
@@ -1352,9 +1552,16 @@ mod tests {
         let layer_id = LayerId::new(1);
 
         let result = apply_error_diffusion(
-            &tile, tc(0, 0), &params, &store, layer_id,
-            &palette_cache, &lut_cache, &doc,
-        ).unwrap();
+            &tile,
+            tc(0, 0),
+            &params,
+            &store,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         // Check top-left halo corner
         for y in 0..HALO {
@@ -1378,15 +1585,27 @@ mod tests {
         let layer_id = LayerId::new(1);
 
         let a = apply_error_diffusion(
-            &tile, tc(0, 0), &params, &store, layer_id,
-            &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &store,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         params.threshold_bias = 0.3;
         let store2 = ErrorResidualsStore::new();
         let b = apply_error_diffusion(
-            &tile, tc(0, 0), &params, &store2, layer_id,
-            &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &store2,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         assert_eq!(a.data, b.data, "ED modes must ignore threshold_bias");
@@ -1414,7 +1633,7 @@ mod tests {
             let mut error_buf = vec![0.0f32; SIZE * SIZE * 3];
             let mut right = vec![0.0f32; SIZE * 2 * 3];
             let mut bottom = vec![0.0f32; 2 * SIZE * 3];
-            let mut corner = vec![0.0f32; CORNER_PATCH * CORNER_PATCH * 3];
+            let mut corner = vec![0.0f32; 2 * 2 * 3];
             distribute_kernel(
                 &mut error_buf,
                 x,
@@ -1426,6 +1645,7 @@ mod tests {
                 &mut corner,
                 1,
                 1,
+                2,
             );
             for &(dx, dy, weight) in kernel.offsets() {
                 let nx = (x as i32 + dx) as usize;
@@ -1436,9 +1656,18 @@ mod tests {
                     "{kernel:?} at ({dx},{dy}): expected {weight}, got {got}"
                 );
             }
-            assert!(right.iter().all(|v| *v == 0.0), "{kernel:?} interior must not overflow right");
-            assert!(bottom.iter().all(|v| *v == 0.0), "{kernel:?} interior must not overflow bottom");
-            assert!(corner.iter().all(|v| *v == 0.0), "{kernel:?} interior must not overflow corner");
+            assert!(
+                right.iter().all(|v| *v == 0.0),
+                "{kernel:?} interior must not overflow right"
+            );
+            assert!(
+                bottom.iter().all(|v| *v == 0.0),
+                "{kernel:?} interior must not overflow bottom"
+            );
+            assert!(
+                corner.iter().all(|v| *v == 0.0),
+                "{kernel:?} interior must not overflow corner"
+            );
         }
     }
 
@@ -1448,7 +1677,7 @@ mod tests {
         let mut error_buf = vec![0.0f32; SIZE * SIZE * 3];
         let mut right = vec![0.0f32; SIZE * 2 * 3];
         let mut bottom = vec![0.0f32; 2 * SIZE * 3];
-        let mut corner = vec![0.0f32; CORNER_PATCH * CORNER_PATCH * 3];
+        let mut corner = vec![0.0f32; 2 * 2 * 3];
         let y = 4usize;
         distribute_kernel(
             &mut error_buf,
@@ -1461,6 +1690,7 @@ mod tests {
             &mut corner,
             1,
             1,
+            2,
         );
         // (dx=+1, dy=0) → col 0 of right overflow, weight 7/48
         let col0 = (y * 2 + 0) * 3;
@@ -1487,7 +1717,7 @@ mod tests {
         let mut error_buf = vec![0.0f32; SIZE * SIZE * 3];
         let mut right = vec![0.0f32; SIZE * 2 * 3];
         let mut bottom = vec![0.0f32; 2 * SIZE * 3];
-        let mut corner = vec![0.0f32; CORNER_PATCH * CORNER_PATCH * 3];
+        let mut corner = vec![0.0f32; 2 * 2 * 3];
         let x = 8usize;
         let y = 8usize;
         distribute_kernel(
@@ -1501,6 +1731,7 @@ mod tests {
             &mut corner,
             -1,
             1,
+            2,
         );
         // (+1,0) 7/16 → screen (-1,0)
         assert!((channel0_at(&error_buf, x - 1, y) - 7.0 / 16.0).abs() < 1e-6);
@@ -1517,7 +1748,7 @@ mod tests {
         let mut error_buf = vec![0.0f32; SIZE * SIZE * 3];
         let mut right = vec![0.0f32; SIZE * 2 * 3];
         let mut bottom = vec![0.0f32; 2 * SIZE * 3];
-        let mut corner = vec![0.0f32; CORNER_PATCH * CORNER_PATCH * 3];
+        let mut corner = vec![0.0f32; 2 * 2 * 3];
         let x = 8usize;
         let y = 8usize;
         distribute_kernel(
@@ -1531,10 +1762,191 @@ mod tests {
             &mut corner,
             1,
             4,
+            4,
         );
         assert_eq!(channel0_at(&error_buf, x + 1, y), 0.0);
         assert!((channel0_at(&error_buf, x + 4, y) - 7.0 / 16.0).abs() < 1e-6);
         assert!((channel0_at(&error_buf, x, y + 4) - 5.0 / 16.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn fs_overflow_margin_scales_with_pixel_size() {
+        use crate::filter::DiffusionKernel;
+        const PIXEL_SIZES: [u32; 6] = [1, 2, 3, 5, 7, 12];
+        for ps in PIXEL_SIZES {
+            let margin = DiffusionKernel::FloydSteinberg.edge_margin(ps);
+            assert_eq!(margin, ps as usize, "FS max_offset is 1");
+            let mut error_buf = vec![0.0f32; SIZE * SIZE * 3];
+            let mut right = vec![0.0f32; SIZE * margin * 3];
+            let mut bottom = vec![0.0f32; margin * SIZE * 3];
+            let mut corner = vec![0.0f32; margin * margin * 3];
+            let y = 10usize;
+            distribute_kernel(
+                &mut error_buf,
+                SIZE - 1,
+                y,
+                [1.0, 0.0, 0.0],
+                DiffusionKernel::FloydSteinberg.offsets(),
+                &mut right,
+                &mut bottom,
+                &mut corner,
+                1,
+                ps as i32,
+                margin,
+            );
+            let hop_col = (ps as usize).saturating_sub(1);
+            let idx = (y * margin + hop_col) * 3;
+            assert!(
+                (right[idx] - 7.0 / 16.0).abs() < 1e-6,
+                "FS ps={ps}: hop col {hop_col} must keep 7/16 (got {})",
+                right[idx]
+            );
+        }
+    }
+
+    #[test]
+    fn wide_kernel_overflow_margin_scales_with_pixel_size() {
+        use crate::filter::DiffusionKernel;
+        const PIXEL_SIZES: [u32; 6] = [1, 2, 3, 5, 7, 12];
+        let kernels = [
+            DiffusionKernel::Atkinson,
+            DiffusionKernel::JarvisJudiceNinke,
+            DiffusionKernel::Stucki,
+            DiffusionKernel::Burkes,
+            DiffusionKernel::Sierra,
+        ];
+        for kernel in kernels {
+            assert_eq!(kernel.max_offset(), 2, "{kernel:?} cell reach is 2");
+            for ps in PIXEL_SIZES {
+                let margin = kernel.edge_margin(ps);
+                assert_eq!(margin, 2 * ps as usize);
+                let mut error_buf = vec![0.0f32; SIZE * SIZE * 3];
+                let mut right = vec![0.0f32; SIZE * margin * 3];
+                let mut bottom = vec![0.0f32; margin * SIZE * 3];
+                let mut corner = vec![0.0f32; margin * margin * 3];
+                let y = 6usize;
+                distribute_kernel(
+                    &mut error_buf,
+                    SIZE - 1,
+                    y,
+                    [1.0, 0.0, 0.0],
+                    kernel.offsets(),
+                    &mut right,
+                    &mut bottom,
+                    &mut corner,
+                    1,
+                    ps as i32,
+                    margin,
+                );
+                let far_col = (2 * ps as usize).saturating_sub(1);
+                let idx = (y * margin + far_col) * 3;
+                assert!(
+                    right[idx].abs() > 1e-8,
+                    "{kernel:?} ps={ps}: far hop col {far_col} must not be clipped"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fs_fixed_margin_2_would_change_neighbor_when_ps_gt_2() {
+        const PIXEL_SIZES: [u8; 6] = [1, 2, 3, 5, 7, 12];
+        // 0.4 + 2 levels: isolated quantize is 0; a positive FS hop crosses 0.5.
+        let tile = make_uniform_tile(0.4, 0.4, 0.4, 1.0);
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let doc = Document::new(DocumentId::new(1), 512, 256);
+        let layer_id = LayerId::new(1);
+
+        for ps in PIXEL_SIZES {
+            let mut params = make_fs_params(2);
+            params.pixel_size = ps;
+            let store = ErrorResidualsStore::new();
+            apply_error_diffusion(
+                &tile,
+                tc(0, 0),
+                &params,
+                &store,
+                layer_id,
+                &palette_cache,
+                &lut_cache,
+                &doc,
+            )
+            .unwrap();
+            let full = store
+                .get_left(1, layer_id, tc(1, 0))
+                .expect("right residuals");
+            assert_eq!(full.margin, ps as usize);
+
+            let ps_us = ps as usize;
+            let last_rep = ((SIZE - 1) / ps_us) * ps_us;
+            let hop = last_rep + ps_us;
+            assert!(
+                hop >= SIZE,
+                "FS ps={ps}: last block hop must cross the tile edge"
+            );
+            let hop_col = hop - SIZE;
+            let hop_energy: f32 = (0..SIZE)
+                .map(|row| full.right[(row * full.margin + hop_col) * 3].abs())
+                .sum();
+            assert!(
+                hop_energy > 1e-6,
+                "FS ps={ps}: right overflow col {hop_col} must carry energy (got {hop_energy})"
+            );
+
+            // ps=2: last hop lands in col 0, so a fixed margin of 2 hid the bug.
+            if hop_col < 2 {
+                continue;
+            }
+
+            let with_full = apply_error_diffusion(
+                &tile,
+                tc(1, 0),
+                &params,
+                &store,
+                layer_id,
+                &palette_cache,
+                &lut_cache,
+                &doc,
+            )
+            .unwrap();
+
+            let mut clipped = ErrorResiduals::with_margin(2);
+            for row in 0..SIZE {
+                for col in 0..2 {
+                    let src = (row * full.margin + col) * 3;
+                    let dst = (row * 2 + col) * 3;
+                    clipped.right[dst] = full.right[src];
+                    clipped.right[dst + 1] = full.right[src + 1];
+                    clipped.right[dst + 2] = full.right[src + 2];
+                }
+            }
+            let clipped_store = ErrorResidualsStore::new();
+            clipped_store.store(1, layer_id, tc(0, 0), clipped);
+            let with_clip = apply_error_diffusion(
+                &tile,
+                tc(1, 0),
+                &params,
+                &clipped_store,
+                layer_id,
+                &palette_cache,
+                &lut_cache,
+                &doc,
+            )
+            .unwrap();
+
+            let mut max_delta = 0.0f32;
+            for y in HALO..(HALO + TILE_SIZE) {
+                for x in HALO..(HALO + TILE_SIZE) {
+                    max_delta =
+                        max_delta.max((with_full.at(x, y, 0) - with_clip.at(x, y, 0)).abs());
+                }
+            }
+            assert!(
+                max_delta > 1e-5,
+                "FS ps={ps}: clipping overflow to 2 cols must change the neighbor (Δ={max_delta})"
+            );
+        }
     }
 
     #[test]
@@ -1553,14 +1965,28 @@ mod tests {
         let palette_id = doc.add_palette(
             "bw".into(),
             vec![
-                LinearColor { r: 0.0, g: 0.0, b: 0.0 },
-                LinearColor { r: 1.0, g: 1.0, b: 1.0 },
+                LinearColor {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                },
+                LinearColor {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 1.0,
+                },
             ],
         );
         params.palette_id = Some(palette_id);
         let result = apply_error_diffusion(
-            &tile, tc(0, 0), &params, &store, LayerId::new(1),
-            &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &store,
+            LayerId::new(1),
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         let mut lums = BTreeSet::new();
@@ -1588,16 +2014,28 @@ mod tests {
 
         let store_a = ErrorResidualsStore::new();
         let a = apply_error_diffusion(
-            &tile, tc(0, 0), &params, &store_a, layer_id,
-            &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &store_a,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         let store_b = ErrorResidualsStore::new();
         let defaulted = make_fs_params(4);
         assert!(!defaulted.serpentine);
         let b = apply_error_diffusion(
-            &tile, tc(0, 0), &defaulted, &store_b, layer_id,
-            &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &defaulted,
+            &store_b,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         assert_eq!(a.data, b.data);
@@ -1606,8 +2044,14 @@ mod tests {
         on.serpentine = true;
         let store_c = ErrorResidualsStore::new();
         let c = apply_error_diffusion(
-            &tile, tc(0, 0), &on, &store_c, layer_id,
-            &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &on,
+            &store_c,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         assert_ne!(a.data, c.data, "serpentine ON must change odd-row output");
@@ -1624,14 +2068,26 @@ mod tests {
         let layer_id = LayerId::new(1);
         let store_a = ErrorResidualsStore::new();
         let a = apply_error_diffusion(
-            &tile, tc(0, 0), &params, &store_a, layer_id,
-            &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &store_a,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         let store_b = ErrorResidualsStore::new();
         let b = apply_error_diffusion(
-            &tile, tc(0, 0), &make_atkinson_params(4), &store_b, layer_id,
-            &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &make_atkinson_params(4),
+            &store_b,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         assert_eq!(a.data, b.data);

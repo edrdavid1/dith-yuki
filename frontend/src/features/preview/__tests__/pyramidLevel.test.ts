@@ -9,6 +9,8 @@ import {
   tilesToRequestAfterDocumentChange,
   shouldKeepLodTile,
   tilesCoverSameDocumentArea,
+  coveringAncestorTiles,
+  maxPyramidLevel,
   COMMIT_WAIT_MS,
   type ViewportState,
 } from '../TileCanvas';
@@ -175,5 +177,29 @@ describe('document source replace refetch', () => {
       { level: 0, x: 1, y: 0 },
     ]);
     expect(tilesToRequestAfterDocumentChange(visible, displayed, true)).toEqual(visible);
+  });
+});
+
+describe('coveringAncestorTiles', () => {
+  it('requests L1 parents for missing L0 tiles', () => {
+    expect(
+      coveringAncestorTiles(
+        [
+          { level: 0, x: 4, y: 6 },
+          { level: 0, x: 5, y: 6 },
+        ],
+        3,
+      ),
+    ).toEqual([{ level: 1, x: 2, y: 3 }]);
+  });
+
+  it('skips when already at max level', () => {
+    expect(coveringAncestorTiles([{ level: 2, x: 0, y: 0 }], 2)).toEqual([]);
+  });
+
+  it('maxPyramidLevel matches compute clamp', () => {
+    expect(maxPyramidLevel(256, 256)).toBe(0);
+    expect(maxPyramidLevel(512, 512)).toBe(1);
+    expect(maxPyramidLevel(3000, 3000)).toBeGreaterThanOrEqual(3);
   });
 });

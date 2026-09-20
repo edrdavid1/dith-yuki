@@ -97,15 +97,14 @@ impl PaletteQuantizeFilter {
 
                 let oklab = linear_to_oklab(engine_color::oklab::LinRgb { r, g, b });
                 let nearest_idx = lut.nearest_index(oklab) as usize;
-                let palette_color = palette
-                    .colors
-                    .get(nearest_idx)
-                    .ok_or_else(|| EngineError::InvalidFilterParams {
+                let palette_color = palette.colors.get(nearest_idx).ok_or_else(|| {
+                    EngineError::InvalidFilterParams {
                         reason: format!(
                             "palette LUT index {nearest_idx} out of range for palette len {}",
                             palette.colors.len()
                         ),
-                    })?;
+                    }
+                })?;
 
                 dst.set(x, y, 0, palette_color.r);
                 dst.set(x, y, 1, palette_color.g);
@@ -145,7 +144,13 @@ impl PaletteQuantizeFilter {
         let palette_oklab: Vec<Oklab> = palette
             .colors
             .iter()
-            .map(|c| linear_to_oklab(engine_color::oklab::LinRgb { r: c.r, g: c.g, b: c.b }))
+            .map(|c| {
+                linear_to_oklab(engine_color::oklab::LinRgb {
+                    r: c.r,
+                    g: c.g,
+                    b: c.b,
+                })
+            })
             .collect();
 
         for y in 0..size {
@@ -197,16 +202,7 @@ impl PaletteQuantizeFilter {
                 let err_b = clamped.b - nearest_oklab.b;
 
                 // Distribute error to neighbors
-                Self::distribute_error(
-                    &mut error_buf,
-                    x,
-                    y,
-                    size,
-                    err_l,
-                    err_a,
-                    err_b,
-                    kernel,
-                );
+                Self::distribute_error(&mut error_buf, x, y, size, err_l, err_a, err_b, kernel);
 
                 // Write palette color (CRITICAL: always write exact palette entry)
                 dst.set(xu, yu, 0, palette_color.r);
@@ -308,23 +304,35 @@ mod tests {
     }
 
     fn default_coord() -> TileCoord {
-        TileCoord { level: 0, x: 0, y: 0 }
+        TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        }
     }
 
     #[test]
     fn test_nearest_only_quantization() {
         // Palette: black and white
         let palette = make_test_palette(vec![
-            LinearColor { r: 0.0, g: 0.0, b: 0.0 }, // black
-            LinearColor { r: 1.0, g: 1.0, b: 1.0 }, // white
+            LinearColor {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+            }, // black
+            LinearColor {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+            }, // white
         ]);
         let lut = build_lut(&palette);
 
         // Input: mid-gray tile (closer to one or the other in Oklab)
         let tile = make_solid_tile(0.8, 0.8, 0.8, 0.5);
 
-        let result = PaletteQuantizeFilter::apply(&tile, default_coord(), &palette, &lut, None)
-            .unwrap();
+        let result =
+            PaletteQuantizeFilter::apply(&tile, default_coord(), &palette, &lut, None).unwrap();
 
         // Output should be white (0.8 linear is closer to white in Oklab)
         let out_r = result.at(10, 10, 0);
@@ -342,17 +350,29 @@ mod tests {
     fn test_nearest_maps_to_closest_palette_color() {
         // Palette: red, green, blue
         let palette = make_test_palette(vec![
-            LinearColor { r: 1.0, g: 0.0, b: 0.0 }, // red
-            LinearColor { r: 0.0, g: 1.0, b: 0.0 }, // green
-            LinearColor { r: 0.0, g: 0.0, b: 1.0 }, // blue
+            LinearColor {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+            }, // red
+            LinearColor {
+                r: 0.0,
+                g: 1.0,
+                b: 0.0,
+            }, // green
+            LinearColor {
+                r: 0.0,
+                g: 0.0,
+                b: 1.0,
+            }, // blue
         ]);
         let lut = build_lut(&palette);
 
         // Input: a strongly red tile
         let tile = make_solid_tile(0.9, 0.1, 0.05, 1.0);
 
-        let result = PaletteQuantizeFilter::apply(&tile, default_coord(), &palette, &lut, None)
-            .unwrap();
+        let result =
+            PaletteQuantizeFilter::apply(&tile, default_coord(), &palette, &lut, None).unwrap();
 
         // Should map to red
         assert_eq!(result.at(5, 5, 0), 1.0);
@@ -364,8 +384,16 @@ mod tests {
     fn test_error_diffusion_floyd_steinberg() {
         // Palette: black and white
         let palette = make_test_palette(vec![
-            LinearColor { r: 0.0, g: 0.0, b: 0.0 },
-            LinearColor { r: 1.0, g: 1.0, b: 1.0 },
+            LinearColor {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            LinearColor {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+            },
         ]);
         let lut = build_lut(&palette);
 
@@ -393,7 +421,10 @@ mod tests {
                 } else if r == 1.0 {
                     white_count += 1;
                 } else {
-                    panic!("Output pixel ({}, {}) has r={} which is neither black nor white", x, y, r);
+                    panic!(
+                        "Output pixel ({}, {}) has r={} which is neither black nor white",
+                        x, y, r
+                    );
                 }
             }
         }
@@ -407,9 +438,11 @@ mod tests {
         let palette = make_test_palette(vec![]);
         // Can't build a tree from empty palette, but we need to test the filter error path
         // The filter should reject empty palettes before using the tree
-        let dummy_palette_for_tree = make_test_palette(vec![
-            LinearColor { r: 0.5, g: 0.5, b: 0.5 },
-        ]);
+        let dummy_palette_for_tree = make_test_palette(vec![LinearColor {
+            r: 0.5,
+            g: 0.5,
+            b: 0.5,
+        }]);
         let lut = build_lut(&dummy_palette_for_tree);
 
         let tile = make_solid_tile(0.5, 0.5, 0.5, 1.0);
@@ -431,9 +464,21 @@ mod tests {
     fn test_palette_membership_invariant() {
         // Every output pixel must exactly match a palette entry
         let palette = make_test_palette(vec![
-            LinearColor { r: 0.2, g: 0.1, b: 0.3 },
-            LinearColor { r: 0.7, g: 0.8, b: 0.4 },
-            LinearColor { r: 0.0, g: 0.5, b: 1.0 },
+            LinearColor {
+                r: 0.2,
+                g: 0.1,
+                b: 0.3,
+            },
+            LinearColor {
+                r: 0.7,
+                g: 0.8,
+                b: 0.4,
+            },
+            LinearColor {
+                r: 0.0,
+                g: 0.5,
+                b: 1.0,
+            },
         ]);
         let lut = build_lut(&palette);
 
@@ -451,8 +496,8 @@ mod tests {
         }
 
         // Test with nearest-only
-        let result = PaletteQuantizeFilter::apply(&tile, default_coord(), &palette, &lut, None)
-            .unwrap();
+        let result =
+            PaletteQuantizeFilter::apply(&tile, default_coord(), &palette, &lut, None).unwrap();
 
         for y in 0..FULL_SIZE {
             for x in 0..FULL_SIZE {
@@ -460,9 +505,10 @@ mod tests {
                 let out_g = result.at(x, y, 1);
                 let out_b = result.at(x, y, 2);
 
-                let matches_any = palette.colors.iter().any(|c| {
-                    c.r == out_r && c.g == out_g && c.b == out_b
-                });
+                let matches_any = palette
+                    .colors
+                    .iter()
+                    .any(|c| c.r == out_r && c.g == out_g && c.b == out_b);
                 assert!(
                     matches_any,
                     "Pixel ({}, {}) = ({}, {}, {}) does not match any palette entry",
@@ -476,11 +522,31 @@ mod tests {
     fn test_palette_membership_with_diffusion() {
         // Same invariant must hold even with error diffusion
         let palette = make_test_palette(vec![
-            LinearColor { r: 0.0, g: 0.0, b: 0.0 },
-            LinearColor { r: 1.0, g: 0.0, b: 0.0 },
-            LinearColor { r: 0.0, g: 1.0, b: 0.0 },
-            LinearColor { r: 0.0, g: 0.0, b: 1.0 },
-            LinearColor { r: 1.0, g: 1.0, b: 1.0 },
+            LinearColor {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            LinearColor {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            LinearColor {
+                r: 0.0,
+                g: 1.0,
+                b: 0.0,
+            },
+            LinearColor {
+                r: 0.0,
+                g: 0.0,
+                b: 1.0,
+            },
+            LinearColor {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+            },
         ]);
         let lut = build_lut(&palette);
 
@@ -502,9 +568,10 @@ mod tests {
                 let out_g = result.at(x, y, 1);
                 let out_b = result.at(x, y, 2);
 
-                let matches_any = palette.colors.iter().any(|c| {
-                    c.r == out_r && c.g == out_g && c.b == out_b
-                });
+                let matches_any = palette
+                    .colors
+                    .iter()
+                    .any(|c| c.r == out_r && c.g == out_g && c.b == out_b);
                 assert!(
                     matches_any,
                     "Pixel ({}, {}) = ({}, {}, {}) does not match any palette entry",
@@ -517,8 +584,16 @@ mod tests {
     #[test]
     fn test_alpha_preservation() {
         let palette = make_test_palette(vec![
-            LinearColor { r: 0.0, g: 0.0, b: 0.0 },
-            LinearColor { r: 1.0, g: 1.0, b: 1.0 },
+            LinearColor {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            LinearColor {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+            },
         ]);
         let lut = build_lut(&palette);
 
@@ -550,7 +625,8 @@ mod tests {
                     result.at(x, y, 3),
                     tile.at(x, y, 3),
                     "Alpha mismatch at ({}, {})",
-                    x, y
+                    x,
+                    y
                 );
             }
         }

@@ -180,7 +180,11 @@ impl GlitchFilter {
     }
 
     /// Apply the glitch filter to a tile.
-    pub fn apply_to_tile(&self, tile: &PixelTile, coord: TileCoord) -> Result<PixelTile, EngineError> {
+    pub fn apply_to_tile(
+        &self,
+        tile: &PixelTile,
+        coord: TileCoord,
+    ) -> Result<PixelTile, EngineError> {
         let mut out = PixelTile::new();
         self.apply_to_tile_into(tile, coord, &mut out)?;
         Ok(out)
@@ -335,14 +339,9 @@ mod tests {
         // Same global dest from two tiles must mix identically (no TileCoord in key).
         let left = tile_coord(0, 0);
         let right = tile_coord(1, 0);
-        let g_left_last = GlobalCoordSigned::from_local_with_halo(
-            left,
-            HALO + TILE_SIZE - 1,
-            HALO + 10,
-            HALO,
-        );
-        let g_right_first =
-            GlobalCoordSigned::from_local_with_halo(right, HALO, HALO + 10, HALO);
+        let g_left_last =
+            GlobalCoordSigned::from_local_with_halo(left, HALO + TILE_SIZE - 1, HALO + 10, HALO);
+        let g_right_first = GlobalCoordSigned::from_local_with_halo(right, HALO, HALO + 10, HALO);
         assert_eq!(g_left_last.x + 1, g_right_first.x);
 
         let seed = 42u64;
@@ -377,9 +376,15 @@ mod tests {
             assert_eq!(g_l.x + 1, g_r.x);
 
             let (sr, sg, sb) = rgb_channel_shifts(seed, g_l.x, g_l.y, 0, intensity);
-            assert!((left.at(last_core_x, y, 0) - sample_pattern(g_l.x + sr, g_l.y, 0)).abs() < 1e-6);
-            assert!((left.at(last_core_x, y, 1) - sample_pattern(g_l.x + sg, g_l.y, 1)).abs() < 1e-6);
-            assert!((left.at(last_core_x, y, 2) - sample_pattern(g_l.x + sb, g_l.y, 2)).abs() < 1e-6);
+            assert!(
+                (left.at(last_core_x, y, 0) - sample_pattern(g_l.x + sr, g_l.y, 0)).abs() < 1e-6
+            );
+            assert!(
+                (left.at(last_core_x, y, 1) - sample_pattern(g_l.x + sg, g_l.y, 1)).abs() < 1e-6
+            );
+            assert!(
+                (left.at(last_core_x, y, 2) - sample_pattern(g_l.x + sb, g_l.y, 2)).abs() < 1e-6
+            );
 
             let (sr, sg, sb) = rgb_channel_shifts(seed, g_r.x, g_r.y, 0, intensity);
             assert!((right.at(HALO, y, 0) - sample_pattern(g_r.x + sr, g_r.y, 0)).abs() < 1e-6);

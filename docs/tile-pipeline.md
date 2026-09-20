@@ -99,8 +99,11 @@ SVG export (document composite → greedy meshing / contour paths) lives in
 тайла ошибка "перетекает" в соседний тайл через `ErrorResidualsStore`.
 
 **Зависимость:** тайл (X, Y) нуждается в residuals от:
-- (X-1, Y) — правый край соседа слева → первые 2 колонки текущего тайла
-- (X, Y-1) — нижний край соседа сверху → первые 2 строки текущего тайла
+- (X-1, Y) — правый край соседа слева → первые `margin` колонок текущего тайла
+- (X, Y-1) — нижний край соседа сверху → первые `margin` строк текущего тайла
+
+`margin = pixel_size × kernel_max_offset` (FS: offset 1; Atkinson/JJN/Stucki/Burkes/Sierra: 2).
+Фиксированные «2 колонки / 2 ряда» обрезают hop `dx × pixel_size` при `pixel_size > 1`.
 
 ---
 
@@ -114,9 +117,10 @@ pub struct ErrorResidualsStore {
 }
 
 pub struct ErrorResiduals {
-    pub right: Vec<f32>,   // TILE_SIZE rows × 2 cols × 3 channels
-    pub bottom: Vec<f32>,  // 2 rows × TILE_SIZE cols × 3 channels
-    pub corner: Vec<f32>,  // CORNER_PATCH×CORNER_PATCH×3 → tile (tx+1, ty+1)
+    pub margin: usize,     // pixel_size × kernel_max_offset
+    pub right: Vec<f32>,   // TILE_SIZE rows × margin cols × 3 channels
+    pub bottom: Vec<f32>,  // margin rows × TILE_SIZE cols × 3 channels
+    pub corner: Vec<f32>,  // margin×margin×3 → tile (tx+1, ty+1)
 }
 ```
 
@@ -222,6 +226,10 @@ for y in 0..TILE_FULL_SIZE {        // 0..260 (including halo)
 - Only representative participates in error diffusion
 - Non-representatives copy color from representative
 - Global coordinate alignment через `coord.x * TILE_SIZE + tile_x`
+- Cross-tile residual **margin** масштабируется: `pixel_size × kernel_max_offset`.
+  При `pixel_size=1` это совпадает со старыми 2 рядами для широких ядер (offset 2)
+  и 1 колонкой для FS. Константа «2» при `ps>1` обрезает overflow и даёт шов
+  с периодом 256 px (не переоткрывать serpentine/wavefront — это другой баг).
 
 ---
 
@@ -309,29 +317,28 @@ loop {
 
 ---
 
-## 10. GPU path (`engine-gpu`, Track D)
+## 10. GPU path (`engine-gpu`, Path B)
 
-Optional wgpu compute for **pattern** filters. Error Diffusion stays CPU-only.
+Resident wgpu graph for **pattern** filters. Error Diffusion stays CPU-only. Product routing is **auto-dispatch** (A1–A4), not a global toggle. Canonical: [gpu-as-built.md](./gpu-as-built.md).
 
 ### Switches
 
 | Env | Effect |
 |-----|--------|
-| `DITHER_FORCE_CPU=1` | Never use GPU (skip adapter init in app, or force CPU in apply) |
-| `DITHER_GPU=1` | Prefer GPU when `GpuContext` is available. **Default: off.** |
+| `DITHER_FORCE_CPU=1` | Never use GPU (skip adapter init) |
+| `DITHER_GPU_PREVIEW=1` | Allow **cold** GPU compute on eligible tiles |
+| `DITHER_GPU=1` | Alias of preview-enabled (legacy name; not v1 dispatch) |
+| `DITHER_GPU_WARMUP=0` | Disable A2 speculative promote |
+
+Warm download from an already-filled VRAM slot runs **without** preview opt-in. No Preferences GPU checkbox (A4).
 
 ### Contract
 
-- **I/O:** RGBA32 float core `256×256` only (no halo in v1 GPU path).
-- **Uniforms:** `tile_offset = (tile.x * 256, tile.y * 256)` — same as `GlobalCoord::from_local(tile, 0, 0)`.
-- **Workgroup:** `16×16`; dispatch `(16, 16, 1)`.
-- **Eligible:** Bayer2/4/8 (`pixel_size==1`, no palette, bias=0, angle=0); CMYK Halftone (same + bias=0); CRT.
-  `dither_alpha` encoded in `color_mode` 0–3; does **not** skip GPU.
-- **Not eligible:** all ED kernels, CustomPng, Wave, Glow, `pixel_size>1`, palette, non-zero bias/angle (Bayer).
-- **Fallback:** map_async timeout/error → increment `map_timeout_counter` → CPU path.
-- **Submit sync:** `GpuContext.submit_lock` for the whole encode/submit/map. **No buffer pool** —
-  four wgpu buffers allocated per tile.
-- **Bridge tax:** `extract_core` / `write_core` are scalar `at()`/`set()` loops over 256².
+- **Atlas:** `Rgba32Float` 260×260 slots (`GpuTileCache`); one fused composite readback per frame.
+- **Executor:** dedicated `GpuExecutor` thread (no worker `submit_lock`).
+- **Decision:** `decide_tile_dispatch` — warm+current gen → GPU download; cold+opt-in → GPU compute; else CPU.
+- **Eligible:** Bayer2/4/8 (`pixel_size==1`, bias=0, angle=0); Halftone; CRT; Guided/Mixed/PaletteQuantize (A7).
+- **Not eligible:** all ED kernels, CustomPng, Wave, Glow, `pixel_size>1`. Pyramid `level > 0` → CPU.
 - **Parity:** Bayer exact (`f32 ==`); Halftone/CRT max ‖Δ‖∞ ≤ `1/255`.
 
 Cost vs CPU: [architecture.md](./architecture.md) §13.4.
@@ -374,17 +381,15 @@ ensure left, top, diag Processed (рекурсия на ЭТОМ воркере)
 не медленная арифметика пикселя. LUT уже O(1); оставшийся per-pixel cost —
 `linear_to_oklab`, если включена палитра.
 
-### GPU Bayer (когда `DITHER_GPU=1` и eligible)
+### GPU Bayer (Path B, eligible + warm or preview opt-in)
 
 ```
-extract_core (скаляр 256²) → submit_lock
-  → alloc 4 buffers → upload 1MB → dispatch → map_async
-  → download 1MB → write_core (скаляр) → halo из source
+miss → upload Raw into atlas slot → graph (resident) → fused composite
+hit  → download RGBA8 from resident composite (no recompute)
+A2   → speculative promote around viewport (no Immediate/Center starve)
 ```
 
-Один тайл в debug/Metal может быть ~1.5–2× быстрее скалярного CPU-loop.
-Viewport из десятков тайлов на CPU-пуле часто быстрее, потому что GPU **один**
-и под lock. Не включать GPU «чтобы стало быстро», пока нет pool/batch.
+Industrial gate: **cold** GPU still loses to CPU (~3×). Warm Bayer/CRT stacks win. Do not advertise “GPU on” as always faster.
 
 ### Что трогать в каком порядке
 
@@ -392,8 +397,8 @@ Viewport из десятков тайлов на CPU-пуле часто быс�
 2. Zoom-out → display pyramid (box-filter L0 Composite; filters stay L0).
 3. ~~Filter stack alloc → in-place/ping-pong PixelTile.~~ **shipped** (tile-memory-inplace).
 4. ED → не GPU; уменьшать лишнюю работу (viewport-only, skip halo preview).
-5. GPU v2 только после (3) и только с persistent buffers + без глобального lock.
-6. Follow-up temps: Adjust blur via park; preview composite без halo; f16 cache stages.
+5. ~~GPU Path B / auto-dispatch.~~ **shipped** (A1–A4). A5 export NO-GO. A8 f16 — не приоритет.
+6. Follow-up temps: Adjust blur via park; preview composite без halo.
 
 Инварианты: `GlobalCoord`/`rem_euclid`, ED corner residuals, GPU parity, LUT
 границы ячеек. Не «ускорять» копированием локальных координат тайла.

@@ -3,7 +3,9 @@
 //! This module provides utility functions to generate palettes from a layer's
 //! pixel content and store the result in the Document.
 
-use engine_color::palette::generate::{generate_palette_weighted, GenerateWeights, PaletteGenMethod};
+use engine_color::palette::generate::{
+    generate_palette_weighted, GenerateWeights, PaletteGenMethod,
+};
 use engine_color::palette::LinearColor;
 
 use crate::document::Document;
@@ -113,13 +115,9 @@ pub fn generate_palette_from_layer_weighted(
     }
 
     // 4. Call generate_palette
-    let colors = generate_palette_weighted(
-        opaque_pixels.into_iter(),
-        target_count,
-        method,
-        weights,
-    )
-    .map_err(|e| EngineError::invalid_state(format!("palette generation failed: {}", e)))?;
+    let colors =
+        generate_palette_weighted(opaque_pixels.into_iter(), target_count, method, weights)
+            .map_err(|e| EngineError::invalid_state(format!("palette generation failed: {}", e)))?;
 
     // 5. Format name as "{layer_name}_{method}" truncated to 64 chars
     let palette_name = format_palette_name(&layer_name, method);
@@ -151,10 +149,26 @@ mod tests {
 
         // Create some pixels: reds and blues with alpha > 0
         let pixels: Vec<(LinearColor, f32)> = (0..100)
-            .map(|_| (LinearColor { r: 1.0, g: 0.0, b: 0.0 }, 1.0))
-            .chain(
-                (0..100).map(|_| (LinearColor { r: 0.0, g: 0.0, b: 1.0 }, 1.0)),
-            )
+            .map(|_| {
+                (
+                    LinearColor {
+                        r: 1.0,
+                        g: 0.0,
+                        b: 0.0,
+                    },
+                    1.0,
+                )
+            })
+            .chain((0..100).map(|_| {
+                (
+                    LinearColor {
+                        r: 0.0,
+                        g: 0.0,
+                        b: 1.0,
+                    },
+                    1.0,
+                )
+            }))
             .collect();
 
         let result = generate_palette_from_layer(
@@ -177,10 +191,26 @@ mod tests {
         let mut doc = make_doc_with_layer(1, "MyLayer");
 
         let pixels: Vec<(LinearColor, f32)> = (0..50)
-            .map(|_| (LinearColor { r: 0.9, g: 0.0, b: 0.0 }, 1.0))
-            .chain(
-                (0..50).map(|_| (LinearColor { r: 0.0, g: 0.9, b: 0.0 }, 1.0)),
-            )
+            .map(|_| {
+                (
+                    LinearColor {
+                        r: 0.9,
+                        g: 0.0,
+                        b: 0.0,
+                    },
+                    1.0,
+                )
+            })
+            .chain((0..50).map(|_| {
+                (
+                    LinearColor {
+                        r: 0.0,
+                        g: 0.9,
+                        b: 0.0,
+                    },
+                    1.0,
+                )
+            }))
             .collect();
 
         let result = generate_palette_from_layer(
@@ -204,9 +234,30 @@ mod tests {
 
         // Mix of transparent and opaque pixels
         let pixels: Vec<(LinearColor, f32)> = vec![
-            (LinearColor { r: 1.0, g: 0.0, b: 0.0 }, 0.0), // transparent, should be skipped
-            (LinearColor { r: 0.0, g: 1.0, b: 0.0 }, 1.0), // opaque
-            (LinearColor { r: 0.0, g: 0.0, b: 1.0 }, 0.5), // semi-transparent, should be included
+            (
+                LinearColor {
+                    r: 1.0,
+                    g: 0.0,
+                    b: 0.0,
+                },
+                0.0,
+            ), // transparent, should be skipped
+            (
+                LinearColor {
+                    r: 0.0,
+                    g: 1.0,
+                    b: 0.0,
+                },
+                1.0,
+            ), // opaque
+            (
+                LinearColor {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 1.0,
+                },
+                0.5,
+            ), // semi-transparent, should be included
         ];
 
         let result = generate_palette_from_layer(
@@ -228,7 +279,14 @@ mod tests {
     fn test_generate_palette_layer_not_found() {
         let mut doc = Document::new(DocumentId::new(1), 256, 256);
 
-        let pixels = vec![(LinearColor { r: 1.0, g: 0.0, b: 0.0 }, 1.0)];
+        let pixels = vec![(
+            LinearColor {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            1.0,
+        )];
 
         let result = generate_palette_from_layer(
             &mut doc,
@@ -247,8 +305,22 @@ mod tests {
 
         // All pixels are fully transparent
         let pixels: Vec<(LinearColor, f32)> = vec![
-            (LinearColor { r: 1.0, g: 0.0, b: 0.0 }, 0.0),
-            (LinearColor { r: 0.0, g: 1.0, b: 0.0 }, 0.0),
+            (
+                LinearColor {
+                    r: 1.0,
+                    g: 0.0,
+                    b: 0.0,
+                },
+                0.0,
+            ),
+            (
+                LinearColor {
+                    r: 0.0,
+                    g: 1.0,
+                    b: 0.0,
+                },
+                0.0,
+            ),
         ];
 
         let result = generate_palette_from_layer(
@@ -268,8 +340,17 @@ mod tests {
         let long_name = "A".repeat(60); // 60 chars + "_MedianCut" = 70 chars > 64
         let mut doc = make_doc_with_layer(1, &long_name);
 
-        let pixels: Vec<(LinearColor, f32)> =
-            vec![(LinearColor { r: 1.0, g: 0.0, b: 0.0 }, 1.0); 10];
+        let pixels: Vec<(LinearColor, f32)> = vec![
+            (
+                LinearColor {
+                    r: 1.0,
+                    g: 0.0,
+                    b: 0.0
+                },
+                1.0
+            );
+            10
+        ];
 
         let result = generate_palette_from_layer(
             &mut doc,
@@ -307,8 +388,17 @@ mod tests {
     fn test_generate_palette_stores_revision_1() {
         let mut doc = make_doc_with_layer(1, "TestLayer");
 
-        let pixels: Vec<(LinearColor, f32)> =
-            vec![(LinearColor { r: 0.5, g: 0.5, b: 0.5 }, 1.0); 20];
+        let pixels: Vec<(LinearColor, f32)> = vec![
+            (
+                LinearColor {
+                    r: 0.5,
+                    g: 0.5,
+                    b: 0.5
+                },
+                1.0
+            );
+            20
+        ];
 
         let result = generate_palette_from_layer(
             &mut doc,

@@ -13,44 +13,55 @@ use engine_tiles::{TileCoord, TILE_SIZE};
 
 use crate::types::LayerId;
 
-/// Patch size for diagonal overflow into the top-left of tile `(tx+1, ty+1)`.
-/// Covers FS `(+1,+1)` and Atkinson kernel reach past both edges (up to 2 px).
+/// Default fixture margin (`pixel_size=1` × widest published kernel offset 2).
+/// Production buffers use [`ErrorResiduals::with_margin`] =
+/// `pixel_size × kernel.max_offset()`.
 pub const CORNER_PATCH: usize = 2;
 
 /// Quantization error residuals for cross-tile error diffusion.
 ///
-/// Stores right-edge (2 columns × TILE_SIZE rows × 3 channels),
-/// bottom-edge (TILE_SIZE columns × 2 rows × 3 channels), and
-/// corner patch (`CORNER_PATCH` × `CORNER_PATCH` × 3) for diagonal overflow.
+/// Edge depth is `margin` columns / rows (and an `margin × margin` corner),
+/// not a fixed 2. `margin = pixel_size × kernel_max_offset` so FS at
+/// `pixel_size=3` keeps a 3-wide overflow (hop `dx × ps`), not a 2-wide
+/// clip that repeats every TILE_SIZE pixels.
 ///
 /// These residuals are produced after processing a tile and consumed
 /// by the right, bottom, and diagonal-neighbor tiles to initialize their
 /// error buffers.
 #[derive(Debug, Clone)]
 pub struct ErrorResiduals {
-    /// Right edge: 2 columns of residual error.
-    /// Layout: `[row * 2 * 3 + col * 3 + channel]`
-    /// Dimensions: TILE_SIZE rows × 2 columns × 3 channels.
+    /// Columns/rows stored past each edge (also the corner patch size).
+    pub margin: usize,
+
+    /// Right edge: `margin` columns of residual error.
+    /// Layout: `[row * margin * 3 + col * 3 + channel]`
+    /// Dimensions: TILE_SIZE rows × margin columns × 3 channels.
     pub right: Vec<f32>,
 
-    /// Bottom edge: 2 rows of residual error.
+    /// Bottom edge: `margin` rows of residual error.
     /// Layout: `[row * TILE_SIZE * 3 + col * 3 + channel]`
-    /// Dimensions: 2 rows × TILE_SIZE columns × 3 channels.
+    /// Dimensions: margin rows × TILE_SIZE columns × 3 channels.
     pub bottom: Vec<f32>,
 
     /// Diagonal overflow for tile `(tx+1, ty+1)` top-left.
-    /// Layout: `[row * CORNER_PATCH * 3 + col * 3 + channel]`
-    /// Dimensions: CORNER_PATCH rows × CORNER_PATCH cols × 3 channels.
+    /// Layout: `[row * margin * 3 + col * 3 + channel]`
     pub corner: Vec<f32>,
 }
 
 impl ErrorResiduals {
-    /// Create a new zeroed `ErrorResiduals` buffer.
+    /// Zeroed buffer with the legacy 2-wide fixture margin.
     pub fn new() -> Self {
+        Self::with_margin(CORNER_PATCH)
+    }
+
+    /// Zeroed buffer sized for a given edge margin.
+    pub fn with_margin(margin: usize) -> Self {
+        let m = margin.max(1);
         Self {
-            right: vec![0.0; TILE_SIZE as usize * 2 * 3],
-            bottom: vec![0.0; 2 * TILE_SIZE as usize * 3],
-            corner: vec![0.0; CORNER_PATCH * CORNER_PATCH * 3],
+            margin: m,
+            right: vec![0.0; TILE_SIZE as usize * m * 3],
+            bottom: vec![0.0; m * TILE_SIZE as usize * 3],
+            corner: vec![0.0; m * m * 3],
         }
     }
 }
@@ -84,7 +95,12 @@ impl ErrorResidualsStore {
     ///
     /// Returns `None` if the current tile is at the left edge (x == 0)
     /// or if the left neighbor has not yet been processed.
-    pub fn get_left(&self, doc: u32, layer_id: LayerId, coord: TileCoord) -> Option<ErrorResiduals> {
+    pub fn get_left(
+        &self,
+        doc: u32,
+        layer_id: LayerId,
+        coord: TileCoord,
+    ) -> Option<ErrorResiduals> {
         if coord.x == 0 {
             return None;
         }
@@ -93,7 +109,9 @@ impl ErrorResidualsStore {
             x: coord.x - 1,
             y: coord.y,
         };
-        self.entries.get(&(doc, layer_id, left_coord)).map(|r| r.clone())
+        self.entries
+            .get(&(doc, layer_id, left_coord))
+            .map(|r| r.clone())
     }
 
     pub fn get_top(&self, doc: u32, layer_id: LayerId, coord: TileCoord) -> Option<ErrorResiduals> {
@@ -105,10 +123,17 @@ impl ErrorResidualsStore {
             x: coord.x,
             y: coord.y - 1,
         };
-        self.entries.get(&(doc, layer_id, top_coord)).map(|r| r.clone())
+        self.entries
+            .get(&(doc, layer_id, top_coord))
+            .map(|r| r.clone())
     }
 
-    pub fn get_diag(&self, doc: u32, layer_id: LayerId, coord: TileCoord) -> Option<ErrorResiduals> {
+    pub fn get_diag(
+        &self,
+        doc: u32,
+        layer_id: LayerId,
+        coord: TileCoord,
+    ) -> Option<ErrorResiduals> {
         if coord.x == 0 || coord.y == 0 {
             return None;
         }
@@ -117,7 +142,9 @@ impl ErrorResidualsStore {
             x: coord.x - 1,
             y: coord.y - 1,
         };
-        self.entries.get(&(doc, layer_id, diag_coord)).map(|r| r.clone())
+        self.entries
+            .get(&(doc, layer_id, diag_coord))
+            .map(|r| r.clone())
     }
 
     pub fn store(&self, doc: u32, layer_id: LayerId, coord: TileCoord, residuals: ErrorResiduals) {
@@ -125,11 +152,12 @@ impl ErrorResidualsStore {
     }
 
     pub fn cached_layer_ids(&self) -> std::collections::HashSet<u32> {
-        self.entries.iter().map(|e| e.key().1.0).collect()
+        self.entries.iter().map(|e| e.key().1 .0).collect()
     }
 
     pub fn evict_layer(&self, doc: u32, layer: LayerId) {
-        self.entries.retain(|(d, l, _), _| *d != doc || l.0 != layer.0);
+        self.entries
+            .retain(|(d, l, _), _| *d != doc || l.0 != layer.0);
         self.clear_count.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -144,11 +172,7 @@ impl ErrorResidualsStore {
         origin_y: u32,
     ) {
         self.entries.retain(|(d, l, c), _| {
-            !(*d == doc
-                && l.0 == layer.0
-                && c.level == level
-                && c.x >= origin_x
-                && c.y >= origin_y)
+            !(*d == doc && l.0 == layer.0 && c.level == level && c.x >= origin_x && c.y >= origin_y)
         });
         self.clear_count.fetch_add(1, Ordering::Relaxed);
     }
@@ -194,12 +218,22 @@ mod tests {
     #[test]
     fn error_residuals_new_is_zeroed() {
         let r = ErrorResiduals::new();
-        assert_eq!(r.right.len(), TILE_SIZE as usize * 2 * 3);
-        assert_eq!(r.bottom.len(), 2 * TILE_SIZE as usize * 3);
+        assert_eq!(r.margin, CORNER_PATCH);
+        assert_eq!(r.right.len(), TILE_SIZE as usize * CORNER_PATCH * 3);
+        assert_eq!(r.bottom.len(), CORNER_PATCH * TILE_SIZE as usize * 3);
         assert_eq!(r.corner.len(), CORNER_PATCH * CORNER_PATCH * 3);
         assert!(r.right.iter().all(|&v| v == 0.0));
         assert!(r.bottom.iter().all(|&v| v == 0.0));
         assert!(r.corner.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn with_margin_sizes_edges() {
+        let r = ErrorResiduals::with_margin(3);
+        assert_eq!(r.margin, 3);
+        assert_eq!(r.right.len(), TILE_SIZE as usize * 3 * 3);
+        assert_eq!(r.bottom.len(), 3 * TILE_SIZE as usize * 3);
+        assert_eq!(r.corner.len(), 3 * 3 * 3);
     }
 
     #[test]
@@ -309,7 +343,7 @@ mod tests {
 
         assert!(store.get_left(1, layer, tc(1, 0)).is_some()); // (0,0) kept
         assert!(store.get_top(1, layer, tc(0, 1)).is_some()); // (0,0)
-        // (2,2) in cone — gone (get_left of (3,2) would need (2,2))
+                                                              // (2,2) in cone — gone (get_left of (3,2) would need (2,2))
         assert!(store.get_left(1, layer, tc(3, 2)).is_none());
         // (2,0): x>=1 but y=0 < 1 — kept
         assert!(store.get_left(1, layer, tc(3, 0)).is_some());

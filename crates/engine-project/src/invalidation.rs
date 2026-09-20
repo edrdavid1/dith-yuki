@@ -19,7 +19,7 @@ pub fn invalidate_layer_structure_changed(
 ) {
     // Mark all Composite tiles dirty (layer order changed, all need recomputation)
     // This is a conservative approach; Phase 3+ can optimize to only affected layers
-    
+
     let mut keys_to_mark = Vec::new();
 
     // Collect all Composite tiles from cache
@@ -41,12 +41,18 @@ pub fn invalidate_layer_structure_changed(
 /// Updates to layer opacity, blend mode, visibility, or offset require Composite
 /// recomputation.
 pub fn invalidate_layer_props_changed(cache: &TileCache, doc: u32, layer_id: LayerId) {
-    let event = InvalidationEvent::LayerPropsChanged { doc, layer: layer_id.0 };
+    let event = InvalidationEvent::LayerPropsChanged {
+        doc,
+        layer: layer_id.0,
+    };
     engine_tiles::invalidation::invalidate(cache, event);
 }
 
 pub fn invalidate_layer_filter_changed(cache: &TileCache, doc: u32, layer_id: LayerId) {
-    let event = InvalidationEvent::LayerFilterChanged { doc, layer: layer_id.0 };
+    let event = InvalidationEvent::LayerFilterChanged {
+        doc,
+        layer: layer_id.0,
+    };
     engine_tiles::invalidation::invalidate(cache, event);
 }
 
@@ -96,7 +102,8 @@ mod tests {
     #[test]
     fn validate_document_consistency_finds_layer() {
         let mut doc = Document::default();
-        let layer = crate::layer::Layer::new(LayerId::new(1), crate::types::LayerKind::Raster, 256, 256);
+        let layer =
+            crate::layer::Layer::new(LayerId::new(1), crate::types::LayerKind::Raster, 256, 256);
         doc.root.push(crate::layer::LayerNode::Leaf(layer));
 
         assert!(validate_document_consistency(&doc, LayerId::new(1)).is_ok());

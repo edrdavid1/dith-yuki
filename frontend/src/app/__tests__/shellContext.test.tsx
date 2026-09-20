@@ -45,6 +45,7 @@ describe('ShellContext', () => {
     expect(result.current.effectPanelRatio).toBe(0.5);
     expect(result.current.autoExtractPalettes).toBe(true);
     expect(result.current.previewBackground).toBe('gray');
+    expect(result.current.welcomeBackground).toBe('artwork');
   });
 
   it('updates split ratios independently per side', () => {
@@ -102,6 +103,7 @@ describe('ShellContext', () => {
       result.current.setSidebarWidth('right', 400);
       result.current.setAutoExtractPalettes(false);
       result.current.setPreviewBackground('black');
+      result.current.setWelcomeBackground('artwork');
     });
     act(() => {
       vi.advanceTimersByTime(150);
@@ -114,6 +116,7 @@ describe('ShellContext', () => {
     expect(parsed.rightSidebar.width).toBe(400);
     expect(parsed.autoExtractPalettes).toBe(false);
     expect(parsed.previewBackground).toBe('black');
+    expect(parsed.welcomeBackground).toBe('artwork');
     expect(parsed.sidebarSide).toBeUndefined();
     vi.useRealTimers();
   });
@@ -164,6 +167,22 @@ describe('ShellContext', () => {
     expect(migrateShellPrefs({ version: 2, previewBackground: 'red' }).previewBackground).toBe(
       'gray'
     );
+  });
+
+  it('parses welcomeBackground ids and defaults unknown values', () => {
+    expect(migrateShellPrefs({ version: 2, welcomeBackground: 'artwork' }).welcomeBackground).toBe(
+      'artwork'
+    );
+    expect(migrateShellPrefs({ version: 2, welcomeBackground: 'none' }).welcomeBackground).toBe(
+      'artwork'
+    );
+    expect(migrateShellPrefs({ version: 2, welcomeBackground: 'pattern' }).welcomeBackground).toBe(
+      'artwork'
+    );
+    expect(migrateShellPrefs({ version: 2, welcomeBackground: 'default' }).welcomeBackground).toBe(
+      'artwork'
+    );
+    expect(migrateShellPrefs({ version: 2 }).welcomeBackground).toBe('artwork');
   });
 
   it('migrates v1 exclusive sidebarSide=right by default', () => {

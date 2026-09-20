@@ -29,6 +29,7 @@ const FLEX_GLOBAL = {
   // (see flexlayout-theme.css splitter_horz negative margin).
   splitterSize: 0,
   splitterExtra: 4,
+  enableEdgeDock: false,
 } as const;
 
 // ─── Default layout JSON ──────────────────────────────────────────────────────

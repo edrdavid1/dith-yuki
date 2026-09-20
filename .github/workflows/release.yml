@@ -1,0 +1,220 @@
+name: Release
+
+# Tag push: v0.3.0 (stable) or v0.3.0-alpha.1 / v0.3.0-beta.1 / v0.3.0-rc.1 (prerelease).
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: ${{ github.ref_name }}
+
+jobs:
+  # ── macOS (primary alpha platform) ─────────────────────────────────────────
+  macos:
+    runs-on: macos-latest
+    outputs:
+      release_id: ${{ steps.tauri_self.outputs.releaseId || steps.tauri_apple.outputs.releaseId }}
+    steps:
+      - name: Require updater signing secrets
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY is required; refusing to publish unsigned updater artifacts."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install JS dependencies
+        run: |
+          npm install
+          npm install --prefix frontend
+
+      - name: Detect release channel
+        id: meta
+        run: |
+          TAG="${{ github.ref_name }}"
+          if echo "$TAG" | grep -Eqi '(alpha|beta|rc)(\.|-|$)'; then
+            echo "channel=alpha" >> "$GITHUB_OUTPUT"
+            echo "title_suffix= (alpha)" >> "$GITHUB_OUTPUT"
+          else
+            echo "channel=stable" >> "$GITHUB_OUTPUT"
+            echo "title_suffix=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up code signing (Apple Developer or self-signed)
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_SIGNING_IDENTITY_SECRET: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          KEYCHAIN_PASSWORD="${KEYCHAIN_PASSWORD:-dither-yuki-ci-keychain}"
+
+          if [ -n "$APPLE_CERTIFICATE" ]; then
+            echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+            security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+            security default-keychain -s build.keychain
+            security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+            security set-keychain-settings -t 3600 -u build.keychain
+            security import "$RUNNER_TEMP/certificate.p12" -k build.keychain \
+              -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+            security set-key-partition-list -S apple-tool:,apple:,codesign: \
+              -s -k "$KEYCHAIN_PASSWORD" build.keychain
+            security find-identity -v -p codesigning build.keychain
+            rm -f "$RUNNER_TEMP/certificate.p12"
+            if [ -n "$APPLE_SIGNING_IDENTITY_SECRET" ]; then
+              CERT_ID="$APPLE_SIGNING_IDENTITY_SECRET"
+            else
+              CERT_INFO=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1)
+              CERT_ID=$(echo "$CERT_INFO" | awk -F'"' '{print $2}')
+            fi
+            if [ -z "$CERT_ID" ]; then
+              echo "Developer ID Application identity not found after import"
+              exit 1
+            fi
+            echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> "$GITHUB_ENV"
+            echo "SIGNING_MODE=apple" >> "$GITHUB_ENV"
+            echo "Imported Apple Developer identity: $CERT_ID"
+          else
+            echo "No APPLE_CERTIFICATE — creating self-signed identity L'eco non di Bergamo"
+            chmod +x scripts/macos-self-sign-cert.sh
+            KEYCHAIN_PASSWORD="$KEYCHAIN_PASSWORD" bash scripts/macos-self-sign-cert.sh
+          fi
+
+      - name: Build and publish (macOS, self-signed)
+        id: tauri_self
+        if: ${{ env.SIGNING_MODE == 'self' }}
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Sign only — do NOT set APPLE_ID / PASSWORD / TEAM_ID (would attempt notarization).
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Dither Yuki ${{ github.ref_name }}${{ steps.meta.outputs.title_suffix }}
+          releaseBody: |
+            ## Dither Yuki ${{ github.ref_name }}
+
+            **Channel:** ${{ steps.meta.outputs.channel }}
+            **Platforms:** macOS (DMG) · Windows (NSIS, when windows job succeeds)
+            **Code signing:** self-signed as **L'eco non di Bergamo** (not Apple Developer ID)
+
+            ### Install (macOS)
+            1. Download the `.dmg` from Assets and drag **Dither Yuki** to Applications.
+            2. Double-click the app — macOS will block it once.
+            3. Open **System Settings → Privacy & Security**, scroll down, click **Open Anyway**.
+            4. Confirm **Open** in the dialog.
+
+            ### Updates
+            From **0.2.0** onward: Help → Check for Updates (Minisign-verified via `latest.json`).
+
+            ### Alpha scope
+            Dither / palette studio — not paint, not print/ICC, not video/batch.
+            GPU is warm-viewport only; cold compute is opt-in (`DITHER_GPU_PREVIEW=1`).
+
+            ### Feedback
+            File a bug with the [bug report template](https://github.com/edrdavid1/dith-yuki/issues/new?template=bug_report.yml).
+
+            See [docs/RELEASE.md](https://github.com/edrdavid1/dith-yuki/blob/main/docs/RELEASE.md).
+          releaseDraft: false
+          prerelease: false
+          args: --bundles app,dmg
+
+      - name: Build and publish (macOS, Apple notarized)
+        id: tauri_apple
+        if: ${{ env.SIGNING_MODE == 'apple' }}
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Dither Yuki ${{ github.ref_name }}${{ steps.meta.outputs.title_suffix }}
+          releaseBody: |
+            ## Dither Yuki ${{ github.ref_name }}
+
+            **Channel:** ${{ steps.meta.outputs.channel }}
+            **Platforms:** macOS (DMG) · Windows (NSIS, when windows job succeeds)
+            **Code signing:** Developer ID + notarization
+
+            ### Install (macOS)
+            1. Download the `.dmg` from Assets.
+            2. Drag **Dither Yuki** to Applications and open.
+
+            ### Updates
+            From **0.2.0** onward: Help → Check for Updates (Minisign-verified via `latest.json`).
+
+            ### Alpha scope
+            Dither / palette studio — not paint, not print/ICC, not video/batch.
+            GPU is warm-viewport only; cold compute is opt-in (`DITHER_GPU_PREVIEW=1`).
+
+            ### Feedback
+            File a bug with the [bug report template](https://github.com/edrdavid1/dith-yuki/issues/new?template=bug_report.yml).
+
+            See [docs/RELEASE.md](https://github.com/edrdavid1/dith-yuki/blob/main/docs/RELEASE.md).
+          releaseDraft: false
+          prerelease: false
+          args: --bundles app,dmg
+
+  # ── Windows (second wave; same release) ────────────────────────────────────
+  windows:
+    needs: macos
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - name: Require updater signing secrets
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY is required; refusing to publish unsigned updater artifacts."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install JS dependencies
+        shell: bash
+        run: |
+          npm install
+          npm install --prefix frontend
+
+      - name: Build and publish (Windows)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Dither Yuki ${{ github.ref_name }}
+          releaseId: ${{ needs.macos.outputs.release_id }}
+          releaseDraft: false
+          prerelease: false
+          args: --bundles nsis

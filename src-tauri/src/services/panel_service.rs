@@ -1,7 +1,7 @@
-use std::sync::Arc;
 use crate::commands::AppState;
 use crate::panel_manager::{DockSide, PanelInfo, SavedBounds, SerializedPanelState, UndockResult};
 use crate::services::AppError;
+use std::sync::Arc;
 
 pub struct PanelService {
     state: Arc<AppState>,
@@ -32,7 +32,9 @@ impl PanelService {
             .panel_manager
             .lock()
             .map_err(|e| AppError::Generic(e.to_string()))?;
-        let result = pm.undock(panel_id).map_err(|e| AppError::Generic(e.to_string()))?;
+        let result = pm
+            .undock(panel_id)
+            .map_err(|e| AppError::Generic(e.to_string()))?;
         let (snapshot, left, right) = pm.get_state_with_orders();
         Ok((result, snapshot, left, right))
     }
@@ -58,14 +60,25 @@ impl PanelService {
     pub fn hide(
         &self,
         panel_id: &str,
-    ) -> Result<(bool, Option<String>, Vec<PanelInfo>, Vec<String>, Vec<String>), AppError> {
+    ) -> Result<
+        (
+            bool,
+            Option<String>,
+            Vec<PanelInfo>,
+            Vec<String>,
+            Vec<String>,
+        ),
+        AppError,
+    > {
         let mut pm = self
             .state
             .ui
             .panel_manager
             .lock()
             .map_err(|e| AppError::Generic(e.to_string()))?;
-        let changed = pm.hide(panel_id).map_err(|e| AppError::Generic(e.to_string()))?;
+        let changed = pm
+            .hide(panel_id)
+            .map_err(|e| AppError::Generic(e.to_string()))?;
         let (snapshot, left, right) = pm.get_state_with_orders();
         let window_label = snapshot
             .iter()
@@ -77,14 +90,25 @@ impl PanelService {
     pub fn show(
         &self,
         panel_id: &str,
-    ) -> Result<(bool, Option<String>, Vec<PanelInfo>, Vec<String>, Vec<String>), AppError> {
+    ) -> Result<
+        (
+            bool,
+            Option<String>,
+            Vec<PanelInfo>,
+            Vec<String>,
+            Vec<String>,
+        ),
+        AppError,
+    > {
         let mut pm = self
             .state
             .ui
             .panel_manager
             .lock()
             .map_err(|e| AppError::Generic(e.to_string()))?;
-        let changed = pm.show(panel_id).map_err(|e| AppError::Generic(e.to_string()))?;
+        let changed = pm
+            .show(panel_id)
+            .map_err(|e| AppError::Generic(e.to_string()))?;
         let (snapshot, left, right) = pm.get_state_with_orders();
         let window_label = snapshot
             .iter()

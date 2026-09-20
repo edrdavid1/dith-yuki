@@ -10,9 +10,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::State;
 
-use engine_tiles::{
-    CacheStage, Priority, RecomputeTask, TileCoord, TileKey, TILE_SIZE,
-};
+use engine_tiles::{CacheStage, Priority, RecomputeTask, TileCoord, TileKey, TILE_SIZE};
 
 use crate::commands::AppState;
 
@@ -153,7 +151,11 @@ pub fn compute_visible_tiles(
     let mut tiles = Vec::new();
     for ty in min_ty..max_ty.min(grid_rows) {
         for tx in min_tx..max_tx.min(grid_cols) {
-            tiles.push(TileCoord { level, x: tx, y: ty });
+            tiles.push(TileCoord {
+                level,
+                x: tx,
+                y: ty,
+            });
         }
     }
     tiles
@@ -211,7 +213,11 @@ pub fn compute_prefetch_ring(
             if !is_visible {
                 // Ensure within grid bounds
                 if tx < grid_cols && ty < grid_rows {
-                    ring.push(TileCoord { level, x: tx, y: ty });
+                    ring.push(TileCoord {
+                        level,
+                        x: tx,
+                        y: ty,
+                    });
                 }
             }
         }
@@ -235,7 +241,9 @@ pub fn sort_tiles_center_out(tiles: &mut Vec<TileCoord>) {
     tiles.sort_by(|a, b| {
         let dist_a = (a.x as f64 - center_x).abs() + (a.y as f64 - center_y).abs();
         let dist_b = (b.x as f64 - center_x).abs() + (b.y as f64 - center_y).abs();
-        dist_a.partial_cmp(&dist_b).unwrap_or(std::cmp::Ordering::Equal)
+        dist_a
+            .partial_cmp(&dist_b)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
 }
 
@@ -379,10 +387,26 @@ mod tests {
         let tiles = compute_visible_tiles(1.0, 0.0, 0.0, 512.0, 512.0, 0, 512, 512);
         // 2x2 grid at level 0
         assert_eq!(tiles.len(), 4);
-        assert!(tiles.contains(&TileCoord { level: 0, x: 0, y: 0 }));
-        assert!(tiles.contains(&TileCoord { level: 0, x: 1, y: 0 }));
-        assert!(tiles.contains(&TileCoord { level: 0, x: 0, y: 1 }));
-        assert!(tiles.contains(&TileCoord { level: 0, x: 1, y: 1 }));
+        assert!(tiles.contains(&TileCoord {
+            level: 0,
+            x: 0,
+            y: 0
+        }));
+        assert!(tiles.contains(&TileCoord {
+            level: 0,
+            x: 1,
+            y: 0
+        }));
+        assert!(tiles.contains(&TileCoord {
+            level: 0,
+            x: 0,
+            y: 1
+        }));
+        assert!(tiles.contains(&TileCoord {
+            level: 0,
+            x: 1,
+            y: 1
+        }));
     }
 
     #[test]
@@ -391,7 +415,14 @@ mod tests {
         let tiles = compute_visible_tiles(1.0, 0.0, 0.0, 256.0, 256.0, 0, 1024, 1024);
         // Only the top-left tile
         assert_eq!(tiles.len(), 1);
-        assert_eq!(tiles[0], TileCoord { level: 0, x: 0, y: 0 });
+        assert_eq!(
+            tiles[0],
+            TileCoord {
+                level: 0,
+                x: 0,
+                y: 0
+            }
+        );
     }
 
     #[test]
@@ -429,40 +460,108 @@ mod tests {
     #[test]
     fn prefetch_ring_around_single_tile() {
         // Single visible tile at (1,1), grid is 4x4
-        let visible = vec![TileCoord { level: 0, x: 1, y: 1 }];
+        let visible = vec![TileCoord {
+            level: 0,
+            x: 1,
+            y: 1,
+        }];
         let ring = compute_prefetch_ring(&visible, 0, 1024, 1024);
         // Ring should be 8 tiles surrounding (1,1)
         assert_eq!(ring.len(), 8);
-        assert!(ring.contains(&TileCoord { level: 0, x: 0, y: 0 }));
-        assert!(ring.contains(&TileCoord { level: 0, x: 1, y: 0 }));
-        assert!(ring.contains(&TileCoord { level: 0, x: 2, y: 0 }));
-        assert!(ring.contains(&TileCoord { level: 0, x: 0, y: 1 }));
-        assert!(ring.contains(&TileCoord { level: 0, x: 2, y: 1 }));
-        assert!(ring.contains(&TileCoord { level: 0, x: 0, y: 2 }));
-        assert!(ring.contains(&TileCoord { level: 0, x: 1, y: 2 }));
-        assert!(ring.contains(&TileCoord { level: 0, x: 2, y: 2 }));
+        assert!(ring.contains(&TileCoord {
+            level: 0,
+            x: 0,
+            y: 0
+        }));
+        assert!(ring.contains(&TileCoord {
+            level: 0,
+            x: 1,
+            y: 0
+        }));
+        assert!(ring.contains(&TileCoord {
+            level: 0,
+            x: 2,
+            y: 0
+        }));
+        assert!(ring.contains(&TileCoord {
+            level: 0,
+            x: 0,
+            y: 1
+        }));
+        assert!(ring.contains(&TileCoord {
+            level: 0,
+            x: 2,
+            y: 1
+        }));
+        assert!(ring.contains(&TileCoord {
+            level: 0,
+            x: 0,
+            y: 2
+        }));
+        assert!(ring.contains(&TileCoord {
+            level: 0,
+            x: 1,
+            y: 2
+        }));
+        assert!(ring.contains(&TileCoord {
+            level: 0,
+            x: 2,
+            y: 2
+        }));
     }
 
     #[test]
     fn prefetch_ring_clamped_to_grid_bounds() {
         // Visible tile at (0,0) in a 2x2 grid
-        let visible = vec![TileCoord { level: 0, x: 0, y: 0 }];
+        let visible = vec![TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        }];
         let ring = compute_prefetch_ring(&visible, 0, 512, 512);
         // Ring can only expand to the right and down (grid is 2x2)
         assert_eq!(ring.len(), 3);
-        assert!(ring.contains(&TileCoord { level: 0, x: 1, y: 0 }));
-        assert!(ring.contains(&TileCoord { level: 0, x: 0, y: 1 }));
-        assert!(ring.contains(&TileCoord { level: 0, x: 1, y: 1 }));
+        assert!(ring.contains(&TileCoord {
+            level: 0,
+            x: 1,
+            y: 0
+        }));
+        assert!(ring.contains(&TileCoord {
+            level: 0,
+            x: 0,
+            y: 1
+        }));
+        assert!(ring.contains(&TileCoord {
+            level: 0,
+            x: 1,
+            y: 1
+        }));
     }
 
     #[test]
     fn prefetch_ring_around_multiple_visible_tiles() {
         // Visible tiles form a 2x2 block at (1,1)-(2,2) in a 4x4 grid
         let visible = vec![
-            TileCoord { level: 0, x: 1, y: 1 },
-            TileCoord { level: 0, x: 2, y: 1 },
-            TileCoord { level: 0, x: 1, y: 2 },
-            TileCoord { level: 0, x: 2, y: 2 },
+            TileCoord {
+                level: 0,
+                x: 1,
+                y: 1,
+            },
+            TileCoord {
+                level: 0,
+                x: 2,
+                y: 1,
+            },
+            TileCoord {
+                level: 0,
+                x: 1,
+                y: 2,
+            },
+            TileCoord {
+                level: 0,
+                x: 2,
+                y: 2,
+            },
         ];
         let ring = compute_prefetch_ring(&visible, 0, 1024, 1024);
         // Ring is the border around the 2x2 block = (4x4 - 2x2) = 12 tiles
@@ -479,8 +578,15 @@ mod tests {
         let visible: Vec<TileCoord> = (0..4)
             .flat_map(|y| (0..4).map(move |x| TileCoord { level: 0, x, y }))
             .collect();
-        let center_tile = TileCoord { level: 0, x: 1, y: 1 };
-        assert_eq!(classify_priority(&center_tile, &visible), Priority::ViewportCenter);
+        let center_tile = TileCoord {
+            level: 0,
+            x: 1,
+            y: 1,
+        };
+        assert_eq!(
+            classify_priority(&center_tile, &visible),
+            Priority::ViewportCenter
+        );
     }
 
     #[test]
@@ -491,8 +597,15 @@ mod tests {
         let visible: Vec<TileCoord> = (0..4)
             .flat_map(|y| (0..4).map(move |x| TileCoord { level: 0, x, y }))
             .collect();
-        let edge_tile = TileCoord { level: 0, x: 0, y: 0 };
-        assert_eq!(classify_priority(&edge_tile, &visible), Priority::ViewportEdge);
+        let edge_tile = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
+        assert_eq!(
+            classify_priority(&edge_tile, &visible),
+            Priority::ViewportEdge
+        );
     }
 
     #[test]
@@ -500,7 +613,11 @@ mod tests {
         // Single tile: center = (0, 0), width=1, height=1
         // half_w = 0.25, half_h = 0.25
         // The tile at (0,0) has dx=0, dy=0 → within inner region
-        let visible = vec![TileCoord { level: 0, x: 0, y: 0 }];
+        let visible = vec![TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        }];
         assert_eq!(
             classify_priority(&visible[0], &visible),
             Priority::ViewportCenter
@@ -509,7 +626,11 @@ mod tests {
 
     #[test]
     fn classify_priority_empty_visible_returns_edge() {
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
         assert_eq!(classify_priority(&coord, &[]), Priority::ViewportEdge);
     }
 
@@ -519,10 +640,26 @@ mod tests {
         // Inner 50%: half_w = 2*0.25 = 0.5, half_h = 0.5
         // All tiles have dx/dy ≤ 0.5, so all are ViewportCenter
         let visible = vec![
-            TileCoord { level: 0, x: 0, y: 0 },
-            TileCoord { level: 0, x: 1, y: 0 },
-            TileCoord { level: 0, x: 0, y: 1 },
-            TileCoord { level: 0, x: 1, y: 1 },
+            TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            },
+            TileCoord {
+                level: 0,
+                x: 1,
+                y: 0,
+            },
+            TileCoord {
+                level: 0,
+                x: 0,
+                y: 1,
+            },
+            TileCoord {
+                level: 0,
+                x: 1,
+                y: 1,
+            },
         ];
         for tile in &visible {
             assert_eq!(classify_priority(tile, &visible), Priority::ViewportCenter);
@@ -537,12 +674,23 @@ mod tests {
         let visible: Vec<TileCoord> = (0..6)
             .flat_map(|y| (0..6).map(move |x| TileCoord { level: 0, x, y }))
             .collect();
-        let corner = TileCoord { level: 0, x: 0, y: 0 };
+        let corner = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
         assert_eq!(classify_priority(&corner, &visible), Priority::ViewportEdge);
 
         // Tile at (2, 2): dx=0.5, dy=0.5 → inside (≤ 1.5)
-        let near_center = TileCoord { level: 0, x: 2, y: 2 };
-        assert_eq!(classify_priority(&near_center, &visible), Priority::ViewportCenter);
+        let near_center = TileCoord {
+            level: 0,
+            x: 2,
+            y: 2,
+        };
+        assert_eq!(
+            classify_priority(&near_center, &visible),
+            Priority::ViewportCenter
+        );
     }
 
     // --- sort_tiles_center_out tests ---
@@ -556,10 +704,21 @@ mod tests {
 
     #[test]
     fn sort_center_out_single_tile() {
-        let mut tiles = vec![TileCoord { level: 0, x: 3, y: 7 }];
+        let mut tiles = vec![TileCoord {
+            level: 0,
+            x: 3,
+            y: 7,
+        }];
         sort_tiles_center_out(&mut tiles);
         assert_eq!(tiles.len(), 1);
-        assert_eq!(tiles[0], TileCoord { level: 0, x: 3, y: 7 });
+        assert_eq!(
+            tiles[0],
+            TileCoord {
+                level: 0,
+                x: 3,
+                y: 7
+            }
+        );
     }
 
     #[test]
@@ -568,10 +727,26 @@ mod tests {
         // All tiles are equidistant (manhattan dist = 1.0 each)
         // Stable sort should preserve original order
         let mut tiles = vec![
-            TileCoord { level: 0, x: 0, y: 0 },
-            TileCoord { level: 0, x: 1, y: 0 },
-            TileCoord { level: 0, x: 0, y: 1 },
-            TileCoord { level: 0, x: 1, y: 1 },
+            TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            },
+            TileCoord {
+                level: 0,
+                x: 1,
+                y: 0,
+            },
+            TileCoord {
+                level: 0,
+                x: 0,
+                y: 1,
+            },
+            TileCoord {
+                level: 0,
+                x: 1,
+                y: 1,
+            },
         ];
         let original = tiles.clone();
         sort_tiles_center_out(&mut tiles);
@@ -589,7 +764,14 @@ mod tests {
         sort_tiles_center_out(&mut tiles);
 
         // First tile should be center (1,1) with distance 0
-        assert_eq!(tiles[0], TileCoord { level: 0, x: 1, y: 1 });
+        assert_eq!(
+            tiles[0],
+            TileCoord {
+                level: 0,
+                x: 1,
+                y: 1
+            }
+        );
 
         // Verify distances are non-decreasing
         let center_x = 1.0_f64;
@@ -611,10 +793,26 @@ mod tests {
 
         // Last 4 tiles should be the corners (distance 2)
         let corners: Vec<TileCoord> = tiles[5..9].to_vec();
-        assert!(corners.contains(&TileCoord { level: 0, x: 0, y: 0 }));
-        assert!(corners.contains(&TileCoord { level: 0, x: 2, y: 0 }));
-        assert!(corners.contains(&TileCoord { level: 0, x: 0, y: 2 }));
-        assert!(corners.contains(&TileCoord { level: 0, x: 2, y: 2 }));
+        assert!(corners.contains(&TileCoord {
+            level: 0,
+            x: 0,
+            y: 0
+        }));
+        assert!(corners.contains(&TileCoord {
+            level: 0,
+            x: 2,
+            y: 0
+        }));
+        assert!(corners.contains(&TileCoord {
+            level: 0,
+            x: 0,
+            y: 2
+        }));
+        assert!(corners.contains(&TileCoord {
+            level: 0,
+            x: 2,
+            y: 2
+        }));
     }
 
     #[test]

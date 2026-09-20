@@ -1,41 +1,44 @@
-#![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
 
 mod commands;
-mod document_session;
 mod dock_affinity;
+mod document_session;
 mod flexlayout_persistence;
 mod gpu_resident_shadow;
 mod macos_title;
+mod memory_budget;
 mod native_menu;
 mod panel_manager;
 mod panel_persistence;
+#[cfg(test)]
+mod preview_latency_diag;
 mod recent_files;
 mod services;
 mod state;
 mod tile_pipeline;
 mod tile_protocol;
+mod tile_serve;
 mod undo;
 mod viewport;
 mod worker;
-#[cfg(test)]
-mod preview_latency_diag;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use commands::{AppState, ViewportState};
 use engine_project::document::DocumentHandle;
 use engine_project::layer::LayerNode;
-use engine_tiles::{
-    Priority, RecomputeTask, Scheduler, TileCache, TileCoord, TileKey, TILE_SIZE,
-};
-use commands::{AppState, ViewportState};
-use panel_manager::PanelManager;
-use worker::WorkerWake;
-use tauri::{Emitter, Manager, RunEvent, WindowEvent};
-use tauri::webview::{NewWindowResponse, WebviewWindowBuilder};
+use engine_tiles::{Priority, RecomputeTask, TileCoord, TileKey, TILE_SIZE};
 #[cfg(target_os = "macos")]
-use objc::{msg_send, sel, sel_impl, class};
-use tile_protocol::{f32_tile_to_rgba8, parse_tile_url, LayerTarget};
+use objc::{class, msg_send, sel, sel_impl};
+use panel_manager::PanelManager;
+use tauri::webview::{NewWindowResponse, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, RunEvent, WindowEvent};
+use tile_protocol::{parse_tile_url, LayerTarget};
+use worker::WorkerWake;
 
 fn main() {
     // B4c: affinity enabled on all platforms — Flex popout completes via JS mouseup,
@@ -45,8 +48,8 @@ fn main() {
     // Track D: optional GPU. Force-CPU via DITHER_FORCE_CPU=1; prefer via DITHER_GPU=1
     // (runtime or compile-time). Finder-launched .app has no shell env.
     let gpu = if engine_gpu::force_cpu() {
-        eprintln!("[engine-gpu] DITHER_FORCE_CPU set — skipping adapter init");
-        log::info!("engine-gpu: DITHER_FORCE_CPU set — skipping adapter init");
+        eprintln!("[engine-gpu] DITHER_FORCE_CPU set — skipping adapter init (T0.1 CPU-only path)");
+        log::info!("engine-gpu: DITHER_FORCE_CPU set — skipping adapter init (T0.1 CPU-only path)");
         None
     } else {
         match engine_gpu::GpuContext::try_new_blocking() {
@@ -74,9 +77,22 @@ fn main() {
     };
 
     // Path B: resident VRAM cache is created inside empty_process when adapter exists.
-    // Decision 0 (multi-doc-cache-budget): 512 MiB holds one hot ~3k doc
-    // (Raw+Processed+Composite ≈ 446 MiB); multi-doc still needs pressure eviction.
-    let app_state = AppState::empty_process(gpu, 512 * 1024 * 1024, dock_affinity_enabled);
+    // Track C Phase 1: RAM budget is 25% of system RAM, clamped to 512 MiB … 4 GiB.
+    let ram = memory_budget::resolve_ram_budget();
+    eprintln!(
+        "[tile-cache] ram_budget_mib={} source={:?} total_system_ram_mib={}",
+        ram.bytes / (1024 * 1024),
+        ram.source,
+        ram.total_system_ram / (1024 * 1024)
+    );
+    log::info!(
+        "tile-cache: ram_budget_mib={} source={:?} total_system_ram_mib={}",
+        ram.bytes / (1024 * 1024),
+        ram.source,
+        ram.total_system_ram / (1024 * 1024)
+    );
+    let mut app_state = AppState::empty_process(gpu, ram.bytes, dock_affinity_enabled);
+    app_state.ram_budget_source = ram.source;
 
     // Wrap in Arc for sharing between Tauri state and worker threads
     let state = Arc::new(app_state);
@@ -115,9 +131,11 @@ fn main() {
                 WindowEvent::Moved(_) if is_panel || is_flex_popout => {
                     let app_handle = window.app_handle().clone();
                     let state = app_handle.state::<Arc<AppState>>();
-                    if let (Ok(pos), Ok(size), Ok(scale)) =
-                        (window.outer_position(), window.outer_size(), window.scale_factor())
-                    {
+                    if let (Ok(pos), Ok(size), Ok(scale)) = (
+                        window.outer_position(),
+                        window.outer_size(),
+                        window.scale_factor(),
+                    ) {
                         let logical = dock_affinity::Rect {
                             x: pos.x as f64 / scale,
                             y: pos.y as f64 / scale,
@@ -265,17 +283,12 @@ fn main() {
                                 primary.as_ref(),
                             );
 
-                            let _ = window.set_size(tauri::Size::Logical(
-                                tauri::LogicalSize::new(
-                                    fixed.width as f64,
-                                    fixed.height as f64,
-                                ),
-                            ));
+                            let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+                                fixed.width as f64,
+                                fixed.height as f64,
+                            )));
                             let _ = window.set_position(tauri::Position::Logical(
-                                tauri::LogicalPosition::new(
-                                    fixed.x as f64,
-                                    fixed.y as f64,
-                                ),
+                                tauri::LogicalPosition::new(fixed.x as f64, fixed.y as f64),
                             ));
                             let _ = window.set_focus();
 
@@ -316,17 +329,22 @@ fn main() {
 
             // Initialize FlexLayout persistence with real app_data_dir (B3)
             if let Ok(app_data_dir) = app_handle.path().app_data_dir() {
-                let new_persistence = crate::flexlayout_persistence::FlexLayoutPersistence::new(app_data_dir.clone());
+                let new_persistence =
+                    crate::flexlayout_persistence::FlexLayoutPersistence::new(app_data_dir.clone());
                 if let Ok(mut persistence_slot) = state.flexlayout_persistence.lock() {
                     *persistence_slot = new_persistence;
                 }
                 // B4a: per-side persistence
-                let left_persistence = crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
-                    app_data_dir.clone(), "flexlayout_left.json",
-                );
-                let right_persistence = crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
-                    app_data_dir, "flexlayout_right.json",
-                );
+                let left_persistence =
+                    crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
+                        app_data_dir.clone(),
+                        "flexlayout_left.json",
+                    );
+                let right_persistence =
+                    crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
+                        app_data_dir,
+                        "flexlayout_right.json",
+                    );
                 if let Ok(mut slot) = state.flexlayout_left.lock() {
                     *slot = left_persistence;
                 }
@@ -367,9 +385,7 @@ fn main() {
             // v1 files migrate to a single-stack on `fallback_side` (legacy shell
             // sidebarSide is applied on the frontend in task 5; Rust defaults to right).
             let fallback_side = panel_manager::DockSide::Right;
-            if let Some(loaded) =
-                panel_persistence::load_panel_state(&app_handle, fallback_side)
-            {
+            if let Some(loaded) = panel_persistence::load_panel_state(&app_handle, fallback_side) {
                 let mut pm = state.ui.panel_manager.lock().unwrap();
                 *pm = PanelManager::from_persisted(
                     loaded.panels,
@@ -417,15 +433,14 @@ fn main() {
 
                         // All panels use custom titlebar with decorations disabled
                         // and Overlay title bar style (for macOS traffic lights).
-                        let builder =
-                            WebviewWindowBuilder::new(&app_handle, &label, url)
-                                .title(&title)
-                                .inner_size(bounds.width as f64, bounds.height as f64)
-                                .position(bounds.x as f64, bounds.y as f64)
-                                .resizable(true)
-                                .decorations(false)
-                                .title_bar_style(tauri::TitleBarStyle::Overlay)
-                                .min_inner_size(280.0, 200.0);
+                        let builder = WebviewWindowBuilder::new(&app_handle, &label, url)
+                            .title(&title)
+                            .inner_size(bounds.width as f64, bounds.height as f64)
+                            .position(bounds.x as f64, bounds.y as f64)
+                            .resizable(true)
+                            .decorations(false)
+                            .title_bar_style(tauri::TitleBarStyle::Overlay)
+                            .min_inner_size(280.0, 200.0);
                         let (max_w, max_h) = commands::panels::panel_max_inner_size(&panel.id);
                         let builder = builder.max_inner_size(max_w, max_h);
 
@@ -465,20 +480,19 @@ fn main() {
             commands::list_open_documents,
             commands::set_active_document,
             commands::close_document,
-            
             // Layer commands
             commands::add_layer,
             commands::remove_layer,
             commands::set_layer_props,
             commands::reorder_layer,
             commands::get_layer_tree,
-            
             // Filter commands
             commands::add_filter,
             commands::update_filter,
             commands::remove_filter,
             commands::reorder_filter,
-            
+            commands::get_algorithm_schema,
+            commands::list_algorithms_for_category,
             // Image / document commands
             commands::load_image,
             commands::create_document,
@@ -494,9 +508,8 @@ fn main() {
             commands::undo::redo,
             commands::undo::is_document_dirty,
             commands::is_release_build,
-            commands::get_gpu_preview_status,
-            commands::set_gpu_preview_enabled,
-            
+            commands::get_gpu_vram_status,
+            commands::get_tile_cache_status,
             // Palette commands
             commands::list_palettes,
             commands::list_builtin_palettes,
@@ -518,14 +531,11 @@ fn main() {
             commands::remove_palette_color,
             commands::reorder_palette_color,
             commands::delete_palette,
-            
             // Selection commands
             commands::set_selection,
             commands::get_selection,
-            
             // Viewport commands
             commands::viewport::set_viewport,
-            
             // Panel commands
             commands::panels::get_panels_state,
             commands::panels::undock_panel,
@@ -543,7 +553,6 @@ fn main() {
             commands::panels::cancel_float_drag,
             commands::panels::complete_float_drag,
             commands::panels::dock_panel_at,
-            
             // FlexLayout commands
             commands::flexlayout::save_layout,
             commands::flexlayout::load_layout,
@@ -593,15 +602,22 @@ fn tile_response(
     content_type: &str,
     body: Vec<u8>,
     generation: Option<u64>,
+    extra: &[(&str, &str)],
 ) -> http::Response<Vec<u8>> {
     let mut builder = http::Response::builder()
         .status(status)
         .header(http::header::CONTENT_TYPE, content_type)
         .header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-        .header(http::header::CACHE_CONTROL, "no-store, no-cache, must-revalidate")
+        .header(
+            http::header::CACHE_CONTROL,
+            "no-store, no-cache, must-revalidate",
+        )
         .header(http::header::PRAGMA, "no-cache");
     if let Some(gen) = generation {
         builder = builder.header("X-Tile-Generation", gen.to_string());
+    }
+    for (name, value) in extra {
+        builder = builder.header(*name, *value);
     }
     builder.body(body).unwrap()
 }
@@ -609,8 +625,8 @@ fn tile_response(
 /// Handle a tile:// protocol request.
 ///
 /// Returns:
-/// - 200 + 262,144 bytes (RGBA8) if tile is cached and clean
-/// - 202 + empty body if tile needs recomputation (schedules Immediate task)
+/// - 200 + RGBA8 if cached and clean, dirty-stale, or pyramid fallback
+/// - 202 + empty body if nothing to show (schedules Immediate)
 /// - 400 if URL is malformed
 /// - 404 if doc/layer/coord is invalid
 fn handle_tile_request(
@@ -623,7 +639,7 @@ fn handle_tile_request(
         Ok(p) => p,
         Err(e) => {
             let msg = format!("400 Bad Request: {}", e);
-            return tile_response(400, "text/plain", msg.into_bytes(), None);
+            return tile_response(400, "text/plain", msg.into_bytes(), None, &[]);
         }
     };
 
@@ -632,7 +648,7 @@ fn handle_tile_request(
         Ok(s) => s,
         Err(_) => {
             let msg = format!("404 Not Found: document {} not found", parsed.doc_id);
-            return tile_response(404, "text/plain", msg.into_bytes(), None);
+            return tile_response(404, "text/plain", msg.into_bytes(), None, &[]);
         }
     };
     let snapshot = session.document_handle.snapshot();
@@ -642,7 +658,7 @@ fn handle_tile_request(
         LayerTarget::Id(id) => {
             if !layer_exists(&snapshot.root, id) {
                 let msg = format!("404 Not Found: layer {} not found", id);
-                return tile_response(404, "text/plain", msg.into_bytes(), None);
+                return tile_response(404, "text/plain", msg.into_bytes(), None, &[]);
             }
             id
         }
@@ -665,7 +681,7 @@ fn handle_tile_request(
             "404 Not Found: tile coordinate ({}, {}) out of bounds for grid {}x{} at level {}",
             parsed.x, parsed.y, grid_cols, grid_rows, parsed.level
         );
-        return tile_response(404, "text/plain", msg.into_bytes(), None);
+        return tile_response(404, "text/plain", msg.into_bytes(), None, &[]);
     }
 
     // 5. Build TileKey and check cache. Ready = !dirty && generation >= doc_gen.
@@ -681,27 +697,46 @@ fn handle_tile_request(
     };
 
     let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
-    if let Some(entry) = state.tiles.tile_cache.entries.get(&key) {
-        let dirty = entry.dirty.load(Ordering::Acquire);
-        if TileCache::tile_entry_is_ready(dirty, entry.generation, doc_gen) {
-            let gen = entry.generation;
-            let rgba8 = f32_tile_to_rgba8(&entry.tile);
-            return tile_response(200, "application/octet-stream", rgba8, Some(gen));
-        }
+    let served = tile_serve::resolve_preview_tile(&state.tiles.tile_cache, key, doc_gen);
+    let ready = matches!(served, tile_serve::PreviewServe::Fresh { .. });
+    if !ready {
+        let layer_gen = snapshot.generations.get_layer_gen(layer_id);
+        let task = RecomputeTask {
+            key,
+            generation: doc_gen,
+            layer_generation: layer_gen,
+            priority: Priority::Immediate,
+        };
+        state.tiles.scheduler.enqueue_dedup(task);
+        state.worker_wake.notify_one();
     }
 
-    // 6. Cache miss, dirty, or behind doc_gen: schedule Immediate and return 202.
-    let layer_gen = snapshot.generations.get_layer_gen(layer_id);
-    let task = RecomputeTask {
-        key,
-        generation: doc_gen,
-        layer_generation: layer_gen,
-        priority: Priority::Immediate,
-    };
-    state.tiles.scheduler.enqueue_dedup(task);
-    state.worker_wake.notify_one();
-
-    tile_response(202, "application/octet-stream", Vec::new(), None)
+    match served {
+        tile_serve::PreviewServe::Fresh { rgba8, generation } => tile_response(
+            200,
+            "application/octet-stream",
+            rgba8,
+            Some(generation),
+            &[],
+        ),
+        tile_serve::PreviewServe::Stale { rgba8, generation } => tile_response(
+            200,
+            "application/octet-stream",
+            rgba8,
+            Some(generation),
+            &[("X-Dither-Tile-Stale", "1")],
+        ),
+        tile_serve::PreviewServe::PyramidFallback { rgba8 } => tile_response(
+            200,
+            "application/octet-stream",
+            rgba8,
+            None,
+            &[("X-Dither-Tile-Fallback", "pyramid")],
+        ),
+        tile_serve::PreviewServe::Pending => {
+            tile_response(202, "application/octet-stream", Vec::new(), None, &[])
+        }
+    }
 }
 
 /// Check if a layer with the given ID exists in the document tree.

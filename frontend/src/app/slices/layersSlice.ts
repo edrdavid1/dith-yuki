@@ -13,7 +13,7 @@ import {
 } from '../../shared/ipc';
 import type { SnapshotLayerNode } from '../../shared/ipc/document';
 import type { EffectType } from '../../types/effects';
-import { EFFECT_DEFAULTS, EFFECT_TO_FILTER_KIND, validateDocumentStructure } from '../../types/effects';
+import { EFFECT_DEFAULTS, EFFECT_TO_FILTER_KIND, specForAlgorithm, validateDocumentStructure } from '../../types/effects';
 import type { RootState } from '../store';
 
 export type LayersStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -159,6 +159,38 @@ export const addLayerWithEffect = createAsyncThunk(
       return imageSourceLayer.id;
     } catch (err) {
       logIpcError('layers.addWithEffect', err);
+      return rejectWithValue(formatIpcError(err));
+    }
+  }
+);
+
+export const addLayerWithAlgorithm = createAsyncThunk(
+  'layers/addWithAlgorithm',
+  async (
+    args: { docId: number | null; layers: LayerNodeDto[]; algorithmId: string },
+    { dispatch, getState, rejectWithValue }
+  ) => {
+    if (args.docId === null) return null;
+    try {
+      const imageSourceLayer = args.layers.length > 0 ? args.layers[0] : null;
+      if (!imageSourceLayer) {
+        return rejectWithValue('No image source layer found');
+      }
+      const lastCreatedId = (getState() as RootState).palettes.lastCreatedId;
+      const spec = specForAlgorithm(args.algorithmId, lastCreatedId);
+      if (!spec) {
+        return rejectWithValue(`Unknown algorithm: ${args.algorithmId}`);
+      }
+      if (spec.kind === 'PaletteQuantize' && spec.params.palette_id == null) {
+        return rejectWithValue('A palette is required for Palette Quantize');
+      }
+      await addFilter(args.docId, imageSourceLayer.id, spec.kind, spec.params, {
+        algorithmId: args.algorithmId,
+      });
+      await dispatch(refreshLayers(args.docId));
+      return imageSourceLayer.id;
+    } catch (err) {
+      logIpcError('layers.addWithAlgorithm', err);
       return rejectWithValue(formatIpcError(err));
     }
   }

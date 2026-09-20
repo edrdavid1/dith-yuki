@@ -10,6 +10,7 @@ import {
   loadHalftoneImage,
 } from './previewBackground';
 import { snapCssPx } from './zoomSnap';
+import { findFallbackTile } from '../../utils/tileFallback';
 
 const cn = bind(styles);
 
@@ -111,6 +112,11 @@ export function computePyramidLevel(
   return Math.max(0, Math.min(level, maxLevel));
 }
 
+export function maxPyramidLevel(docWidth: number, docHeight: number): number {
+  if (Math.max(docWidth, docHeight) <= TILE_SIZE) return 0;
+  return computePyramidLevel(Number.MIN_VALUE, docWidth, docHeight);
+}
+
 /**
  * Convert a tile's grid coordinates to screen pixel position
  * based on the current viewport state.
@@ -204,6 +210,24 @@ export function shouldKeepLodTile(
   const missing = visibleCurrent.filter((t) => !displayed.has(tileKey(t)));
   if (missing.length === 0) return false;
   return missing.some((v) => tilesCoverSameDocumentArea(tile, v));
+}
+
+/** Coarser tiles that cover holes — fetch so pyramid fallback can blit. */
+export function coveringAncestorTiles(
+  missing: TileCoord[],
+  maxLevel: number,
+): TileCoord[] {
+  const extra: TileCoord[] = [];
+  const seen = new Set<string>();
+  for (const t of missing) {
+    if (t.level >= maxLevel) continue;
+    const parent = { level: t.level + 1, x: t.x >> 1, y: t.y >> 1 };
+    const k = tileKey(parent);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    extra.push(parent);
+  }
+  return extra;
 }
 
 /**
@@ -409,6 +433,28 @@ export default function TileCanvas({
       if (!shouldKeepLodTile(tile, currentLevel, visible, haveCurrent)) continue;
       blitOne(tile.x, tile.y, tile.level, bitmap);
     }
+    for (const vis of visible) {
+      if (haveCurrent.has(tileKey(vis))) continue;
+      const fb = findFallbackTile(vis.level, vis.x, vis.y, tileMapRef.current);
+      if (!fb) continue;
+      const bitmap = tileMapRef.current.get(fb.key);
+      if (!bitmap) continue;
+      const blit = computeTileBlit(vis.x, vis.y, vis.level, vp, docWidth, docHeight, dpr);
+      if (!blit) continue;
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(
+        bitmap,
+        fb.srcX,
+        fb.srcY,
+        fb.srcSize,
+        fb.srcSize,
+        blit.dx,
+        blit.dy,
+        blit.dw,
+        blit.dh,
+      );
+      ctx.imageSmoothingEnabled = false;
+    }
     for (const [key, bitmap] of tileMapRef.current) {
       const tile = parseTileKey(key);
       if (tile.level !== currentLevel) continue;
@@ -595,10 +641,15 @@ export default function TileCanvas({
     if (workerRef.current) {
       const visible = computeVisibleTiles(viewport, docWidth, docHeight);
       const needed = visible.filter(t => !tileMapRef.current.has(`${t.level}/${t.x}/${t.y}`));
-      if (needed.length > 0) {
+      const ancestors = coveringAncestorTiles(
+        needed,
+        maxPyramidLevel(docWidth, docHeight),
+      ).filter((t) => !tileMapRef.current.has(tileKey(t)));
+      const tiles = [...needed, ...ancestors];
+      if (tiles.length > 0) {
         workerRef.current.postMessage({
           type: 'request-tiles',
-          tiles: needed,
+          tiles,
           docId,
           rev: tileRevRef.current,
         });

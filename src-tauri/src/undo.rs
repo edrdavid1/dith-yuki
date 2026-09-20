@@ -183,7 +183,10 @@ fn referenced_layer_ids(undo: &UndoManager, live: &Document) -> HashSet<u32> {
 
 fn evict_layer_all(state: &AppState, doc: u32, layer: u32) {
     state.tiles.tile_cache.evict_layer(doc, layer);
-    state.tiles.error_residuals.evict_layer(doc, LayerId::new(layer));
+    state
+        .tiles
+        .error_residuals
+        .evict_layer(doc, LayerId::new(layer));
     state.tiles.block_representatives.evict_layer(doc, layer);
 }
 
@@ -355,8 +358,6 @@ pub fn apply_redo(state: &AppState, app: &AppHandle, doc_id: u32) -> Result<Undo
     restore_and_invalidate(state, app, doc_id, restored, "document_redone")
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,9 +373,12 @@ mod tests {
     fn dummy_mutate(state: &AppState) -> Result<(), String> {
         let doc_id = active_doc_id(state);
         with_document_undo(state, None, doc_id, || {
-            state.require_session(doc_id)?.document_handle.mutate(|doc| {
-                doc.increment_generation();
-            });
+            state
+                .require_session(doc_id)?
+                .document_handle
+                .mutate(|doc| {
+                    doc.increment_generation();
+                });
             Ok(())
         })
     }
@@ -383,24 +387,27 @@ mod tests {
         let doc_id = active_doc_id(state);
         let mut id = 0u32;
         with_document_undo(state, None, doc_id, || {
-            state.require_session(doc_id)?.document_handle.mutate(|doc| {
-                id = doc
-                    .root
-                    .iter()
-                    .map(|n| match n {
-                        LayerNode::Leaf(l) => l.id.0,
-                        LayerNode::Group(g) => g.id.0,
-                    })
-                    .max()
-                    .unwrap_or(0)
-                    .saturating_add(1);
-                doc.root.push(LayerNode::Leaf(Layer::new(
-                    LayerId::new(id),
-                    LayerKind::Raster,
-                    doc.width,
-                    doc.height,
-                )));
-            });
+            state
+                .require_session(doc_id)?
+                .document_handle
+                .mutate(|doc| {
+                    id = doc
+                        .root
+                        .iter()
+                        .map(|n| match n {
+                            LayerNode::Leaf(l) => l.id.0,
+                            LayerNode::Group(g) => g.id.0,
+                        })
+                        .max()
+                        .unwrap_or(0)
+                        .saturating_add(1);
+                    doc.root.push(LayerNode::Leaf(Layer::new(
+                        LayerId::new(id),
+                        LayerKind::Raster,
+                        doc.width,
+                        doc.height,
+                    )));
+                });
             Ok(())
         })
         .unwrap();
@@ -421,7 +428,12 @@ mod tests {
     #[test]
     fn undo_redo_roundtrip_and_bounds() {
         let state = test_state();
-        assert!(!lock_undo(&state.must_active()).unwrap().state_dto().can_undo);
+        assert!(
+            !lock_undo(&state.must_active())
+                .unwrap()
+                .state_dto()
+                .can_undo
+        );
 
         dummy_mutate(&state).unwrap();
         let dto = lock_undo(&state.must_active()).unwrap().state_dto();
@@ -434,7 +446,10 @@ mod tests {
         let doc_id = active_doc_id(&state);
         let err = with_document_undo(&state, None, doc_id, || Err::<(), _>("nope".into()));
         assert!(err.is_err());
-        assert_eq!(lock_undo(&state.must_active()).unwrap().undo_stack.len(), before_len);
+        assert_eq!(
+            lock_undo(&state.must_active()).unwrap().undo_stack.len(),
+            before_len
+        );
         assert_eq!(
             Arc::as_ptr(&state.must_active().document_handle.snapshot()),
             before_ptr
@@ -449,7 +464,12 @@ mod tests {
             undo.redo_stack.push(current);
             state.must_active().document_handle.store(prev);
         }
-        assert!(lock_undo(&state.must_active()).unwrap().state_dto().can_redo);
+        assert!(
+            lock_undo(&state.must_active())
+                .unwrap()
+                .state_dto()
+                .can_redo
+        );
 
         let dto = lock_undo(&state.must_active()).unwrap().state_dto();
         assert!(!dto.can_undo);
@@ -467,7 +487,10 @@ mod tests {
         for _ in 0..UNDO_MAX_DEPTH + 5 {
             dummy_mutate(&state).unwrap();
         }
-        assert_eq!(lock_undo(&state.must_active()).unwrap().undo_stack.len(), UNDO_MAX_DEPTH);
+        assert_eq!(
+            lock_undo(&state.must_active()).unwrap().undo_stack.len(),
+            UNDO_MAX_DEPTH
+        );
     }
 
     #[test]
@@ -477,7 +500,11 @@ mod tests {
         let key = TileKey {
             doc: 1,
             layer,
-            coord: TileCoord { level: 0, x: 0, y: 0 },
+            coord: TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            },
             stage: CacheStage::Processed,
         };
         state
@@ -518,10 +545,21 @@ mod tests {
     fn clear_history_empties_stacks() {
         let state = test_state();
         dummy_mutate(&state).unwrap();
-        assert!(lock_undo(&state.must_active()).unwrap().state_dto().can_undo);
+        assert!(
+            lock_undo(&state.must_active())
+                .unwrap()
+                .state_dto()
+                .can_undo
+        );
         clear_history(&state, None, active_doc_id(&state)).unwrap();
-        assert!(lock_undo(&state.must_active()).unwrap().undo_stack.is_empty());
-        assert!(lock_undo(&state.must_active()).unwrap().redo_stack.is_empty());
+        assert!(lock_undo(&state.must_active())
+            .unwrap()
+            .undo_stack
+            .is_empty());
+        assert!(lock_undo(&state.must_active())
+            .unwrap()
+            .redo_stack
+            .is_empty());
     }
 
     #[test]

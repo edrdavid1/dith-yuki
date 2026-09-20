@@ -5,6 +5,7 @@ export * from './recent';
 export * from './pattern';
 export * from './layers';
 export * from './filters';
+export * from './registry';
 export * from './selection';
 export * from './viewport';
 export * from './panels';

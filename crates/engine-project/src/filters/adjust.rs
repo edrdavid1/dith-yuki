@@ -248,7 +248,11 @@ mod tests {
     }
 
     fn coord() -> TileCoord {
-        TileCoord { level: 0, x: 0, y: 0 }
+        TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        }
     }
 
     #[test]
@@ -317,7 +321,10 @@ mod tests {
         }
         let out = apply_adjust(&tile, coord(), 0.0, 0.0, 0.0, 1.0, 0.0, 0.0);
         let v = out.at(HALO + 8, HALO + 8, 0);
-        assert!(v > 0.15 && v < 0.85, "expected mid-gray after blur, got {v}");
+        assert!(
+            v > 0.15 && v < 0.85,
+            "expected mid-gray after blur, got {v}"
+        );
     }
 
     #[test]

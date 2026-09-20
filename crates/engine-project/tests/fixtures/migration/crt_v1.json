@@ -1,0 +1,8 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "kind": "Crt",
+  "params": {"Crt": {"period": 2, "strength": 0.5, "mask_strength": 0.0}},
+  "enabled": true,
+  "algorithm_id": "crt",
+  "schema_version": 1
+}

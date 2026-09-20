@@ -253,10 +253,7 @@ fn rewrite_value_export(
             if let Some(pid) = map.remove("palette_id") {
                 if let Some(n) = pid.as_u64() {
                     if let Some(key) = palette_to_key.get(&(n as u32)) {
-                        map.insert(
-                            "palette_ref".into(),
-                            serde_json::Value::String(key.clone()),
-                        );
+                        map.insert("palette_ref".into(), serde_json::Value::String(key.clone()));
                     }
                 }
             }
@@ -410,9 +407,9 @@ fn rewrite_value_import(
                             .file_name()
                             .map(|n| n.to_string_lossy().into_owned())
                             .unwrap_or_else(|| path.to_string());
-                        let synth = basename_to_synth.get(&key).ok_or_else(|| {
-                            ProjectError::UnresolvedCustomPng(key.clone())
-                        })?;
+                        let synth = basename_to_synth
+                            .get(&key)
+                            .ok_or_else(|| ProjectError::UnresolvedCustomPng(key.clone()))?;
                         obj.insert(
                             "path".into(),
                             serde_json::Value::String(synth.to_string_lossy().into_owned()),
@@ -610,8 +607,8 @@ pub fn pack_pattern_to_bytes(
         serde_json::to_vec_pretty(&manifest).map_err(|e| ProjectError::Codec(e.to_string()))?;
     let filters_json =
         serde_json::to_vec_pretty(&file_filters).map_err(|e| ProjectError::Codec(e.to_string()))?;
-    let palettes_json =
-        serde_json::to_vec_pretty(&palettes_file).map_err(|e| ProjectError::Codec(e.to_string()))?;
+    let palettes_json = serde_json::to_vec_pretty(&palettes_file)
+        .map_err(|e| ProjectError::Codec(e.to_string()))?;
 
     let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
     entries.push(("manifest.json".into(), manifest_json));
@@ -634,8 +631,8 @@ pub fn unpack_pattern_from_bytes(
     zip_bytes: &[u8],
     running_app_version: &str,
 ) -> Result<UnpackedPattern, ProjectError> {
-    let mut reader =
-        ZipArchiveReader::open(zip_bytes).map_err(|e| ProjectError::InvalidArchive(e.to_string()))?;
+    let mut reader = ZipArchiveReader::open(zip_bytes)
+        .map_err(|e| ProjectError::InvalidArchive(e.to_string()))?;
 
     let manifest_bytes = reader
         .read_entry("manifest.json")
@@ -720,7 +717,8 @@ pub fn unpack_pattern_from_bytes(
                 actual,
             });
         }
-        let path = materialize_threshold_map(&bytes).map_err(|e| ProjectError::Io(e.to_string()))?;
+        let path =
+            materialize_threshold_map(&bytes).map_err(|e| ProjectError::Io(e.to_string()))?;
         basename_to_synth.insert(basename, path);
     }
 
@@ -743,13 +741,7 @@ pub fn export_pattern_from_document(
 ) -> Result<Vec<u8>, ProjectError> {
     let layer = find_leaf(&doc.root, layer_id)?;
     let filters = select_filters(layer, filter_instance_ids)?;
-    pack_pattern_to_bytes(
-        &filters,
-        &doc.palettes,
-        meta,
-        running_app_version,
-        read_png,
-    )
+    pack_pattern_to_bytes(&filters, &doc.palettes, meta, running_app_version, read_png)
 }
 
 /// Import: new palettes + new filters, append to a leaf layer. No-op on groups.
@@ -816,11 +808,11 @@ pub fn write_pattern_to_path(path: &Path, zip_bytes: &[u8]) -> Result<(), Projec
 mod tests {
     use super::*;
     use crate::filter::{DitherColorMode, DitherParamsV2};
+    use crate::filters::apply::apply_filter_to_tile;
     use crate::layer::LayerGroup;
     use crate::serialize::archive::read_zip_entry;
     use crate::serialize::project::read_png_file;
     use crate::types::{DocumentId, LayerKind};
-    use crate::filters::apply::apply_filter_to_tile;
     use engine_color::palette_cache::PaletteKdCache;
     use engine_color::palette_lut::PaletteLutCache;
     use engine_color::threshold_map::ThresholdMapCache;
@@ -926,13 +918,15 @@ mod tests {
         )
         .unwrap();
 
-        let filters_json = String::from_utf8(read_zip_entry(&zip, "filters.json").unwrap()).unwrap();
+        let filters_json =
+            String::from_utf8(read_zip_entry(&zip, "filters.json").unwrap()).unwrap();
         assert!(filters_json.contains("palette_ref"));
         assert!(filters_json.contains("p0"));
         assert!(!filters_json.contains("palette_id"));
         assert!(!filters_json.contains("requires_full_row"));
         assert!(
-            filters_json.contains("\"enabled\": false") || filters_json.contains("\"enabled\":false")
+            filters_json.contains("\"enabled\": false")
+                || filters_json.contains("\"enabled\":false")
         );
         let palettes_json =
             String::from_utf8(read_zip_entry(&zip, "palettes.json").unwrap()).unwrap();
@@ -999,7 +993,8 @@ mod tests {
         )
         .unwrap();
 
-        let filters_json = String::from_utf8(read_zip_entry(&zip, "filters.json").unwrap()).unwrap();
+        let filters_json =
+            String::from_utf8(read_zip_entry(&zip, "filters.json").unwrap()).unwrap();
         assert!(
             !filters_json.contains("secret_machine_map"),
             "{filters_json}"
@@ -1066,7 +1061,8 @@ mod tests {
             8,
             8,
         )));
-        let err = import_pattern_into_document(&zip, &mut dest, LayerId::new(1), "0.1.0").unwrap_err();
+        let err =
+            import_pattern_into_document(&zip, &mut dest, LayerId::new(1), "0.1.0").unwrap_err();
         assert!(
             matches!(err, ProjectError::AppVersionTooOld { .. }),
             "{err:?}"
@@ -1113,7 +1109,8 @@ mod tests {
             8,
             8,
         )));
-        let err = import_pattern_into_document(&zip, &mut dest, LayerId::new(1), "0.1.0").unwrap_err();
+        let err =
+            import_pattern_into_document(&zip, &mut dest, LayerId::new(1), "0.1.0").unwrap_err();
         assert!(
             matches!(err, ProjectError::UnsupportedVersion { ref kind, .. } if kind == "dyuki"),
             "{err:?}"
@@ -1152,7 +1149,8 @@ mod tests {
             8,
             8,
         )));
-        let err = import_pattern_into_document(&zip, &mut dest, LayerId::new(1), "0.1.0").unwrap_err();
+        let err =
+            import_pattern_into_document(&zip, &mut dest, LayerId::new(1), "0.1.0").unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("unknown") || msg.contains("update the app") || msg.contains("invalid"),
@@ -1196,7 +1194,8 @@ mod tests {
             8,
             8,
         )));
-        let err = import_pattern_into_document(&zip, &mut dest, LayerId::new(1), "0.1.0").unwrap_err();
+        let err =
+            import_pattern_into_document(&zip, &mut dest, LayerId::new(1), "0.1.0").unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("unknown") || msg.contains("update the app") || msg.contains("invalid"),
@@ -1233,7 +1232,8 @@ mod tests {
             8,
         )));
         dest.root.push(LayerNode::Group(group));
-        let err = import_pattern_into_document(&zip, &mut dest, LayerId::new(9), "0.1.0").unwrap_err();
+        let err =
+            import_pattern_into_document(&zip, &mut dest, LayerId::new(9), "0.1.0").unwrap_err();
         assert!(matches!(err, ProjectError::TargetIsGroup), "{err:?}");
         match &dest.root[0] {
             LayerNode::Group(g) => match &g.children[0] {
@@ -1385,7 +1385,11 @@ mod tests {
         let lut = PaletteLutCache::new();
         let thresh = ThresholdMapCache::new();
         let tile = make_gradient_tile();
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
         let src_layer = match &src.root[0] {
             LayerNode::Leaf(l) => l,
             _ => panic!(),
@@ -1419,8 +1423,8 @@ mod tests {
             LayerNode::Leaf(l) => l,
             _ => panic!(),
         };
-        let dest_out =
-            apply_filter_to_tile(&tile, dest_layer, coord, &kd, &lut, &thresh, &dest).expect("dest apply");
+        let dest_out = apply_filter_to_tile(&tile, dest_layer, coord, &kd, &lut, &thresh, &dest)
+            .expect("dest apply");
         assert_eq!(src_out.data.as_ref(), dest_out.data.as_ref());
     }
 

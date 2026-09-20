@@ -14,6 +14,8 @@ pub mod layers;
 pub use layers::*;
 pub mod filters;
 pub use filters::*;
+pub mod registry;
+pub use registry::*;
 pub mod palette;
 pub use palette::*;
 pub mod color_lab;
@@ -29,28 +31,31 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use engine_project::{
+    commands as engine_commands,
+    commands::{AddLayerArgs, LayerPropsPatch},
     document::DocumentHandle,
     dto::DocumentSnapshotDto,
-    types::{LayerId, LayerKind, BlendMode},
-    commands::{AddLayerArgs, LayerPropsPatch},
-    commands as engine_commands,
+    types::{BlendMode, LayerId, LayerKind},
 };
-use engine_tiles::{PixelTile, TileCache, Scheduler};
 use engine_tiles::{CacheStage, Priority, RecomputeTask, TileKey};
+use engine_tiles::{PixelTile, Scheduler, TileCache};
 
+use crate::document_session::{emit_tabs_changed, OpenDocumentsPayload};
 use crate::panel_manager::PanelManager;
 use crate::worker::WorkerWake;
-use crate::document_session::{emit_tabs_changed, OpenDocumentsPayload};
 
-pub use crate::services::palette_service::{hex_to_linear, linear_to_hex};
+pub use crate::commands::color_lab::{
+    oklab_points_from_hexes, oklab_points_from_linear, OklabPointDto,
+};
 pub use crate::services::document_service::{
-    f32_to_u8, encode_rgba_to_png, validate_document_dimensions, place_image_at_origin,
-    blank_rgba_f32, MAX_DOCUMENT_DIMENSION, IMAGE_IMPORT_EXTENSIONS, BlankBackground,
-    LoadImageResponse, SaveProjectResponse, OpenProjectResponse, ExportPatternRequest,
-    ImportPatternRequest, ImportPatternResponse, ExportImageRequest, DocumentResponse,
+    blank_rgba_f32, encode_rgba_to_png, f32_to_u8, import_raster_layer, install_raster_document,
+    place_image_at_origin, validate_document_dimensions, BlankBackground, DocumentResponse,
+    ExportImageRequest, ExportPatternRequest, ImportPatternRequest, ImportPatternResponse,
+    LoadImageResponse, OpenProjectResponse, SaveProjectResponse, IMAGE_IMPORT_EXTENSIONS,
+    MAX_DOCUMENT_DIMENSION,
 };
 pub use crate::services::palette_service::find_layers_referencing_palette;
-pub use crate::commands::color_lab::{oklab_points_from_hexes, oklab_points_from_linear, OklabPointDto};
+pub use crate::services::palette_service::{hex_to_linear, linear_to_hex};
 
 pub use crate::viewport::ViewportState;
 
@@ -79,8 +84,10 @@ pub struct AppState {
     /// B4 will remove old PanelManager infrastructure entirely.
     pub flexlayout_persistence: Mutex<crate::flexlayout_persistence::FlexLayoutPersistence>,
     /// B4a: per-side FlexLayout persistence.
-    pub flexlayout_left:  Mutex<crate::flexlayout_persistence::FlexLayoutPersistence>,
+    pub flexlayout_left: Mutex<crate::flexlayout_persistence::FlexLayoutPersistence>,
     pub flexlayout_right: Mutex<crate::flexlayout_persistence::FlexLayoutPersistence>,
+    /// Track C: how the CPU tile-cache budget was chosen (`empty_process` tests = override).
+    pub ram_budget_source: crate::memory_budget::RamBudgetSource,
 }
 
 pub struct QuitGuard {
@@ -135,7 +142,8 @@ pub(crate) fn invalidate_after_document_replace(state: &AppState) {
     state.tiles.block_representatives.invalidate_all();
     if let Ok(session) = state.active_session() {
         state
-            .tiles.error_residuals
+            .tiles
+            .error_residuals
             .evict_document(session.document_handle.snapshot().id.0);
     } else {
         state.tiles.error_residuals.clear();
@@ -192,7 +200,10 @@ fn preview_pass_busy(state: &AppState) -> bool {
         || state.tiles.scheduler.queued_len() > 0
 }
 
-pub(crate) fn layer_needs_dither_cache_reset(nodes: &[engine_project::LayerNode], layer_id: u32) -> bool {
+pub(crate) fn layer_needs_dither_cache_reset(
+    nodes: &[engine_project::LayerNode],
+    layer_id: u32,
+) -> bool {
     use engine_project::filter::FilterParams;
     for node in nodes {
         match node {
@@ -219,11 +230,7 @@ pub(crate) fn layer_needs_dither_cache_reset(nodes: &[engine_project::LayerNode]
 pub(crate) fn request_preview_refresh(state: &AppState, layer_id: u32, clear_residuals: bool) {
     if preview_pass_busy(state) {
         let mut pending = state.pending_preview_refresh.lock().unwrap();
-        let clear = clear_residuals
-            || pending
-                .as_ref()
-                .map(|p| p.clear_residuals)
-                .unwrap_or(false);
+        let clear = clear_residuals || pending.as_ref().map(|p| p.clear_residuals).unwrap_or(false);
         *pending = Some(PendingPreviewRefresh {
             layer_id,
             clear_residuals: clear,
@@ -240,7 +247,8 @@ fn run_preview_refresh(state: &AppState, layer_id: u32, clear_residuals: bool) {
     if clear_residuals {
         let doc = session.document_handle.snapshot().id.0;
         state
-            .tiles.error_residuals
+            .tiles
+            .error_residuals
             .evict_layer(doc, engine_project::types::LayerId::new(layer_id));
         state.tiles.block_representatives.evict_layer(doc, layer_id);
     }
@@ -264,20 +272,24 @@ pub(crate) fn on_preview_task_finished(state: &AppState) {
     }
 }
 
-pub fn is_release_build() -> bool {
-    !cfg!(debug_assertions)
-}
-
 #[cfg(test)]
 pub(crate) fn make_test_app_state() -> Arc<AppState> {
-    use engine_project::Document;
     use engine_project::types::DocumentId;
+    use engine_project::Document;
 
     let state = AppState::empty_process(None, 512 * 1024 * 1024, true);
-    state.spawn_session(Document::new(DocumentId::new(1), 800, 600));
+    let mut doc = Document::new(DocumentId::new(1), 800, 600);
+    doc.root.push(engine_project::layer::LayerNode::Leaf(
+        engine_project::layer::Layer::new(
+            engine_project::types::LayerId::new(1),
+            engine_project::types::LayerKind::Raster,
+            800,
+            600,
+        ),
+    ));
+    state.spawn_session(doc);
     Arc::new(state)
 }
-
 
 #[cfg(test)]
 mod tests;

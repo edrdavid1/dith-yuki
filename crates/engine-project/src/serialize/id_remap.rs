@@ -201,24 +201,28 @@ fn remap_filter(f: &FilterInstanceFile, tables: &mut IdRemapTables) -> FilterIns
         enabled: f.enabled,
         opacity: f.opacity,
         blend_mode: f.blend_mode,
+        algorithm_id: f.algorithm_id.clone(),
+        schema_version: f.schema_version,
     }
 }
 
-fn remap_filter_params(params: &FilterParams, tables: &IdRemapTables) -> FilterParams {
-    match params {
+fn remap_filter_params(params: &serde_json::Value, tables: &IdRemapTables) -> serde_json::Value {
+    let Ok(typed) = serde_json::from_value::<FilterParams>(params.clone()) else {
+        return params.clone();
+    };
+    let remapped = match typed {
         FilterParams::PaletteQuantize {
             palette_id,
             diffusion,
         } => FilterParams::PaletteQuantize {
             palette_id: tables
                 .palettes
-                .get(palette_id)
+                .get(&palette_id)
                 .copied()
                 .expect("palette_id mapped"),
-            diffusion: *diffusion,
+            diffusion,
         },
-        FilterParams::DitherV2(p) => {
-            let mut p = p.clone();
+        FilterParams::DitherV2(mut p) => {
             if let Some(old) = p.palette_id {
                 p.palette_id = Some(
                     tables
@@ -230,13 +234,14 @@ fn remap_filter_params(params: &FilterParams, tables: &IdRemapTables) -> FilterP
             }
             FilterParams::DitherV2(p)
         }
-        other => other.clone(),
-    }
+        other => other,
+    };
+    serde_json::to_value(remapped).unwrap_or_else(|_| params.clone())
 }
 
 /// Convenience: ensure a remapped filter's `requires_full_row` matches `FilterInstance::new`.
 pub fn recompute_requires_full_row(f: &FilterInstanceFile) -> bool {
-    filter_from_file(f).requires_full_row
+    filter_from_file(f, None).requires_full_row
 }
 
 #[cfg(test)]
@@ -294,15 +299,18 @@ mod tests {
                     filters: vec![FilterInstanceFile {
                         id: fid,
                         kind: FilterKind::Dither,
-                        params: FilterParams::DitherV2(DitherParamsV2 {
+                        params: serde_json::to_value(FilterParams::DitherV2(DitherParamsV2 {
                             mode: DitherModeV2::FloydSteinberg,
                             levels: 2,
                             palette_id: Some(PaletteId::new(pal_old)),
                             ..DitherParamsV2::default()
-                        }),
+                        }))
+                        .unwrap(),
                         enabled: true,
                         opacity: 1.0,
                         blend_mode: BlendMode::Normal,
+                        algorithm_id: None,
+                        schema_version: None,
                     }],
                     bounds_l0: TileBounds::full_document(64, 64),
                     raw_asset: Some("1.png".into()),
@@ -355,7 +363,10 @@ mod tests {
             })
             .expect("main layer");
 
-        assert_eq!(main.mask.as_ref().unwrap().get_external_layer(), Some(new_mask));
+        assert_eq!(
+            main.mask.as_ref().unwrap().get_external_layer(),
+            Some(new_mask)
+        );
         match &main.filters[0].params {
             FilterParams::DitherV2(p) => assert_eq!(p.palette_id, Some(new_pal)),
             other => panic!("unexpected params: {other:?}"),
@@ -363,7 +374,10 @@ mod tests {
         assert!(main.filters[0].requires_full_row);
         assert_eq!(remapped.document.revision, 1);
         assert_eq!(remapped.document.palettes[0].revision, 1);
-        assert_eq!(remapped.raw_assets.get(&old_raster).map(String::as_str), Some("1.png"));
+        assert_eq!(
+            remapped.raw_assets.get(&old_raster).map(String::as_str),
+            Some("1.png")
+        );
     }
 
     #[test]

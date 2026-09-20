@@ -46,27 +46,29 @@ fn arb_palette_id() -> impl Strategy<Value = Option<PaletteId>> {
 fn arb_valid_params() -> impl Strategy<Value = DitherParamsV2> {
     (
         arb_valid_mode(),
-        2u16..=256u16,           // valid levels
-        (10u32..=400u32),        // will map to 0.1..=4.0
-        1u8..=32u8,              // valid pixel_size
+        2u16..=256u16,    // valid levels
+        (10u32..=400u32), // will map to 0.1..=4.0
+        1u8..=32u8,       // valid pixel_size
         arb_color_mode(),
         arb_palette_id(),
     )
-        .prop_map(|(mode, levels, ts_raw, pixel_size, color_mode, palette_id)| {
-            // Map ts_raw (10..=400) to threshold_scale (0.1..=4.0) in steps of 0.01
-            let threshold_scale = ts_raw as f32 / 100.0;
-            DitherParamsV2 {
-                mode,
-                levels,
-                threshold_scale,
-                pixel_size,
-                color_mode,
-                palette_id,
-                threshold_bias: 0.0,
-                pattern_angle: 0.0,
-                ..Default::default()
-            }
-        })
+        .prop_map(
+            |(mode, levels, ts_raw, pixel_size, color_mode, palette_id)| {
+                // Map ts_raw (10..=400) to threshold_scale (0.1..=4.0) in steps of 0.01
+                let threshold_scale = ts_raw as f32 / 100.0;
+                DitherParamsV2 {
+                    mode,
+                    levels,
+                    threshold_scale,
+                    pixel_size,
+                    color_mode,
+                    palette_id,
+                    threshold_bias: 0.0,
+                    pattern_angle: 0.0,
+                    ..Default::default()
+                }
+            },
+        )
 }
 
 /// Generate DitherParamsV2 with out-of-range threshold_bias.
@@ -109,17 +111,20 @@ fn arb_invalid_levels() -> impl Strategy<Value = DitherParamsV2> {
         arb_color_mode(),
         arb_palette_id(),
     )
-        .prop_map(|(mode, levels, ts_raw, pixel_size, color_mode, palette_id)| {
-            let threshold_scale = ts_raw as f32 / 100.0;
-            DitherParamsV2 {
-                mode,
-                levels,
-                threshold_scale,
-                pixel_size,
-                color_mode,
-                palette_id,            ..Default::default()
-            }
-        })
+        .prop_map(
+            |(mode, levels, ts_raw, pixel_size, color_mode, palette_id)| {
+                let threshold_scale = ts_raw as f32 / 100.0;
+                DitherParamsV2 {
+                    mode,
+                    levels,
+                    threshold_scale,
+                    pixel_size,
+                    color_mode,
+                    palette_id,
+                    ..Default::default()
+                }
+            },
+        )
 }
 
 /// Generate DitherParamsV2 with out-of-range threshold_scale.
@@ -138,15 +143,14 @@ fn arb_invalid_threshold_scale() -> impl Strategy<Value = DitherParamsV2> {
         arb_palette_id(),
     )
         .prop_map(
-            |(mode, levels, threshold_scale, pixel_size, color_mode, palette_id)| {
-                DitherParamsV2 {
-                    mode,
-                    levels,
-                    threshold_scale,
-                    pixel_size,
-                    color_mode,
-                    palette_id,            ..Default::default()
-                }
+            |(mode, levels, threshold_scale, pixel_size, color_mode, palette_id)| DitherParamsV2 {
+                mode,
+                levels,
+                threshold_scale,
+                pixel_size,
+                color_mode,
+                palette_id,
+                ..Default::default()
             },
         )
 }
@@ -161,17 +165,20 @@ fn arb_invalid_pixel_size() -> impl Strategy<Value = DitherParamsV2> {
         arb_color_mode(),
         arb_palette_id(),
     )
-        .prop_map(|(mode, levels, ts_raw, pixel_size, color_mode, palette_id)| {
-            let threshold_scale = ts_raw as f32 / 100.0;
-            DitherParamsV2 {
-                mode,
-                levels,
-                threshold_scale,
-                pixel_size,
-                color_mode,
-                palette_id,            ..Default::default()
-            }
-        })
+        .prop_map(
+            |(mode, levels, ts_raw, pixel_size, color_mode, palette_id)| {
+                let threshold_scale = ts_raw as f32 / 100.0;
+                DitherParamsV2 {
+                    mode,
+                    levels,
+                    threshold_scale,
+                    pixel_size,
+                    color_mode,
+                    palette_id,
+                    ..Default::default()
+                }
+            },
+        )
 }
 
 /// Generate DitherParamsV2 with CustomPng mode and empty path.
@@ -193,7 +200,8 @@ fn arb_invalid_custom_png_empty_path() -> impl Strategy<Value = DitherParamsV2> 
                 threshold_scale,
                 pixel_size,
                 color_mode,
-                palette_id,            ..Default::default()
+                palette_id,
+                ..Default::default()
             }
         })
 }

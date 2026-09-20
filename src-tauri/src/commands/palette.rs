@@ -2,13 +2,13 @@ use std::sync::Arc;
 use tauri::{AppHandle, State};
 
 use crate::commands::AppState;
-use crate::services::PaletteService;
 pub use crate::services::palette_service::{
     AddColorRequest, AddPaletteRequest, BuiltinPaletteDto, CreatePaletteRequest,
     DeletePaletteResponse, ExportPaletteRequest, GeneratePaletteRequest, PaletteDto,
-    RenamePaletteRequest, RemoveColorRequest, ReplacePaletteRequest, ReorderColorRequest,
+    RemoveColorRequest, RenamePaletteRequest, ReorderColorRequest, ReplacePaletteRequest,
     UpdateColorRequest,
 };
+use crate::services::PaletteService;
 
 #[tauri::command]
 pub fn list_palettes(state: State<'_, Arc<AppState>>) -> Result<Vec<PaletteDto>, String> {

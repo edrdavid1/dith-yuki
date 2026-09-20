@@ -345,10 +345,7 @@ impl PanelManager {
             }
         } else {
             let target = &docked_visible[insert_index];
-            order_snapshot
-                .iter()
-                .position(|x| x == target)
-                .unwrap_or(0)
+            order_snapshot.iter().position(|x| x == target).unwrap_or(0)
         };
 
         let abs_pos = abs_pos.min(order_snapshot.len());
@@ -359,8 +356,7 @@ impl PanelManager {
         if let Some(panel) = self.panels.get_mut(panel_id) {
             panel.dock_side = Some(side);
         }
-        self.last_dock_sides
-            .insert(panel_id.to_string(), side);
+        self.last_dock_sides.insert(panel_id.to_string(), side);
     }
 
     /// Insert into side order by absolute index among all members of that side.
@@ -372,8 +368,7 @@ impl PanelManager {
         if let Some(panel) = self.panels.get_mut(panel_id) {
             panel.dock_side = Some(side);
         }
-        self.last_dock_sides
-            .insert(panel_id.to_string(), side);
+        self.last_dock_sides.insert(panel_id.to_string(), side);
     }
 
     /// Side to use for `dock_panel` without an explicit side: last remembered, else right.
@@ -809,7 +804,8 @@ mod tests {
     #[test]
     fn move_to_side_may_empty_a_side() {
         let mut pm = PanelManager::new();
-        pm.move_to_side("effect", DockSide::Left, usize::MAX).unwrap();
+        pm.move_to_side("effect", DockSide::Left, usize::MAX)
+            .unwrap();
         pm.move_to_side("colorlab", DockSide::Left, usize::MAX)
             .unwrap();
         assert_eq!(pm.get_left_order(), &["layers", "effect", "colorlab"]);
@@ -821,9 +817,7 @@ mod tests {
     fn move_to_side_rejects_floating() {
         let mut pm = PanelManager::new();
         pm.undock("layers").unwrap();
-        let err = pm
-            .move_to_side("layers", DockSide::Right, 0)
-            .unwrap_err();
+        let err = pm.move_to_side("layers", DockSide::Right, 0).unwrap_err();
         assert!(matches!(err, PanelError::NotDocked(_)));
     }
 
@@ -878,11 +872,8 @@ mod tests {
     #[test]
     fn reorder_side_isolates_sides() {
         let mut pm = PanelManager::new();
-        pm.reorder_side(
-            DockSide::Right,
-            vec!["colorlab".into(), "effect".into()],
-        )
-        .unwrap();
+        pm.reorder_side(DockSide::Right, vec!["colorlab".into(), "effect".into()])
+            .unwrap();
         assert_eq!(pm.get_right_order(), &["colorlab", "effect"]);
         assert_eq!(pm.get_left_order(), &["layers"]);
         pm.assert_invariants();
@@ -893,10 +884,7 @@ mod tests {
         let mut pm = PanelManager::new();
         // Wrong members (includes left panel)
         let err = pm
-            .reorder_side(
-                DockSide::Right,
-                vec!["layers".into(), "effect".into()],
-            )
+            .reorder_side(DockSide::Right, vec!["layers".into(), "effect".into()])
             .unwrap_err();
         assert!(matches!(err, PanelError::InvalidOrder(_)));
 

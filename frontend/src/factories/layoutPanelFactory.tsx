@@ -47,8 +47,7 @@ export function layoutPanelFactory(
       case 'effect':
         return <EffectsFeature {...chrome} />;
       case 'colorlab':
-        // One TabNode; internal Color Lab sections stay in-panel navigation.
-        // Popout uses denser `full` layout (same as old panel-colorlab window).
+        // One TabNode; docked = full Color Lab stacked in one column.
         return (
           <ColorLabFeature
             variant={floating ? 'full' : 'sidebar'}

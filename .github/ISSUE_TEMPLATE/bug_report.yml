@@ -1,0 +1,85 @@
+# Bug report
+
+name: Bug report
+description: Something broke in Dither Yuki (alpha feedback welcome)
+title: "[bug] "
+labels: ["bug", "alpha"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying the alpha. Include OS + app version so we can reproduce.
+        Not in scope yet: paint tools, ICC/print, video/batch, default-on cold GPU.
+
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: Help → About, or the version shown in the update dialog
+      placeholder: "0.2.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - macOS
+        - Windows
+        - Linux (from source)
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: os_version
+    attributes:
+      label: OS version
+      placeholder: "macOS 15.1 / Windows 11 23H2"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install_channel
+    attributes:
+      label: How did you install?
+      options:
+        - GitHub Releases DMG / NSIS
+        - In-app update
+        - Built from source
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open …
+        2. Add filter …
+        3. …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: Paste relevant console output or attach a screenshot
+      render: text

@@ -51,6 +51,10 @@ pub enum EngineError {
 
     #[error("Operation not supported: {reason}")]
     NotSupported { reason: String },
+
+    /// Registry lookup failed for a persisted or requested `algorithm_id`.
+    #[error("Unknown algorithm: {id}")]
+    UnknownAlgorithm { id: String },
 }
 
 impl EngineError {
@@ -107,6 +111,42 @@ impl EngineError {
         EngineError::PaletteInUse {
             palette_id,
             references,
+        }
+    }
+
+    /// Create an UnknownAlgorithm error
+    pub fn unknown_algorithm(id: impl Into<String>) -> Self {
+        EngineError::UnknownAlgorithm { id: id.into() }
+    }
+}
+
+/// Convert an [`EngineError`] into a [`engine_registry::FilterError`].
+///
+/// `FilterError` lives in `engine-registry`, which this crate depends on, so
+/// the `From` impl must be defined here (orphan rule: the implementing crate
+/// must own at least one of the two types involved).
+///
+/// Usage inside `apply()` implementations in `engine-project`:
+/// ```ignore
+/// some_engine_fn().map_err(engine_registry::FilterError::from_engine)?;
+/// ```
+impl From<EngineError> for engine_registry::FilterError {
+    fn from(e: EngineError) -> Self {
+        match serde_json::to_string(&e) {
+            Ok(json) => engine_registry::FilterError::Engine(json),
+            Err(_) => engine_registry::FilterError::from_engine(e),
+        }
+    }
+}
+
+impl From<engine_registry::FilterError> for EngineError {
+    fn from(e: engine_registry::FilterError) -> Self {
+        match e {
+            engine_registry::FilterError::Params(err) => {
+                EngineError::invalid_filter_params(err.to_string())
+            }
+            engine_registry::FilterError::Engine(msg) => serde_json::from_str(&msg)
+                .unwrap_or_else(|_| EngineError::invalid_filter_params(msg)),
         }
     }
 }

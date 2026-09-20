@@ -15,7 +15,6 @@ function renderMenuBar(overrides?: Partial<React.ComponentProps<typeof MenuBar>>
     onSaveProjectAs: vi.fn(),
     onExportPattern: vi.fn(),
     onImportPattern: vi.fn(),
-    onOpenColorLab: vi.fn(),
     onOpenPreferences: vi.fn(),
     onOpenHelp: vi.fn(),
   };
@@ -32,7 +31,7 @@ describe('MenuBar', () => {
     expect(labels).toContain('File');
     expect(labels).toContain('Edit');
     expect(labels).toContain('Presets');
-    expect(labels).toContain('Color Lab');
+    expect(labels).not.toContain('Color Lab');
     expect(labels).toContain('Preferences');
     expect(labels).toContain('Help');
   });
@@ -106,14 +105,6 @@ describe('MenuBar', () => {
     expect(screen.queryByText('Open Image')).not.toBeInTheDocument();
   });
 
-  it('Color Lab click calls onOpenColorLab directly (no dropdown)', () => {
-    const { props } = renderMenuBar();
-    fireEvent.click(screen.getByText('Color Lab'));
-    expect(props.onOpenColorLab).toHaveBeenCalledTimes(1);
-    // No dropdown items should appear
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
-  });
-
   it('Preferences click calls onOpenPreferences directly (no dropdown)', () => {
     const { props } = renderMenuBar();
     fireEvent.click(screen.getByText('Preferences'));
@@ -179,16 +170,6 @@ describe('MenuBar', () => {
     fireEvent.click(screen.getByText('Presets'));
     expect(screen.getByText('Export Pattern…')).toBeDisabled();
     expect(screen.getByText('Import Pattern…')).toBeDisabled();
-  });
-
-  it('hovering Color Lab when dropdown is open closes the dropdown', () => {
-    renderMenuBar();
-    fireEvent.click(screen.getByText('File'));
-    expect(screen.getByText('Open Image')).toBeInTheDocument();
-    fireEvent.mouseEnter(screen.getByText('Color Lab'));
-    // Dropdown should be closed since Color Lab has no dropdown
-    expect(screen.queryByText('Open Image')).not.toBeInTheDocument();
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 
   it('hovering Preferences when dropdown is open closes the dropdown', () => {

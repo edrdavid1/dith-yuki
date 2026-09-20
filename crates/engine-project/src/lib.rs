@@ -11,6 +11,7 @@
 //! - Invalidation: Cache coordination
 //! - Commands: Document mutation operations
 
+pub mod algorithms;
 pub mod commands;
 pub mod compositor;
 pub mod document;
@@ -27,16 +28,22 @@ pub mod simd;
 pub mod types;
 
 // Public API re-exports
-pub use commands::{add_layer, remove_layer, set_layer_props, reorder_layer, LayerPropsPatch};
+pub use commands::{add_layer, remove_layer, reorder_layer, set_layer_props, LayerPropsPatch};
 pub use compositor::{blend_tile, composite_tile};
 pub use document::{Document, DocumentHandle};
 pub use error::EngineError;
-pub use filter::{apply_filter_to_tile, FilterInstance, FilterKind, FilterParams, DitherMode, DiffusionKernel};
+pub use filter::{
+    filter_kind_for_algorithm_id, filter_params_to_json, resolve_algorithm_id, DiffusionKernel,
+    DitherMode, FilterInstance, FilterKind, FilterParams, PlaceholderParams,
+};
+pub use filters::FilterContext;
 pub use invalidation::{
     invalidate_layer_filter_changed, invalidate_layer_props_changed,
     invalidate_layer_structure_changed, validate_document_consistency,
 };
-pub use layer::{flatten_bottom_to_top, walk_bottom_to_top, Layer, LayerGroup, LayerNode, LayerRef};
+pub use layer::{
+    flatten_bottom_to_top, walk_bottom_to_top, Layer, LayerGroup, LayerNode, LayerRef,
+};
 pub use mask::{apply_mask, MaskRef, MaskStorage};
 pub use palette_gen::{generate_palette_from_layer, generate_palette_from_layer_weighted};
 pub use simd::{

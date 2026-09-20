@@ -98,20 +98,48 @@ mod tests {
                 tile.set(x, y, 3, 1.0);
             }
         }
-        let top = apply_crt(&tile, TileCoord { level: 0, x: 0, y: 0 }, 2, 0.5, 0.0);
-        let bottom = apply_crt(&tile, TileCoord { level: 0, x: 0, y: 1 }, 2, 0.5, 0.0);
+        let top = apply_crt(
+            &tile,
+            TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            },
+            2,
+            0.5,
+            0.0,
+        );
+        let bottom = apply_crt(
+            &tile,
+            TileCoord {
+                level: 0,
+                x: 0,
+                y: 1,
+            },
+            2,
+            0.5,
+            0.0,
+        );
 
         // Last core row of tile y=0 is global Y=255; first core of y=1 is Y=256.
         let last_core_y = HALO + TILE_SIZE - 1;
         let first_core_y = HALO;
         let g_top = GlobalCoordSigned::from_local_with_halo(
-            TileCoord { level: 0, x: 0, y: 0 },
+            TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            },
             HALO,
             last_core_y,
             HALO,
         );
         let g_bot = GlobalCoordSigned::from_local_with_halo(
-            TileCoord { level: 0, x: 0, y: 1 },
+            TileCoord {
+                level: 0,
+                x: 0,
+                y: 1,
+            },
             HALO,
             first_core_y,
             HALO,

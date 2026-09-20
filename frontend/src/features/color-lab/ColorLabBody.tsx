@@ -6,8 +6,6 @@ import PaletteManagerSection from './PaletteManagerSection';
 import PaletteVolumeViewer from './PaletteVolumeViewer';
 import RampGeneratorSection from './RampGeneratorSection';
 import ColorLabFooter from './ColorLabFooter';
-import Icon from '../../icons/iconRegistry';
-import Tooltip from '../../shared/ui/Tooltip';
 import type { ColorEntry, ExtractMethod } from './types';
 import type { BuiltinPaletteDto, PaletteDto } from '../../shared/ipc';
 import styles from './ColorLabWindow.module.css';
@@ -59,7 +57,7 @@ export interface ColorLabBodyProps {
 
 const PLACEHOLDER = 'name-of-saved-palette';
 
-/** Shared Color Lab body — compact sidebar or full floating layout. */
+/** Full Color Lab body. Docked (`sidebar`) is the same tools, one column. */
 export default function ColorLabBody(props: ColorLabBodyProps) {
   const isSidebar = props.variant === 'sidebar';
 
@@ -77,9 +75,8 @@ export default function ColorLabBody(props: ColorLabBodyProps) {
           .map((c) => [c.r, c.g, c.b] as [number, number, number])}
       />
 
-      {isSidebar ? (
+      <div className={cn('color-lab-stack')}>
         <AutoExtractSection
-          compact
           extractMethod={props.extractMethod}
           extractCount={props.extractCount}
           chromaWeight={props.chromaWeight}
@@ -91,40 +88,12 @@ export default function ColorLabBody(props: ColorLabBodyProps) {
           onExtractRaw={props.onExtractRaw}
           onExtractActual={props.onExtractActual}
         />
-      ) : (
-        <div className={cn('color-lab-grid')}>
-          <AutoExtractSection
-            extractMethod={props.extractMethod}
-            extractCount={props.extractCount}
-            chromaWeight={props.chromaWeight}
-            contrastWeight={props.contrastWeight}
-            onMethodChange={props.onMethodChange}
-            onCountChange={props.onCountChange}
-            onChromaWeightChange={props.onChromaWeightChange}
-            onContrastWeightChange={props.onContrastWeightChange}
-            onExtractRaw={props.onExtractRaw}
-            onExtractActual={props.onExtractActual}
-          />
-          <ImportExportSection
-            canExport={props.colors.length > 0}
-            onImport={props.onImport}
-            onExport={props.onExport}
-          />
-        </div>
-      )}
-
-      {!isSidebar && (
-        <div className={cn('color-lab-grid')}>
-          <RampGeneratorSection
-            onInsert={props.onInsertGeneratedColors}
-            onError={props.onGeneratorError}
-          />
-          <HarmonySection
-            onInsert={props.onInsertGeneratedColors}
-            onError={props.onGeneratorError}
-          />
-        </div>
-      )}
+        <ImportExportSection
+          canExport={props.colors.length > 0}
+          onImport={props.onImport}
+          onExport={props.onExport}
+        />
+      </div>
 
       <input
         type="text"
@@ -139,7 +108,7 @@ export default function ColorLabBody(props: ColorLabBodyProps) {
         colors={props.colors}
         canAddColor={props.canAddColor}
         compact={isSidebar}
-        showSectionTitle={!isSidebar}
+        showSectionTitle
         selectedIndex={props.selectedColorIndex}
         onSelect={props.onSelectColor}
         onChange={props.onColorChange}
@@ -147,6 +116,17 @@ export default function ColorLabBody(props: ColorLabBodyProps) {
         onAdd={props.onAddColor}
         onOpenPicker={props.onOpenPicker}
       />
+
+      <div className={cn('color-lab-stack')}>
+        <RampGeneratorSection
+          onInsert={props.onInsertGeneratedColors}
+          onError={props.onGeneratorError}
+        />
+        <HarmonySection
+          onInsert={props.onInsertGeneratedColors}
+          onError={props.onGeneratorError}
+        />
+      </div>
 
       <PaletteVolumeViewer
         colors={props.colors}
@@ -164,37 +144,12 @@ export default function ColorLabBody(props: ColorLabBodyProps) {
         </>
       )}
 
-      {isSidebar ? (
-        <div className={cn('color-lab-utility-grid')}>
-          <Tooltip label="Sort by brightness">
-            <button
-              type="button"
-              onClick={props.onSort}
-              className={cn('color-lab-button', 'color-lab-button-icon')}
-              aria-label="Sort by brightness"
-            >
-              <Icon name="sort" width={16} height={16} />
-            </button>
-          </Tooltip>
-          <Tooltip label="Auto interpolate">
-            <button
-              type="button"
-              disabled
-              className={cn('color-lab-button', 'color-lab-button-icon')}
-              aria-label="Auto interpolate"
-            >
-              <Icon name="auto-interpolate" width={16} height={16} />
-            </button>
-          </Tooltip>
-        </div>
-      ) : (
-        <ColorLabFooter
-          cancelLabel="Reset"
-          onSort={props.onSort}
-          onCancel={props.onReset}
-          onApply={props.onApply}
-        />
-      )}
+      <ColorLabFooter
+        cancelLabel="Reset"
+        onSort={props.onSort}
+        onCancel={props.onReset}
+        onApply={props.onApply}
+      />
     </div>
   );
 }

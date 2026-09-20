@@ -2,11 +2,11 @@ use std::sync::Arc;
 use tauri::{AppHandle, State};
 
 use crate::commands::AppState;
-use crate::services::FilterService;
 pub use crate::services::filter_service::{
     AddFilterRequest, FilterIdResponse, RemoveFilterRequest, ReorderFilterRequest,
     UpdateFilterRequest,
 };
+use crate::services::FilterService;
 
 #[tauri::command]
 pub fn add_filter(

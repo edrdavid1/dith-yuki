@@ -21,14 +21,13 @@ interface MenuBarProps {
   onSaveProjectAs: () => void;
   onExportPattern: () => void;
   onImportPattern: () => void;
-  onOpenColorLab: () => void;
   onOpenPreferences: () => void;
   onOpenHelp: () => void;
   onUndo?: () => void;
   onRedo?: () => void;
 }
 
-type MenuId = 'file' | 'edit' | 'presets' | 'colorlab' | 'preferences' | 'help';
+type MenuId = 'file' | 'edit' | 'presets' | 'preferences' | 'help';
 
 interface MenuItem {
   id: MenuId;
@@ -39,13 +38,12 @@ const MENU_ITEMS: MenuItem[] = [
   { id: 'file', label: 'File' },
   { id: 'edit', label: 'Edit' },
   { id: 'presets', label: 'Presets' },
-  { id: 'colorlab', label: 'Color Lab' },
   { id: 'preferences', label: 'Preferences' },
   { id: 'help', label: 'Help' },
 ];
 
 /** Top-level items that open a window directly (no dropdown). */
-const DIRECT_OPEN_MENUS: ReadonlySet<MenuId> = new Set(['colorlab', 'preferences', 'help']);
+const DIRECT_OPEN_MENUS: ReadonlySet<MenuId> = new Set(['preferences', 'help']);
 
 function MenuBar({
   hasDocument,
@@ -62,7 +60,6 @@ function MenuBar({
   onSaveProjectAs,
   onExportPattern,
   onImportPattern,
-  onOpenColorLab,
   onOpenPreferences,
   onOpenHelp,
   onUndo,
@@ -97,11 +94,6 @@ function MenuBar({
   }, [openMenu]);
 
   const handleMenuClick = useCallback((id: MenuId) => {
-    if (id === 'colorlab') {
-      onOpenColorLab();
-      setOpenMenu(null);
-      return;
-    }
     if (id === 'preferences') {
       onOpenPreferences();
       setOpenMenu(null);
@@ -113,7 +105,7 @@ function MenuBar({
       return;
     }
     setOpenMenu(prev => (prev === id ? null : id));
-  }, [onOpenColorLab, onOpenPreferences, onOpenHelp]);
+  }, [onOpenPreferences, onOpenHelp]);
 
   const handleMenuHover = useCallback((id: MenuId) => {
     // Only switch on hover if a dropdown is already open

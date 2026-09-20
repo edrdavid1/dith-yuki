@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import EffectSettingsPanel from '../EffectSettingsPanel';
 import type { LayerWithFilters } from '../EffectSettingsPanel';
@@ -9,6 +9,45 @@ import { StoreProvider, createTestStore } from '../../app/__tests__/testStore';
 // Mock listPalettes IPC call
 vi.mock('../../ipc/commands', () => ({
   listPalettes: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock('../../shared/ipc/registry', () => ({
+  EFFECT_CATEGORIES: ['dithering', 'glitch', 'color_adjust', 'stylize', 'palette'],
+  listAlgorithmsForCategory: vi.fn(async (category: string) => {
+    if (category === 'dithering') {
+      return [
+        {
+          id: 'floyd_steinberg',
+          display_name: 'Floyd–Steinberg',
+          category: 'dithering',
+          deprecated: false,
+        },
+        {
+          id: 'bayer_4x4',
+          display_name: 'Bayer 4×4',
+          category: 'dithering',
+          deprecated: false,
+        },
+      ];
+    }
+    return [];
+  }),
+  getAlgorithmSchema: vi.fn(async (id: string) => {
+    if (id === 'bayer_4x4' || id === 'floyd_steinberg' || id === 'palette_quantize') {
+      return [
+        {
+          type: 'slider',
+          key: 'levels',
+          label: 'Levels',
+          min: 2,
+          max: 256,
+          default: 4,
+          step: null,
+        },
+      ];
+    }
+    throw new Error(`unknown algorithm: ${id}`);
+  }),
 }));
 
 function renderPanel(ui: ReactElement) {
@@ -125,31 +164,51 @@ describe('EffectSettingsPanel', () => {
   });
 
   describe('Empty state', () => {
-    it('shows effect chooser when no layer selected', () => {
+    it('shows a single Dithering row instead of per-algorithm effects', async () => {
       render(<EffectSettingsPanel selectedLayer={null} onUpdateParams={onUpdateParams} />);
       expect(screen.getByText('Effect')).toBeInTheDocument();
-      // Should show the effect type options
-      expect(screen.getByText('Dithering')).toBeInTheDocument();
-      expect(screen.getByText('Glitching')).toBeInTheDocument();
-      expect(screen.getByText('Curves')).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByText('Dithering')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Floyd–Steinberg')).not.toBeInTheDocument();
+      expect(screen.queryByText('Bayer 4×4')).not.toBeInTheDocument();
       expect(screen.getByText('RGB channels')).toBeInTheDocument();
-      expect(screen.getByText('Adjust')).toBeInTheDocument();
-      // Should not have any sliders
       expect(screen.queryByRole('slider')).not.toBeInTheDocument();
     });
 
-    it('shows effect chooser when Image_Source_Layer is selected (no filters)', () => {
+    it('shows effect chooser when Image_Source_Layer is selected (no filters)', async () => {
       render(<EffectSettingsPanel selectedLayer={makeImageSourceLayer()} onUpdateParams={onUpdateParams} />);
       expect(screen.getByText('Effect')).toBeInTheDocument();
-      expect(screen.getByText('Dithering')).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByText('Dithering')).toBeInTheDocument();
+      });
       expect(screen.queryByRole('slider')).not.toBeInTheDocument();
     });
 
-    it('calls onSelectEffect when effect type is clicked', () => {
+    it('calls onSelectEffect when Dithering is clicked', async () => {
       const onSelectEffect = vi.fn();
-      render(<EffectSettingsPanel selectedLayer={null} onUpdateParams={onUpdateParams} onSelectEffect={onSelectEffect} />);
+      render(
+        <EffectSettingsPanel
+          selectedLayer={null}
+          onUpdateParams={onUpdateParams}
+          onSelectEffect={onSelectEffect}
+        />
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Dithering')).toBeInTheDocument();
+      });
       fireEvent.click(screen.getByText('Dithering'));
       expect(onSelectEffect).toHaveBeenCalledWith('Dithering');
+    });
+
+    it('calls onSelectEffect for the leftover RGB channels row', async () => {
+      const onSelectEffect = vi.fn();
+      render(<EffectSettingsPanel selectedLayer={null} onUpdateParams={onUpdateParams} onSelectEffect={onSelectEffect} />);
+      await waitFor(() => {
+        expect(screen.getByText('RGB channels')).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText('RGB channels'));
+      expect(onSelectEffect).toHaveBeenCalledWith('RGBChannels');
     });
   });
 
@@ -499,6 +558,42 @@ describe('EffectSettingsPanel', () => {
       fireEvent.click(imp);
       expect(onExportPattern).toHaveBeenCalledTimes(1);
       expect(onImportPattern).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('registry schema path', () => {
+    it('keeps dithering algorithms on DitherSettings (algorithm dropdown)', async () => {
+      renderPanel(
+        <EffectSettingsPanel
+          selectedLayer={{
+            id: 1,
+            name: 'Bayer',
+            filters: [
+              {
+                id: 'filter-1',
+                kind: 'DitherV2',
+                algorithm_id: 'bayer_4x4',
+                schema_version: 1,
+                params: {
+                  type: 'DitherV2',
+                  mode: 'bayer_4x4',
+                  levels: 4,
+                  threshold_scale: 1,
+                  pixel_size: 1,
+                  color_mode: 'rgb',
+                  palette_id: null,
+                },
+                enabled: true,
+                opacity: 1,
+                blend_mode: 'Normal',
+              } as FilterInfo,
+            ],
+          }}
+          onUpdateParams={onUpdateParams}
+        />
+      );
+      expect(screen.getByText('Algorithm')).toBeInTheDocument();
+      expect(screen.getByText('Bayer 4×4')).toBeInTheDocument();
     });
   });
 });

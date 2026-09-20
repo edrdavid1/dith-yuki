@@ -1,7 +1,6 @@
 import type { DockSide } from '../../types/panels';
 import type { FilterInfo, FilterKind } from '../../types';
-import type { EffectType } from '../../types/effects';
-import { EFFECT_TO_FILTER_KIND } from '../../types/effects';
+import { EFFECT_TO_FILTER_KIND, isDitheringAlgorithmId, type EffectType } from '../../types/effects';
 import Icon from '../../icons/iconRegistry';
 import Tooltip from '../../shared/ui/Tooltip';
 import SimpleBar from 'simplebar-react';
@@ -13,6 +12,10 @@ import RGBSettings from './editors/RGBSettings';
 import GlowSettings from './editors/GlowSettings';
 import CrtSettings from './editors/CrtSettings';
 import AdjustSettings from './editors/AdjustSettings';
+import AlgorithmSettingsPanel from './AlgorithmSettingsPanel';
+import { useAlgorithmCatalog } from './hooks/useAlgorithmCatalog';
+import { unwrapFilterParams } from '../../shared/unwrapFilterParams';
+import type { AlgorithmInfo, EffectCategory } from '../../shared/ipc/registry';
 import styles from './EffectSettingsPanel.module.css';
 import { bind } from '../../shared/ui/cn';
 const cn = bind(styles);
@@ -27,6 +30,7 @@ export interface EffectSettingsPanelProps {
   selectedLayer: LayerWithFilters | null;
   onUpdateParams: (layerId: number, filterId: string, params: Record<string, unknown>) => void;
   onSelectEffect?: (effectType: EffectType) => void;
+  onSelectAlgorithm?: (algorithmId: string) => void;
   onTitleBarMouseDown?: (e: React.MouseEvent) => void;
   dockSide?: DockSide;
   onMoveToSide?: (side: DockSide) => void;
@@ -69,15 +73,35 @@ function EffectIcon({ type }: { type: EffectType }) {
   }
 }
 
-const EFFECT_OPTIONS: { type: EffectType; label: string }[] = [
-  { type: 'Dithering', label: 'Dithering' },
-  { type: 'Glitching', label: 'Glitching' },
-  { type: 'Curves', label: 'Curves' },
+function CategoryIcon({ category }: { category: EffectCategory }) {
+  switch (category) {
+    case 'dithering':
+    case 'palette':
+      return <Icon name="effect.dithering" width={20} height={20} />;
+    case 'glitch':
+      return <Icon name="effect.glitching" width={20} height={20} />;
+    case 'color_adjust':
+      return <Icon name="effect.adjust" width={20} height={20} />;
+    case 'stylize':
+      return <Icon name="effect.crt" width={20} height={20} />;
+    default:
+      return null;
+  }
+}
+
+/** Levels is not in the Registry; keep it as a static chooser row. */
+const LEGACY_CHOOSER: { type: EffectType; label: string }[] = [
   { type: 'RGBChannels', label: 'RGB channels' },
-  { type: 'Glow', label: 'Glow' },
-  { type: 'CRT', label: 'CRT' },
-  { type: 'Adjust', label: 'Adjust' },
 ];
+
+/** Non-dither registry ids that still map to the legacy EffectType chooser/editors. */
+const ALGO_TO_EFFECT: Record<string, { type: EffectType; label: string }> = {
+  glitch: { type: 'Glitching', label: 'Glitching' },
+  curves: { type: 'Curves', label: 'Curves' },
+  glow: { type: 'Glow', label: 'Glow' },
+  crt: { type: 'CRT', label: 'CRT' },
+  adjust: { type: 'Adjust', label: 'Adjust' },
+};
 
 /**
  * Thin effect settings switcher — editors live in `features/effects/editors/*`.
@@ -86,6 +110,7 @@ export default function EffectSettingsPanel({
   selectedLayer,
   onUpdateParams,
   onSelectEffect,
+  onSelectAlgorithm,
   onTitleBarMouseDown,
   dockSide,
   onMoveToSide,
@@ -96,6 +121,7 @@ export default function EffectSettingsPanel({
   onExportPattern,
   onImportPattern,
 }: EffectSettingsPanelProps) {
+  const catalog = useAlgorithmCatalog();
   const canUsePattern = targetLayerId != null;
   const patternActions = (
     <div className={cn('pattern-actions')}>
@@ -140,7 +166,54 @@ export default function EffectSettingsPanel({
         <div className={cn("effect-settings-scroll")}>
           <SimpleBar style={{ height: '100%' }}>
             <div className={cn("effect-chooser-list")} role="listbox" aria-label="Choose effect type">
-              {EFFECT_OPTIONS.map((option) => (
+              {catalog == null && (
+                <div className={cn('effect-chooser-row-label')} role="status">Loading…</div>
+              )}
+              {catalog != null && catalog.some((a) => a.category === 'dithering') && (
+                <button
+                  type="button"
+                  className={cn("effect-chooser-row")}
+                  role="option"
+                  aria-selected={false}
+                  onClick={() => onSelectEffect?.('Dithering')}
+                >
+                  <div className={cn("effect-chooser-row-icon")}>
+                    <EffectIcon type="Dithering" />
+                  </div>
+                  <div className={cn("effect-chooser-row-label")}>
+                    <span>Dithering</span>
+                  </div>
+                </button>
+              )}
+              {catalog?.filter((algo: AlgorithmInfo) => algo.category !== 'dithering').map((algo) => {
+                const mapped = ALGO_TO_EFFECT[algo.id];
+                return (
+                  <button
+                    key={algo.id}
+                    className={cn("effect-chooser-row")}
+                    role="option"
+                    aria-selected={false}
+                    onClick={() =>
+                      mapped
+                        ? onSelectEffect?.(mapped.type)
+                        : onSelectAlgorithm?.(algo.id)
+                    }
+                    type="button"
+                  >
+                    <div className={cn("effect-chooser-row-icon")}>
+                      {mapped ? (
+                        <EffectIcon type={mapped.type} />
+                      ) : (
+                        <CategoryIcon category={algo.category} />
+                      )}
+                    </div>
+                    <div className={cn("effect-chooser-row-label")}>
+                      <span>{mapped?.label ?? algo.display_name}</span>
+                    </div>
+                  </button>
+                );
+              })}
+              {LEGACY_CHOOSER.map((option) => (
                 <button
                   key={option.type}
                   className={cn("effect-chooser-row")}
@@ -173,10 +246,25 @@ export default function EffectSettingsPanel({
   };
 
   const renderSettings = () => {
-    const params = filter.params as unknown as Record<string, unknown>;
+    const params = unwrapFilterParams(filter.params as unknown as Record<string, unknown>);
+    const dithering =
+      effectType === 'Dithering' ||
+      filter.kind === 'DitherV2' ||
+      filter.kind === 'Dither' ||
+      (filter.algorithm_id != null && isDitheringAlgorithmId(filter.algorithm_id));
+    if (dithering) {
+      return <DitherSettings params={params} onUpdate={handleUpdate} />;
+    }
+    if (filter.algorithm_id) {
+      return (
+        <AlgorithmSettingsPanel
+          algorithmId={filter.algorithm_id}
+          values={params}
+          onChange={handleUpdate}
+        />
+      );
+    }
     switch (effectType) {
-      case 'Dithering':
-        return <DitherSettings params={params} onUpdate={handleUpdate} />;
       case 'Glitching':
         return <GlitchSettings params={params} onUpdate={handleUpdate} />;
       case 'Curves':
@@ -198,7 +286,12 @@ export default function EffectSettingsPanel({
     <div className={cn("effect-settings-panel")}>
       {!hideChrome && (
         <WindowTitlebar
-          title={effectType || 'Dithering'}
+          title={
+            effectType === 'Dithering' ||
+            (filter.algorithm_id != null && isDitheringAlgorithmId(filter.algorithm_id))
+              ? 'Dithering'
+              : (filter.algorithm_id ?? effectType ?? 'Dithering')
+          }
           onMouseDown={onTitleBarMouseDown}
           dockSide={dockSide}
           onMoveToSide={onMoveToSide}

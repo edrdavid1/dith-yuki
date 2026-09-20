@@ -1,0 +1,8 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "kind": "PaletteQuantize",
+  "params": {"PaletteQuantize": {"palette_id": 1}},
+  "enabled": true,
+  "algorithm_id": "palette_quantize",
+  "schema_version": 1
+}

@@ -65,10 +65,7 @@ fn arb_pixel_size() -> impl Strategy<Value = u8> {
 
 /// Generate a color mode.
 fn arb_color_mode() -> impl Strategy<Value = DitherColorMode> {
-    prop_oneof![
-        Just(DitherColorMode::Rgb),
-        Just(DitherColorMode::Grayscale),
-    ]
+    prop_oneof![Just(DitherColorMode::Rgb), Just(DitherColorMode::Grayscale),]
 }
 
 /// Generate a tile coordinate component.

@@ -1,11 +1,13 @@
 use std::sync::Arc;
 use tauri::AppHandle;
 
-use engine_project::filter::{DitherMode, DiffusionKernel};
+use engine_project::filter::{DiffusionKernel, DitherMode};
 use engine_project::filters::curves::CurveChannel;
 use engine_project::filters::glitch::GlitchType;
 use engine_project::types::FilterInstanceId;
-use engine_project::{FilterInstance, FilterKind, FilterParams};
+use engine_project::{
+    filter_kind_for_algorithm_id, FilterInstance, FilterKind, FilterParams, PlaceholderParams,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::commands::{
@@ -21,6 +23,8 @@ pub struct AddFilterRequest {
     pub layer_id: u32,
     pub kind: String,
     pub params: serde_json::Value,
+    #[serde(default)]
+    pub algorithm_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -116,20 +120,43 @@ impl FilterService {
             "Glow" => FilterKind::Glow,
             "Crt" => FilterKind::Crt,
             "Adjust" => FilterKind::Adjust,
-            _ => return Err(AppError::InvalidOperation("Invalid filter kind".to_string())),
+            other => filter_kind_for_algorithm_id(other).ok_or_else(|| {
+                AppError::InvalidOperation(format!("Invalid filter kind: {other}"))
+            })?,
         };
 
         let params = match req.kind.as_str() {
             "DitherV2" => {
                 let dither_params: engine_project::filter::DitherParamsV2 =
-                    serde_json::from_value(req.params.clone())
-                        .map_err(|e| AppError::InvalidOperation(format!("Invalid DitherV2 params: {}", e)))?;
-                dither_params.validate().map_err(|e| AppError::InvalidOperation(format!("{}", e)))?;
+                    serde_json::from_value(req.params.clone()).map_err(|e| {
+                        AppError::InvalidOperation(format!("Invalid DitherV2 params: {}", e))
+                    })?;
+                dither_params
+                    .validate()
+                    .map_err(|e| AppError::InvalidOperation(format!("{}", e)))?;
+                FilterParams::DitherV2(dither_params)
+            }
+            algo if filter_kind_for_algorithm_id(algo) == Some(FilterKind::Dither) => {
+                let mut dither_params: engine_project::filter::DitherParamsV2 =
+                    serde_json::from_value(req.params.clone()).unwrap_or_default();
+                if let Ok(mode) =
+                    serde_json::from_value(serde_json::Value::String(algo.to_string()))
+                {
+                    dither_params.mode = mode;
+                }
+                dither_params
+                    .validate()
+                    .map_err(|e| AppError::InvalidOperation(format!("{}", e)))?;
                 FilterParams::DitherV2(dither_params)
             }
             _ => match kind {
                 FilterKind::Curves => {
-                    let channel = match req.params.get("channel").and_then(|v| v.as_str()).unwrap_or("All") {
+                    let channel = match req
+                        .params
+                        .get("channel")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("All")
+                    {
                         "Red" => CurveChannel::Red,
                         "Green" => CurveChannel::Green,
                         "Blue" => CurveChannel::Blue,
@@ -150,20 +177,58 @@ impl FilterService {
                                 None
                             })
                             .collect();
-                        FilterParams::Curves { curve: curve_vec, channel }
+                        FilterParams::Curves {
+                            curve: curve_vec,
+                            channel,
+                        }
                     } else {
-                        FilterParams::Curves { curve: vec![(0.0, 0.0), (1.0, 1.0)], channel }
+                        FilterParams::Curves {
+                            curve: vec![(0.0, 0.0), (1.0, 1.0)],
+                            channel,
+                        }
                     }
                 }
                 FilterKind::Levels => {
-                    let input_black = req.params.get("input_black").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-                    let input_white = req.params.get("input_white").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
-                    let gamma = req.params.get("gamma").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
-                    let output_black = req.params.get("output_black").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-                    let output_white = req.params.get("output_white").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
-                    let channel_r = req.params.get("channel_r").and_then(|v| v.as_bool()).unwrap_or(true);
-                    let channel_g = req.params.get("channel_g").and_then(|v| v.as_bool()).unwrap_or(true);
-                    let channel_b = req.params.get("channel_b").and_then(|v| v.as_bool()).unwrap_or(true);
+                    let input_black = req
+                        .params
+                        .get("input_black")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as f32;
+                    let input_white = req
+                        .params
+                        .get("input_white")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(1.0) as f32;
+                    let gamma = req
+                        .params
+                        .get("gamma")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(1.0) as f32;
+                    let output_black = req
+                        .params
+                        .get("output_black")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as f32;
+                    let output_white = req
+                        .params
+                        .get("output_white")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(1.0) as f32;
+                    let channel_r = req
+                        .params
+                        .get("channel_r")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
+                    let channel_g = req
+                        .params
+                        .get("channel_g")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
+                    let channel_b = req
+                        .params
+                        .get("channel_b")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
                     FilterParams::Levels {
                         input_black,
                         input_white,
@@ -176,24 +241,49 @@ impl FilterService {
                     }
                 }
                 FilterKind::Dither => {
-                    let mode = match req.params.get("mode").and_then(|v| v.as_str()).unwrap_or("ErrorDiffusion") {
+                    let mode = match req
+                        .params
+                        .get("mode")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("ErrorDiffusion")
+                    {
                         "Bayer" => {
-                            let matrix_size = req.params.get("matrix_size").and_then(|v| v.as_u64()).unwrap_or(4) as u8;
+                            let matrix_size = req
+                                .params
+                                .get("matrix_size")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(4) as u8;
                             DitherMode::Bayer { matrix_size }
                         }
                         "ThresholdMap" => {
-                            let path = req.params.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let path = req
+                                .params
+                                .get("path")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
                             DitherMode::ThresholdMap { path }
                         }
                         _ => {
-                            let name = req.params.get("kernel").and_then(|v| v.as_str()).unwrap_or("FloydSteinberg");
-                            let kernel = DiffusionKernel::from_ui_name(name).unwrap_or(DiffusionKernel::FloydSteinberg);
+                            let name = req
+                                .params
+                                .get("kernel")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("FloydSteinberg");
+                            let kernel = DiffusionKernel::from_ui_name(name)
+                                .unwrap_or(DiffusionKernel::FloydSteinberg);
                             DitherMode::ErrorDiffusion { kernel }
                         }
                     };
-                    let color_depth = req.params.get("color_depth").and_then(|v| v.as_u64()).unwrap_or(4) as u8;
+                    let color_depth = req
+                        .params
+                        .get("color_depth")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(4) as u8;
                     if !(1..=8).contains(&color_depth) {
-                        return Err(AppError::InvalidOperation("Color depth must be 1-8 bits".to_string()));
+                        return Err(AppError::InvalidOperation(
+                            "Color depth must be 1-8 bits".to_string(),
+                        ));
                     }
                     FilterParams::Dither { mode, color_depth }
                 }
@@ -202,43 +292,120 @@ impl FilterService {
                         .params
                         .get("palette_id")
                         .and_then(|v| v.as_u64())
-                        .ok_or_else(|| AppError::InvalidOperation("palette_id is required for PaletteQuantize".to_string()))? as u32;
-                    let diffusion = req.params.get("diffusion").and_then(|v| v.as_str()).map(|s| {
-                        DiffusionKernel::from_ui_name(s).unwrap_or(DiffusionKernel::FloydSteinberg)
-                    });
+                        .ok_or_else(|| {
+                            AppError::InvalidOperation(
+                                "palette_id is required for PaletteQuantize".to_string(),
+                            )
+                        })? as u32;
+                    let diffusion = req
+                        .params
+                        .get("diffusion")
+                        .and_then(|v| v.as_str())
+                        .map(|s| {
+                            DiffusionKernel::from_ui_name(s)
+                                .unwrap_or(DiffusionKernel::FloydSteinberg)
+                        });
                     FilterParams::PaletteQuantize {
                         palette_id: engine_project::PaletteId::new(palette_id),
                         diffusion,
                     }
                 }
                 FilterKind::Glitch => {
-                    let glitch_type = match req.params.get("glitch_type").and_then(|v| v.as_str()).unwrap_or("RGBShift") {
+                    let glitch_type = match req
+                        .params
+                        .get("glitch_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("RGBShift")
+                    {
                         "BlockDisplace" => GlitchType::BlockDisplace,
                         _ => GlitchType::RGBShift,
                     };
-                    let intensity = req.params.get("intensity").and_then(|v| v.as_f64()).unwrap_or(0.5) as f32;
-                    let seed = req.params.get("seed").and_then(|v| v.as_u64()).unwrap_or(42);
-                    FilterParams::Glitch { glitch_type, intensity, seed }
+                    let intensity = req
+                        .params
+                        .get("intensity")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.5) as f32;
+                    let seed = req
+                        .params
+                        .get("seed")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(42);
+                    FilterParams::Glitch {
+                        glitch_type,
+                        intensity,
+                        seed,
+                    }
                 }
                 FilterKind::Glow => {
-                    let radius = req.params.get("radius").and_then(|v| v.as_f64()).unwrap_or(2.0) as f32;
-                    let intensity = req.params.get("intensity").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
-                    let threshold = req.params.get("threshold").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-                    FilterParams::Glow { radius, intensity, threshold }
+                    let radius = req
+                        .params
+                        .get("radius")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(2.0) as f32;
+                    let intensity = req
+                        .params
+                        .get("intensity")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(1.0) as f32;
+                    let threshold = req
+                        .params
+                        .get("threshold")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as f32;
+                    FilterParams::Glow {
+                        radius,
+                        intensity,
+                        threshold,
+                    }
                 }
                 FilterKind::Crt => {
-                    let period = req.params.get("period").and_then(|v| v.as_u64()).unwrap_or(2) as u8;
-                    let strength = req.params.get("strength").and_then(|v| v.as_f64()).unwrap_or(0.5) as f32;
-                    let mask_strength = req.params.get("mask_strength").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-                    FilterParams::Crt { period, strength, mask_strength }
+                    let period = req
+                        .params
+                        .get("period")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(2) as u8;
+                    let strength = req
+                        .params
+                        .get("strength")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.5) as f32;
+                    let mask_strength = req
+                        .params
+                        .get("mask_strength")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as f32;
+                    FilterParams::Crt {
+                        period,
+                        strength,
+                        mask_strength,
+                    }
                 }
-                FilterKind::Adjust => parse_adjust_params(&req.params, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
-                FilterKind::Placeholder => FilterParams::Placeholder("unknown".to_string()),
+                FilterKind::Adjust => {
+                    parse_adjust_params(&req.params, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+                }
+                FilterKind::Placeholder => FilterParams::Placeholder(PlaceholderParams {
+                    label: "unknown".to_string(),
+                    raw_params: None,
+                }),
             },
         };
 
-        let filter = FilterInstance::new(kind, params);
-        filter.validate().map_err(|e| AppError::InvalidOperation(format!("{}", e)))?;
+        let mut filter = FilterInstance::new(kind, params);
+        let resolved_id = req.algorithm_id.clone().or_else(|| {
+            engine_project::algorithms::builtin_registry()
+                .get_by_str(&req.kind)
+                .map(|_| req.kind.clone())
+        });
+        if let Some(id) = resolved_id.as_deref() {
+            let algo = engine_project::algorithms::builtin_registry()
+                .get_by_str(id)
+                .ok_or_else(|| AppError::InvalidOperation(format!("Unknown algorithm: {id}")))?;
+            filter.algorithm_id = Some(id.to_string());
+            filter.schema_version = Some(algo.schema_version());
+        }
+        filter
+            .validate()
+            .map_err(|e| AppError::InvalidOperation(format!("{}", e)))?;
 
         let filter_id = filter.id.to_string();
 
@@ -254,45 +421,69 @@ impl FilterService {
                 self.state.tiles.block_representatives.clear_dithered();
             }
 
-            self.state.require_session(doc_id)?.document_handle.mutate(|doc| {
-                fn find_and_add_filter(nodes: &mut Vec<engine_project::LayerNode>, layer_id: u32, filter: FilterInstance) -> bool {
-                    for node in nodes.iter_mut() {
-                        match node {
-                            engine_project::LayerNode::Leaf(layer) => {
-                                if layer.id.0 == layer_id {
-                                    layer.add_filter_instance(filter);
-                                    return true;
+            self.state
+                .require_session(doc_id)?
+                .document_handle
+                .mutate(|doc| {
+                    fn find_and_add_filter(
+                        nodes: &mut Vec<engine_project::LayerNode>,
+                        layer_id: u32,
+                        filter: FilterInstance,
+                    ) -> bool {
+                        for node in nodes.iter_mut() {
+                            match node {
+                                engine_project::LayerNode::Leaf(layer) => {
+                                    if layer.id.0 == layer_id {
+                                        layer.add_filter_instance(filter);
+                                        return true;
+                                    }
                                 }
-                            }
-                            engine_project::LayerNode::Group(group) => {
-                                if find_and_add_filter(&mut group.children, layer_id, filter.clone()) {
-                                    return true;
+                                engine_project::LayerNode::Group(group) => {
+                                    if find_and_add_filter(
+                                        &mut group.children,
+                                        layer_id,
+                                        filter.clone(),
+                                    ) {
+                                        return true;
+                                    }
                                 }
                             }
                         }
+                        false
                     }
-                    false
-                }
 
-                found = find_and_add_filter(&mut doc.root, layer_id, filter);
-                if found {
-                    doc.increment_generation();
-                }
-            });
+                    found = find_and_add_filter(&mut doc.root, layer_id, filter);
+                    if found {
+                        doc.increment_generation();
+                    }
+                });
 
             if !found {
                 return Err(format!("Layer {} not found", layer_id));
             }
 
             {
-                let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+                let snapshot = self
+                    .state
+                    .require_session(doc_id)?
+                    .document_handle
+                    .snapshot();
                 snapshot.generations.increment_layer_gen(layer_id);
             }
 
-            let doc = self.state.require_session(doc_id)?.document_handle.snapshot().id.0;
+            let doc = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot()
+                .id
+                .0;
             engine_tiles::invalidation::invalidate(
                 &self.state.tiles.tile_cache,
-                engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { doc, layer: layer_id },
+                engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
+                    doc,
+                    layer: layer_id,
+                },
             );
 
             schedule_dirty_viewport_tiles(&self.state);
@@ -312,46 +503,77 @@ impl FilterService {
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
             let mut found = false;
 
-            self.state.require_session(doc_id)?.document_handle.mutate(|doc| {
-                fn find_and_remove_filter(nodes: &mut Vec<engine_project::LayerNode>, layer_id: u32, filter_id: &str) -> bool {
-                    for node in nodes.iter_mut() {
-                        match node {
-                            engine_project::LayerNode::Leaf(layer) => {
-                                if layer.id.0 == layer_id {
-                                    if let Some(idx) = layer.filters.iter().position(|f| f.id.to_string() == filter_id) {
-                                        layer.filters.remove(idx);
+            self.state
+                .require_session(doc_id)?
+                .document_handle
+                .mutate(|doc| {
+                    fn find_and_remove_filter(
+                        nodes: &mut Vec<engine_project::LayerNode>,
+                        layer_id: u32,
+                        filter_id: &str,
+                    ) -> bool {
+                        for node in nodes.iter_mut() {
+                            match node {
+                                engine_project::LayerNode::Leaf(layer) => {
+                                    if layer.id.0 == layer_id {
+                                        if let Some(idx) = layer
+                                            .filters
+                                            .iter()
+                                            .position(|f| f.id.to_string() == filter_id)
+                                        {
+                                            layer.filters.remove(idx);
+                                            return true;
+                                        }
+                                        return false;
+                                    }
+                                }
+                                engine_project::LayerNode::Group(group) => {
+                                    if find_and_remove_filter(
+                                        &mut group.children,
+                                        layer_id,
+                                        filter_id,
+                                    ) {
                                         return true;
                                     }
-                                    return false;
-                                }
-                            }
-                            engine_project::LayerNode::Group(group) => {
-                                if find_and_remove_filter(&mut group.children, layer_id, filter_id) {
-                                    return true;
                                 }
                             }
                         }
+                        false
                     }
-                    false
-                }
 
-                found = find_and_remove_filter(&mut doc.root, req.layer_id, &req.filter_id);
-                if found {
-                    doc.increment_generation();
-                }
-            });
+                    found = find_and_remove_filter(&mut doc.root, req.layer_id, &req.filter_id);
+                    if found {
+                        doc.increment_generation();
+                    }
+                });
 
             if !found {
-                return Err(format!("Filter '{}' not found on layer {}", req.filter_id, req.layer_id));
+                return Err(format!(
+                    "Filter '{}' not found on layer {}",
+                    req.filter_id, req.layer_id
+                ));
             }
 
             request_preview_refresh(
                 &self.state,
                 req.layer_id,
-                layer_needs_dither_cache_reset(&self.state.require_session(doc_id)?.document_handle.snapshot().root, req.layer_id),
+                layer_needs_dither_cache_reset(
+                    &self
+                        .state
+                        .require_session(doc_id)?
+                        .document_handle
+                        .snapshot()
+                        .root,
+                    req.layer_id,
+                ),
             );
 
-            emit_document_changed(app_handle, "filter_removed", Some(req.layer_id), Some(doc_id));
+            emit_document_changed(
+                app_handle,
+                "filter_removed",
+                Some(req.layer_id),
+                Some(doc_id),
+            );
             Ok(())
         })
         .map_err(AppError::Generic)
@@ -366,51 +588,89 @@ impl FilterService {
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
             let mut success = false;
 
-            self.state.require_session(doc_id)?.document_handle.mutate(|doc| {
-                fn find_and_reorder(nodes: &mut Vec<engine_project::LayerNode>, layer_id: u32, filter_id: &str, new_index: usize) -> bool {
-                    for node in nodes.iter_mut() {
-                        match node {
-                            engine_project::LayerNode::Leaf(layer) => {
-                                if layer.id.0 == layer_id {
-                                    let current_idx = layer.filters.iter().position(|f| f.id.to_string() == filter_id);
-                                    if let Some(idx) = current_idx {
-                                        let clamped_new = new_index.min(layer.filters.len() - 1);
-                                        if idx != clamped_new {
-                                            let filter = layer.filters.remove(idx);
-                                            layer.filters.insert(clamped_new, filter);
+            self.state
+                .require_session(doc_id)?
+                .document_handle
+                .mutate(|doc| {
+                    fn find_and_reorder(
+                        nodes: &mut Vec<engine_project::LayerNode>,
+                        layer_id: u32,
+                        filter_id: &str,
+                        new_index: usize,
+                    ) -> bool {
+                        for node in nodes.iter_mut() {
+                            match node {
+                                engine_project::LayerNode::Leaf(layer) => {
+                                    if layer.id.0 == layer_id {
+                                        let current_idx = layer
+                                            .filters
+                                            .iter()
+                                            .position(|f| f.id.to_string() == filter_id);
+                                        if let Some(idx) = current_idx {
+                                            let clamped_new =
+                                                new_index.min(layer.filters.len() - 1);
+                                            if idx != clamped_new {
+                                                let filter = layer.filters.remove(idx);
+                                                layer.filters.insert(clamped_new, filter);
+                                            }
+                                            return true;
                                         }
+                                        return false;
+                                    }
+                                }
+                                engine_project::LayerNode::Group(group) => {
+                                    if find_and_reorder(
+                                        &mut group.children,
+                                        layer_id,
+                                        filter_id,
+                                        new_index,
+                                    ) {
                                         return true;
                                     }
-                                    return false;
-                                }
-                            }
-                            engine_project::LayerNode::Group(group) => {
-                                if find_and_reorder(&mut group.children, layer_id, filter_id, new_index) {
-                                    return true;
                                 }
                             }
                         }
+                        false
                     }
-                    false
-                }
 
-                success = find_and_reorder(&mut doc.root, req.layer_id, &req.filter_id, req.new_index);
-                if success {
-                    doc.increment_generation();
-                }
-            });
+                    success = find_and_reorder(
+                        &mut doc.root,
+                        req.layer_id,
+                        &req.filter_id,
+                        req.new_index,
+                    );
+                    if success {
+                        doc.increment_generation();
+                    }
+                });
 
             if !success {
-                return Err(format!("Filter '{}' not found on layer {}", req.filter_id, req.layer_id));
+                return Err(format!(
+                    "Filter '{}' not found on layer {}",
+                    req.filter_id, req.layer_id
+                ));
             }
 
             request_preview_refresh(
                 &self.state,
                 req.layer_id,
-                layer_needs_dither_cache_reset(&self.state.require_session(doc_id)?.document_handle.snapshot().root, req.layer_id),
+                layer_needs_dither_cache_reset(
+                    &self
+                        .state
+                        .require_session(doc_id)?
+                        .document_handle
+                        .snapshot()
+                        .root,
+                    req.layer_id,
+                ),
             );
 
-            emit_document_changed(app_handle, "filter_reordered", Some(req.layer_id), Some(doc_id));
+            emit_document_changed(
+                app_handle,
+                "filter_reordered",
+                Some(req.layer_id),
+                Some(doc_id),
+            );
             Ok(())
         })
         .map_err(AppError::Generic)
@@ -427,7 +687,11 @@ impl FilterService {
             .map_err(|e| AppError::InvalidOperation(format!("Invalid filter_id: {}", e)))?;
         let filter_id = FilterInstanceId(uuid);
 
-        let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+        let snapshot = self
+            .state
+            .require_session(doc_id)?
+            .document_handle
+            .snapshot();
         let (filter_kind, is_dither_v2, existing_params) = {
             fn find_filter_kind(
                 nodes: &[engine_project::LayerNode],
@@ -439,13 +703,20 @@ impl FilterService {
                         engine_project::LayerNode::Leaf(layer) => {
                             if layer.id.0 == layer_id {
                                 if let Some(filter) = layer.find_filter(filter_id) {
-                                    let is_dither_v2 = matches!(&filter.params, FilterParams::DitherV2(_));
-                                    return Some((filter.kind, is_dither_v2, filter.params.clone()));
+                                    let is_dither_v2 =
+                                        matches!(&filter.params, FilterParams::DitherV2(_));
+                                    return Some((
+                                        filter.kind,
+                                        is_dither_v2,
+                                        filter.params.clone(),
+                                    ));
                                 }
                             }
                         }
                         engine_project::LayerNode::Group(group) => {
-                            if let Some(result) = find_filter_kind(&group.children, layer_id, filter_id) {
+                            if let Some(result) =
+                                find_filter_kind(&group.children, layer_id, filter_id)
+                            {
                                 return Some(result);
                             }
                         }
@@ -453,26 +724,45 @@ impl FilterService {
                 }
                 None
             }
-            let (kind, is_dither_v2, params) = find_filter_kind(&snapshot.root, req.layer_id, filter_id)
-                .ok_or_else(|| AppError::InvalidOperation(format!("Filter {} not found on layer {}", req.filter_id, req.layer_id)))?;
+            let (kind, is_dither_v2, params) =
+                find_filter_kind(&snapshot.root, req.layer_id, filter_id).ok_or_else(|| {
+                    AppError::InvalidOperation(format!(
+                        "Filter {} not found on layer {}",
+                        req.filter_id, req.layer_id
+                    ))
+                })?;
             (kind, is_dither_v2, params)
         };
         drop(snapshot);
 
-        let params_empty = req.params.as_object().map(|o| o.is_empty()).unwrap_or(false);
+        let params_empty = req
+            .params
+            .as_object()
+            .map(|o| o.is_empty())
+            .unwrap_or(false);
 
         let new_params = if params_empty {
             existing_params
-        } else if is_dither_v2 || (filter_kind == FilterKind::Dither && req.params.get("levels").is_some()) {
+        } else if is_dither_v2
+            || (filter_kind == FilterKind::Dither && req.params.get("levels").is_some())
+        {
             let dither_params: engine_project::filter::DitherParamsV2 =
-                serde_json::from_value(req.params.clone())
-                    .map_err(|e| AppError::InvalidOperation(format!("Invalid DitherV2 params: {}", e)))?;
-            dither_params.validate().map_err(|e| AppError::InvalidOperation(format!("{}", e)))?;
+                serde_json::from_value(req.params.clone()).map_err(|e| {
+                    AppError::InvalidOperation(format!("Invalid DitherV2 params: {}", e))
+                })?;
+            dither_params
+                .validate()
+                .map_err(|e| AppError::InvalidOperation(format!("{}", e)))?;
             FilterParams::DitherV2(dither_params)
         } else {
             match filter_kind {
                 FilterKind::Curves => {
-                    let channel = match req.params.get("channel").and_then(|v| v.as_str()).unwrap_or("All") {
+                    let channel = match req
+                        .params
+                        .get("channel")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("All")
+                    {
                         "Red" => CurveChannel::Red,
                         "Green" => CurveChannel::Green,
                         "Blue" => CurveChannel::Blue,
@@ -493,20 +783,58 @@ impl FilterService {
                                 None
                             })
                             .collect();
-                        FilterParams::Curves { curve: curve_vec, channel }
+                        FilterParams::Curves {
+                            curve: curve_vec,
+                            channel,
+                        }
                     } else {
-                        FilterParams::Curves { curve: vec![(0.0, 0.0), (1.0, 1.0)], channel }
+                        FilterParams::Curves {
+                            curve: vec![(0.0, 0.0), (1.0, 1.0)],
+                            channel,
+                        }
                     }
                 }
                 FilterKind::Levels => {
-                    let input_black = req.params.get("input_black").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-                    let input_white = req.params.get("input_white").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
-                    let gamma = req.params.get("gamma").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
-                    let output_black = req.params.get("output_black").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-                    let output_white = req.params.get("output_white").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
-                    let channel_r = req.params.get("channel_r").and_then(|v| v.as_bool()).unwrap_or(true);
-                    let channel_g = req.params.get("channel_g").and_then(|v| v.as_bool()).unwrap_or(true);
-                    let channel_b = req.params.get("channel_b").and_then(|v| v.as_bool()).unwrap_or(true);
+                    let input_black = req
+                        .params
+                        .get("input_black")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as f32;
+                    let input_white = req
+                        .params
+                        .get("input_white")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(1.0) as f32;
+                    let gamma = req
+                        .params
+                        .get("gamma")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(1.0) as f32;
+                    let output_black = req
+                        .params
+                        .get("output_black")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as f32;
+                    let output_white = req
+                        .params
+                        .get("output_white")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(1.0) as f32;
+                    let channel_r = req
+                        .params
+                        .get("channel_r")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
+                    let channel_g = req
+                        .params
+                        .get("channel_g")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
+                    let channel_b = req
+                        .params
+                        .get("channel_b")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
                     FilterParams::Levels {
                         input_black,
                         input_white,
@@ -519,54 +847,135 @@ impl FilterService {
                     }
                 }
                 FilterKind::Dither => {
-                    let mode = match req.params.get("mode").and_then(|v| v.as_str()).unwrap_or("ErrorDiffusion") {
+                    let mode = match req
+                        .params
+                        .get("mode")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("ErrorDiffusion")
+                    {
                         "Bayer" => {
-                            let matrix_size = req.params.get("matrix_size").and_then(|v| v.as_u64()).unwrap_or(4) as u8;
+                            let matrix_size = req
+                                .params
+                                .get("matrix_size")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(4) as u8;
                             DitherMode::Bayer { matrix_size }
                         }
                         "ThresholdMap" => {
-                            let path = req.params.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let path = req
+                                .params
+                                .get("path")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
                             DitherMode::ThresholdMap { path }
                         }
                         _ => {
-                            let name = req.params.get("kernel").and_then(|v| v.as_str()).unwrap_or("FloydSteinberg");
-                            let kernel = DiffusionKernel::from_ui_name(name).unwrap_or(DiffusionKernel::FloydSteinberg);
+                            let name = req
+                                .params
+                                .get("kernel")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("FloydSteinberg");
+                            let kernel = DiffusionKernel::from_ui_name(name)
+                                .unwrap_or(DiffusionKernel::FloydSteinberg);
                             DitherMode::ErrorDiffusion { kernel }
                         }
                     };
-                    let color_depth = req.params.get("color_depth").and_then(|v| v.as_u64()).unwrap_or(4) as u8;
+                    let color_depth = req
+                        .params
+                        .get("color_depth")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(4) as u8;
                     FilterParams::Dither { mode, color_depth }
                 }
                 FilterKind::PaletteQuantize => {
-                    let palette_id = req.params.get("palette_id").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                    let diffusion = req.params.get("diffusion").and_then(|v| v.as_str()).map(|s| {
-                        DiffusionKernel::from_ui_name(s).unwrap_or(DiffusionKernel::FloydSteinberg)
-                    });
+                    let palette_id = req
+                        .params
+                        .get("palette_id")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32;
+                    let diffusion = req
+                        .params
+                        .get("diffusion")
+                        .and_then(|v| v.as_str())
+                        .map(|s| {
+                            DiffusionKernel::from_ui_name(s)
+                                .unwrap_or(DiffusionKernel::FloydSteinberg)
+                        });
                     FilterParams::PaletteQuantize {
                         palette_id: engine_project::PaletteId::new(palette_id),
                         diffusion,
                     }
                 }
                 FilterKind::Glitch => {
-                    let glitch_type = match req.params.get("glitch_type").and_then(|v| v.as_str()).unwrap_or("RGBShift") {
+                    let glitch_type = match req
+                        .params
+                        .get("glitch_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("RGBShift")
+                    {
                         "BlockDisplace" => GlitchType::BlockDisplace,
                         _ => GlitchType::RGBShift,
                     };
-                    let intensity = req.params.get("intensity").and_then(|v| v.as_f64()).unwrap_or(0.5) as f32;
-                    let seed = req.params.get("seed").and_then(|v| v.as_u64()).unwrap_or(42);
-                    FilterParams::Glitch { glitch_type, intensity, seed }
+                    let intensity = req
+                        .params
+                        .get("intensity")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.5) as f32;
+                    let seed = req
+                        .params
+                        .get("seed")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(42);
+                    FilterParams::Glitch {
+                        glitch_type,
+                        intensity,
+                        seed,
+                    }
                 }
                 FilterKind::Glow => {
-                    let radius = req.params.get("radius").and_then(|v| v.as_f64()).unwrap_or(2.0) as f32;
-                    let intensity = req.params.get("intensity").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
-                    let threshold = req.params.get("threshold").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-                    FilterParams::Glow { radius, intensity, threshold }
+                    let radius = req
+                        .params
+                        .get("radius")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(2.0) as f32;
+                    let intensity = req
+                        .params
+                        .get("intensity")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(1.0) as f32;
+                    let threshold = req
+                        .params
+                        .get("threshold")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as f32;
+                    FilterParams::Glow {
+                        radius,
+                        intensity,
+                        threshold,
+                    }
                 }
                 FilterKind::Crt => {
-                    let period = req.params.get("period").and_then(|v| v.as_u64()).unwrap_or(2) as u8;
-                    let strength = req.params.get("strength").and_then(|v| v.as_f64()).unwrap_or(0.5) as f32;
-                    let mask_strength = req.params.get("mask_strength").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-                    FilterParams::Crt { period, strength, mask_strength }
+                    let period = req
+                        .params
+                        .get("period")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(2) as u8;
+                    let strength = req
+                        .params
+                        .get("strength")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.5) as f32;
+                    let mask_strength = req
+                        .params
+                        .get("mask_strength")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as f32;
+                    FilterParams::Crt {
+                        period,
+                        strength,
+                        mask_strength,
+                    }
                 }
                 FilterKind::Adjust => {
                     let (ec, eb, es, ebl, esh, en) = match existing_params {
@@ -582,7 +991,10 @@ impl FilterService {
                     };
                     parse_adjust_params(&req.params, ec, eb, es, ebl, esh, en)
                 }
-                FilterKind::Placeholder => FilterParams::Placeholder("unknown".to_string()),
+                FilterKind::Placeholder => FilterParams::Placeholder(PlaceholderParams {
+                    label: "unknown".to_string(),
+                    raw_params: None,
+                }),
             }
         };
 
@@ -599,7 +1011,9 @@ impl FilterService {
         } else {
             None
         };
-        temp_filter.validate().map_err(|e| AppError::InvalidOperation(format!("Invalid parameters: {}", e)))?;
+        temp_filter
+            .validate()
+            .map_err(|e| AppError::InvalidOperation(format!("Invalid parameters: {}", e)))?;
 
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
             let layer_id = req.layer_id;
@@ -619,8 +1033,24 @@ impl FilterService {
                             engine_project::LayerNode::Leaf(layer) => {
                                 if layer.id.0 == layer_id {
                                     if let Some(filter) = layer.find_filter_mut(filter_id) {
+                                        // Keep algorithm_id aligned with DitherV2.mode so
+                                        // registry dispatch and requires_full_row stay consistent.
+                                        if let FilterParams::DitherV2(ref p) = new_params {
+                                            filter.algorithm_id =
+                                                p.mode.algorithm_id().map(str::to_string);
+                                            filter.schema_version = filter
+                                                .algorithm_id
+                                                .as_deref()
+                                                .and_then(|id| {
+                                                    engine_project::algorithms::builtin_registry()
+                                                        .get_by_str(id)
+                                                        .map(|a| a.schema_version())
+                                                });
+                                        }
                                         filter.requires_full_row =
-                                            engine_project::FilterInstance::params_require_full_row(&new_params);
+                                            engine_project::FilterInstance::params_require_full_row(
+                                                &new_params,
+                                            );
                                         filter.params = new_params;
                                         if let Some(opacity) = opacity {
                                             filter.opacity = opacity;

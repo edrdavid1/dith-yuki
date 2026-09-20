@@ -1,6 +1,6 @@
 {
   "productName": "Dither Yuki",
-  "version": "0.2.0",
+  "version": "0.3.0-alpha.2",
   "identifier": "com.dither.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -21,7 +21,10 @@
         "decorations": true,
         "hiddenTitle": true,
         "titleBarStyle": "Overlay",
-        "trafficLightPosition": { "x": 12, "y": 17 },
+        "trafficLightPosition": {
+          "x": 12,
+          "y": 17
+        },
         "backgroundColor": "#CDCDCD"
       }
     ],
@@ -31,9 +34,12 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": [
+      "app",
+      "dmg"
+    ],
     "publisher": "L'eco non di Bergamo",
-    "copyright": "Copyright © 2026 L'eco non di Bergamo",
+    "copyright": "Copyright \u00a9 2026 L'eco non di Bergamo",
     "homepage": "https://github.com/edrdavid1/dith-yuki",
     "license": "FCL-1.0",
     "category": "GraphicsAndDesign",
@@ -46,7 +52,9 @@
     ],
     "fileAssociations": [
       {
-        "ext": ["dyproj"],
+        "ext": [
+          "dyproj"
+        ],
         "name": "Dither Project",
         "description": "Dither Yuki project archive",
         "role": "Editor",
@@ -54,11 +62,16 @@
         "mimeType": "application/x-dither-project",
         "exportedType": {
           "identifier": "com.dither.app.project",
-          "conformsTo": ["public.data", "com.pkware.zip-archive"]
+          "conformsTo": [
+            "public.data",
+            "com.pkware.zip-archive"
+          ]
         }
       },
       {
-        "ext": ["dyuki"],
+        "ext": [
+          "dyuki"
+        ],
         "name": "Dither Pattern",
         "description": "Dither Yuki sharable pattern",
         "role": "Editor",
@@ -66,13 +79,17 @@
         "mimeType": "application/x-dither-pattern",
         "exportedType": {
           "identifier": "com.dither.app.pattern",
-          "conformsTo": ["public.data", "com.pkware.zip-archive"]
+          "conformsTo": [
+            "public.data",
+            "com.pkware.zip-archive"
+          ]
         }
       }
     ],
     "macOS": {
       "minimumSystemVersion": "10.15",
-      "signingIdentity": null
+      "signingIdentity": null,
+      "hardenedRuntime": false
     },
     "createUpdaterArtifacts": true
   },

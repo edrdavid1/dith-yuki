@@ -45,10 +45,7 @@ fn rect_intersects_monitor(bounds: &SavedBounds, monitor: &MonitorRect) -> bool 
     let mon_right = monitor.x.saturating_add(monitor.width as i32);
     let mon_bottom = monitor.y.saturating_add(monitor.height as i32);
 
-    bounds.x < mon_right
-        && win_right > monitor.x
-        && bounds.y < mon_bottom
-        && win_bottom > monitor.y
+    bounds.x < mon_right && win_right > monitor.x && bounds.y < mon_bottom && win_bottom > monitor.y
 }
 
 pub fn correct_bounds_for_monitors(
@@ -194,7 +191,8 @@ fn focus_floating_panel(app_handle: &AppHandle, panel_id: &str, window_label: &s
             width: (size.width as f64 / scale).round().max(1.0) as u32,
             height: (size.height as f64 / scale).round().max(1.0) as u32,
         };
-        let fixed = resolve_undock_bounds(panel_id, Some(logical.clone()), &monitors, primary.as_ref());
+        let fixed =
+            resolve_undock_bounds(panel_id, Some(logical.clone()), &monitors, primary.as_ref());
         if fixed.x != logical.x
             || fixed.y != logical.y
             || fixed.width != logical.width
@@ -306,12 +304,7 @@ pub fn undock_panel(
     }
 
     let (monitors, primary) = get_monitor_rects(&app_handle);
-    let bounds = resolve_undock_bounds(
-        &panel_id,
-        result.bounds,
-        &monitors,
-        primary.as_ref(),
-    );
+    let bounds = resolve_undock_bounds(&panel_id, result.bounds, &monitors, primary.as_ref());
 
     let title = format!("Dither – {}", panel_display_name(&panel_id));
     let url = tauri::WebviewUrl::App(result.url.into());
@@ -410,8 +403,9 @@ pub fn reorder_sidebar(
 ) -> Result<(), String> {
     let dock_side = parse_dock_side(&side)?;
     let service = PanelService::new(state.inner().clone());
-    let (panels_snapshot, left_order, right_order) =
-        service.reorder_side(dock_side, order).map_err(|e| e.to_string())?;
+    let (panels_snapshot, left_order, right_order) = service
+        .reorder_side(dock_side, order)
+        .map_err(|e| e.to_string())?;
 
     emit_panel_state(&app_handle, panels_snapshot, left_order, right_order);
     Ok(())
@@ -444,18 +438,16 @@ pub fn move_all_panels_to_side(
 ) -> Result<(), String> {
     let dock_side = parse_dock_side(&side)?;
     let service = PanelService::new(state.inner().clone());
-    let (panels_snapshot, left_order, right_order) =
-        service.move_all_to_side(dock_side).map_err(|e| e.to_string())?;
+    let (panels_snapshot, left_order, right_order) = service
+        .move_all_to_side(dock_side)
+        .map_err(|e| e.to_string())?;
 
     emit_panel_state(&app_handle, panels_snapshot, left_order, right_order);
     Ok(())
 }
 
 #[tauri::command]
-pub fn swap_sidebars(
-    app_handle: AppHandle,
-    state: State<Arc<AppState>>,
-) -> Result<(), String> {
+pub fn swap_sidebars(app_handle: AppHandle, state: State<Arc<AppState>>) -> Result<(), String> {
     let service = PanelService::new(state.inner().clone());
     let (panels_snapshot, left_order, right_order) =
         service.swap_sidebars().map_err(|e| e.to_string())?;
@@ -483,17 +475,29 @@ pub fn undock_panel_with_size(
         return Ok(());
     }
 
-    let provided_bounds = SavedBounds { x, y, width, height };
+    let provided_bounds = SavedBounds {
+        x,
+        y,
+        width,
+        height,
+    };
     let (monitors, primary) = get_monitor_rects(&app_handle);
-    let corrected_bounds =
-        resolve_undock_bounds(&panel_id, Some(provided_bounds), &monitors, primary.as_ref());
+    let corrected_bounds = resolve_undock_bounds(
+        &panel_id,
+        Some(provided_bounds),
+        &monitors,
+        primary.as_ref(),
+    );
 
     let title = format!("Dither – {}", panel_display_name(&panel_id));
     let url = tauri::WebviewUrl::App(result.url.into());
 
     let builder = WebviewWindowBuilder::new(&app_handle, &result.window_label, url)
         .title(&title)
-        .inner_size(corrected_bounds.width as f64, corrected_bounds.height as f64)
+        .inner_size(
+            corrected_bounds.width as f64,
+            corrected_bounds.height as f64,
+        )
         .position(corrected_bounds.x as f64, corrected_bounds.y as f64)
         .resizable(true)
         .decorations(false)
@@ -522,7 +526,15 @@ pub fn save_panel_bounds(
     state: State<Arc<AppState>>,
 ) -> Result<(), String> {
     PanelService::new(state.inner().clone())
-        .save_bounds(&panel_id, SavedBounds { x, y, width, height })
+        .save_bounds(
+            &panel_id,
+            SavedBounds {
+                x,
+                y,
+                width,
+                height,
+            },
+        )
         .map_err(|e| e.to_string())
 }
 
@@ -547,10 +559,7 @@ fn is_flex_layout_panel(panel_id: &str) -> bool {
 }
 
 /// Color Lab uses `panel-{id}`; FlexLayout popouts use `flex-popout-N`.
-fn resolve_float_window(
-    app_handle: &AppHandle,
-    panel_id: &str,
-) -> Option<tauri::WebviewWindow> {
+fn resolve_float_window(app_handle: &AppHandle, panel_id: &str) -> Option<tauri::WebviewWindow> {
     let panel_label = format!("panel-{}", panel_id);
     if let Some(win) = app_handle.get_webview_window(&panel_label) {
         return Some(win);
@@ -621,7 +630,13 @@ pub fn dock_panel_at(
     state: State<Arc<AppState>>,
 ) -> Result<(), String> {
     let dock_side = parse_dock_side(&side)?;
-    dock_panel_at_inner(&panel_id, dock_side, insert_index, &app_handle, state.inner())
+    dock_panel_at_inner(
+        &panel_id,
+        dock_side,
+        insert_index,
+        &app_handle,
+        state.inner(),
+    )
 }
 
 fn dock_panel_at_inner(
@@ -632,8 +647,9 @@ fn dock_panel_at_inner(
     state: &Arc<AppState>,
 ) -> Result<(), String> {
     let service = PanelService::new(state.clone());
-    let (old_label, panels_snapshot, left_order, right_order) =
-        service.dock_at(panel_id, side, index).map_err(|e| e.to_string())?;
+    let (old_label, panels_snapshot, left_order, right_order) = service
+        .dock_at(panel_id, side, index)
+        .map_err(|e| e.to_string())?;
 
     if let Some(label) = old_label {
         if let Some(win) = app_handle.get_webview_window(&label) {
@@ -732,10 +748,7 @@ fn ensure_fallback_dock_zone(app_handle: &AppHandle, state: &AppState) {
 }
 
 #[tauri::command]
-pub fn cancel_float_drag(
-    app_handle: AppHandle,
-    state: State<Arc<AppState>>,
-) -> Result<(), String> {
+pub fn cancel_float_drag(app_handle: AppHandle, state: State<Arc<AppState>>) -> Result<(), String> {
     let mut ctrl = state.dock_affinity.lock().map_err(|e| e.to_string())?;
     if let Some(ev) = ctrl.cancel() {
         emit_dock_affinity(&app_handle, &ev);
@@ -793,10 +806,7 @@ pub fn finish_float_drag(app_handle: &AppHandle, state: &Arc<AppState>) {
             );
         } else if let Err(e) = dock_panel_at_inner(&panel_id, side, insert_index, app_handle, state)
         {
-            let _ = app_handle.emit(
-                "panel-error",
-                format!("Failed to dock panel: {}", e),
-            );
+            let _ = app_handle.emit("panel-error", format!("Failed to dock panel: {}", e));
         }
     }
 
@@ -837,12 +847,22 @@ mod tests {
     use super::*;
 
     fn make_monitor(x: i32, y: i32, width: u32, height: u32) -> MonitorRect {
-        MonitorRect { x, y, width, height }
+        MonitorRect {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     #[test]
     fn bounds_on_screen_returned_unchanged() {
-        let bounds = SavedBounds { x: 100, y: 100, width: 400, height: 600 };
+        let bounds = SavedBounds {
+            x: 100,
+            y: 100,
+            width: 400,
+            height: 600,
+        };
         let monitors = vec![make_monitor(0, 0, 1920, 1080)];
         let primary = monitors[0].clone();
 
@@ -855,7 +875,12 @@ mod tests {
 
     #[test]
     fn bounds_off_screen_right_gets_centered() {
-        let bounds = SavedBounds { x: 5000, y: 100, width: 400, height: 600 };
+        let bounds = SavedBounds {
+            x: 5000,
+            y: 100,
+            width: 400,
+            height: 600,
+        };
         let monitors = vec![make_monitor(0, 0, 1920, 1080)];
         let primary = monitors[0].clone();
 
@@ -868,7 +893,12 @@ mod tests {
 
     #[test]
     fn bounds_off_screen_left_gets_centered() {
-        let bounds = SavedBounds { x: -5000, y: -3000, width: 400, height: 600 };
+        let bounds = SavedBounds {
+            x: -5000,
+            y: -3000,
+            width: 400,
+            height: 600,
+        };
         let monitors = vec![make_monitor(0, 0, 1920, 1080)];
         let primary = monitors[0].clone();
 
@@ -881,7 +911,12 @@ mod tests {
 
     #[test]
     fn bounds_partially_on_screen_returned_unchanged() {
-        let bounds = SavedBounds { x: 1800, y: 900, width: 400, height: 600 };
+        let bounds = SavedBounds {
+            x: 1800,
+            y: 900,
+            width: 400,
+            height: 600,
+        };
         let monitors = vec![make_monitor(0, 0, 1920, 1080)];
         let primary = monitors[0].clone();
 
@@ -892,7 +927,12 @@ mod tests {
 
     #[test]
     fn multi_monitor_on_second_screen_unchanged() {
-        let bounds = SavedBounds { x: 2000, y: 100, width: 400, height: 600 };
+        let bounds = SavedBounds {
+            x: 2000,
+            y: 100,
+            width: 400,
+            height: 600,
+        };
         let monitors = vec![
             make_monitor(0, 0, 1920, 1080),
             make_monitor(1920, 0, 2560, 1440),
@@ -906,7 +946,12 @@ mod tests {
 
     #[test]
     fn multi_monitor_off_all_screens_centers_on_primary() {
-        let bounds = SavedBounds { x: 10000, y: 5000, width: 400, height: 600 };
+        let bounds = SavedBounds {
+            x: 10000,
+            y: 5000,
+            width: 400,
+            height: 600,
+        };
         let monitors = vec![
             make_monitor(0, 0, 1920, 1080),
             make_monitor(1920, 0, 2560, 1440),
@@ -922,7 +967,12 @@ mod tests {
 
     #[test]
     fn no_monitors_returns_bounds_unchanged() {
-        let bounds = SavedBounds { x: 5000, y: 5000, width: 400, height: 600 };
+        let bounds = SavedBounds {
+            x: 5000,
+            y: 5000,
+            width: 400,
+            height: 600,
+        };
         let monitors: Vec<MonitorRect> = vec![];
 
         let result = correct_bounds_for_monitors(&bounds, &monitors, None);
@@ -932,7 +982,12 @@ mod tests {
 
     #[test]
     fn no_primary_falls_back_to_first_monitor() {
-        let bounds = SavedBounds { x: 10000, y: 10000, width: 300, height: 500 };
+        let bounds = SavedBounds {
+            x: 10000,
+            y: 10000,
+            width: 300,
+            height: 500,
+        };
         let monitors = vec![make_monitor(0, 0, 2560, 1440)];
 
         let result = correct_bounds_for_monitors(&bounds, &monitors, None);
@@ -944,7 +999,12 @@ mod tests {
 
     #[test]
     fn preserves_width_and_height_when_correcting() {
-        let bounds = SavedBounds { x: -9999, y: -9999, width: 450, height: 700 };
+        let bounds = SavedBounds {
+            x: -9999,
+            y: -9999,
+            width: 450,
+            height: 700,
+        };
         let monitors = vec![make_monitor(0, 0, 1920, 1080)];
         let primary = monitors[0].clone();
 
@@ -955,7 +1015,12 @@ mod tests {
 
     #[test]
     fn window_exactly_touching_monitor_edge_is_on_screen() {
-        let bounds = SavedBounds { x: -400, y: 0, width: 400, height: 600 };
+        let bounds = SavedBounds {
+            x: -400,
+            y: 0,
+            width: 400,
+            height: 600,
+        };
         let monitors = vec![make_monitor(0, 0, 1920, 1080)];
         let primary = monitors[0].clone();
 
@@ -981,7 +1046,12 @@ mod tests {
 
     #[test]
     fn window_one_pixel_overlap_stays_on_screen() {
-        let bounds = SavedBounds { x: -399, y: 0, width: 400, height: 600 };
+        let bounds = SavedBounds {
+            x: -399,
+            y: 0,
+            width: 400,
+            height: 600,
+        };
         let monitors = vec![make_monitor(0, 0, 1920, 1080)];
         let primary = monitors[0].clone();
 

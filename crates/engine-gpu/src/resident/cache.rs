@@ -1,12 +1,13 @@
 //! GPU-resident tile cache: resident array + frame scratch (Path B D1/D2).
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use dashmap::{DashMap, DashSet};
 use engine_tiles::cache::{EvictContext, TILE_BYTES};
-use engine_tiles::{CacheStage, PixelTile, TileKey};
+use engine_tiles::{CacheStage, PixelTile, TileCoord, TileKey};
 
 use crate::context::GpuContext;
 use crate::dispatch::map_read_with_timeout;
@@ -19,6 +20,51 @@ use super::format::{
 use super::slot::{GpuSlotMeta, SlotAllocator, SlotHandle};
 
 const MAP_TIMEOUT: Duration = Duration::from_millis(2_000);
+
+/// Snapshot for A8: is the 256 MiB atlas actually full in use?
+#[derive(Clone, Copy, Debug)]
+pub struct GpuVramStats {
+    pub live_slots: u32,
+    pub max_slots: u32,
+    pub free_slots: u32,
+    pub peak_live: u32,
+    pub pressure_evicts: u64,
+    pub budget_bytes: u64,
+}
+
+impl GpuVramStats {
+    pub fn occupancy(&self) -> f64 {
+        if self.max_slots == 0 {
+            return 0.0;
+        }
+        self.live_slots as f64 / self.max_slots as f64
+    }
+
+    pub fn peak_occupancy(&self) -> f64 {
+        if self.max_slots == 0 {
+            return 0.0;
+        }
+        self.peak_live as f64 / self.max_slots as f64
+    }
+}
+
+/// Last process-wide eviction policy (active tab, open docs, visible coords).
+/// `promote` uses this instead of a doc-blind empty `EvictContext` (A6).
+struct EvictPolicySnapshot {
+    active_doc: Option<u32>,
+    open_docs: HashSet<u32>,
+    viewport_coords: HashSet<TileCoord>,
+}
+
+impl Default for EvictPolicySnapshot {
+    fn default() -> Self {
+        Self {
+            active_doc: None,
+            open_docs: HashSet::new(),
+            viewport_coords: HashSet::new(),
+        }
+    }
+}
 
 /// GPU-resident tiles: one resident `Texture2DArray` + frame scratch ping-pong.
 pub struct GpuTileCache {
@@ -33,6 +79,9 @@ pub struct GpuTileCache {
     /// Slots referenced by an in-flight frame submit — skip pressure eviction.
     in_flight: DashSet<u32>,
     live_slots: AtomicU32,
+    peak_live: AtomicU32,
+    pressure_evicts: AtomicU64,
+    evict_policy: Mutex<EvictPolicySnapshot>,
 }
 
 impl GpuTileCache {
@@ -71,6 +120,9 @@ impl GpuTileCache {
             allocator: SlotAllocator::new(layout.max_resident_slots),
             in_flight: DashSet::new(),
             live_slots: AtomicU32::new(0),
+            peak_live: AtomicU32::new(0),
+            pressure_evicts: AtomicU64::new(0),
+            evict_policy: Mutex::new(EvictPolicySnapshot::default()),
         }
     }
 
@@ -92,6 +144,17 @@ impl GpuTileCache {
 
     pub fn max_slots(&self) -> u32 {
         self.layout.max_resident_slots
+    }
+
+    pub fn vram_stats(&self) -> GpuVramStats {
+        GpuVramStats {
+            live_slots: self.live_slot_count(),
+            max_slots: self.max_slots(),
+            free_slots: self.free_slot_count(),
+            peak_live: self.peak_live.load(Ordering::Relaxed),
+            pressure_evicts: self.pressure_evicts.load(Ordering::Relaxed),
+            budget_bytes: self.config.vram_budget_bytes,
+        }
     }
 
     pub fn scratch_a(&self) -> &wgpu::Texture {
@@ -136,19 +199,63 @@ impl GpuTileCache {
             if existing.generation == generation {
                 return Ok(existing.slot);
             }
+            drop(existing);
             self.release_key(&key);
         }
 
         if self.allocator.free_count() == 0 {
-            let empty_open = HashSet::new();
-            let empty_vp = HashSet::new();
+            let policy = self.evict_policy.lock().unwrap_or_else(|e| e.into_inner());
             self.evict_for_pressure(&EvictContext {
-                active_doc: Some(key.doc),
-                open_docs: &empty_open,
-                viewport_coords: &empty_vp,
+                active_doc: policy.active_doc.or(Some(key.doc)),
+                open_docs: &policy.open_docs,
+                viewport_coords: &policy.viewport_coords,
             });
         }
 
+        self.alloc_and_upload(ctx, key, tile, generation)
+    }
+
+    /// Promote only if a free slot exists (or this key already occupies one). Never evicts.
+    pub fn try_promote(
+        &self,
+        ctx: &GpuContext,
+        key: TileKey,
+        tile: &PixelTile,
+        generation: u64,
+    ) -> Result<SlotHandle, GpuError> {
+        if tile.data.len() * std::mem::size_of::<f32>() != TILE_BYTES {
+            return Err(GpuError::Device(format!(
+                "promote: expected {TILE_BYTES} bytes, got {}",
+                tile.data.len() * 4
+            )));
+        }
+
+        if let Some(existing) = self.entries.get(&key) {
+            if existing.generation == generation {
+                return Ok(existing.slot);
+            }
+            drop(existing);
+            self.release_key(&key);
+        }
+
+        if self.allocator.free_count() == 0 {
+            return Err(GpuError::Device("GPU resident slots exhausted".into()));
+        }
+
+        self.alloc_and_upload(ctx, key, tile, generation)
+    }
+
+    pub fn free_slot_count(&self) -> u32 {
+        self.allocator.free_count()
+    }
+
+    fn alloc_and_upload(
+        &self,
+        ctx: &GpuContext,
+        key: TileKey,
+        tile: &PixelTile,
+        generation: u64,
+    ) -> Result<SlotHandle, GpuError> {
         let slot = self
             .allocator
             .alloc()
@@ -188,7 +295,8 @@ impl GpuTileCache {
         };
         self.entries.insert(key, meta);
         self.slot_to_key.insert(slot.index, key);
-        self.live_slots.fetch_add(1, Ordering::Relaxed);
+        let live = self.live_slots.fetch_add(1, Ordering::Relaxed) + 1;
+        self.peak_live.fetch_max(live, Ordering::Relaxed);
         Ok(slot)
     }
 
@@ -269,6 +377,14 @@ impl GpuTileCache {
         Ok(Some(tile))
     }
 
+    /// Copy CPU-tier `EvictContext` so executor `promote` is not doc-blind.
+    pub fn set_evict_policy(&self, ctx: &EvictContext<'_>) {
+        let mut g = self.evict_policy.lock().unwrap_or_else(|e| e.into_inner());
+        g.active_doc = ctx.active_doc;
+        g.open_docs = ctx.open_docs.clone();
+        g.viewport_coords = ctx.viewport_coords.clone();
+    }
+
     /// Unconditional doc teardown (symmetric with CPU `TileCache::evict_document`).
     pub fn evict_document(&self, doc: u32) {
         let keys: Vec<TileKey> = self
@@ -320,10 +436,8 @@ impl GpuTileCache {
                 if inactive_docs != is_inactive {
                     return false;
                 }
-                if !is_inactive {
-                    if ctx.viewport_coords.contains(&key.coord) {
-                        return false;
-                    }
+                if ctx.protects_tile(key) {
+                    return false;
                 }
                 if stage == CacheStage::Raw && ctx.open_docs.contains(&key.doc) {
                     return false;
@@ -336,6 +450,7 @@ impl GpuTileCache {
         candidates.sort_by_key(|(t, _)| *t);
         for (_, key) in candidates {
             self.release_key(&key);
+            self.pressure_evicts.fetch_add(1, Ordering::Relaxed);
             if self.allocator.free_count() > 0 {
                 return;
             }
@@ -586,6 +701,35 @@ mod tests {
             remaining_doc1 < cap as usize,
             "pressure should evict at least one inactive-doc tile before active"
         );
+        assert!(
+            cache.vram_stats().pressure_evicts >= 1,
+            "pressure evicts must be counted"
+        );
+    }
+
+    #[test]
+    fn evict_pressure_pins_open_raw() {
+        let Some(fg) = fake_gpu() else {
+            return;
+        };
+        let cache = &fg.cache;
+        let cap = cache.max_slots();
+        for i in 0..cap {
+            insert_meta(cache, key_doc(1, i, 0, CacheStage::Raw), i, 1);
+        }
+        assert_eq!(cache.allocator.free_count(), 0);
+        let open = open_set(&[1]);
+        cache.evict_for_pressure(&EvictContext {
+            active_doc: Some(1),
+            open_docs: &open,
+            viewport_coords: &HashSet::new(),
+        });
+        assert_eq!(
+            cache.allocator.free_count(),
+            0,
+            "open-doc Raw must stay pinned like CPU TileCache"
+        );
+        assert_eq!(cache.live_slot_count(), cap);
     }
 
     #[test]

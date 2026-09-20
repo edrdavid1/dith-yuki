@@ -2,16 +2,14 @@ use std::sync::Arc;
 use tauri::{AppHandle, State};
 
 use crate::commands::AppState;
-use crate::services::LayerService;
 pub use crate::services::layer_service::{
     AddLayerRequest, LayerIdResponse, LayerNodeDto, LayerPropsPatchDto, ReorderLayerRequest,
     SetLayerPropsRequest,
 };
+use crate::services::LayerService;
 
 #[tauri::command]
-pub fn get_layer_tree(
-    state: State<'_, Arc<AppState>>,
-) -> Result<Vec<LayerNodeDto>, String> {
+pub fn get_layer_tree(state: State<'_, Arc<AppState>>) -> Result<Vec<LayerNodeDto>, String> {
     LayerService::new(state.inner().clone())
         .get_layer_tree()
         .map_err(|e| e.to_string())

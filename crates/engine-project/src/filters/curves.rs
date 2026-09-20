@@ -76,7 +76,11 @@ impl CurvesFilter {
         }
 
         // Find or insert point at input
-        if let Some(pos) = self.curve.iter().position(|(x, _)| (x - input).abs() < 0.001) {
+        if let Some(pos) = self
+            .curve
+            .iter()
+            .position(|(x, _)| (x - input).abs() < 0.001)
+        {
             self.curve[pos] = (input, output);
         } else {
             self.curve.push((input, output));
@@ -107,7 +111,10 @@ impl CurvesFilter {
 
         // Get the 4 control points for Catmull-Rom
         let p0 = if i == 0 {
-            (self.curve[0].0 - (self.curve[1].0 - self.curve[0].0), self.curve[0].1)
+            (
+                self.curve[0].0 - (self.curve[1].0 - self.curve[0].0),
+                self.curve[0].1,
+            )
         } else {
             self.curve[i - 1]
         };
@@ -118,7 +125,11 @@ impl CurvesFilter {
         let p3 = if i + 2 < self.curve.len() {
             self.curve[i + 2]
         } else {
-            (self.curve[self.curve.len() - 1].0 + (self.curve[self.curve.len() - 1].0 - self.curve[self.curve.len() - 2].0), self.curve[self.curve.len() - 1].1)
+            (
+                self.curve[self.curve.len() - 1].0
+                    + (self.curve[self.curve.len() - 1].0 - self.curve[self.curve.len() - 2].0),
+                self.curve[self.curve.len() - 1].1,
+            )
         };
 
         // Normalize t to [0, 1] between p1 and p2
@@ -146,7 +157,11 @@ impl CurvesFilter {
     }
 
     /// Apply curves into an existing buffer (full 260² write, no alloc).
-    pub fn apply_to_tile_into(&self, tile: &PixelTile, dst: &mut PixelTile) -> Result<(), EngineError> {
+    pub fn apply_to_tile_into(
+        &self,
+        tile: &PixelTile,
+        dst: &mut PixelTile,
+    ) -> Result<(), EngineError> {
         for y in 0u32..260 {
             for x in 0u32..260 {
                 dst.set(x, y, 3, tile.at(x, y, 3));
@@ -192,7 +207,10 @@ impl CurvesFilter {
 /// This is an exact copy of the current `apply_to_tile` implementation at the time of snapshotting.
 /// Used to verify that optimized versions (LUT-based) produce identical or near-identical output.
 #[cfg(test)]
-pub fn reference_curves_apply_to_tile(filter: &CurvesFilter, tile: &PixelTile) -> Result<PixelTile, EngineError> {
+pub fn reference_curves_apply_to_tile(
+    filter: &CurvesFilter,
+    tile: &PixelTile,
+) -> Result<PixelTile, EngineError> {
     let mut result = PixelTile::new();
 
     // Copy all pixels from source and apply curve transformation

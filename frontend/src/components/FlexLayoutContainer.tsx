@@ -93,6 +93,117 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
     return () => mo.disconnect();
   }, [model]);
 
+  // Hide left/right drop outlines. Only watch outline nodes — observing every
+  // `style` change on the layout tree makes splitter resize hitch (reflow).
+  useEffect(() => {
+    const root = columnRef.current;
+    if (!root) return;
+
+    const outlineSelector =
+      '.flexlayout__outline_rect, .flexlayout__outline_rect_edge';
+    const outlineObservers = new Map<HTMLElement, MutationObserver>();
+    let raf = 0;
+
+    const markEl = (el: HTMLElement) => {
+      const layout = el.closest('.flexlayout__layout') as HTMLElement | null;
+      const pw = layout?.clientWidth ?? 0;
+      const ph = layout?.clientHeight ?? 0;
+      const w = el.offsetWidth;
+      const h = el.offsetHeight;
+      const stack =
+        pw > 0 && ph > 0 ? w >= pw * 0.8 && h <= ph * 0.65 : w > h;
+      const next = stack ? 'stack' : 'side';
+      if (el.getAttribute('data-drop-axis') !== next) {
+        el.setAttribute('data-drop-axis', next);
+      }
+    };
+
+    const watchOutline = (el: HTMLElement) => {
+      if (outlineObservers.has(el)) return;
+      markEl(el);
+      const oo = new MutationObserver(() => {
+        if (raf) return;
+        raf = requestAnimationFrame(() => {
+          raf = 0;
+          markEl(el);
+        });
+      });
+      oo.observe(el, { attributes: true, attributeFilter: ['style', 'class'] });
+      outlineObservers.set(el, oo);
+    };
+
+    const scan = () => {
+      const live = new Set<HTMLElement>();
+      root.querySelectorAll<HTMLElement>(outlineSelector).forEach((el) => {
+        live.add(el);
+        watchOutline(el);
+      });
+      for (const [el, oo] of outlineObservers) {
+        if (live.has(el)) continue;
+        oo.disconnect();
+        outlineObservers.delete(el);
+      }
+    };
+
+    scan();
+    const treeMo = new MutationObserver(scan);
+    treeMo.observe(root, { subtree: true, childList: true });
+    return () => {
+      treeMo.disconnect();
+      if (raf) cancelAnimationFrame(raf);
+      for (const oo of outlineObservers.values()) oo.disconnect();
+      outlineObservers.clear();
+    };
+  }, [model]);
+
+  useEffect(() => {
+    const root = columnRef.current;
+    if (!root) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t?.closest('.flexlayout__splitter, .flexlayout__splitter_extra')) return;
+      const doc = root.ownerDocument;
+      const prevUserSelect = doc.body.style.userSelect;
+      doc.body.style.userSelect = 'none';
+      const onSelectStart = (ev: Event) => ev.preventDefault();
+      const onUp = () => {
+        doc.body.style.userSelect = prevUserSelect;
+        doc.removeEventListener('selectstart', onSelectStart);
+        doc.removeEventListener('mouseup', onUp);
+      };
+      doc.addEventListener('selectstart', onSelectStart);
+      doc.addEventListener('mouseup', onUp);
+    };
+    root.addEventListener('mousedown', onDown, true);
+    return () => root.removeEventListener('mousedown', onDown, true);
+  }, [model]);
+
+  useEffect(() => {
+    const root = columnRef.current;
+    if (!root) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t?.closest('.flexlayout__splitter, .flexlayout__splitter_extra')) return;
+      const doc = root.ownerDocument;
+      const prevUserSelect = doc.body.style.userSelect;
+      const prevWebkit = (doc.body.style as CSSStyleDeclaration & { webkitUserSelect?: string }).webkitUserSelect;
+      doc.body.style.userSelect = 'none';
+      (doc.body.style as CSSStyleDeclaration & { webkitUserSelect?: string }).webkitUserSelect = 'none';
+      const onSelectStart = (ev: Event) => ev.preventDefault();
+      const onUp = () => {
+        doc.body.style.userSelect = prevUserSelect;
+        (doc.body.style as CSSStyleDeclaration & { webkitUserSelect?: string }).webkitUserSelect =
+          prevWebkit ?? '';
+        doc.removeEventListener('selectstart', onSelectStart);
+        doc.removeEventListener('mouseup', onUp);
+      };
+      doc.addEventListener('selectstart', onSelectStart);
+      doc.addEventListener('mouseup', onUp);
+    };
+    root.addEventListener('mousedown', onDown, true);
+    return () => root.removeEventListener('mousedown', onDown, true);
+  }, [model]);
+
   const saveCommand = side === 'left' ? 'save_layout_left' : 'save_layout_right';
 
   const scheduleSave = useCallback(
@@ -114,7 +225,16 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
   const normalizingRef = useRef(false);
 
   const handleModelChange = useCallback(
-    (newModel: Model, _action: Action) => {
+    (newModel: Model, action: Action) => {
+      // Live splitter drag mutates the model in place; a React setState here
+      // remounts the tree and makes the split hitch until mouseup.
+      if (
+        action.type === Actions.ADJUST_SPLIT ||
+        action.type === Actions.ADJUST_BORDER_SPLIT
+      ) {
+        scheduleSave(newModel);
+        return;
+      }
       if (!normalizingRef.current) {
         normalizingRef.current = true;
         try {
@@ -270,7 +390,7 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
         i18nMapper={i18nMapper}
         supportsPopout={true}
         popoutURL={`${typeof window !== 'undefined' ? window.location.origin : ''}/popout.html`}
-        realtimeResize={false}
+        realtimeResize={true}
       />
     </div>
   );

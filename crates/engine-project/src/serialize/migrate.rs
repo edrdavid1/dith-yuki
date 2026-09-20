@@ -133,7 +133,10 @@ pub fn check_format_version(kind: ArchiveKind, found: u32) -> Result<(), Project
 ///
 /// MVP: only v1 exists (identity). `document_json` is returned unchanged when
 /// `format_version == 1`.
-pub fn migrate_dyproj(format_version: u32, document_json: serde_json::Value) -> Result<serde_json::Value, ProjectError> {
+pub fn migrate_dyproj(
+    format_version: u32,
+    document_json: serde_json::Value,
+) -> Result<serde_json::Value, ProjectError> {
     check_format_version(ArchiveKind::Dyproj, format_version)?;
     // v1 → identity. Future: ordered migrate_vN_to_vN+1 chain for dyproj only.
     Ok(document_json)
@@ -142,7 +145,10 @@ pub fn migrate_dyproj(format_version: u32, document_json: serde_json::Value) -> 
 /// Migrate a `.dyuki` pattern payload up to [`SUPPORTED_DYUKI_VERSION`].
 ///
 /// MVP: only v1 exists (identity). Independent of the dyproj version ladder.
-pub fn migrate_dyuki(format_version: u32, pattern_json: serde_json::Value) -> Result<serde_json::Value, ProjectError> {
+pub fn migrate_dyuki(
+    format_version: u32,
+    pattern_json: serde_json::Value,
+) -> Result<serde_json::Value, ProjectError> {
     check_format_version(ArchiveKind::Dyuki, format_version)?;
     Ok(pattern_json)
 }
@@ -200,8 +206,14 @@ mod tests {
     fn kind_version_ladders_are_independent() {
         // Document the lock: constants are separate symbols; bumping one must
         // not be expressed as a shared counter.
-        assert_eq!(ArchiveKind::Dyproj.supported_version(), SUPPORTED_DYPROJ_VERSION);
-        assert_eq!(ArchiveKind::Dyuki.supported_version(), SUPPORTED_DYUKI_VERSION);
+        assert_eq!(
+            ArchiveKind::Dyproj.supported_version(),
+            SUPPORTED_DYPROJ_VERSION
+        );
+        assert_eq!(
+            ArchiveKind::Dyuki.supported_version(),
+            SUPPORTED_DYUKI_VERSION
+        );
         // Both start at 1 for MVP, but they are not the same binding.
         let _ = SUPPORTED_DYPROJ_VERSION;
         let _ = SUPPORTED_DYUKI_VERSION;

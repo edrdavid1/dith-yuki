@@ -110,10 +110,7 @@ pub fn parse_tile_url(uri: &str) -> Result<ParsedTileUrl, TileProtocolError> {
         .strip_prefix("tile://localhost/")
         .or_else(|| uri.strip_prefix("tile://"))
         .ok_or_else(|| {
-            TileProtocolError::MalformedUrl(format!(
-                "URL must start with 'tile://', got: {}",
-                uri
-            ))
+            TileProtocolError::MalformedUrl(format!("URL must start with 'tile://', got: {}", uri))
         })?;
 
     // Cache-bust query (`?g=`) must not count as extra path segments.
@@ -157,23 +154,23 @@ pub fn parse_tile_url(uri: &str) -> Result<ParsedTileUrl, TileProtocolError> {
     }
 
     // Parse doc_id
-    let doc_id: u32 = segments[1].parse().map_err(|_| {
-        TileProtocolError::InvalidSegment {
+    let doc_id: u32 = segments[1]
+        .parse()
+        .map_err(|_| TileProtocolError::InvalidSegment {
             segment: segments[1].to_string(),
             reason: "doc_id must be a valid u32 integer".to_string(),
-        }
-    })?;
+        })?;
 
     // Parse layer_id (u32 or "composite")
     let layer = if segments[3] == "composite" {
         LayerTarget::Composite
     } else {
-        let id: u32 = segments[3].parse().map_err(|_| {
-            TileProtocolError::InvalidSegment {
+        let id: u32 = segments[3]
+            .parse()
+            .map_err(|_| TileProtocolError::InvalidSegment {
                 segment: segments[3].to_string(),
                 reason: "layer_id must be a valid u32 integer or 'composite'".to_string(),
-            }
-        })?;
+            })?;
         LayerTarget::Id(id)
     };
 
@@ -191,28 +188,28 @@ pub fn parse_tile_url(uri: &str) -> Result<ParsedTileUrl, TileProtocolError> {
     };
 
     // Parse level
-    let level: u8 = segments[7].parse().map_err(|_| {
-        TileProtocolError::InvalidSegment {
+    let level: u8 = segments[7]
+        .parse()
+        .map_err(|_| TileProtocolError::InvalidSegment {
             segment: segments[7].to_string(),
             reason: "level must be a valid u8 integer (0-255)".to_string(),
-        }
-    })?;
+        })?;
 
     // Parse x
-    let x: u32 = segments[8].parse().map_err(|_| {
-        TileProtocolError::InvalidSegment {
+    let x: u32 = segments[8]
+        .parse()
+        .map_err(|_| TileProtocolError::InvalidSegment {
             segment: segments[8].to_string(),
             reason: "x must be a valid u32 integer".to_string(),
-        }
-    })?;
+        })?;
 
     // Parse y
-    let y: u32 = segments[9].parse().map_err(|_| {
-        TileProtocolError::InvalidSegment {
+    let y: u32 = segments[9]
+        .parse()
+        .map_err(|_| TileProtocolError::InvalidSegment {
             segment: segments[9].to_string(),
             reason: "y must be a valid u32 integer".to_string(),
-        }
-    })?;
+        })?;
 
     Ok(ParsedTileUrl {
         doc_id,
@@ -352,7 +349,8 @@ mod tests {
 
     #[test]
     fn parse_max_values() {
-        let url = "tile://doc/4294967295/layer/4294967295/stage/composite/l/255/4294967295/4294967295";
+        let url =
+            "tile://doc/4294967295/layer/4294967295/stage/composite/l/255/4294967295/4294967295";
         let parsed = parse_tile_url(url).unwrap();
         assert_eq!(parsed.doc_id, u32::MAX);
         assert_eq!(parsed.layer, LayerTarget::Id(u32::MAX));

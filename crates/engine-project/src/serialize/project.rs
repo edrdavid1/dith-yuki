@@ -81,12 +81,7 @@ fn collect_custom_png_embeds(
         Ok(())
     }
 
-    walk(
-        &doc.root,
-        read_png,
-        &mut path_to_basename,
-        &mut embeds,
-    )?;
+    walk(&doc.root, read_png, &mut path_to_basename, &mut embeds)?;
     Ok((embeds, path_to_basename))
 }
 
@@ -174,11 +169,7 @@ pub fn save_project_to_bytes(
     app_version: &str,
     mut read_threshold_png: impl FnMut(&str) -> Result<Vec<u8>, ProjectError>,
 ) -> Result<SaveProjectResult, ProjectError> {
-    let size_warning = soft_size_warning(
-        doc.width,
-        doc.height,
-        count_raster_layers(&doc.root),
-    );
+    let size_warning = soft_size_warning(doc.width, doc.height, count_raster_layers(&doc.root));
 
     let (embeds, path_to_basename) = collect_custom_png_embeds(doc, &mut read_threshold_png)?;
 
@@ -266,8 +257,8 @@ pub fn open_project_from_bytes(
     staging_cache: &TileCache,
     runtime_doc_id: DocumentId,
 ) -> Result<OpenProjectResult, ProjectError> {
-    let mut reader =
-        ZipArchiveReader::open(zip_bytes).map_err(|e| ProjectError::InvalidArchive(e.to_string()))?;
+    let mut reader = ZipArchiveReader::open(zip_bytes)
+        .map_err(|e| ProjectError::InvalidArchive(e.to_string()))?;
 
     let manifest_bytes = reader
         .read_entry("manifest.json")
@@ -308,8 +299,8 @@ pub fn open_project_from_bytes(
                 actual,
             });
         }
-        let path = materialize_threshold_map(&bytes)
-            .map_err(|e| ProjectError::Io(e.to_string()))?;
+        let path =
+            materialize_threshold_map(&bytes).map_err(|e| ProjectError::Io(e.to_string()))?;
         basename_to_synth.insert(basename.to_string(), path);
         Ok(())
     })?;
@@ -333,15 +324,17 @@ pub fn open_project_from_bytes(
             .layers
             .get(old_layer_id)
             .copied()
-            .ok_or_else(|| ProjectError::InvalidArchive(format!("no remap for layer {old_layer_id}")))?;
+            .ok_or_else(|| {
+                ProjectError::InvalidArchive(format!("no remap for layer {old_layer_id}"))
+            })?;
 
         // Prefer document dims; PNG should match doc size per assemble contract.
         let width = remapped.document.width.max(w);
         let height = remapped.document.height.max(h);
         let _ = (width, height); // dims on document already set
-        decompose_image_to_tiles(&rgba, w, h, runtime_doc_id.0, new_id.0, staging_cache).map_err(|e| {
-            ProjectError::Codec(format!("decompose failed for layer {}: {e}", new_id.0))
-        })?;
+        decompose_image_to_tiles(&rgba, w, h, runtime_doc_id.0, new_id.0, staging_cache).map_err(
+            |e| ProjectError::Codec(format!("decompose failed for layer {}: {e}", new_id.0)),
+        )?;
     }
 
     // Ensure adjustment layers never required PNG (already skipped via raw_assets).
@@ -375,7 +368,9 @@ fn collect_custom_png_basenames_from_file(
             match node {
                 LayerNodeFile::Leaf(layer) => {
                     for filter in &layer.filters {
-                        if let FilterParams::DitherV2(p) = &filter.params {
+                        if let Ok(FilterParams::DitherV2(p)) =
+                            serde_json::from_value::<FilterParams>(filter.params.clone())
+                        {
                             if let DitherModeV2::CustomPng { path } = &p.mode {
                                 visit(path)?;
                             }
@@ -449,7 +444,8 @@ mod tests {
         assert!(!saved.size_warning);
 
         let staging = TileCache::new(50_000_000);
-        let opened = open_project_from_bytes(&saved.zip_bytes, &staging, DocumentId::new(1)).unwrap();
+        let opened =
+            open_project_from_bytes(&saved.zip_bytes, &staging, DocumentId::new(1)).unwrap();
         assert_eq!(opened.document.width, w);
         assert_eq!(opened.document.height, h);
         assert_eq!(opened.document.root.len(), 1);
@@ -469,7 +465,11 @@ mod tests {
         let key = engine_tiles::TileKey {
             doc: 1,
             layer: new_id.0,
-            coord: engine_tiles::TileCoord { level: 0, x: 0, y: 0 },
+            coord: engine_tiles::TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            },
             stage: engine_tiles::CacheStage::Raw,
         };
         assert!(staging.get_entry(key).is_some());
@@ -546,8 +546,12 @@ mod tests {
         let cache = TileCache::new(20_000_000);
         decompose_image_to_tiles(&rgba, w, h, 1, 1, &cache).unwrap();
         let mut doc = Document::new(DocumentId::new(1), w, h);
-        doc.root
-            .push(LayerNode::Leaf(Layer::new(LayerId::new(1), LayerKind::Raster, w, h)));
+        doc.root.push(LayerNode::Leaf(Layer::new(
+            LayerId::new(1),
+            LayerKind::Raster,
+            w,
+            h,
+        )));
         let saved = save_project_to_bytes(&doc, &cache, "0.1.0", |_| unreachable!()).unwrap();
 
         // Inject a fake CustomPng pointing at a wrong-named empty asset.
@@ -557,20 +561,24 @@ mod tests {
         let fake_name = "00000000000000000000000000000000.png";
         match &mut file.root[0] {
             crate::serialize::document_dto::LayerNodeFile::Leaf(l) => {
-                l.filters.push(crate::serialize::document_dto::FilterInstanceFile {
-                    id: crate::types::FilterInstanceId::new(),
-                    kind: FilterKind::Dither,
-                    params: FilterParams::DitherV2(DitherParamsV2 {
-                        mode: DitherModeV2::CustomPng {
-                            path: fake_name.into(),
-                        },
-                        levels: 2,
-                        ..DitherParamsV2::default()
-                    }),
-                    enabled: true,
-                    opacity: 1.0,
-                    blend_mode: crate::types::BlendMode::Normal,
-                });
+                l.filters
+                    .push(crate::serialize::document_dto::FilterInstanceFile {
+                        id: crate::types::FilterInstanceId::new(),
+                        kind: FilterKind::Dither,
+                        params: serde_json::to_value(FilterParams::DitherV2(DitherParamsV2 {
+                            mode: DitherModeV2::CustomPng {
+                                path: fake_name.into(),
+                            },
+                            levels: 2,
+                            ..DitherParamsV2::default()
+                        }))
+                        .unwrap(),
+                        enabled: true,
+                        opacity: 1.0,
+                        blend_mode: crate::types::BlendMode::Normal,
+                        algorithm_id: None,
+                        schema_version: None,
+                    });
             }
             _ => panic!(),
         }
@@ -599,7 +607,10 @@ mod tests {
 
         let staging = TileCache::new(20_000_000);
         let err = open_project_from_bytes(&zip, &staging, DocumentId::new(1)).unwrap_err();
-        assert!(matches!(err, ProjectError::HashMismatch { .. }), "got {err:?}");
+        assert!(
+            matches!(err, ProjectError::HashMismatch { .. }),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -612,8 +623,12 @@ mod tests {
         force_drop_raw_tile(&cache, 1, LayerId::new(1), 0, 0);
 
         let mut doc = Document::new(DocumentId::new(1), w, h);
-        doc.root
-            .push(LayerNode::Leaf(Layer::new(LayerId::new(1), LayerKind::Raster, w, h)));
+        doc.root.push(LayerNode::Leaf(Layer::new(
+            LayerId::new(1),
+            LayerKind::Raster,
+            w,
+            h,
+        )));
 
         let err = save_project_to_bytes(&doc, &cache, "0.1.0", |_| unreachable!()).unwrap_err();
         assert!(matches!(
@@ -634,8 +649,12 @@ mod tests {
         let cache = TileCache::new(20_000_000);
         decompose_image_to_tiles(&rgba, w, h, 1, 1, &cache).unwrap();
         let mut doc = Document::new(DocumentId::new(1), w, h);
-        doc.root
-            .push(LayerNode::Leaf(Layer::new(LayerId::new(1), LayerKind::Raster, w, h)));
+        doc.root.push(LayerNode::Leaf(Layer::new(
+            LayerId::new(1),
+            LayerKind::Raster,
+            w,
+            h,
+        )));
         let saved = save_project_to_bytes(&doc, &cache, "0.1.0", |_| unreachable!()).unwrap();
 
         let mut reader = ZipArchiveReader::open(&saved.zip_bytes).unwrap();

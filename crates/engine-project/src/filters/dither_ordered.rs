@@ -28,10 +28,7 @@ const TILE_FULL_SIZE: u32 = TILE_SIZE + 2 * HALO;
 // ─── Bayer Matrices (normalized to [0, 1)) ───────────────────────────────────
 
 /// 2×2 Bayer matrix normalized to [0, 1) range.
-const BAYER_2X2: [[f32; 2]; 2] = [
-    [0.0 / 4.0, 2.0 / 4.0],
-    [3.0 / 4.0, 1.0 / 4.0],
-];
+const BAYER_2X2: [[f32; 2]; 2] = [[0.0 / 4.0, 2.0 / 4.0], [3.0 / 4.0, 1.0 / 4.0]];
 
 /// 4×4 Bayer matrix normalized to [0, 1) range.
 #[rustfmt::skip]
@@ -84,10 +81,7 @@ pub(crate) fn wave_threshold(
 ) -> f32 {
     let phi = angle_deg.to_radians();
     let u = gx as f32 * phi.cos() + gy as f32 * phi.sin();
-    let t = 0.5
-        + 0.5
-            * (std::f32::consts::TAU * u / wavelength + phase).sin()
-            * amplitude;
+    let t = 0.5 + 0.5 * (std::f32::consts::TAU * u / wavelength + phase).sin() * amplitude;
     t.clamp(0.0, 0.999_999)
 }
 
@@ -101,7 +95,12 @@ fn rgb_to_cmyk(r: f32, g: f32, b: f32) -> (f32, f32, f32, f32) {
     let c = (1.0 - r - k) / (1.0 - k);
     let m = (1.0 - g - k) / (1.0 - k);
     let y = (1.0 - b - k) / (1.0 - k);
-    (c.clamp(0.0, 1.0), m.clamp(0.0, 1.0), y.clamp(0.0, 1.0), k.clamp(0.0, 1.0))
+    (
+        c.clamp(0.0, 1.0),
+        m.clamp(0.0, 1.0),
+        y.clamp(0.0, 1.0),
+        k.clamp(0.0, 1.0),
+    )
 }
 
 /// CMYK dots → RGB display reconstruction.
@@ -116,7 +115,11 @@ fn cmyk_to_rgb(c: f32, m: f32, y: f32, k: f32) -> (f32, f32, f32) {
 /// Hard-disk CMYK screen: ink if `dist <= (s/2) * sqrt(tone) * threshold_scale`.
 fn halftone_channel_ink(dist: f32, tone: f32, s: f32, threshold_scale: f32) -> f32 {
     let r_max = (s * 0.5) * tone.sqrt() * threshold_scale;
-    if dist <= r_max { 1.0 } else { 0.0 }
+    if dist <= r_max {
+        1.0
+    } else {
+        0.0
+    }
 }
 
 /// Get the threshold value for a given global coordinate and dither mode.
@@ -244,11 +247,12 @@ fn get_threshold_i32(
             params.wave_angle,
         )),
         DitherModeV2::CustomPng { path } => {
-            let map = threshold_cache.get_or_load(Path::new(path)).map_err(|e| {
-                EngineError::IoError {
-                    reason: format!("Failed to load threshold map: {}", e),
-                }
-            })?;
+            let map =
+                threshold_cache
+                    .get_or_load(Path::new(path))
+                    .map_err(|e| EngineError::IoError {
+                        reason: format!("Failed to load threshold map: {}", e),
+                    })?;
             let ux = (gx as i64).rem_euclid(map.width as i64) as u32;
             let uy = (gy as i64).rem_euclid(map.height as i64) as u32;
             Ok(map.sample(ux, uy))
@@ -486,8 +490,16 @@ pub fn apply_ordered_with_cache(
 ) -> Result<PixelTile, EngineError> {
     let mut out = PixelTile::new();
     apply_ordered_with_cache_into(
-        tile, coord, params, threshold_cache, palette_cache, lut_cache, document,
-        block_cache, layer_id, &mut out,
+        tile,
+        coord,
+        params,
+        threshold_cache,
+        palette_cache,
+        lut_cache,
+        document,
+        block_cache,
+        layer_id,
+        &mut out,
     )?;
     Ok(out)
 }
@@ -538,9 +550,11 @@ pub fn apply_ordered_with_cache_into(
     }
 
     let palette = if let Some(palette_id) = params.palette_id {
-        Some(document.get_palette(palette_id).ok_or_else(|| {
-            EngineError::palette_not_found(palette_id)
-        })?)
+        Some(
+            document
+                .get_palette(palette_id)
+                .ok_or_else(|| EngineError::palette_not_found(palette_id))?,
+        )
     } else {
         None
     };
@@ -561,12 +575,8 @@ pub fn apply_ordered_with_cache_into(
                 picker: OrderedPalettePicker::new(p),
             }
         }
-        (Some(p), PaletteDitherMode::Strict) => {
-            PalettePath::Strict(OrderedPalettePicker::new(p))
-        }
-        (Some(p), PaletteDitherMode::Simple) => {
-            PalettePath::Simple(SimpleRgbPicker::new(p))
-        }
+        (Some(p), PaletteDitherMode::Strict) => PalettePath::Strict(OrderedPalettePicker::new(p)),
+        (Some(p), PaletteDitherMode::Simple) => PalettePath::Simple(SimpleRgbPicker::new(p)),
     };
 
     for y in 0..TILE_FULL_SIZE {
@@ -583,9 +593,23 @@ pub fn apply_ordered_with_cache_into(
             // Do not rotate before alignment: mega-pixel blocks stay axis-aligned rectangles.
             // Wave is not matrix-indexed; it samples pixel-space block origin.
             let (r, g, b, block_a) = if ps > 1 {
-                read_block_source(tile, coord, block_gx, block_gy, block_cache, document.id.0, layer_id, ps)
+                read_block_source(
+                    tile,
+                    coord,
+                    block_gx,
+                    block_gy,
+                    block_cache,
+                    document.id.0,
+                    layer_id,
+                    ps,
+                )
             } else {
-                (tile.at(x, y, 0), tile.at(x, y, 1), tile.at(x, y, 2), tile.at(x, y, 3))
+                (
+                    tile.at(x, y, 0),
+                    tile.at(x, y, 1),
+                    tile.at(x, y, 2),
+                    tile.at(x, y, 3),
+                )
             };
             let src_a = if params.dither_alpha {
                 block_a
@@ -610,8 +634,7 @@ pub fn apply_ordered_with_cache_into(
             match params.color_mode {
                 DitherColorMode::Rgb => match &palette_path {
                     PalettePath::Strict(picker) => {
-                        let (qr, qg, qb) =
-                            picker.pick(r, g, b, threshold, params.threshold_scale);
+                        let (qr, qg, qb) = picker.pick(r, g, b, threshold, params.threshold_scale);
                         dst.set(x, y, 0, qr);
                         dst.set(x, y, 1, qg);
                         dst.set(x, y, 2, qb);
@@ -621,9 +644,24 @@ pub fn apply_ordered_with_cache_into(
                         levels: ch_levels,
                     } => {
                         let t = 0.5 + (threshold - 0.5) * params.threshold_scale;
-                        dst.set(x, y, 0, quantize_channel_guided(r, ranges[0], *ch_levels, t));
-                        dst.set(x, y, 1, quantize_channel_guided(g, ranges[1], *ch_levels, t));
-                        dst.set(x, y, 2, quantize_channel_guided(b, ranges[2], *ch_levels, t));
+                        dst.set(
+                            x,
+                            y,
+                            0,
+                            quantize_channel_guided(r, ranges[0], *ch_levels, t),
+                        );
+                        dst.set(
+                            x,
+                            y,
+                            1,
+                            quantize_channel_guided(g, ranges[1], *ch_levels, t),
+                        );
+                        dst.set(
+                            x,
+                            y,
+                            2,
+                            quantize_channel_guided(b, ranges[2], *ch_levels, t),
+                        );
                     }
                     PalettePath::Mixed {
                         ranges,
@@ -774,7 +812,15 @@ fn apply_cmyk_halftone(
 ) -> Result<PixelTile, EngineError> {
     let mut out = PixelTile::new();
     apply_cmyk_halftone_into(
-        tile, coord, params, palette_cache, lut_cache, document, block_cache, layer_id, &mut out,
+        tile,
+        coord,
+        params,
+        palette_cache,
+        lut_cache,
+        document,
+        block_cache,
+        layer_id,
+        &mut out,
     )?;
     Ok(out)
 }
@@ -814,9 +860,23 @@ fn apply_cmyk_halftone_into(
             let block_gy = block.y;
 
             let (r, g, b, block_a) = if ps > 1 {
-                read_block_source(tile, coord, block_gx, block_gy, block_cache, document.id.0, layer_id, ps)
+                read_block_source(
+                    tile,
+                    coord,
+                    block_gx,
+                    block_gy,
+                    block_cache,
+                    document.id.0,
+                    layer_id,
+                    ps,
+                )
             } else {
-                (tile.at(x, y, 0), tile.at(x, y, 1), tile.at(x, y, 2), tile.at(x, y, 3))
+                (
+                    tile.at(x, y, 0),
+                    tile.at(x, y, 1),
+                    tile.at(x, y, 2),
+                    tile.at(x, y, 3),
+                )
             };
             let src_a = if params.dither_alpha {
                 block_a
@@ -942,7 +1002,16 @@ mod tests {
         let lut_cache = PaletteLutCache::new();
         let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
 
-        let result = apply_ordered(&tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc).unwrap();
+        let result = apply_ordered(
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         let levels = params.levels as f32;
         for y in 0..TILE_FULL_SIZE {
@@ -951,7 +1020,10 @@ mod tests {
                     assert!(
                         is_valid_level(result.at(x, y, c), levels),
                         "Invalid level at ({}, {}, {}): {}",
-                        x, y, c, result.at(x, y, c)
+                        x,
+                        y,
+                        c,
+                        result.at(x, y, c)
                     );
                 }
             }
@@ -967,7 +1039,16 @@ mod tests {
         let lut_cache = PaletteLutCache::new();
         let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
 
-        let result = apply_ordered(&tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc).unwrap();
+        let result = apply_ordered(
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         let levels = params.levels as f32;
         for y in 0..TILE_FULL_SIZE {
@@ -988,7 +1069,16 @@ mod tests {
         let lut_cache = PaletteLutCache::new();
         let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
 
-        let result = apply_ordered(&tile, tc(3, 7), &params, &threshold_cache, &palette_cache, &lut_cache, &doc).unwrap();
+        let result = apply_ordered(
+            &tile,
+            tc(3, 7),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         let levels = params.levels as f32;
         for y in 0..TILE_FULL_SIZE {
@@ -1010,7 +1100,16 @@ mod tests {
         let lut_cache = PaletteLutCache::new();
         let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
 
-        let result = apply_ordered(&tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc).unwrap();
+        let result = apply_ordered(
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         for y in 0..TILE_FULL_SIZE {
             for x in 0..TILE_FULL_SIZE {
@@ -1034,7 +1133,13 @@ mod tests {
         let lut_cache = PaletteLutCache::new();
         let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
         let result = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
 
@@ -1042,7 +1147,10 @@ mod tests {
             assert_eq!(result.at(0, y, 3), 0.0, "transparent stays 0 at y={y}");
             assert_eq!(result.at(0, y, 0), 0.0, "punched alpha must clear RGB");
             let a = result.at(8, y, 3);
-            assert!(a == 0.0 || a == 1.0, "soft alpha must be 0 or 1, got {a} at y={y}");
+            assert!(
+                a == 0.0 || a == 1.0,
+                "soft alpha must be 0 or 1, got {a} at y={y}"
+            );
             assert_eq!(result.at(16, y, 3), 1.0, "opaque stays 1 at y={y}");
         }
         let mut saw_zero = false;
@@ -1054,7 +1162,10 @@ mod tests {
                 _ => {}
             }
         }
-        assert!(saw_zero && saw_one, "Bayer on 0.4 alpha should mix 0 and 1 along a column");
+        assert!(
+            saw_zero && saw_one,
+            "Bayer on 0.4 alpha should mix 0 and 1 along a column"
+        );
     }
 
     #[test]
@@ -1077,7 +1188,13 @@ mod tests {
         let lut_cache = PaletteLutCache::new();
         let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
         let result = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
 
@@ -1093,7 +1210,8 @@ mod tests {
                                 result.at(x + dx, y + dy, 3),
                                 a0,
                                 "alpha not uniform in {ps}×{ps} block at ({}, {})",
-                                x, y
+                                x,
+                                y
                             );
                         }
                     }
@@ -1113,8 +1231,26 @@ mod tests {
         let params_low = make_params(DitherModeV2::Bayer4x4, 4, 0.1);
         let params_high = make_params(DitherModeV2::Bayer4x4, 4, 4.0);
 
-        let result_low = apply_ordered(&tile, tc(0, 0), &params_low, &threshold_cache, &palette_cache, &lut_cache, &doc).unwrap();
-        let result_high = apply_ordered(&tile, tc(0, 0), &params_high, &threshold_cache, &palette_cache, &lut_cache, &doc).unwrap();
+        let result_low = apply_ordered(
+            &tile,
+            tc(0, 0),
+            &params_low,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
+        let result_high = apply_ordered(
+            &tile,
+            tc(0, 0),
+            &params_high,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         // Results should differ since threshold_scale changes the offset magnitude
         assert_ne!(result_low.data, result_high.data);
@@ -1130,7 +1266,16 @@ mod tests {
         let lut_cache = PaletteLutCache::new();
         let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
 
-        let result = apply_ordered(&tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc).unwrap();
+        let result = apply_ordered(
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         for y in 0..TILE_FULL_SIZE {
             for x in 0..TILE_FULL_SIZE {
@@ -1152,8 +1297,26 @@ mod tests {
         let lut_cache = PaletteLutCache::new();
         let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
 
-        let r1 = apply_ordered(&tile, tc(5, 10), &params, &threshold_cache, &palette_cache, &lut_cache, &doc).unwrap();
-        let r2 = apply_ordered(&tile, tc(5, 10), &params, &threshold_cache, &palette_cache, &lut_cache, &doc).unwrap();
+        let r1 = apply_ordered(
+            &tile,
+            tc(5, 10),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
+        let r2 = apply_ordered(
+            &tile,
+            tc(5, 10),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         assert_eq!(r1.data, r2.data);
     }
@@ -1167,7 +1330,16 @@ mod tests {
         let lut_cache = PaletteLutCache::new();
         let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
 
-        let result = apply_ordered(&tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc).unwrap();
+        let result = apply_ordered(
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         for y in 0..TILE_FULL_SIZE {
             for x in 0..TILE_FULL_SIZE {
@@ -1187,7 +1359,16 @@ mod tests {
         let lut_cache = PaletteLutCache::new();
         let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
 
-        let result = apply_ordered(&tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc).unwrap();
+        let result = apply_ordered(
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         for y in 0..TILE_FULL_SIZE {
             for x in 0..TILE_FULL_SIZE {
@@ -1242,7 +1423,11 @@ mod tests {
         let s = 8.0;
         // rem_euclid(0,8)-4 = -4; rem_euclid(4,8)-4 = 0 → center-ish at (4,4)
         let d = rotated_cell_dist(4, 4, s, 0.0);
-        assert!(d < 1e-5, "expected near-zero dist at cell center, got {}", d);
+        assert!(
+            d < 1e-5,
+            "expected near-zero dist at cell center, got {}",
+            d
+        );
         let d_corner = rotated_cell_dist(0, 0, s, 0.0);
         assert!((d_corner - (4.0_f32 * 2.0_f32.sqrt())).abs() < 1e-4);
     }
@@ -1269,7 +1454,13 @@ mod tests {
         let lut_cache = PaletteLutCache::new();
         let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
         let result = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         assert_eq!(result.at(10, 10, 3), 0.42);
@@ -1286,11 +1477,23 @@ mod tests {
         let lut_cache = PaletteLutCache::new();
         let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
         let r1 = apply_ordered(
-            &tile, tc(1, 1), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(1, 1),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         let r2 = apply_ordered(
-            &tile, tc(1, 1), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(1, 1),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         assert_eq!(r1.data, r2.data);
@@ -1308,7 +1511,16 @@ mod tests {
         let lut_cache = PaletteLutCache::new();
         let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
 
-        let result = apply_ordered(&tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc).unwrap();
+        let result = apply_ordered(
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         // Check that 2×2 blocks have uniform color
         let ps = 2u32;
@@ -1322,16 +1534,31 @@ mod tests {
                         let px = bx + dx;
                         let py = by + dy;
                         assert_eq!(
-                            result.at(px, py, 0), r0,
-                            "R mismatch in block ({}, {}) at pixel ({}, {})", bx, by, px, py
+                            result.at(px, py, 0),
+                            r0,
+                            "R mismatch in block ({}, {}) at pixel ({}, {})",
+                            bx,
+                            by,
+                            px,
+                            py
                         );
                         assert_eq!(
-                            result.at(px, py, 1), g0,
-                            "G mismatch in block ({}, {}) at pixel ({}, {})", bx, by, px, py
+                            result.at(px, py, 1),
+                            g0,
+                            "G mismatch in block ({}, {}) at pixel ({}, {})",
+                            bx,
+                            by,
+                            px,
+                            py
                         );
                         assert_eq!(
-                            result.at(px, py, 2), b0,
-                            "B mismatch in block ({}, {}) at pixel ({}, {})", bx, by, px, py
+                            result.at(px, py, 2),
+                            b0,
+                            "B mismatch in block ({}, {}) at pixel ({}, {})",
+                            bx,
+                            by,
+                            px,
+                            py
                         );
                     }
                 }
@@ -1350,7 +1577,16 @@ mod tests {
         let doc = Document::new(crate::types::DocumentId::new(1), 512, 512);
 
         // Process at tile (1, 1) — global offset is (256, 256)
-        let result = apply_ordered(&tile, tc(1, 1), &params, &threshold_cache, &palette_cache, &lut_cache, &doc).unwrap();
+        let result = apply_ordered(
+            &tile,
+            tc(1, 1),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         // Halo shifts local (0,0) off the global ps grid; compare runs that share aligned origin.
         let ps = 4u32;
@@ -1359,7 +1595,8 @@ mod tests {
             for x in 0..TILE_FULL_SIZE {
                 let block = GlobalCoordSigned::from_local_with_halo(coord, x, y, HALO).aligned(ps);
                 if x + 1 < TILE_FULL_SIZE {
-                    let n = GlobalCoordSigned::from_local_with_halo(coord, x + 1, y, HALO).aligned(ps);
+                    let n =
+                        GlobalCoordSigned::from_local_with_halo(coord, x + 1, y, HALO).aligned(ps);
                     if n == block {
                         assert_eq!(
                             result.at(x, y, 0),
@@ -1371,7 +1608,8 @@ mod tests {
                     }
                 }
                 if y + 1 < TILE_FULL_SIZE {
-                    let n = GlobalCoordSigned::from_local_with_halo(coord, x, y + 1, HALO).aligned(ps);
+                    let n =
+                        GlobalCoordSigned::from_local_with_halo(coord, x, y + 1, HALO).aligned(ps);
                     if n == block {
                         assert_eq!(
                             result.at(x, y, 0),
@@ -1396,7 +1634,16 @@ mod tests {
         let lut_cache = PaletteLutCache::new();
         let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
 
-        let result = apply_ordered(&tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc).unwrap();
+        let result = apply_ordered(
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         // With ps=1, adjacent pixels can have different values (they do due to Bayer matrix)
         // Just verify it produces valid quantized levels and not all the same
@@ -1410,7 +1657,10 @@ mod tests {
                 }
             }
         }
-        assert!(seen_different, "With ps=1, Bayer 4x4 should produce varied output");
+        assert!(
+            seen_different,
+            "With ps=1, Bayer 4x4 should produce varied output"
+        );
     }
 
     // ─── Palette Quantization Tests (Req 6.1–6.3, 6.5, 7.1–7.4) ────────
@@ -1432,14 +1682,35 @@ mod tests {
         let palette_id = doc.add_palette(
             "Test".to_string(),
             vec![
-                LinearColor { r: 0.0, g: 0.0, b: 0.0 }, // black
-                LinearColor { r: 1.0, g: 1.0, b: 1.0 }, // white
-                LinearColor { r: 0.5, g: 0.0, b: 0.5 }, // purple
+                LinearColor {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                }, // black
+                LinearColor {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 1.0,
+                }, // white
+                LinearColor {
+                    r: 0.5,
+                    g: 0.0,
+                    b: 0.5,
+                }, // purple
             ],
         );
         params.palette_id = Some(palette_id);
 
-        let result = apply_ordered(&tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc).unwrap();
+        let result = apply_ordered(
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         // Every output pixel must match one of the palette colors
         let palette = doc.get_palette(palette_id).unwrap();
@@ -1449,9 +1720,10 @@ mod tests {
                 let out_g = result.at(x, y, 1);
                 let out_b = result.at(x, y, 2);
 
-                let matches_any = palette.colors.iter().any(|c| {
-                    c.r == out_r && c.g == out_g && c.b == out_b
-                });
+                let matches_any = palette
+                    .colors
+                    .iter()
+                    .any(|c| c.r == out_r && c.g == out_g && c.b == out_b);
                 assert!(
                     matches_any,
                     "Pixel ({}, {}) = ({}, {}, {}) does not match any palette entry",
@@ -1475,14 +1747,32 @@ mod tests {
         let palette_id = doc.add_palette(
             "S".into(),
             vec![
-                LinearColor { r: 0.0, g: 0.0, b: 0.0 },
-                LinearColor { r: 1.0, g: 0.0, b: 0.0 },
-                LinearColor { r: 0.0, g: 1.0, b: 0.0 },
+                LinearColor {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                },
+                LinearColor {
+                    r: 1.0,
+                    g: 0.0,
+                    b: 0.0,
+                },
+                LinearColor {
+                    r: 0.0,
+                    g: 1.0,
+                    b: 0.0,
+                },
             ],
         );
         params.palette_id = Some(palette_id);
         let result = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         let palette = doc.get_palette(palette_id).unwrap();
@@ -1523,13 +1813,27 @@ mod tests {
         let palette_id = doc.add_palette(
             "G".into(),
             vec![
-                LinearColor { r: 0.1, g: 0.2, b: 0.3 },
-                LinearColor { r: 0.9, g: 0.8, b: 0.7 },
+                LinearColor {
+                    r: 0.1,
+                    g: 0.2,
+                    b: 0.3,
+                },
+                LinearColor {
+                    r: 0.9,
+                    g: 0.8,
+                    b: 0.7,
+                },
             ],
         );
         params.palette_id = Some(palette_id);
         let result = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         let palette = doc.get_palette(palette_id).unwrap();
@@ -1547,7 +1851,10 @@ mod tests {
                 }
             }
         }
-        assert!(found_off_palette, "Guided must produce at least one non-palette RGB");
+        assert!(
+            found_off_palette,
+            "Guided must produce at least one non-palette RGB"
+        );
     }
 
     #[test]
@@ -1567,13 +1874,27 @@ mod tests {
         let palette_id = doc.add_palette(
             "R".into(),
             vec![
-                LinearColor { r: 0.2, g: 0.1, b: 0.4 },
-                LinearColor { r: 0.8, g: 0.6, b: 0.9 },
+                LinearColor {
+                    r: 0.2,
+                    g: 0.1,
+                    b: 0.4,
+                },
+                LinearColor {
+                    r: 0.8,
+                    g: 0.6,
+                    b: 0.9,
+                },
             ],
         );
         params.palette_id = Some(palette_id);
         let result = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         let palette = doc.get_palette(palette_id).unwrap();
@@ -1616,14 +1937,32 @@ mod tests {
         let palette_id = doc.add_palette(
             "M".into(),
             vec![
-                LinearColor { r: 0.1, g: 0.2, b: 0.3 },
-                LinearColor { r: 0.9, g: 0.8, b: 0.7 },
-                LinearColor { r: 0.2, g: 0.7, b: 0.4 },
+                LinearColor {
+                    r: 0.1,
+                    g: 0.2,
+                    b: 0.3,
+                },
+                LinearColor {
+                    r: 0.9,
+                    g: 0.8,
+                    b: 0.7,
+                },
+                LinearColor {
+                    r: 0.2,
+                    g: 0.7,
+                    b: 0.4,
+                },
             ],
         );
         params.palette_id = Some(palette_id);
         let result = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         let palette = doc.get_palette(palette_id).unwrap();
@@ -1695,7 +2034,13 @@ mod tests {
         );
         params.palette_id = Some(palette_id);
         let result = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         let mut unique = BTreeSet::new();
@@ -1742,21 +2087,53 @@ mod tests {
         let palette_id = doc.add_palette(
             "MS".into(),
             vec![
-                LinearColor { r: 0.0, g: 0.0, b: 0.0 },
-                LinearColor { r: 1.0, g: 0.0, b: 0.0 },
-                LinearColor { r: 0.0, g: 1.0, b: 0.0 },
-                LinearColor { r: 0.0, g: 0.0, b: 1.0 },
-                LinearColor { r: 1.0, g: 1.0, b: 1.0 },
+                LinearColor {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                },
+                LinearColor {
+                    r: 1.0,
+                    g: 0.0,
+                    b: 0.0,
+                },
+                LinearColor {
+                    r: 0.0,
+                    g: 1.0,
+                    b: 0.0,
+                },
+                LinearColor {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 1.0,
+                },
+                LinearColor {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 1.0,
+                },
             ],
         );
         strict.palette_id = Some(palette_id);
         mixed.palette_id = Some(palette_id);
         let a = apply_ordered(
-            &tile, tc(0, 0), &strict, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &strict,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         let b = apply_ordered(
-            &tile, tc(0, 0), &mixed, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &mixed,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         assert_ne!(
@@ -1792,10 +2169,26 @@ mod tests {
         let palette_id = doc.add_palette(
             "ps4".into(),
             vec![
-                LinearColor { r: 0.0, g: 0.0, b: 0.0 },
-                LinearColor { r: 0.33, g: 0.33, b: 0.33 },
-                LinearColor { r: 0.66, g: 0.66, b: 0.66 },
-                LinearColor { r: 1.0, g: 1.0, b: 1.0 },
+                LinearColor {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                },
+                LinearColor {
+                    r: 0.33,
+                    g: 0.33,
+                    b: 0.33,
+                },
+                LinearColor {
+                    r: 0.66,
+                    g: 0.66,
+                    b: 0.66,
+                },
+                LinearColor {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 1.0,
+                },
             ],
         );
         params.palette_id = Some(palette_id);
@@ -1807,7 +2200,13 @@ mod tests {
         );
 
         let result = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         let mut lums = BTreeSet::new();
@@ -1847,14 +2246,32 @@ mod tests {
         let palette_id = doc.add_palette(
             "S".into(),
             vec![
-                LinearColor { r: 0.1, g: 0.2, b: 0.3 },
-                LinearColor { r: 0.9, g: 0.8, b: 0.7 },
-                LinearColor { r: 0.2, g: 0.7, b: 0.4 },
+                LinearColor {
+                    r: 0.1,
+                    g: 0.2,
+                    b: 0.3,
+                },
+                LinearColor {
+                    r: 0.9,
+                    g: 0.8,
+                    b: 0.7,
+                },
+                LinearColor {
+                    r: 0.2,
+                    g: 0.7,
+                    b: 0.4,
+                },
             ],
         );
         params.palette_id = Some(palette_id);
         let result = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         let palette = doc.get_palette(palette_id).unwrap();
@@ -1908,7 +2325,13 @@ mod tests {
         );
         params.palette_id = Some(palette_id);
         let result = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         let red_r = srgb_to_linear(255);
@@ -1947,10 +2370,18 @@ mod tests {
         let g = srgb_to_linear(128);
         // Old bayerDither: (T-0.5)*intensity*64. T=0 → −32 → 96, nearer black.
         let black = picker.pick(g, g, g, -0.5 * SIMPLE_BAYER_SRGB_AMPLITUDE);
-        assert!(black.0 < 0.01, "T=0 offset must pick black, got {}", black.0);
+        assert!(
+            black.0 < 0.01,
+            "T=0 offset must pick black, got {}",
+            black.0
+        );
         // No offset: 128 is 1 closer to 255 than to 0.
         let white = picker.pick(g, g, g, 0.0);
-        assert!(white.0 > 0.99, "zero offset mid-gray must pick white, got {}", white.0);
+        assert!(
+            white.0 > 0.99,
+            "zero offset mid-gray must pick white, got {}",
+            white.0
+        );
     }
 
     #[test]
@@ -1991,7 +2422,13 @@ mod tests {
         params.palette_id = Some(palette_id);
 
         let result = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
 
@@ -2054,7 +2491,13 @@ mod tests {
         params.palette_id = Some(palette_id);
 
         let result = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
 
@@ -2111,7 +2554,13 @@ mod tests {
         params.palette_id = Some(palette_id);
 
         let result = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
 
@@ -2194,7 +2643,13 @@ mod tests {
         params.palette_id = Some(palette_id);
 
         let result = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
 
@@ -2227,8 +2682,19 @@ mod tests {
         let lut_cache = PaletteLutCache::new();
         let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
 
-        let result = apply_ordered(&tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc);
-        assert!(result.is_err(), "Should error when palette_id references nonexistent palette");
+        let result = apply_ordered(
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        );
+        assert!(
+            result.is_err(),
+            "Should error when palette_id references nonexistent palette"
+        );
     }
 
     #[test]
@@ -2241,13 +2707,29 @@ mod tests {
         let lut_cache = PaletteLutCache::new();
         let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
 
-        let result = apply_ordered(&tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc).unwrap();
+        let result = apply_ordered(
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         for y in 0..TILE_FULL_SIZE {
             for x in 0..TILE_FULL_SIZE {
                 for c in 0..3 {
                     let v = result.at(x, y, c);
-                    assert!(v >= 0.0 && v <= 1.0, "Value out of range at ({}, {}, {}): {}", x, y, c, v);
+                    assert!(
+                        v >= 0.0 && v <= 1.0,
+                        "Value out of range at ({}, {}, {}): {}",
+                        x,
+                        y,
+                        c,
+                        v
+                    );
                 }
             }
         }
@@ -2269,8 +2751,26 @@ mod tests {
         let lut_cache = PaletteLutCache::new();
         let doc = Document::new(crate::types::DocumentId::new(1), 512, 512);
 
-        let result_left = apply_ordered(&tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc).unwrap();
-        let result_right = apply_ordered(&tile, tc(1, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc).unwrap();
+        let result_left = apply_ordered(
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
+        let result_right = apply_ordered(
+            &tile,
+            tc(1, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
 
         // The last core column of tile (0,0) is at local x = HALO + TILE_SIZE - 1 = 257
         // The first core column of tile (1,0) is at local x = HALO = 2
@@ -2288,11 +2788,13 @@ mod tests {
             // Both should be valid quantized levels
             assert!(
                 is_valid_level(left_val, 4.0),
-                "Invalid level at left boundary: {}", left_val
+                "Invalid level at left boundary: {}",
+                left_val
             );
             assert!(
                 is_valid_level(right_val, 4.0),
-                "Invalid level at right boundary: {}", right_val
+                "Invalid level at right boundary: {}",
+                right_val
             );
         }
 
@@ -2344,13 +2846,25 @@ mod tests {
         let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
 
         let baseline = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         params.threshold_bias = 0.0;
         params.pattern_angle = 0.0;
         let same = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         assert_eq!(baseline.data, same.data);
@@ -2378,17 +2892,35 @@ mod tests {
 
         let mut params = make_params(DitherModeV2::Bayer4x4, 2, 1.0);
         let mid = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         params.threshold_bias = 0.2;
         let high = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         params.threshold_bias = -0.2;
         let low = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
 
@@ -2415,22 +2947,46 @@ mod tests {
         let doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
 
         let a = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
         params.pattern_angle = 15.0;
         let rotated = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
-        assert_ne!(a.data, rotated.data, "non-zero angle must change Bayer sampling");
+        assert_ne!(
+            a.data, rotated.data,
+            "non-zero angle must change Bayer sampling"
+        );
 
         params.pattern_angle = 375.0;
         let period = apply_ordered(
-            &tile, tc(0, 0), &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
-        assert_eq!(rotated.data, period.data, "angle and angle+360 must be bit-identical");
+        assert_eq!(
+            rotated.data, period.data,
+            "angle and angle+360 must be bit-identical"
+        );
     }
 
     #[test]
@@ -2446,7 +3002,13 @@ mod tests {
         let coord = tc(0, 0);
 
         let result = apply_ordered(
-            &tile, coord, &params, &threshold_cache, &palette_cache, &lut_cache, &doc,
+            &tile,
+            coord,
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
 
@@ -2455,7 +3017,8 @@ mod tests {
             for x in 0..TILE_FULL_SIZE {
                 let block = GlobalCoordSigned::from_local_with_halo(coord, x, y, HALO).aligned(ps);
                 if x + 1 < TILE_FULL_SIZE {
-                    let n = GlobalCoordSigned::from_local_with_halo(coord, x + 1, y, HALO).aligned(ps);
+                    let n =
+                        GlobalCoordSigned::from_local_with_halo(coord, x + 1, y, HALO).aligned(ps);
                     if n == block {
                         assert_eq!(
                             result.at(x, y, 0),
@@ -2465,7 +3028,8 @@ mod tests {
                     }
                 }
                 if y + 1 < TILE_FULL_SIZE {
-                    let n = GlobalCoordSigned::from_local_with_halo(coord, x, y + 1, HALO).aligned(ps);
+                    let n =
+                        GlobalCoordSigned::from_local_with_halo(coord, x, y + 1, HALO).aligned(ps);
                     if n == block {
                         assert_eq!(
                             result.at(x, y, 0),
@@ -2559,7 +3123,8 @@ mod tests {
             let psu = ps as u32;
             for y in 0..TILE_FULL_SIZE {
                 for x in 0..TILE_FULL_SIZE {
-                    let block = GlobalCoordSigned::from_local_with_halo(coord, x, y, HALO).aligned(psu);
+                    let block =
+                        GlobalCoordSigned::from_local_with_halo(coord, x, y, HALO).aligned(psu);
                     let (tx, ty) = ordered_pattern_coord(block.x, block.y, psu, 0.0);
                     let t = get_threshold_i32(&params, tx, ty, &cache).unwrap();
                     seen.insert(t.to_bits());

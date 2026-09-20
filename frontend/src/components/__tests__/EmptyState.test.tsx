@@ -1,8 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import EmptyState from '../EmptyState';
+import { ShellProvider } from '../../app/shell/ShellContext';
 import { openRecentByKind } from '../../shared/ipc/recent';
 import type { RecentFileEntry } from '../../shared/ipc/recent';
+
+function wrapper({ children }: { children: ReactNode }) {
+  return <ShellProvider>{children}</ShellProvider>;
+}
 
 const imageEntry: RecentFileEntry = {
   path: '/tmp/photo.png',
@@ -25,7 +31,8 @@ describe('EmptyState (Welcome)', () => {
         onNewProject={vi.fn()}
         onOpenImage={vi.fn()}
         onOpenProject={vi.fn()}
-      />
+      />,
+      { wrapper }
     );
     expect(screen.getByText('Open image')).toBeInTheDocument();
     expect(screen.getByText('Open project')).toBeInTheDocument();
@@ -42,7 +49,8 @@ describe('EmptyState (Welcome)', () => {
         onOpenRecent={(entry) =>
           openRecentByKind(entry, { openImageAt, openProjectAt })
         }
-      />
+      />,
+      { wrapper }
     );
     fireEvent.click(screen.getByText('photo.png'));
     expect(openImageAt).toHaveBeenCalledWith('/tmp/photo.png');
@@ -58,7 +66,8 @@ describe('EmptyState (Welcome)', () => {
         onOpenRecent={(entry) =>
           openRecentByKind(entry, { openImageAt, openProjectAt })
         }
-      />
+      />,
+      { wrapper }
     );
     fireEvent.click(screen.getByText('proj.dyproj'));
     expect(openProjectAt).toHaveBeenCalledWith('/tmp/proj.dyproj');
@@ -72,7 +81,7 @@ describe('EmptyState (Welcome)', () => {
       display_name: `file-${i}.png`,
       opened_at: '2026-08-13T00:00:00.000Z',
     }));
-    render(<EmptyState recentEntries={entries} />);
+    render(<EmptyState recentEntries={entries} />, { wrapper });
     expect(screen.getByText('file-0.png')).toBeInTheDocument();
     expect(screen.getByText('file-5.png')).toBeInTheDocument();
     expect(screen.queryByText('file-6.png')).not.toBeInTheDocument();
