@@ -223,8 +223,8 @@ Export принимает `ExportImageRequest.doc_id` (может отличат
 | `tabs-changed` | `OpenDocumentsPayload` | Список вкладок + active |
 | `document-changed` | `{ kind, layer_id?, doc_id? }` | `doc_id` = active на момент emit; kinds: `document_activated`, `document_closed`, `image_loaded`, `project_opened`, filter/*, undo… |
 | `tile-ready` | `{ doc_id, layer_id, stage, level, x, y }` | Frontend фильтрует по своему `docId` |
-| `dirty-changed` | `{ dirty }` | **Без** `doc_id` — только active |
-| `undo-state-changed` | `{ can_undo, can_redo }` | Только active |
+| `dirty-changed` | `{ dirty, doc_id }` | Frontend: `patchTabDirty` для любой вкладки; `documentSlice.dirty` / title — только active |
+| `undo-state-changed` | `{ can_undo, can_redo, doc_id? }` | Frontend зеркалит только для active |
 
 ---
 

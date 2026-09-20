@@ -7,6 +7,7 @@ import { applyPanelEvent, fetchPanels } from './slices/panelsSlice';
 import { applyRemoteDraft, hydrateFromStorage } from './slices/colorLabSlice';
 import { applyUndoState } from './slices/undoSlice';
 import { bumpVersion, applyRemoteBinding, loadPersistedLastCreatedId } from './slices/palettesSlice';
+import { patchTabDirty } from './slices/tabsSlice';
 import {
   onColorLabDraftChanged,
   onPaletteBindingChanged,
@@ -125,10 +126,16 @@ export function startEngineEventBridge(store: AppStore): EngineBridgeCleanup {
     if (cancelled) return;
     const active = store.getState().document.docId;
     const eventDoc = event.payload.doc_id;
+    const dirty = event.payload.dirty;
+    // Always mirror into tabs so quit/close see inactive dirty tabs.
+    if (typeof eventDoc === 'number' && eventDoc > 0) {
+      dispatch(patchTabDirty({ id: eventDoc, dirty }));
+    }
+    // Window title / documentSlice only track the active document.
     if (typeof eventDoc === 'number' && eventDoc > 0 && active != null && eventDoc !== active) {
       return;
     }
-    dispatch(setDirty(event.payload.dirty));
+    dispatch(setDirty(dirty));
   }).then((fn) => {
     if (cancelled) fn();
     else unsubscribers.push(fn);

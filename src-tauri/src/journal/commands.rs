@@ -12,6 +12,7 @@ use crate::document_session::emit_tabs_changed;
 use crate::journal::meta::{
     journal_blob_path, list_metas, read_meta, JournalContentKind, JournalMeta,
 };
+use crate::journal::roster::{self, SessionRoster};
 use crate::journal::{delete_journal, recovery_subdir, write_journal_for_doc};
 use crate::services::document_service::OpenProjectResponse;
 
@@ -26,6 +27,8 @@ pub struct RecoveryScanDto {
     /// True when clean_exit.marker was missing (crash / kill / first launch).
     pub previous_unclean: bool,
     pub journals: Vec<JournalMeta>,
+    /// Last open-tab set (may be present even when journals are empty).
+    pub roster: Option<SessionRoster>,
 }
 
 fn app_data(app: &AppHandle) -> Result<PathBuf, String> {
@@ -43,9 +46,15 @@ pub fn scan_recovery_journals(app: AppHandle) -> Result<RecoveryScanDto, String>
         .into_iter()
         .filter(|m| m.content_kind == JournalContentKind::FullDyproj)
         .collect();
+    let roster = if previous_unclean {
+        roster::read_roster(&data)
+    } else {
+        None
+    };
     Ok(RecoveryScanDto {
         previous_unclean,
         journals,
+        roster,
     })
 }
 
@@ -167,6 +176,7 @@ pub fn discard_recovery_journals(
 /// Write clean-exit marker (call after QuitGuard allows exit).
 pub fn write_marker_from_app(app: &AppHandle) {
     if let Ok(data) = app_data(app) {
+        roster::clear_roster(&data);
         if let Err(e) = crate::journal::clean_exit::write_clean_exit_marker(&data) {
             log::warn!("clean_exit marker write failed: {e}");
         }

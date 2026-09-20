@@ -62,6 +62,11 @@ const tabsSlice = createSlice({
     tabsChanged(state, action: PayloadAction<OpenDocumentsPayload>) {
       applyPayload(state, action.payload);
     },
+    /** Live dirty from `dirty-changed` — unknown ids are ignored. */
+    patchTabDirty(state, action: PayloadAction<{ id: number; dirty: boolean }>) {
+      const tab = state.tabs.find((t) => t.id === action.payload.id);
+      if (tab) tab.dirty = action.payload.dirty;
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -80,5 +85,5 @@ const tabsSlice = createSlice({
   },
 });
 
-export const { tabsChanged } = tabsSlice.actions;
+export const { tabsChanged, patchTabDirty } = tabsSlice.actions;
 export default tabsSlice.reducer;

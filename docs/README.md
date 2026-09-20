@@ -2,7 +2,7 @@
 
 As-built notes for Dither Yuki. Product overview and install: [root README](../README.md).
 
-**Canon (read these first):** [`architecture.md`](./architecture.md) · [`tile-pipeline.md`](./tile-pipeline.md) · [`FLEXLAYOUT_DOCKING.md`](./FLEXLAYOUT_DOCKING.md) · [`gpu-as-built.md`](./gpu-as-built.md)
+**Canon (read these first):** [`architecture.md`](./architecture.md) · [`tile-pipeline.md`](./tile-pipeline.md) · [`FLEXLAYOUT_DOCKING.md`](./FLEXLAYOUT_DOCKING.md) · [`gpu-as-built.md`](./gpu-as-built.md) · [`crash-recovery.md`](./crash-recovery.md)
 
 Working agent specs stay local only (not in this repo on GitHub).
 
@@ -20,6 +20,7 @@ Working agent specs stay local only (not in this repo on GitHub).
 |---|---|
 | [architecture.md](./architecture.md) | Stack, crates, IPC, preview, cost model |
 | [multi-doc-tabs.md](./multi-doc-tabs.md) | Tabs, sessions, shared cache, save/export |
+| [crash-recovery.md](./crash-recovery.md) | Atomic save, journals, clean-exit, soft discard, roster |
 | [tile-pipeline.md](./tile-pipeline.md) | 256×256 tiles, coords, ED, GPU routing |
 | [gpu-as-built.md](./gpu-as-built.md) | Path B resident GPU, auto-dispatch |
 | [FLEXLAYOUT_DOCKING.md](./FLEXLAYOUT_DOCKING.md) | Layers / Effect / Color Lab docking |

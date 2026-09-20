@@ -6,15 +6,23 @@ import {
   recoverJournal,
   scanRecoveryJournals,
   type JournalMeta,
+  type RosterEntry,
 } from './shared/ipc/recovery';
+import { openProject } from './shared/ipc/project';
 import { useAppDispatch } from './app/hooks';
 import { refreshTabs } from './app/slices/tabsSlice';
 import { refreshDocument } from './app/slices/documentSlice';
 
+type RecoveryGate =
+  | { kind: 'scanning' }
+  | { kind: 'none' }
+  | { kind: 'journals'; journals: JournalMeta[]; rosterDocs: RosterEntry[] }
+  | { kind: 'roster'; rosterDocs: RosterEntry[] };
+
 /** Thin app root — providers live in main.tsx; layout owns the shell. */
 function App() {
   const dispatch = useAppDispatch();
-  const [journals, setJournals] = useState<JournalMeta[] | null>(null);
+  const [gate, setGate] = useState<RecoveryGate>({ kind: 'scanning' });
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -22,16 +30,18 @@ function App() {
     void scanRecoveryJournals()
       .then((scan) => {
         if (cancelled) return;
-        // Show only when journals exist (first launch also lacks marker).
+        const rosterDocs = scan.roster?.open_docs ?? [];
         if (scan.journals.length > 0) {
-          setJournals(scan.journals);
+          setGate({ kind: 'journals', journals: scan.journals, rosterDocs });
+        } else if (scan.previous_unclean && rosterDocs.length > 0) {
+          setGate({ kind: 'roster', rosterDocs });
         } else {
-          setJournals([]);
+          setGate({ kind: 'none' });
         }
       })
       .catch((err) => {
         console.error('Recovery scan failed:', err);
-        if (!cancelled) setJournals([]);
+        if (!cancelled) setGate({ kind: 'none' });
       });
     return () => {
       cancelled = true;
@@ -39,16 +49,16 @@ function App() {
   }, []);
 
   const finish = useCallback(async () => {
-    setJournals([]);
+    setGate({ kind: 'none' });
     await dispatch(refreshTabs());
     await dispatch(refreshDocument());
   }, [dispatch]);
 
   const onRecoverAll = useCallback(async () => {
-    if (!journals) return;
+    if (gate.kind !== 'journals') return;
     setBusy(true);
     try {
-      for (const j of journals) {
+      for (const j of gate.journals) {
         await recoverJournal(j.recovery_id);
       }
       await finish();
@@ -57,7 +67,7 @@ function App() {
     } finally {
       setBusy(false);
     }
-  }, [finish, journals]);
+  }, [finish, gate]);
 
   const onDiscardAll = useCallback(async () => {
     setBusy(true);
@@ -71,24 +81,46 @@ function App() {
     }
   }, [finish]);
 
-  const onSkip = useCallback(async () => {
+  const onReopenRoster = useCallback(async () => {
+    if (gate.kind !== 'roster') return;
+    setBusy(true);
+    try {
+      for (const entry of gate.rosterDocs) {
+        const path = entry.project_path ?? entry.source_path;
+        if (!path) continue;
+        try {
+          await openProject(path);
+        } catch (err) {
+          console.error(`Reopen failed for ${path}:`, err);
+        }
+      }
+      await finish();
+    } finally {
+      setBusy(false);
+    }
+  }, [finish, gate]);
+
+  const onSkip = useCallback(() => {
     // Keep journals on disk for a later session; just continue.
-    setJournals([]);
+    setGate({ kind: 'none' });
   }, []);
 
-  const scanning = journals === null;
-  const showRecovery = (journals?.length ?? 0) > 0;
+  const showRecovery = gate.kind === 'journals' || gate.kind === 'roster';
 
   return (
     <>
-      {!scanning && !showRecovery ? <AppLayout /> : null}
-      {showRecovery && journals ? (
+      {gate.kind === 'none' ? <AppLayout /> : null}
+      {showRecovery ? (
         <RecoveryDialog
-          journals={journals}
+          journals={gate.kind === 'journals' ? gate.journals : []}
+          rosterDocs={
+            gate.kind === 'journals' || gate.kind === 'roster' ? gate.rosterDocs : []
+          }
           busy={busy}
           onRecoverAll={() => void onRecoverAll()}
           onDiscardAll={() => void onDiscardAll()}
-          onSkip={() => void onSkip()}
+          onReopenRoster={gate.kind === 'roster' ? () => void onReopenRoster() : undefined}
+          onSkip={onSkip}
         />
       ) : null}
     </>

@@ -1,5 +1,11 @@
 export type UnsavedGuardChoice = 'save' | 'discard' | 'cancel';
 
+/** Result of the multi-document quit dialog (one prompt for N dirty tabs). */
+export type UnsavedMultiChoice =
+  | { kind: 'cancel' }
+  | { kind: 'discard-all' }
+  | { kind: 'save-selected'; selectedIds: number[] };
+
 export function projectBasename(path: string | null | undefined): string {
   if (!path) return 'Untitled';
   const name = path.split(/[/\\]/).pop();
@@ -39,20 +45,35 @@ export async function confirmUnsavedIfNeeded(opts: {
 }
 
 /**
- * VS Code / Photoshop quit: prompt each dirty document in order.
- * Cancel on any document aborts the whole operation (quit / close window).
+ * Quit / window close: one prompt when several tabs are dirty; single-doc path when one.
+ * Cancel or any failed save aborts the whole operation.
  */
 export async function confirmUnsavedDocuments(opts: {
   documents: UnsavedDocumentRef[];
-  /** Show dialog for this document; basename is already set by the UI layer. */
-  promptFor: (doc: UnsavedDocumentRef) => Promise<UnsavedGuardChoice>;
+  promptSingle: (doc: UnsavedDocumentRef) => Promise<UnsavedGuardChoice>;
+  promptMulti: (docs: UnsavedDocumentRef[]) => Promise<UnsavedMultiChoice>;
   save: (doc: UnsavedDocumentRef) => Promise<boolean>;
 }): Promise<boolean> {
   const dirty = opts.documents.filter((d) => d.dirty);
+  if (dirty.length === 0) return true;
+
+  if (dirty.length === 1) {
+    const doc = dirty[0]!;
+    return confirmUnsavedIfNeeded({
+      hasDocument: true,
+      dirty: true,
+      prompt: () => opts.promptSingle(doc),
+      save: () => opts.save(doc),
+    });
+  }
+
+  const choice = await opts.promptMulti(dirty);
+  if (choice.kind === 'cancel') return false;
+  if (choice.kind === 'discard-all') return true;
+
+  const selected = new Set(choice.selectedIds);
   for (const doc of dirty) {
-    const choice = await opts.promptFor(doc);
-    if (choice === 'cancel') return false;
-    if (choice === 'discard') continue;
+    if (!selected.has(doc.id)) continue;
     const saved = await opts.save(doc);
     if (!saved) return false;
   }

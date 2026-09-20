@@ -10,6 +10,7 @@ import {
   displayNameForUnsaved,
   type UnsavedDocumentRef,
   type UnsavedGuardChoice,
+  type UnsavedMultiChoice,
 } from '../shared/unsavedGuard';
 import type { OpenDocumentTab } from '../shared/ipc/document';
 import {
@@ -22,32 +23,77 @@ function tabToRef(tab: OpenDocumentTab): UnsavedDocumentRef {
   return { id: tab.id, dirty: tab.dirty, path: tab.path, title: tab.title };
 }
 
+type PromptState =
+  | { mode: 'single'; basename: string }
+  | { mode: 'multi'; documents: UnsavedDocumentRef[]; selectedIds: number[] };
+
 /**
- * Single UnsavedGuard owner for the window (VS Code / Photoshop):
+ * Single UnsavedGuard owner for the window:
  * - tab × → one document (+ soft-discard Restore toast)
- * - quit / window close / updater restart → every dirty tab in order
+ * - quit / window close / updater restart → all dirty tabs (aggregated when >1)
  */
 export function useUnsavedGuard() {
   const dispatch = useAppDispatch();
   const tabs = useAppSelector((s) => s.tabs.tabs);
 
-  const [open, setOpen] = useState(false);
-  const [basename, setBasename] = useState('Untitled');
-  const resolver = useRef<((choice: UnsavedGuardChoice) => void) | null>(null);
+  const [prompt, setPrompt] = useState<PromptState | null>(null);
+  const singleResolver = useRef<((choice: UnsavedGuardChoice) => void) | null>(null);
+  const multiResolver = useRef<((choice: UnsavedMultiChoice) => void) | null>(null);
   const [softDiscard, setSoftDiscard] = useState<SoftDiscardInfo | null>(null);
 
-  const promptFor = useCallback(async (doc: UnsavedDocumentRef) => {
-    setBasename(displayNameForUnsaved(doc));
+  const clearPrompt = useCallback(() => {
+    setPrompt(null);
+    singleResolver.current = null;
+    multiResolver.current = null;
+  }, []);
+
+  const promptSingle = useCallback(async (doc: UnsavedDocumentRef) => {
+    setPrompt({ mode: 'single', basename: displayNameForUnsaved(doc) });
     return new Promise<UnsavedGuardChoice>((resolve) => {
-      resolver.current = resolve;
-      setOpen(true);
+      singleResolver.current = resolve;
     });
   }, []);
 
-  const finish = useCallback((choice: UnsavedGuardChoice) => {
-    setOpen(false);
-    resolver.current?.(choice);
-    resolver.current = null;
+  const promptMulti = useCallback(async (docs: UnsavedDocumentRef[]) => {
+    setPrompt({
+      mode: 'multi',
+      documents: docs,
+      selectedIds: docs.map((d) => d.id),
+    });
+    return new Promise<UnsavedMultiChoice>((resolve) => {
+      multiResolver.current = resolve;
+    });
+  }, []);
+
+  const finishSingle = useCallback(
+    (choice: UnsavedGuardChoice) => {
+      const resolve = singleResolver.current;
+      clearPrompt();
+      resolve?.(choice);
+    },
+    [clearPrompt]
+  );
+
+  const finishMulti = useCallback(
+    (choice: UnsavedMultiChoice) => {
+      const resolve = multiResolver.current;
+      clearPrompt();
+      resolve?.(choice);
+    },
+    [clearPrompt]
+  );
+
+  const toggleSelected = useCallback((id: number) => {
+    setPrompt((prev) => {
+      if (!prev || prev.mode !== 'multi') return prev;
+      const has = prev.selectedIds.includes(id);
+      return {
+        ...prev,
+        selectedIds: has
+          ? prev.selectedIds.filter((x) => x !== id)
+          : [...prev.selectedIds, id],
+      };
+    });
   }, []);
 
   const saveDoc = useCallback(
@@ -55,45 +101,59 @@ export function useUnsavedGuard() {
     [dispatch]
   );
 
-  /** Quit / close window / restart: walk all dirty tabs sequentially. */
+  /** Backend snapshot before guard — safety net if live dirty patches were missed. */
+  const loadFreshTabs = useCallback(async (): Promise<OpenDocumentTab[]> => {
+    const result = await dispatch(refreshTabs());
+    if (refreshTabs.fulfilled.match(result)) {
+      return result.payload.tabs;
+    }
+    return tabs;
+  }, [dispatch, tabs]);
+
+  /** Quit / close window / restart. */
   const confirmQuit = useCallback(async () => {
+    const fresh = await loadFreshTabs();
     return confirmUnsavedDocuments({
-      documents: tabs.map(tabToRef),
-      promptFor,
+      documents: fresh.map(tabToRef),
+      promptSingle,
+      promptMulti,
       save: saveDoc,
     });
-  }, [promptFor, saveDoc, tabs]);
+  }, [loadFreshTabs, promptMulti, promptSingle, saveDoc]);
 
   /** Tab strip × — guard that tab, then close (soft discard keeps journal + toast). */
   const confirmCloseTab = useCallback(
     async (tab: OpenDocumentTab) => {
-      if (!tab.dirty) {
-        await dispatch(closeTab(tab.id));
+      const fresh = await loadFreshTabs();
+      const current = fresh.find((t) => t.id === tab.id) ?? tab;
+
+      if (!current.dirty) {
+        await dispatch(closeTab(current.id));
         return true;
       }
 
-      const choice = await promptFor(tabToRef(tab));
+      const choice = await promptSingle(tabToRef(current));
       if (choice === 'cancel') return false;
 
       if (choice === 'save') {
-        const saved = await saveDoc(tabToRef(tab));
+        const saved = await saveDoc(tabToRef(current));
         if (!saved) return false;
-        await dispatch(closeTab(tab.id));
+        await dispatch(closeTab(current.id));
         return true;
       }
 
       // Don’t Save — flush journal, close, offer Restore for ~12s.
       try {
-        const info = await prepareSoftDiscard(tab.id);
-        await dispatch(closeTab(tab.id));
+        const info = await prepareSoftDiscard(current.id);
+        await dispatch(closeTab(current.id));
         setSoftDiscard(info);
       } catch (err) {
         console.error('Soft discard prepare failed:', err);
-        await dispatch(closeTab(tab.id));
+        await dispatch(closeTab(current.id));
       }
       return true;
     },
-    [dispatch, promptFor, saveDoc]
+    [dispatch, loadFreshTabs, promptSingle, saveDoc]
   );
 
   const onRestoreDiscarded = useCallback(
@@ -113,11 +173,32 @@ export function useUnsavedGuard() {
   const dialog = (
     <>
       <UnsavedGuardDialog
-        isOpen={open}
-        basename={basename}
-        onSave={() => finish('save')}
-        onDiscard={() => finish('discard')}
-        onCancel={() => finish('cancel')}
+        isOpen={prompt != null}
+        basename={prompt?.mode === 'single' ? prompt.basename : undefined}
+        documents={prompt?.mode === 'multi' ? prompt.documents : undefined}
+        selectedIds={prompt?.mode === 'multi' ? prompt.selectedIds : undefined}
+        onToggleSelected={toggleSelected}
+        onSave={() => {
+          if (prompt?.mode === 'multi') {
+            finishMulti({ kind: 'save-selected', selectedIds: prompt.selectedIds });
+          } else {
+            finishSingle('save');
+          }
+        }}
+        onDiscard={() => {
+          if (prompt?.mode === 'multi') {
+            finishMulti({ kind: 'discard-all' });
+          } else {
+            finishSingle('discard');
+          }
+        }}
+        onCancel={() => {
+          if (prompt?.mode === 'multi') {
+            finishMulti({ kind: 'cancel' });
+          } else {
+            finishSingle('cancel');
+          }
+        }}
       />
       <DiscardRestoreToast
         info={softDiscard}

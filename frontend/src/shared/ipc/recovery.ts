@@ -15,9 +15,24 @@ export interface JournalMeta {
   discarded: boolean;
 }
 
+export interface RosterEntry {
+  recovery_id: string;
+  runtime_doc_id: number;
+  display_name: string;
+  project_path: string | null;
+  source_path: string | null;
+  dirty: boolean;
+}
+
+export interface SessionRoster {
+  open_docs: RosterEntry[];
+  active_recovery_id: string | null;
+}
+
 export interface RecoveryScan {
   previous_unclean: boolean;
   journals: JournalMeta[];
+  roster: SessionRoster | null;
 }
 
 export interface RecoveredProject {

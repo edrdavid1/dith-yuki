@@ -9,7 +9,7 @@ use engine_project::document::DocumentHandle;
 use engine_project::types::DocumentId;
 use engine_project::Document;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::commands::AppState;
 use crate::undo::UndoManager;
@@ -424,6 +424,9 @@ pub fn emit_tabs_changed(app: Option<&AppHandle>, state: &AppState) {
         return;
     };
     let _ = app.emit("tabs-changed", state.tab_list());
+    if let Ok(data) = app.path().app_data_dir() {
+        crate::journal::roster::persist_from_state(state, &data);
+    }
 }
 
 #[cfg(test)]

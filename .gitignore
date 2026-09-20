@@ -18,6 +18,7 @@ npm-debug.log*
 .cursor-spec/
 .kiro/
 .local-specs/
+.local-doc/
 
 # IDE
 .vscode/
