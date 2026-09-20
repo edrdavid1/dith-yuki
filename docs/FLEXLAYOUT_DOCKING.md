@@ -2,13 +2,11 @@
 
 **Дата:** 2026-09-04  
 **Статус:** as-built (B3 + B4a + B4b + B4c)  
-**Библиотека:** [`flexlayout-react`](https://github.com/caplin/FlexLayout) **0.7.15** (MIT; см. [`legal/flexlayout-license-snapshot.md`](./legal/flexlayout-license-snapshot.md))  
-**ADR:** [`B2_ADR_flexlayout_docking.md`](./B2_ADR_flexlayout_docking.md)  
-**Открытая работа:** [`KANBAN_gpu_and_docking.md`](./KANBAN_gpu_and_docking.md)
+**Библиотека:** [`flexlayout-react`](https://github.com/caplin/FlexLayout) **0.7.15** (MIT; см. [`legal/flexlayout-license-snapshot.md`](./legal/flexlayout-license-snapshot.md))
 
 Этот документ — актуальная картина: как библиотека подключена, какие окна мигрированы, кто чем владеет, как устроены float/redock и persistence.
 
-Расхождения с ADR (§12) разделены на **оправданную эволюцию** и **технический долг** — не смешивать.
+Расхождения с исходным ADR (§12) разделены на **оправданную эволюцию** и **технический долг** — не смешивать.
 
 ---
 
@@ -319,7 +317,7 @@ ADR — целевое состояние после **полной** мигра
 ### Обязательно до релиза (не «потом»)
 
 1. **UX: всё зафлоатил, нет docked sibling.** Плейсхолдер «Dock back» убран; колонка уходит в float-host. Возврат: close на `FlexPopoutChrome`, drag на dock-зону (JS affinity), либо меню. **Discoverability** — прогнать в QA для трёх панелей.
-2. **B4c manual QA:** feel JS `setPosition` drag vs старый OS-drag; negative-origin multi-monitor; Linux smoke redock (спека [`.cursor-spec/track-r-docking/B4c_js_popout_drag_spec.md`](../.cursor-spec/track-r-docking/B4c_js_popout_drag_spec.md)).
+2. **B4c manual QA:** feel JS `setPosition` drag vs старый OS-drag; negative-origin multi-monitor; Linux smoke redock.
 
 ### Прочие известные пределы
 
@@ -340,6 +338,4 @@ ADR — целевое состояние после **полной** мигра
 
 | Документ | Назначение |
 |----------|------------|
-| [`B2_ADR_flexlayout_docking.md`](./B2_ADR_flexlayout_docking.md) | Решение «почему FlexLayout» и целевая архитектура |
 | [`legal/flexlayout-license-snapshot.md`](./legal/flexlayout-license-snapshot.md) | Снимок MIT LICENSE для 0.7.15 |
-| [`.cursor-spec/track-r-docking/B4c_js_popout_drag_spec.md`](../.cursor-spec/track-r-docking/B4c_js_popout_drag_spec.md) | B4c JS popout drag + QA |

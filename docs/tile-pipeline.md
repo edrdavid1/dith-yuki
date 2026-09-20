@@ -133,9 +133,7 @@ pub struct ErrorResiduals {
 ### 4.2 ED wavefront scheduler
 
 Тайлы dequeит worker pool по приоритету (Immediate…Prefetch). Для error diffusion
-порядок задаёт **планировщик**, не рекурсия на воркере.
-
-Спека: `.cursor-spec/ed-scheduler/SPEC.md`.
+Порядок задаёт **планировщик**, не рекурсия на воркере.
 
 ```
 schedule_dirty_viewport_tiles / ensure_processed ED:

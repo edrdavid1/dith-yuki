@@ -6,7 +6,6 @@
 > **См. также:**
 > - [architecture.md](./architecture.md) — общий стек и IPC
 > - [tile-pipeline.md](./tile-pipeline.md) — тайлы, стадии Raw / Processed / Composite
-> - Память на больших доках: [`.cursor-spec/track-c-memory/SPEC.md`](../.cursor-spec/track-c-memory/SPEC.md)
 
 ---
 
@@ -312,7 +311,7 @@ M1–M7 закрыты в as-built (явный `doc_id`, per-tab Guard, neighbor
 | Soft trim Composite на deactivate | Явный trim нет; pressure уже сносит inactive Composite/Processed |
 | RAM budget | Adaptive 25% / 512 MiB–4 GiB (Track C Phase 1); Raw open sessions pinned |
 | Raw вне TileCache / reload | Follow-up |
-| Per-doc доли бюджета / memory UI | Follow-up ([track-c-memory](../.cursor-spec/track-c-memory/SPEC.md)) |
+| Per-doc доли бюджета / memory UI | Follow-up |
 | Split view / два холста | Non-goal |
 
 ---
@@ -341,4 +340,4 @@ M1–M7 закрыты в as-built (явный `doc_id`, per-tab Guard, neighbor
 5. **Palette caches `(doc, palette_id)`** — нет cross-doc LUT collision.
 6. **Tab chrome** — вкладки в title area; registry уже готов до UI.
 
-Этот файл — as-built обзор. Новая работа по памяти — [track-c-memory](../.cursor-spec/track-c-memory/SPEC.md).
+Этот файл — as-built обзор.

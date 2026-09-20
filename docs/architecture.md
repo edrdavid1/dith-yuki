@@ -1542,7 +1542,7 @@ Viewport 40 Composite + 40 Processed + 40 Raw уже ~120 MB на один с�
 | | Cache footprint | Compute temps |
 |--|-----------------|---------------|
 | Что считает | `Arc<PixelTile>` в `TileCache` (Raw/Processed/Composite) | Одновременно живые owned `PixelTile` на worker apply |
-| Рычаг | adaptive budget / eviction ([track-c-memory](../.cursor-spec/track-c-memory/SPEC.md)) | In-place + park (as-built) |
+| Рычаг | adaptive budget / eviction | In-place + park (as-built) |
 
 **Аллокации на один Processed (один Dither, opacity=1, Normal, CPU) — as-built after in-place:**
 

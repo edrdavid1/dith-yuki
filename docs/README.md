@@ -4,7 +4,7 @@ As-built notes for Dither Yuki. Product overview and install: [root README](../R
 
 **Canon (read these first):** [`architecture.md`](./architecture.md) · [`tile-pipeline.md`](./tile-pipeline.md) · [`FLEXLAYOUT_DOCKING.md`](./FLEXLAYOUT_DOCKING.md) · [`gpu-as-built.md`](./gpu-as-built.md)
 
-Working specs (not as-built) live under [`.cursor-spec/`](../.cursor-spec/README.md) locally — do not duplicate TZ into `docs/`.
+Working agent specs stay local only (not in this repo on GitHub).
 
 ## Dev
 
@@ -26,13 +26,4 @@ Working specs (not as-built) live under [`.cursor-spec/`](../.cursor-spec/README
 | [palette-dither.md](./palette-dither.md) | Bound palette vs dither filter |
 | [color-lab.md](./color-lab.md) | Palettes, Oklab, Color Lab UI |
 | [dither_yuki_0.2.0_overview.md](./dither_yuki_0.2.0_overview.md) | What’s real vs still beta |
-
-## Design decisions & backlog
-
-| Doc | Contents |
-|---|---|
-| [gpu-path-b-adr.md](./gpu-path-b-adr.md) | ADR: Path B decisions |
-| [B2_ADR_flexlayout_docking.md](./B2_ADR_flexlayout_docking.md) | Why FlexLayout |
-| [TRACK_E_extensibility_architecture.md](./TRACK_E_extensibility_architecture.md) | Registry + format versioning |
-| [KANBAN_gpu_and_docking.md](./KANBAN_gpu_and_docking.md) | Open work only |
 | [legal/flexlayout-license-snapshot.md](./legal/flexlayout-license-snapshot.md) | MIT snapshot for flexlayout-react 0.7.15 |

@@ -32,7 +32,7 @@ After `npm install`, `patch:flexlayout` must run (postinstall). Without it, Flex
 - **Rust engines** live in `crates/`. Document model and filters: `engine-project`. GPU: `engine-gpu` (Path B).
 - **Tauri glue** (commands, workers, `tile://`): `src-tauri/src/`.
 - **UI**: `frontend/src/` (React 18, Redux Toolkit, TypeScript, flexlayout-react 0.7.15).
-- **Docs**: [docs/README.md](./README.md) is as-built. [`.cursor-spec/`](../.cursor-spec/README.md) is only open work + frozen decisions.
+- **Docs**: [docs/README.md](./README.md) is as-built. Working agent specs stay local-only (not published).
 
 Public APIs in Rust should have `///` comments. Match existing naming in the file you edit.
 

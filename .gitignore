@@ -13,10 +13,11 @@ Cargo.lock.old
 /frontend/dist/
 npm-debug.log*
 
-# Local agent specs (not published)
+# Local agent specs / ADRs (not published)
 .gemini-spec/
 .cursor-spec/
 .kiro/
+.local-specs/
 
 # IDE
 .vscode/
