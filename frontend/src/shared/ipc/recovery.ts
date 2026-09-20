@@ -40,3 +40,13 @@ export async function discardRecoveryJournals(recoveryIds?: string[]): Promise<v
     recoveryIds: recoveryIds ?? null,
   });
 }
+
+export interface SoftDiscardInfo {
+  recovery_id: string;
+  display_name: string;
+}
+
+/** Flush journal now and mark discarded before closing a dirty tab. */
+export async function prepareSoftDiscard(docId: number): Promise<SoftDiscardInfo> {
+  return invoke<SoftDiscardInfo>('prepare_soft_discard', { docId });
+}

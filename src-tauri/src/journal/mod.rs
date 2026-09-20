@@ -8,6 +8,7 @@ mod runtime;
 mod write;
 pub mod clean_exit;
 pub mod commands;
+pub mod signals;
 
 pub use meta::{list_metas, recovery_subdir, JournalMeta, JOURNAL_MAX_BYTES};
 pub use runtime::{schedule_dirty, set_recovery_dir, start_heartbeat, JournalRuntime};

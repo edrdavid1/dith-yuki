@@ -12,8 +12,14 @@ use crate::document_session::emit_tabs_changed;
 use crate::journal::meta::{
     journal_blob_path, list_metas, read_meta, JournalContentKind, JournalMeta,
 };
-use crate::journal::{delete_journal, recovery_subdir};
+use crate::journal::{delete_journal, recovery_subdir, write_journal_for_doc};
 use crate::services::document_service::OpenProjectResponse;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SoftDiscardDto {
+    pub recovery_id: String,
+    pub display_name: String,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RecoveryScanDto {
@@ -166,3 +172,65 @@ pub fn write_marker_from_app(app: &AppHandle) {
         }
     }
 }
+
+/// Flush journal now and mark it discarded (soft Don't Save on tab ×).
+#[tauri::command]
+pub fn prepare_soft_discard(
+    doc_id: u32,
+    state: State<'_, Arc<AppState>>,
+) -> Result<SoftDiscardDto, String> {
+    let session = state.require_session(doc_id)?;
+    let recovery_id = session.recovery_id;
+    let display_name = {
+        let project = session
+            .project_path
+            .lock()
+            .ok()
+            .and_then(|g| g.clone());
+        let source = session
+            .source_path
+            .lock()
+            .ok()
+            .and_then(|g| g.clone());
+        project
+            .as_ref()
+            .or(source.as_ref())
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| format!("Untitled {}", session.id.0))
+    };
+
+    write_journal_for_doc(state.inner(), doc_id)?;
+
+    // Mark discarded so clean-exit cleanup can target these, and crash recovery still finds them.
+    if let Ok(guard) = state.journal.lock() {
+        if let Some(ref dir) = guard.recovery_dir {
+            let meta_path = crate::journal::meta::journal_meta_path(dir, recovery_id);
+            if let Ok(mut meta) = read_meta(&meta_path) {
+                meta.discarded = true;
+                let _ = crate::journal::meta::write_meta(dir, &meta);
+            }
+        }
+    }
+
+    Ok(SoftDiscardDto {
+        recovery_id: recovery_id.to_string(),
+        display_name,
+    })
+}
+
+/// Sync flush of every dirty open document (signal handlers / last-chance).
+pub fn flush_all_dirty_journals(state: &AppState) {
+    let ids: Vec<u32> = match state.sessions.lock() {
+        Ok(map) => map.keys().copied().collect(),
+        Err(_) => return,
+    };
+    for doc_id in ids {
+        if !crate::undo::is_dirty_doc(state, doc_id) {
+            continue;
+        }
+        if let Err(e) = write_journal_for_doc(state, doc_id) {
+            log::warn!("flush_all_dirty_journals doc {doc_id}: {e}");
+        }
+    }
+}
+

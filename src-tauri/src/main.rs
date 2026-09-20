@@ -370,6 +370,7 @@ fn main() {
                     crate::journal::recovery_subdir(&app_data_dir),
                 );
                 crate::journal::start_heartbeat(app_handle.clone());
+                crate::journal::signals::install_signal_flush(app_handle.clone());
             }
 
             // Set native titlebar color on macOS
@@ -500,6 +501,7 @@ fn main() {
                     crate::journal::commands::scan_recovery_journals,
                     crate::journal::commands::recover_journal,
                     crate::journal::commands::discard_recovery_journals,
+                    crate::journal::commands::prepare_soft_discard,
             commands::new_document,
             commands::get_document_snapshot,
             commands::list_open_documents,
