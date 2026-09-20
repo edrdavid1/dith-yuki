@@ -9,6 +9,7 @@ mod document_session;
 mod file_log;
 mod flexlayout_persistence;
 mod gpu_resident_shadow;
+mod journal;
 #[cfg(target_os = "macos")]
 mod macos_title;
 mod memory_budget;
@@ -353,7 +354,7 @@ fn main() {
                     );
                 let right_persistence =
                     crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
-                        app_data_dir,
+                        app_data_dir.clone(),
                         "flexlayout_right.json",
                     );
                 if let Ok(mut slot) = state.flexlayout_left.lock() {
@@ -362,6 +363,14 @@ fn main() {
                 if let Ok(mut slot) = state.flexlayout_right.lock() {
                     *slot = right_persistence;
                 }
+
+                // Crash-recovery journal root: {app_data}/recovery/
+                crate::journal::set_recovery_dir(
+                    &state,
+                    crate::journal::recovery_subdir(&app_data_dir),
+                );
+                crate::journal::start_heartbeat(app_handle.clone());
+                crate::journal::signals::install_signal_flush(app_handle.clone());
             }
 
             // Set native titlebar color on macOS
@@ -487,8 +496,12 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             // Document commands
-            commands::allow_app_exit,
-            commands::confirm_app_quit,
+                    commands::allow_app_exit,
+                    commands::confirm_app_quit,
+                    crate::journal::commands::scan_recovery_journals,
+                    crate::journal::commands::recover_journal,
+                    crate::journal::commands::discard_recovery_journals,
+                    crate::journal::commands::prepare_soft_discard,
             commands::new_document,
             commands::get_document_snapshot,
             commands::list_open_documents,

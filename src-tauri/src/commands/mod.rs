@@ -88,6 +88,8 @@ pub struct AppState {
     pub flexlayout_right: Mutex<crate::flexlayout_persistence::FlexLayoutPersistence>,
     /// Track C: how the CPU tile-cache budget was chosen (`empty_process` tests = override).
     pub ram_budget_source: crate::memory_budget::RamBudgetSource,
+    /// Crash-recovery journal (Phase 2). `recovery_dir` set from app_data in setup.
+    pub journal: Mutex<crate::journal::JournalRuntime>,
 }
 
 pub struct QuitGuard {

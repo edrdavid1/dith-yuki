@@ -796,13 +796,10 @@ pub fn import_pattern_into_document(
     })
 }
 
-/// Write packed bytes to a filesystem path.
-pub fn write_pattern_to_path(path: &Path, zip_bytes: &[u8]) -> Result<(), ProjectError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| ProjectError::Io(e.to_string()))?;
-    }
-    std::fs::write(path, zip_bytes).map_err(|e| ProjectError::Io(e.to_string()))
-}
+        /// Write packed bytes to a filesystem path.
+        pub fn write_pattern_to_path(path: &Path, zip_bytes: &[u8]) -> Result<(), ProjectError> {
+            engine_io::atomic_write(path, zip_bytes).map_err(|e| ProjectError::Io(e.to_string()))
+        }
 
 #[cfg(test)]
 mod tests {

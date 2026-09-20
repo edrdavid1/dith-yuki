@@ -646,7 +646,7 @@ impl PaletteService {
 
         let bytes = do_export(palette, format).map_err(|e| AppError::Generic(format!("{}", e)))?;
 
-        std::fs::write(&req.path, &bytes)
+        engine_io::atomic_write(std::path::Path::new(&req.path), &bytes)
             .map_err(|e| AppError::Generic(format!("Failed to write file: {}", e)))?;
 
         Ok(())

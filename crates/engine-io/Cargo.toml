@@ -9,6 +9,13 @@ engine-core = { path = "../engine-core" }
 thiserror = "1"
 dirs = "5"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+] }
+
 [dev-dependencies]
 proptest = "1"
 roxmltree = "0.20"
+tempfile = "3"

@@ -16,13 +16,18 @@ pub use crate::services::document_service::{
 use crate::services::{AppError, DocumentService};
 
 #[tauri::command]
-pub fn allow_app_exit(gate: State<'_, Arc<QuitGuard>>) {
+pub fn allow_app_exit(app: AppHandle, gate: State<'_, Arc<QuitGuard>>) {
     gate.allow_exit.store(true, Ordering::SeqCst);
+    // Soft-discard B: intentional exit clears leftover journals, then marker.
+    let _ = crate::journal::commands::discard_recovery_journals(None, app.clone());
+    crate::journal::commands::write_marker_from_app(&app);
 }
 
 #[tauri::command]
 pub fn confirm_app_quit(app: AppHandle, gate: State<'_, Arc<QuitGuard>>) {
     gate.allow_exit.store(true, Ordering::SeqCst);
+    let _ = crate::journal::commands::discard_recovery_journals(None, app.clone());
+    crate::journal::commands::write_marker_from_app(&app);
     app.exit(0);
 }
 

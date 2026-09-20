@@ -102,7 +102,7 @@ docs/          # as-built architecture & developer guides
 
 ### Documentation
 
-Start with [docs/README.md](./docs/README.md) (index). Day-to-day: [Dev setup](./docs/dev-setup.md) · [Release](./docs/RELEASE.md) · [Architecture](./docs/architecture.md).
+Start with [docs/README.md](./docs/README.md) (index). Day-to-day: [Dev setup](./docs/dev-setup.md) · [Release](./docs/RELEASE.md) · [Architecture](./docs/architecture.md) · [Crash recovery](./docs/crash-recovery.md).
 
 ---
 

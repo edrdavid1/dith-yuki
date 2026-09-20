@@ -1094,10 +1094,13 @@ graph TD
 | `EffectsFeature` | Filter stack UI; editors в `features/effects/editors/` |
 | `LayersFeature` | Layer tree + DnD + visibility/opacity |
 | `ColorLabFeature` | Draft palette, extract, builtins, ramps, volume viewer |
-| `UnsavedGuardDialog` | Save / Don’t Save / Cancel |
+| `UnsavedGuardDialog` | Save / Don’t Save / Cancel (multi-tab quit checklist) |
+| `RecoveryDialog` / `DiscardRestoreToast` | Startup journal / roster reopen; soft-discard Restore |
 | `UpdateAvailableDialog` / `FileTooNewDialog` | Track O |
 | `EmptyState` | Welcome при отсутствии документа |
 | `common/*` | Slider, NumberInput, DropdownMenu, ResizeHandle, Notification |
+
+Crash recovery (atomic Save, debounce journal, clean-exit marker, session roster): see [crash-recovery.md](./crash-recovery.md).
 
 ### 7.4 TileCanvas + Web Worker
 
