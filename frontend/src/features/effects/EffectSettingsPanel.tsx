@@ -265,8 +265,6 @@ export default function EffectSettingsPanel({
       );
     }
     switch (effectType) {
-      case 'Dithering':
-        return <DitherSettings params={params} onUpdate={handleUpdate} />;
       case 'Glitching':
         return <GlitchSettings params={params} onUpdate={handleUpdate} />;
       case 'Curves':
