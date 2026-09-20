@@ -495,8 +495,11 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             // Document commands
-            commands::allow_app_exit,
-            commands::confirm_app_quit,
+                    commands::allow_app_exit,
+                    commands::confirm_app_quit,
+                    crate::journal::commands::scan_recovery_journals,
+                    crate::journal::commands::recover_journal,
+                    crate::journal::commands::discard_recovery_journals,
             commands::new_document,
             commands::get_document_snapshot,
             commands::list_open_documents,

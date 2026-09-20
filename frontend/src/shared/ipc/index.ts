@@ -15,3 +15,4 @@ export * from './events';
 export * from './dialogs';
 export * from './errors';
 export * from './updates';
+export * from './recovery';
