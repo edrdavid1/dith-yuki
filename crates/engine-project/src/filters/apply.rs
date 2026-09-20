@@ -2,26 +2,24 @@
 //!
 //! Main entry point for applying filters to tiles.
 
-use super::adjust::apply_adjust_into;
-use super::crt::apply_crt_into;
-use super::curves::CurvesFilter;
 use super::dither_diffusion::apply_error_diffusion_with_cache_into;
 use super::dither_ordered::apply_ordered_with_cache_into;
 use super::dither_residuals::ErrorResidualsStore;
-use super::glitch::GlitchFilter;
-use super::glow::apply_glow_into;
 use super::levels::LevelsFilter;
-use super::palette_quantize::PaletteQuantizeFilter;
-use engine_gpu::GpuContext;
 use crate::compositor::blend_tile;
 use crate::document::Document;
 use crate::error::EngineError;
-use crate::filter::{DitherModeV2, DitherParamsV2, FilterInstance, FilterParams};
+use crate::filter::{
+    filter_kind_for_algorithm_id, filter_params_to_json, resolve_algorithm_id, DitherModeV2,
+    DitherParamsV2, FilterInstance, FilterKind, FilterParams,
+};
+use crate::filters::context::FilterContext;
 use crate::layer::Layer;
 use crate::types::{BlendMode, LayerId};
 use engine_color::palette_cache::PaletteKdCache;
-use engine_color::palette_lut::{PaletteLutCache, DEFAULT_LUT_SIZE};
+use engine_color::palette_lut::PaletteLutCache;
 use engine_color::threshold_map::ThresholdMapCache;
+use engine_gpu::GpuContext;
 use engine_tiles::block_cache::BlockRepresentativeCache;
 use engine_tiles::{with_tile_buffer_park, PixelTile, TileBufferPark, TileCoord};
 
@@ -46,7 +44,13 @@ pub fn apply_filter_to_tile(
     let local_residuals = ErrorResidualsStore::new();
     let local_blocks = BlockRepresentativeCache::new();
     apply_filter_to_tile_with_caches(
-        tile, layer, coord, palette_cache, lut_cache, threshold_cache, document,
+        tile,
+        layer,
+        coord,
+        palette_cache,
+        lut_cache,
+        threshold_cache,
+        document,
         &local_residuals,
         &local_blocks,
         None,
@@ -71,8 +75,15 @@ pub fn apply_filter_to_tile_with_residuals(
 ) -> Result<PixelTile, EngineError> {
     let local_blocks = BlockRepresentativeCache::new();
     apply_filter_to_tile_with_caches(
-        tile, layer, coord, palette_cache, lut_cache, threshold_cache, document,
-        residuals_store, &local_blocks,
+        tile,
+        layer,
+        coord,
+        palette_cache,
+        lut_cache,
+        threshold_cache,
+        document,
+        residuals_store,
+        &local_blocks,
         None,
     )
 }
@@ -135,12 +146,7 @@ pub fn apply_filter_to_tile_with_park(
     // Layers panel is top-to-bottom = `filters[0]` … `filters[n-1]` (Image Source
     // under the last row). Apply bottom-up: last vec entry first, so the top row
     // is the final look and sees the output of everything below — not Raw.
-    let enabled: Vec<&FilterInstance> = layer
-        .filters
-        .iter()
-        .rev()
-        .filter(|f| f.enabled)
-        .collect();
+    let enabled: Vec<&FilterInstance> = layer.filters.iter().rev().filter(|f| f.enabled).collect();
 
     if enabled.is_empty() {
         let mut out = park.take();
@@ -238,8 +244,17 @@ fn apply_filter_with_blend(
     gpu: Option<&GpuContext>,
 ) -> Result<PixelTile, EngineError> {
     let full_result = apply_single_filter(
-        pre, filter, coord, palette_cache, lut_cache, threshold_cache, document,
-        residuals_store, block_cache, layer_id, gpu,
+        pre,
+        filter,
+        coord,
+        palette_cache,
+        lut_cache,
+        threshold_cache,
+        document,
+        residuals_store,
+        block_cache,
+        layer_id,
+        gpu,
     )?;
 
     if filter.opacity >= 1.0 && filter.blend_mode == BlendMode::Normal {
@@ -272,10 +287,45 @@ fn apply_single_filter_into(
         dst.data.as_ptr(),
         "filter src/dst must not alias"
     );
-    match &filter.params {
-        FilterParams::Curves { curve, channel } => {
-            apply_curves_filter_into(tile, curve, *channel, dst)
+
+    // Registry-only dispatch for built-in algorithms (task 4.1).
+    // `algorithm_id` may be missing on legacy instances — infer from params.
+    // Levels / CustomPng / Placeholder are not in the 17-id registry.
+    if let Some(id) = resolve_algorithm_id(filter) {
+        let Some(algo) = crate::algorithms::builtin_registry().get_by_str(&id) else {
+            return Err(EngineError::unknown_algorithm(id));
+        };
+        let ctx = FilterContext::new(
+            coord,
+            document,
+            palette_cache,
+            lut_cache,
+            threshold_cache,
+            residuals_store,
+            block_cache,
+            gpu,
+            layer_id,
+        );
+        let params_json = filter_params_to_json(&filter.params)?;
+        dst.copy_from(tile);
+        let result = algo.apply(dst, &params_json, &ctx).map_err(EngineError::from);
+        // Pre-registry dither path cleared a missing optional palette and retried
+        // (levels / greyscale dither). Registry dispatch must keep that behavior —
+        // otherwise Color Lab's stale `lastCreatedId` aborts every Processed tile.
+        if let Err(EngineError::PaletteNotFound { .. }) = &result {
+            if filter_kind_for_algorithm_id(&id) == Some(FilterKind::Dither) {
+                if let Some(fallback_json) = dither_params_json_without_palette(&filter.params)? {
+                    dst.copy_from(tile);
+                    return algo
+                        .apply(dst, &fallback_json, &ctx)
+                        .map_err(EngineError::from);
+                }
+            }
         }
+        return result;
+    }
+
+    match &filter.params {
         FilterParams::Levels {
             input_black,
             input_white,
@@ -298,69 +348,44 @@ fn apply_single_filter_into(
         FilterParams::Dither { mode, color_depth } => {
             let params_v2 = DitherParamsV2::from((mode.clone(), *color_depth));
             dispatch_dither_v2_into(
-                tile, dst, coord, &params_v2, threshold_cache, palette_cache, lut_cache,
-                document, residuals_store, block_cache, layer_id, gpu,
+                tile,
+                dst,
+                coord,
+                &params_v2,
+                threshold_cache,
+                palette_cache,
+                lut_cache,
+                document,
+                residuals_store,
+                block_cache,
+                layer_id,
+                gpu,
             )
         }
-        FilterParams::PaletteQuantize { palette_id, diffusion } => {
-            let palette = document
-                .get_palette(*palette_id)
-                .ok_or_else(|| EngineError::palette_not_found(*palette_id))?;
-            let lut = lut_cache
-                .get_or_build(document.id.0, palette, palette_cache, DEFAULT_LUT_SIZE)
-                .map_err(|e| EngineError::InvalidFilterParams {
-                    reason: format!("Failed to build palette LUT: {}", e),
-                })?;
-            PaletteQuantizeFilter::apply_into(tile, coord, palette, &lut, *diffusion, dst)
-        }
-        FilterParams::Glitch { glitch_type, intensity, seed } => {
-            apply_glitch_filter_into(tile, *glitch_type, *intensity, *seed, coord, dst)
-        }
         FilterParams::DitherV2(params) => dispatch_dither_v2_into(
-            tile, dst, coord, params, threshold_cache, palette_cache, lut_cache, document,
-            residuals_store, block_cache, layer_id, gpu,
+            tile,
+            dst,
+            coord,
+            params,
+            threshold_cache,
+            palette_cache,
+            lut_cache,
+            document,
+            residuals_store,
+            block_cache,
+            layer_id,
+            gpu,
         ),
-        FilterParams::Glow {
-            radius,
-            intensity,
-            threshold,
-        } => {
-            apply_glow_into(tile, *radius, *intensity, *threshold, dst);
-            Ok(())
-        }
-        FilterParams::Crt {
-            period,
-            strength,
-            mask_strength,
-        } => {
-            apply_crt_into(tile, coord, *period, *strength, *mask_strength, dst);
-            Ok(())
-        }
-        FilterParams::Adjust {
-            contrast,
-            brightness,
-            saturation,
-            blur,
-            sharpness,
-            noise,
-        } => {
-            apply_adjust_into(
-                tile,
-                coord,
-                *contrast,
-                *brightness,
-                *saturation,
-                *blur,
-                *sharpness,
-                *noise,
-                dst,
-            );
-            Ok(())
-        }
         FilterParams::Placeholder(_) => {
             dst.copy_from(tile);
             Ok(())
         }
+        _ => Err(EngineError::unknown_algorithm(
+            filter
+                .algorithm_id
+                .clone()
+                .unwrap_or_else(|| "unregistered".into()),
+        )),
     }
 }
 
@@ -381,10 +406,39 @@ fn apply_single_filter(
 ) -> Result<PixelTile, EngineError> {
     let mut out = PixelTile::new();
     apply_single_filter_into(
-        tile, &mut out, filter, coord, palette_cache, lut_cache, threshold_cache, document,
-        residuals_store, block_cache, layer_id, gpu,
+        tile,
+        &mut out,
+        filter,
+        coord,
+        palette_cache,
+        lut_cache,
+        threshold_cache,
+        document,
+        residuals_store,
+        block_cache,
+        layer_id,
+        gpu,
     )?;
     Ok(out)
+}
+
+/// JSON for a dither filter with `palette_id` cleared, if it had one.
+///
+/// Used when registry apply hits [`EngineError::PaletteNotFound`] so we can
+/// retry without a palette (same contract as [`dispatch_dither_v2_into`]).
+fn dither_params_json_without_palette(
+    params: &FilterParams,
+) -> Result<Option<serde_json::Value>, EngineError> {
+    match params {
+        FilterParams::DitherV2(p) if p.palette_id.is_some() => {
+            let mut fallback = p.clone();
+            fallback.palette_id = None;
+            Ok(Some(serde_json::to_value(&fallback).map_err(|e| {
+                EngineError::invalid_filter_params(e.to_string())
+            })?))
+        }
+        _ => Ok(None),
+    }
 }
 
 /// Dispatch a DitherV2 filter into `dst`.
@@ -403,16 +457,36 @@ fn dispatch_dither_v2_into(
     gpu: Option<&GpuContext>,
 ) -> Result<(), EngineError> {
     let result = dispatch_dither_v2_inner_into(
-        tile, dst, coord, params, threshold_cache, palette_cache, lut_cache, document,
-        residuals_store, block_cache, layer_id, gpu,
+        tile,
+        dst,
+        coord,
+        params,
+        threshold_cache,
+        palette_cache,
+        lut_cache,
+        document,
+        residuals_store,
+        block_cache,
+        layer_id,
+        gpu,
     );
     if let Err(EngineError::PaletteNotFound { .. }) = &result {
         if params.palette_id.is_some() {
             let mut fallback = params.clone();
             fallback.palette_id = None;
             return dispatch_dither_v2_inner_into(
-                tile, dst, coord, &fallback, threshold_cache, palette_cache, lut_cache, document,
-                residuals_store, block_cache, layer_id, gpu,
+                tile,
+                dst,
+                coord,
+                &fallback,
+                threshold_cache,
+                palette_cache,
+                lut_cache,
+                document,
+                residuals_store,
+                block_cache,
+                layer_id,
+                gpu,
             );
         }
     }
@@ -431,47 +505,61 @@ fn dispatch_dither_v2_inner_into(
     residuals_store: &ErrorResidualsStore,
     block_cache: &BlockRepresentativeCache,
     layer_id: LayerId,
-    gpu: Option<&GpuContext>,
+    _gpu: Option<&GpuContext>,
 ) -> Result<(), EngineError> {
     match &params.mode {
-        DitherModeV2::Bayer2x2
-        | DitherModeV2::Bayer4x4
-        | DitherModeV2::Bayer8x8 => apply_ordered_with_cache_into(
-            tile, coord, params, threshold_cache, palette_cache, lut_cache, document,
-            block_cache, layer_id, dst,
-        ),
-        DitherModeV2::CmykHalftone => apply_ordered_with_cache_into(
-            tile, coord, params, threshold_cache, palette_cache, lut_cache, document,
-            block_cache, layer_id, dst,
-        ),
-        DitherModeV2::CustomPng { .. } | DitherModeV2::Wave => {
+        DitherModeV2::Bayer2x2 | DitherModeV2::Bayer4x4 | DitherModeV2::Bayer8x8 => {
             apply_ordered_with_cache_into(
-                tile, coord, params, threshold_cache, palette_cache, lut_cache, document,
-                block_cache, layer_id, dst,
+                tile,
+                coord,
+                params,
+                threshold_cache,
+                palette_cache,
+                lut_cache,
+                document,
+                block_cache,
+                layer_id,
+                dst,
             )
         }
-        mode if mode.is_error_diffusion() => {
-            apply_error_diffusion_with_cache_into(
-                tile, coord, params, residuals_store, layer_id,
-                palette_cache, lut_cache, document, block_cache, dst,
-            )
-        }
+        DitherModeV2::CmykHalftone => apply_ordered_with_cache_into(
+            tile,
+            coord,
+            params,
+            threshold_cache,
+            palette_cache,
+            lut_cache,
+            document,
+            block_cache,
+            layer_id,
+            dst,
+        ),
+        DitherModeV2::CustomPng { .. } | DitherModeV2::Wave => apply_ordered_with_cache_into(
+            tile,
+            coord,
+            params,
+            threshold_cache,
+            palette_cache,
+            lut_cache,
+            document,
+            block_cache,
+            layer_id,
+            dst,
+        ),
+        mode if mode.is_error_diffusion() => apply_error_diffusion_with_cache_into(
+            tile,
+            coord,
+            params,
+            residuals_store,
+            layer_id,
+            palette_cache,
+            lut_cache,
+            document,
+            block_cache,
+            dst,
+        ),
         _ => unreachable!("unhandled dither mode in dispatch"),
     }
-}
-
-/// Apply Curves filter into `dst`.
-fn apply_curves_filter_into(
-    tile: &PixelTile,
-    curve_data: &[(f32, f32)],
-    channel: super::curves::CurveChannel,
-    dst: &mut PixelTile,
-) -> Result<(), EngineError> {
-    let mut filter = CurvesFilter::new(channel);
-    for &(input, output) in curve_data {
-        filter.add_point(input, output)?;
-    }
-    filter.apply_to_tile_into(tile, dst)
 }
 
 /// Apply Levels filter into `dst`.
@@ -498,26 +586,19 @@ fn apply_levels_filter_into(
     filter.apply_to_tile_into(tile, dst)
 }
 
-/// Apply Glitch filter into `dst`.
-fn apply_glitch_filter_into(
-    tile: &PixelTile,
-    glitch_type: super::glitch::GlitchType,
-    intensity: f32,
-    seed: u64,
-    coord: TileCoord,
-    dst: &mut PixelTile,
-) -> Result<(), EngineError> {
-    let filter = GlitchFilter::new(glitch_type, intensity, seed)?;
-    filter.apply_to_tile_into(tile, coord, dst)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::curves::CurveChannel;
-    use crate::filter::{FilterInstance, FilterKind, FilterParams, DitherMode, DiffusionKernel};
+    use super::*;
+    use crate::filter::{DiffusionKernel, DitherMode, FilterInstance, FilterKind, FilterParams};
 
-    fn make_caches_and_doc() -> (PaletteKdCache, PaletteLutCache, ThresholdMapCache, Document, ErrorResidualsStore) {
+    fn make_caches_and_doc() -> (
+        PaletteKdCache,
+        PaletteLutCache,
+        ThresholdMapCache,
+        Document,
+        ErrorResidualsStore,
+    ) {
         let palette_cache = PaletteKdCache::new();
         let lut_cache = PaletteLutCache::new();
         let threshold_cache = ThresholdMapCache::new();
@@ -536,11 +617,27 @@ mod tests {
                 channel: CurveChannel::All,
             },
         );
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
         let (pc, lc, tc, doc, rs) = make_caches_and_doc();
         let layer_id = LayerId::new(1);
 
-        let result = apply_single_filter(&tile, &filter, coord, &pc, &lc, &tc, &doc, &rs, &BlockRepresentativeCache::new(), layer_id, None);
+        let result = apply_single_filter(
+            &tile,
+            &filter,
+            coord,
+            &pc,
+            &lc,
+            &tc,
+            &doc,
+            &rs,
+            &BlockRepresentativeCache::new(),
+            layer_id,
+            None,
+        );
         assert!(result.is_ok());
     }
 
@@ -560,11 +657,27 @@ mod tests {
                 channel_b: true,
             },
         );
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
         let (pc, lc, tc, doc, rs) = make_caches_and_doc();
         let layer_id = LayerId::new(1);
 
-        let result = apply_single_filter(&tile, &filter, coord, &pc, &lc, &tc, &doc, &rs, &BlockRepresentativeCache::new(), layer_id, None);
+        let result = apply_single_filter(
+            &tile,
+            &filter,
+            coord,
+            &pc,
+            &lc,
+            &tc,
+            &doc,
+            &rs,
+            &BlockRepresentativeCache::new(),
+            layer_id,
+            None,
+        );
         assert!(result.is_ok());
     }
 
@@ -600,7 +713,11 @@ mod tests {
                 channel_b: true,
             },
         );
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
         let (pc, lc, tc, doc, rs) = make_caches_and_doc();
         let layer_id = LayerId::new(1);
         let a = apply_single_filter(
@@ -645,15 +762,33 @@ mod tests {
         let filter = FilterInstance::new(
             FilterKind::Dither,
             FilterParams::Dither {
-                mode: DitherMode::ErrorDiffusion { kernel: DiffusionKernel::FloydSteinberg },
+                mode: DitherMode::ErrorDiffusion {
+                    kernel: DiffusionKernel::FloydSteinberg,
+                },
                 color_depth: 4,
             },
         );
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
         let (pc, lc, tc, doc, rs) = make_caches_and_doc();
         let layer_id = LayerId::new(1);
 
-        let result = apply_single_filter(&tile, &filter, coord, &pc, &lc, &tc, &doc, &rs, &BlockRepresentativeCache::new(), layer_id, None);
+        let result = apply_single_filter(
+            &tile,
+            &filter,
+            coord,
+            &pc,
+            &lc,
+            &tc,
+            &doc,
+            &rs,
+            &BlockRepresentativeCache::new(),
+            layer_id,
+            None,
+        );
         assert!(result.is_ok());
     }
 
@@ -670,11 +805,27 @@ mod tests {
                 seed: 12345,
             },
         );
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
         let (pc, lc, tc, doc, rs) = make_caches_and_doc();
         let layer_id = LayerId::new(1);
 
-        let result = apply_single_filter(&tile, &filter, coord, &pc, &lc, &tc, &doc, &rs, &BlockRepresentativeCache::new(), layer_id, None);
+        let result = apply_single_filter(
+            &tile,
+            &filter,
+            coord,
+            &pc,
+            &lc,
+            &tc,
+            &doc,
+            &rs,
+            &BlockRepresentativeCache::new(),
+            layer_id,
+            None,
+        );
         assert!(result.is_ok());
     }
 
@@ -688,11 +839,27 @@ mod tests {
                 diffusion: None,
             },
         );
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
         let (pc, lc, tc, doc, rs) = make_caches_and_doc();
         let layer_id = LayerId::new(1);
 
-        let result = apply_single_filter(&tile, &filter, coord, &pc, &lc, &tc, &doc, &rs, &BlockRepresentativeCache::new(), layer_id, None);
+        let result = apply_single_filter(
+            &tile,
+            &filter,
+            coord,
+            &pc,
+            &lc,
+            &tc,
+            &doc,
+            &rs,
+            &BlockRepresentativeCache::new(),
+            layer_id,
+            None,
+        );
         assert!(result.is_err());
         match result {
             Err(EngineError::PaletteNotFound { .. }) => {} // expected
@@ -703,7 +870,6 @@ mod tests {
 
     #[test]
     fn apply_palette_quantize_with_valid_palette() {
-        use crate::types::PaletteId;
         use engine_color::palette::LinearColor;
 
         let mut tile = PixelTile::new();
@@ -727,9 +893,21 @@ mod tests {
         let palette_id = doc.add_palette(
             "Test".to_string(),
             vec![
-                LinearColor { r: 1.0, g: 0.0, b: 0.0 },
-                LinearColor { r: 0.0, g: 1.0, b: 0.0 },
-                LinearColor { r: 0.0, g: 0.0, b: 1.0 },
+                LinearColor {
+                    r: 1.0,
+                    g: 0.0,
+                    b: 0.0,
+                },
+                LinearColor {
+                    r: 0.0,
+                    g: 1.0,
+                    b: 0.0,
+                },
+                LinearColor {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 1.0,
+                },
             ],
         );
 
@@ -740,9 +918,25 @@ mod tests {
                 diffusion: None,
             },
         );
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
 
-        let result = apply_single_filter(&tile, &filter, coord, &palette_cache, &lut_cache, &threshold_cache, &doc, &residuals, &BlockRepresentativeCache::new(), layer_id, None);
+        let result = apply_single_filter(
+            &tile,
+            &filter,
+            coord,
+            &palette_cache,
+            &lut_cache,
+            &threshold_cache,
+            &doc,
+            &residuals,
+            &BlockRepresentativeCache::new(),
+            layer_id,
+            None,
+        );
         assert!(result.is_ok());
 
         // Verify output pixels are palette members
@@ -751,14 +945,22 @@ mod tests {
         let g = output.at(10, 10, 1);
         let b = output.at(10, 10, 2);
         let palette = doc.get_palette(palette_id).unwrap();
-        let is_member = palette.colors.iter().any(|c| c.r == r && c.g == g && c.b == b);
+        let is_member = palette
+            .colors
+            .iter()
+            .any(|c| c.r == r && c.g == g && c.b == b);
         assert!(is_member, "Output pixel should be a palette member");
     }
 
     #[test]
     fn skip_disabled_filters() {
         let tile = PixelTile::new();
-        let mut layer = Layer::new(crate::types::LayerId::new(1), crate::types::LayerKind::Raster, 256, 256);
+        let mut layer = Layer::new(
+            crate::types::LayerId::new(1),
+            crate::types::LayerKind::Raster,
+            256,
+            256,
+        );
 
         let mut filter = FilterInstance::new(
             FilterKind::Curves,
@@ -770,7 +972,11 @@ mod tests {
         filter.enabled = false;
         layer.filters.push(filter);
 
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
         let (pc, lc, tc, doc, _rs) = make_caches_and_doc();
         let result = apply_filter_to_tile(&tile, &layer, coord, &pc, &lc, &tc, &doc);
         assert!(result.is_ok());
@@ -779,7 +985,12 @@ mod tests {
     #[test]
     fn multiple_filters_applied() {
         let tile = PixelTile::new();
-        let mut layer = Layer::new(crate::types::LayerId::new(1), crate::types::LayerKind::Raster, 256, 256);
+        let mut layer = Layer::new(
+            crate::types::LayerId::new(1),
+            crate::types::LayerKind::Raster,
+            256,
+            256,
+        );
 
         let filter1 = FilterInstance::new(
             FilterKind::Curves,
@@ -804,7 +1015,11 @@ mod tests {
         layer.filters.push(filter1);
         layer.filters.push(filter2);
 
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
         let (pc, lc, tc, doc, _rs) = make_caches_and_doc();
         let result = apply_filter_to_tile(&tile, &layer, coord, &pc, &lc, &tc, &doc);
         assert!(result.is_ok());
@@ -812,7 +1027,7 @@ mod tests {
 
     #[test]
     fn apply_dither_v2_ordered() {
-        use crate::filter::{DitherModeV2, DitherColorMode, DitherParamsV2};
+        use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
 
         let mut tile = PixelTile::new();
         for y in 0..260u32 {
@@ -833,20 +1048,92 @@ mod tests {
                 pixel_size: 1,
                 color_mode: DitherColorMode::Rgb,
                 palette_id: None,
-            ..Default::default()
+                ..Default::default()
             }),
         );
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
         let (pc, lc, tc, doc, rs) = make_caches_and_doc();
         let layer_id = LayerId::new(1);
 
-        let result = apply_single_filter(&tile, &filter, coord, &pc, &lc, &tc, &doc, &rs, &BlockRepresentativeCache::new(), layer_id, None);
+        let result = apply_single_filter(
+            &tile,
+            &filter,
+            coord,
+            &pc,
+            &lc,
+            &tc,
+            &doc,
+            &rs,
+            &BlockRepresentativeCache::new(),
+            layer_id,
+            None,
+        );
         assert!(result.is_ok());
     }
 
     #[test]
+    fn dither_missing_palette_falls_back_via_registry() {
+        use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
+
+        let mut tile = PixelTile::new();
+        for y in 0..260u32 {
+            for x in 0..260u32 {
+                tile.set(x, y, 0, 0.5);
+                tile.set(x, y, 1, 0.5);
+                tile.set(x, y, 2, 0.5);
+                tile.set(x, y, 3, 1.0);
+            }
+        }
+
+        let mut filter = FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::Bayer4x4,
+                levels: 4,
+                threshold_scale: 1.0,
+                pixel_size: 1,
+                color_mode: DitherColorMode::Rgb,
+                palette_id: Some(crate::types::PaletteId::new(1)),
+                ..Default::default()
+            }),
+        );
+        filter.algorithm_id = Some("bayer_4x4".into());
+
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
+        let (pc, lc, tc, doc, rs) = make_caches_and_doc();
+        let layer_id = LayerId::new(1);
+
+        let result = apply_single_filter(
+            &tile,
+            &filter,
+            coord,
+            &pc,
+            &lc,
+            &tc,
+            &doc,
+            &rs,
+            &BlockRepresentativeCache::new(),
+            layer_id,
+            None,
+        );
+        assert!(
+            result.is_ok(),
+            "missing optional palette must fall back, got: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
     fn apply_dither_v2_error_diffusion() {
-        use crate::filter::{DitherModeV2, DitherColorMode, DitherParamsV2};
+        use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
 
         let mut tile = PixelTile::new();
         for y in 0..260u32 {
@@ -867,14 +1154,30 @@ mod tests {
                 pixel_size: 1,
                 color_mode: DitherColorMode::Rgb,
                 palette_id: None,
-            ..Default::default()
+                ..Default::default()
             }),
         );
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
         let (pc, lc, tc, doc, rs) = make_caches_and_doc();
         let layer_id = LayerId::new(1);
 
-        let result = apply_single_filter(&tile, &filter, coord, &pc, &lc, &tc, &doc, &rs, &BlockRepresentativeCache::new(), layer_id, None);
+        let result = apply_single_filter(
+            &tile,
+            &filter,
+            coord,
+            &pc,
+            &lc,
+            &tc,
+            &doc,
+            &rs,
+            &BlockRepresentativeCache::new(),
+            layer_id,
+            None,
+        );
         assert!(result.is_ok());
     }
 
@@ -910,7 +1213,11 @@ mod tests {
         assert_eq!(filter.opacity, 1.0);
         assert_eq!(filter.blend_mode, BlendMode::Normal);
 
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
         let (pc, lc, tc, doc, rs) = make_caches_and_doc();
         let layer_id = LayerId::new(1);
         let blocks = BlockRepresentativeCache::new();
@@ -946,7 +1253,11 @@ mod tests {
         );
         filter.opacity = 0.5;
 
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
         let (pc, lc, tc, doc, rs) = make_caches_and_doc();
         let layer_id = LayerId::new(1);
         let blocks = BlockRepresentativeCache::new();
@@ -992,7 +1303,11 @@ mod tests {
         );
         filter.opacity = 0.5;
 
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
         let (pc, lc, tc, doc, rs) = make_caches_and_doc();
         let layer_id = LayerId::new(1);
         let blocks = BlockRepresentativeCache::new();
@@ -1056,7 +1371,11 @@ mod tests {
         let mut dither_only = Layer::new(LayerId::new(1), LayerKind::Raster, 256, 256);
         dither_only.filters.push(dither);
 
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
         let (pc, lc, tc, doc, rs) = make_caches_and_doc();
         let blocks = BlockRepresentativeCache::new();
 
@@ -1065,7 +1384,16 @@ mod tests {
         )
         .unwrap();
         let dither_out = apply_filter_to_tile_with_caches(
-            &tile, &dither_only, coord, &pc, &lc, &tc, &doc, &rs, &blocks, None,
+            &tile,
+            &dither_only,
+            coord,
+            &pc,
+            &lc,
+            &tc,
+            &doc,
+            &rs,
+            &blocks,
+            None,
         )
         .unwrap();
 
@@ -1081,7 +1409,7 @@ mod tests {
         use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
         use crate::layer::Layer;
         use crate::types::LayerKind;
-        use engine_tiles::{TILE_PARK_CAPACITY, TileBufferPark};
+        use engine_tiles::{TileBufferPark, TILE_PARK_CAPACITY};
 
         let mut tile = PixelTile::new();
         fill_gray(&mut tile, 0.4);
@@ -1102,7 +1430,11 @@ mod tests {
             ));
         }
 
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
         let (pc, lc, tc, doc, rs) = make_caches_and_doc();
         let blocks = BlockRepresentativeCache::new();
         let mut park = TileBufferPark::new();
@@ -1131,7 +1463,7 @@ mod tests {
     fn track_i_blend_uses_park_without_growing_past_capacity() {
         use crate::layer::Layer;
         use crate::types::LayerKind;
-        use engine_tiles::{TILE_PARK_CAPACITY, TileBufferPark};
+        use engine_tiles::{TileBufferPark, TILE_PARK_CAPACITY};
 
         let mut tile = PixelTile::new();
         fill_gray(&mut tile, 0.5);
@@ -1153,7 +1485,11 @@ mod tests {
         let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, 256, 256);
         layer.filters.push(filter);
 
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
         let (pc, lc, tc, doc, rs) = make_caches_and_doc();
         let blocks = BlockRepresentativeCache::new();
         let mut park = TileBufferPark::new();
@@ -1202,7 +1538,10 @@ mod tests {
         layer
     }
 
-    /// Peak live temps beyond the immutable src (warm park): Normal ≤ 2.
+    /// Peak live temps beyond the immutable src (warm park): Normal ≤ 3.
+    ///
+    /// Registry `FilterAlgorithm::apply` is in-place; ordered kernels that
+    /// forbid src/dst alias allocate one scratch tile on top of the ping-pong pair.
     #[test]
     fn peak_live_temps_normal_warm_park() {
         use engine_tiles::{pixel_tile_live, TileBufferPark};
@@ -1218,7 +1557,11 @@ mod tests {
             let _ = pixel_tile_live::mark_baseline();
 
             let layer = bayer_stack(n);
-            let coord = TileCoord { level: 0, x: 0, y: 0 };
+            let coord = TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            };
             let (pc, lc, tc, doc, rs) = make_caches_and_doc();
             let blocks = BlockRepresentativeCache::new();
 
@@ -1229,7 +1572,7 @@ mod tests {
 
             let temps = pixel_tile_live::peak().saturating_sub(src_baseline);
             assert!(
-                temps <= 2,
+                temps <= 3,
                 "Normal stack n={n}: peak temps {temps} (peak={}, src_baseline={src_baseline})",
                 pixel_tile_live::peak(),
             );
@@ -1269,15 +1612,15 @@ mod tests {
         );
         filter.opacity = 0.5;
 
-        let mut layer = crate::layer::Layer::new(
-            LayerId::new(1),
-            crate::types::LayerKind::Raster,
-            256,
-            256,
-        );
+        let mut layer =
+            crate::layer::Layer::new(LayerId::new(1), crate::types::LayerKind::Raster, 256, 256);
         layer.filters.push(filter);
 
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
         let (pc, lc, tc, doc, rs) = make_caches_and_doc();
         let blocks = BlockRepresentativeCache::new();
 

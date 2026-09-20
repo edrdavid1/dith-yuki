@@ -110,15 +110,11 @@ export default function PaletteVolumeViewer({
   const onSelectRef = useRef(onSelectIndex);
   const cloudRef = useRef<CloudPoint[]>([]);
   const pointsGroupRef = useRef<THREE.Group | null>(null);
-  const [sectionOpen, setSectionOpen] = useState(!compact);
+  const [sectionOpen, setSectionOpen] = useState(true);
   selectedRef.current = selectedIndex;
   onSelectRef.current = onSelectIndex;
 
   const validCount = colors.reduce((n, c) => n + (c.valid ? 1 : 0), 0);
-
-  useEffect(() => {
-    setSectionOpen(!compact);
-  }, [compact]);
 
   useEffect(() => {
     const valid = colors

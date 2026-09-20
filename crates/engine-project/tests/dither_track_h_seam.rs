@@ -54,7 +54,11 @@ fn assert_vertical_seam_continuous(params: &DitherParamsV2) {
 
     let left = apply_ordered(
         &tile,
-        TileCoord { level: 0, x: 0, y: 0 },
+        TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        },
         params,
         &cache,
         &pk,
@@ -64,7 +68,11 @@ fn assert_vertical_seam_continuous(params: &DitherParamsV2) {
     .unwrap();
     let right = apply_ordered(
         &tile,
-        TileCoord { level: 0, x: 1, y: 0 },
+        TileCoord {
+            level: 0,
+            x: 1,
+            y: 0,
+        },
         params,
         &cache,
         &pk,
@@ -74,13 +82,21 @@ fn assert_vertical_seam_continuous(params: &DitherParamsV2) {
     .unwrap();
 
     let g_l = GlobalCoordSigned::from_local_with_halo(
-        TileCoord { level: 0, x: 0, y: 0 },
+        TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        },
         HALO + TILE_SIZE - 1,
         HALO,
         HALO,
     );
     let g_r = GlobalCoordSigned::from_local_with_halo(
-        TileCoord { level: 0, x: 1, y: 0 },
+        TileCoord {
+            level: 0,
+            x: 1,
+            y: 0,
+        },
         HALO,
         HALO,
         HALO,
@@ -106,7 +122,11 @@ fn assert_axis_aligned_blocks(params: &DitherParamsV2) {
     let pk = PaletteKdCache::new();
     let lut = PaletteLutCache::new();
     let doc = Document::new(DocumentId::new(1), 512, 512);
-    let coord = TileCoord { level: 0, x: 0, y: 0 };
+    let coord = TileCoord {
+        level: 0,
+        x: 0,
+        y: 0,
+    };
     let result = apply_ordered(&tile, coord, params, &cache, &pk, &lut, &doc).unwrap();
 
     for y in HALO..(HALO + TILE_SIZE) {

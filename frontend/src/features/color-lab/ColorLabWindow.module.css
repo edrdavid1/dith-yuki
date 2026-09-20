@@ -43,6 +43,19 @@
   gap: 16px;
 }
 
+.color-lab-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.color-lab-body:not(.color-lab-body-sidebar) .color-lab-stack {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
 .color-lab-column {
   display: flex;
   flex-direction: column;
@@ -106,11 +119,30 @@
 }
 
 .color-lab-body-sidebar {
-  padding: 10px;
-  gap: 12px;
+  padding: 10px 10px 16px;
+  gap: 14px;
   overflow-x: hidden;
   min-width: 0;
   box-sizing: border-box;
+}
+
+.color-lab-body-sidebar .color-lab-stack {
+  gap: 16px;
+}
+
+.color-lab-body-sidebar .color-lab-column {
+  min-width: 0;
+}
+
+.color-lab-body-sidebar .color-lab-footer {
+  justify-content: stretch;
+}
+
+.color-lab-body-sidebar .color-lab-cancel-btn,
+.color-lab-body-sidebar .color-lab-apply-btn {
+  flex: 1;
+  width: auto;
+  min-width: 0;
 }
 
 .color-lab-colors-grid-compact {
@@ -166,9 +198,14 @@
   height: 28px;
 }
 
-.color-lab-body-sidebar .color-lab-button {
-  font-size: 11px;
-  gap: 4px;
+.color-lab-body-sidebar .color-lab-buttons {
+  flex-direction: row;
+  gap: 8px;
+}
+
+.color-lab-body-sidebar .color-lab-buttons > * {
+  flex: 1;
+  min-width: 0;
 }
 
 .color-lab-hint {

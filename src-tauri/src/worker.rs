@@ -106,9 +106,7 @@ pub struct TileReadyPayload {
 pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
     loop {
         if let Some(task) = state.tiles.scheduler.dequeue() {
-            state
-                .preview_pass_inflight
-                .fetch_add(1, Ordering::AcqRel);
+            state.preview_pass_inflight.fetch_add(1, Ordering::AcqRel);
 
             // Staleness check (requirement 10.5), including Composite layer 0.
             // Skipping Composite used to reuse in-flight work during slider
@@ -118,72 +116,62 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
             let snapshot = match state.session(task.key.doc) {
                 Ok(s) => s.document_handle.snapshot(),
                 Err(_) => {
-                    state
-                        .preview_pass_inflight
-                        .fetch_sub(1, Ordering::AcqRel);
+                    state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
                     crate::commands::on_preview_task_finished(&state);
                     continue;
                 }
             };
 
             if task_is_stale(&task, &snapshot) {
-                state
-                    .preview_pass_inflight
-                    .fetch_sub(1, Ordering::AcqRel);
+                state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
                 crate::commands::on_preview_task_finished(&state);
                 continue;
             }
 
             let result: Result<Arc<PixelTile>, engine_project::error::EngineError> =
                 match task.key.stage {
-                CacheStage::Raw => load_raw_tile(task.key, &state),
-                CacheStage::Processed => {
-                    if crate::tile_pipeline::layer_has_error_diffusion(
-                        &snapshot.root,
-                        task.key.layer,
-                    ) && !engine_tiles::ed_ready(&state.tiles.tile_cache, task.key, true)
-                    {
-                        state.tiles.ed_frontier.block(task, &state.tiles.tile_cache);
-                        state
-                            .preview_pass_inflight
-                            .fetch_sub(1, Ordering::AcqRel);
-                        crate::commands::on_preview_task_finished(&state);
-                        continue;
-                    }
-                    compute_processed_tile(task.key, &state)
-                }
-                CacheStage::Composite => match compute_composite_tile(task.key, &state) {
-                    Err(engine_project::error::EngineError::EdPrefixPending) => {
-                        let deps = crate::tile_pipeline::pending_ed_processed_at_coord(
-                            &state,
+                    CacheStage::Raw => load_raw_tile(task.key, &state),
+                    CacheStage::Processed => {
+                        if crate::tile_pipeline::layer_has_error_diffusion(
                             &snapshot.root,
-                            task.key.doc,
-                            task.key.coord,
-                        );
-                        if deps.is_empty() {
-                            state.tiles.scheduler.enqueue_or_bump(task);
-                            state.worker_wake.notify_one();
-                        } else {
-                            state.tiles.ed_frontier.block_on(task, deps);
+                            task.key.layer,
+                        ) && !engine_tiles::ed_ready(&state.tiles.tile_cache, task.key, true)
+                        {
+                            state.tiles.ed_frontier.block(task, &state.tiles.tile_cache);
+                            state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
+                            crate::commands::on_preview_task_finished(&state);
+                            continue;
                         }
-                        state
-                            .preview_pass_inflight
-                            .fetch_sub(1, Ordering::AcqRel);
-                        crate::commands::on_preview_task_finished(&state);
-                        continue;
+                        compute_processed_tile(task.key, &state)
                     }
-                    other => other,
-                },
-            };
+                    CacheStage::Composite => match compute_composite_tile(task.key, &state) {
+                        Err(engine_project::error::EngineError::EdPrefixPending) => {
+                            let deps = crate::tile_pipeline::pending_ed_processed_at_coord(
+                                &state,
+                                &snapshot.root,
+                                task.key.doc,
+                                task.key.coord,
+                            );
+                            if deps.is_empty() {
+                                state.tiles.scheduler.enqueue_or_bump(task);
+                                state.worker_wake.notify_one();
+                            } else {
+                                state.tiles.ed_frontier.block_on(task, deps);
+                            }
+                            state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
+                            crate::commands::on_preview_task_finished(&state);
+                            continue;
+                        }
+                        other => other,
+                    },
+                };
 
             if let Ok(tile) = result {
                 // Re-check after compute: gen may have advanced while we worked.
                 let snapshot = match state.session(task.key.doc) {
                     Ok(s) => s.document_handle.snapshot(),
                     Err(_) => {
-                        state
-                            .preview_pass_inflight
-                            .fetch_sub(1, Ordering::AcqRel);
+                        state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
                         crate::commands::on_preview_task_finished(&state);
                         continue;
                     }
@@ -252,9 +240,7 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
                 }
             }
 
-            state
-                .preview_pass_inflight
-                .fetch_sub(1, Ordering::AcqRel);
+            state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
             crate::commands::on_preview_task_finished(&state);
         } else {
             // No tasks available — wait on Condvar for immediate wake when work arrives.
@@ -300,8 +286,8 @@ fn compute_composite_tile(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine_project::Document;
     use engine_project::types::DocumentId;
+    use engine_project::Document;
     use engine_tiles::{Priority, TileCoord};
 
     fn composite_task(generation: u64) -> RecomputeTask {

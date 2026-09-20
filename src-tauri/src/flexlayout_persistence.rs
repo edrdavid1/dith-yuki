@@ -90,8 +90,9 @@ impl FlexLayoutPersistence {
     /// - `Err(LayoutPersistenceError)` on any failure (read/write/dir creation)
     pub fn save(&self, layout_json: &str) -> Result<(), LayoutPersistenceError> {
         // Validate JSON before writing
-        serde_json::from_str::<Value>(layout_json)
-            .map_err(|e| LayoutPersistenceError::InvalidJson(format!("invalid layout json: {}", e)))?;
+        serde_json::from_str::<Value>(layout_json).map_err(|e| {
+            LayoutPersistenceError::InvalidJson(format!("invalid layout json: {}", e))
+        })?;
 
         // Ensure app data directory exists
         fs::create_dir_all(&self.app_data_dir)
@@ -101,18 +102,14 @@ impl FlexLayoutPersistence {
         let temp_path = layout_path.with_extension("json.tmp");
 
         // Write to temp file first
-        fs::write(&temp_path, layout_json)
-            .map_err(|e| LayoutPersistenceError::WriteError(format!(
-                "failed to write temp file: {}",
-                e
-            )))?;
+        fs::write(&temp_path, layout_json).map_err(|e| {
+            LayoutPersistenceError::WriteError(format!("failed to write temp file: {}", e))
+        })?;
 
         // Atomic rename: temp → final location
-        fs::rename(&temp_path, &layout_path)
-            .map_err(|e| LayoutPersistenceError::WriteError(format!(
-                "failed to rename temp file: {}",
-                e
-            )))?;
+        fs::rename(&temp_path, &layout_path).map_err(|e| {
+            LayoutPersistenceError::WriteError(format!("failed to rename temp file: {}", e))
+        })?;
 
         Ok(())
     }
@@ -157,10 +154,7 @@ impl FlexLayoutPersistence {
         match serde_json::from_str::<Value>(&contents) {
             Ok(_) => Ok(contents),
             Err(e) => {
-                log::warn!(
-                    "Failed to parse layout JSON: {}; using default layout",
-                    e
-                );
+                log::warn!("Failed to parse layout JSON: {}; using default layout", e);
                 Ok(Self::default_layout_json())
             }
         }
@@ -234,7 +228,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let persistence = FlexLayoutPersistence::new(temp_dir.path().to_path_buf());
 
-        let layout_json = r#"{"version": 3, "root": {"type": "border", "id": "root", "children": []}}"#;
+        let layout_json =
+            r#"{"version": 3, "root": {"type": "border", "id": "root", "children": []}}"#;
 
         // Save
         persistence.save(layout_json).unwrap();
@@ -253,7 +248,7 @@ mod tests {
 
         persistence.save(complex_layout).unwrap();
         let loaded = persistence.load().unwrap();
-        
+
         // Verify structure is preserved exactly
         let original_value: Value = serde_json::from_str(complex_layout).unwrap();
         let loaded_value: Value = serde_json::from_str(&loaded).unwrap();
@@ -269,7 +264,7 @@ mod tests {
         let loaded = persistence.load().unwrap();
         assert!(loaded.contains("\"version\": 3"));
         assert!(loaded.contains("Layers"));
-        
+
         // Verify it's valid JSON
         let value: Value = serde_json::from_str(&loaded).unwrap();
         assert_eq!(value["version"], 3);
@@ -289,7 +284,7 @@ mod tests {
         let loaded = persistence.load().unwrap();
         assert!(loaded.contains("\"version\": 3"));
         assert!(loaded.contains("Layers"));
-        
+
         // Verify returned JSON is valid
         let value: Value = serde_json::from_str(&loaded).unwrap();
         assert_eq!(value["version"], 3);
@@ -314,7 +309,11 @@ mod tests {
 
         // Create v2 layout file (old system)
         let v2_path = temp_dir.path().join("panel_state.json");
-        fs::write(&v2_path, r#"{"version": 2, "panels": [], "left_order": [], "right_order": []}"#).unwrap();
+        fs::write(
+            &v2_path,
+            r#"{"version": 2, "panels": [], "left_order": [], "right_order": []}"#,
+        )
+        .unwrap();
 
         // Load should detect v2 and return default v3 (no translation)
         let loaded = persistence.load().unwrap();
@@ -360,7 +359,7 @@ mod tests {
             "left_order": ["layers"],
             "right_order": ["effect"]
         }"#;
-        
+
         let v2_path = temp_dir.path().join("panel_state.json");
         fs::write(&v2_path, v2_content).unwrap();
 
@@ -372,7 +371,7 @@ mod tests {
         assert_eq!(value["version"], 3);
         assert_eq!(value["root"]["type"], "border");
         assert!(value["root"].get("children").is_some());
-        
+
         // Verify v2 concepts are NOT in the result (no panels array, no left_order/right_order at root)
         assert!(value.get("panels").is_none());
         assert!(value.get("left_order").is_none());
@@ -386,7 +385,7 @@ mod tests {
 
         let result = persistence.save("{ invalid json }");
         assert!(result.is_err());
-        
+
         match result {
             Err(LayoutPersistenceError::InvalidJson(_)) => {} // expected
             _ => panic!("Expected InvalidJson error"),
@@ -464,7 +463,7 @@ mod tests {
 
         let result = persistence.reset_to_default().unwrap();
         assert!(result.contains("\"version\": 3"));
-        
+
         let value: Value = serde_json::from_str(&result).unwrap();
         assert_eq!(value["version"], 3);
     }
@@ -473,19 +472,19 @@ mod tests {
     fn save_creates_app_data_directory_if_missing() {
         let temp_dir = TempDir::new().unwrap();
         let nested_dir = temp_dir.path().join("app").join("data");
-        
+
         // Verify nested directory doesn't exist
         assert!(!nested_dir.exists());
 
         let persistence = FlexLayoutPersistence::new(nested_dir.clone());
         let layout_json = r#"{"version": 3, "root": {"type": "border"}}"#;
-        
+
         // Save should create the directory
         persistence.save(layout_json).unwrap();
-        
+
         // Verify directory was created
         assert!(nested_dir.exists());
-        
+
         // Verify file was written
         let file_path = nested_dir.join("flexlayout_state.json");
         assert!(file_path.exists());
@@ -497,13 +496,15 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
 
         // Test 1: Completely missing directory and file
-        let persistence = FlexLayoutPersistence::new(temp_dir.path().join("scenario1").to_path_buf());
+        let persistence =
+            FlexLayoutPersistence::new(temp_dir.path().join("scenario1").to_path_buf());
         let loaded = persistence.load().unwrap();
         assert!(loaded.contains("\"version\": 3"));
 
         // Test 2: Directory exists but file missing
         fs::create_dir_all(temp_dir.path().join("scenario2")).unwrap();
-        let persistence = FlexLayoutPersistence::new(temp_dir.path().join("scenario2").to_path_buf());
+        let persistence =
+            FlexLayoutPersistence::new(temp_dir.path().join("scenario2").to_path_buf());
         let loaded = persistence.load().unwrap();
         assert!(loaded.contains("\"version\": 3"));
 

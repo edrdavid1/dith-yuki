@@ -211,14 +211,9 @@ impl DockAffinityController {
 
     /// Snapshot of current session for mouseup completion: (panel_id, armed, insert, side).
     pub fn session_snapshot(&self) -> Option<(String, bool, usize, Option<SidebarSide>)> {
-        self.session.as_ref().map(|s| {
-            (
-                s.panel_id.clone(),
-                s.armed,
-                s.insert_index,
-                s.armed_side,
-            )
-        })
+        self.session
+            .as_ref()
+            .map(|s| (s.panel_id.clone(), s.armed, s.insert_index, s.armed_side))
     }
 }
 
@@ -471,11 +466,7 @@ mod tests {
             side,
             slots: slots
                 .into_iter()
-                .map(|(mid_y, top, bottom)| DockSlot {
-                    mid_y,
-                    top,
-                    bottom,
-                })
+                .map(|(mid_y, top, bottom)| DockSlot { mid_y, top, bottom })
                 .collect(),
         }
     }
@@ -698,7 +689,14 @@ mod tests {
 
     #[test]
     fn legacy_mid_only_slots_still_resolve_gaps() {
-        let z = zone_mids(SidebarSide::Right, 200.0, 0.0, 100.0, 400.0, vec![100.0, 300.0]);
+        let z = zone_mids(
+            SidebarSide::Right,
+            200.0,
+            0.0,
+            100.0,
+            400.0,
+            vec![100.0, 300.0],
+        );
         assert_eq!(insert_gap_ys(&z), vec![0.0, 200.0, 400.0]);
     }
 
@@ -813,25 +811,11 @@ mod tests {
         let mut c = DockAffinityController::new(true);
         c.set_dock_zone(
             SidebarSide::Left,
-            Some(zone(
-                SidebarSide::Left,
-                0.0,
-                0.0,
-                80.0,
-                400.0,
-                vec![],
-            )),
+            Some(zone(SidebarSide::Left, 0.0, 0.0, 80.0, 400.0, vec![])),
         );
         c.set_dock_zone(
             SidebarSide::Right,
-            Some(zone(
-                SidebarSide::Right,
-                900.0,
-                0.0,
-                80.0,
-                400.0,
-                vec![],
-            )),
+            Some(zone(SidebarSide::Right, 900.0, 0.0, 80.0, 400.0, vec![])),
         );
         assert_eq!(c.zones.len(), 2);
 
@@ -900,8 +884,7 @@ mod tests {
             width: 80.0,
             height: 300.0,
         };
-        let (inside, armed, _, side) =
-            update_affinity_multi(&zones, win_on_secondary, false, None);
+        let (inside, armed, _, side) = update_affinity_multi(&zones, win_on_secondary, false, None);
         assert!(inside);
         assert!(armed);
         assert_eq!(side, Some(SidebarSide::Left));
@@ -931,8 +914,7 @@ mod tests {
             width: 40.0,
             height: 32.0,
         };
-        let (inside, armed, insert, side) =
-            update_affinity_multi(&zones, win_top, false, None);
+        let (inside, armed, insert, side) = update_affinity_multi(&zones, win_top, false, None);
         assert!(inside);
         assert!(armed);
         assert_eq!(insert, 0);
@@ -976,7 +958,10 @@ mod tests {
             height: 400.0,
         };
         let center = titlebar_band(win);
-        assert!(center.x > 40.0, "precondition: center band misses empty strip");
+        assert!(
+            center.x > 40.0,
+            "precondition: center band misses empty strip"
+        );
 
         let (inside, armed, insert, side) = update_affinity_multi(&zones, win, false, None);
         assert!(inside);
@@ -994,7 +979,8 @@ mod tests {
             width: 40.0,
             height: 32.0,
         };
-        let (inside, armed, _, side) = update_affinity_multi(&zones, band, true, Some(SidebarSide::Right));
+        let (inside, armed, _, side) =
+            update_affinity_multi(&zones, band, true, Some(SidebarSide::Right));
         assert!(!inside);
         assert!(!armed);
         assert!(side.is_none());

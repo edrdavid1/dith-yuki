@@ -21,6 +21,9 @@ crossbeam = "0.8"
 crossbeam-channel = "0.5"
 dashmap = "5.5"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
+
 [dev-dependencies]
 pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }

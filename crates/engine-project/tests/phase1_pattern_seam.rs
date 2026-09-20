@@ -42,7 +42,11 @@ fn assert_vertical_seam_continuous(params: &DitherParamsV2) {
 
     let left = apply_ordered(
         &tile,
-        TileCoord { level: 0, x: 0, y: 0 },
+        TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        },
         params,
         &cache,
         &pk,
@@ -52,7 +56,11 @@ fn assert_vertical_seam_continuous(params: &DitherParamsV2) {
     .unwrap();
     let right = apply_ordered(
         &tile,
-        TileCoord { level: 0, x: 1, y: 0 },
+        TileCoord {
+            level: 0,
+            x: 1,
+            y: 0,
+        },
         params,
         &cache,
         &pk,
@@ -63,13 +71,21 @@ fn assert_vertical_seam_continuous(params: &DitherParamsV2) {
 
     // Verify global coords are consecutive across the seam.
     let g_l = GlobalCoordSigned::from_local_with_halo(
-        TileCoord { level: 0, x: 0, y: 0 },
+        TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        },
         HALO + TILE_SIZE - 1,
         HALO,
         HALO,
     );
     let g_r = GlobalCoordSigned::from_local_with_halo(
-        TileCoord { level: 0, x: 1, y: 0 },
+        TileCoord {
+            level: 0,
+            x: 1,
+            y: 0,
+        },
         HALO,
         HALO,
         HALO,

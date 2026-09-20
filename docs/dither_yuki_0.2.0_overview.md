@@ -1,10 +1,10 @@
 # Dither Yuki 0.2.0 — честный снимок продукта
 
-> Обновлено **2026-09-04**. Движок тайлов и дизера — настоящий. Ниже — что уже закрыто и что всё ещё beta, без продажи «как Photoshop».
+> Обновлено **2026-09-05**. Движок тайлов и дизера — настоящий. Ниже — что уже закрыто и что всё ещё beta, без продажи «как Photoshop».
 
 | Документов | Потолок | Кэш RAM | IPC |
 |---|---|---|---|
-| N вкладок (runtime `DocumentId`) | 8192² | process 512 MiB + Raw pin | `commands/` + `services/` |
+| N вкладок (runtime `DocumentId`) | 8192² | adaptive 25% RAM, clamp 512 MiB–4 GiB (`DITHER_RAM_BUDGET_MIB`) | `commands/` + `services/` |
 
 > **Вердикт**  
 > Студия дизера на холсте до ~4K с вкладками, FlexLayout-панелями и Path B GPU **на тёплом viewport** — работает. Не продукт: paint, ICC/print, video/batch, default-on GPU на холодном панорамировании, OS-окно на второй монитор (B7).
@@ -46,8 +46,8 @@ Env: `DITHER_GPU_PREVIEW=1` (cold compute), `DITHER_FORCE_CPU=1`, `DITHER_GPU_WA
 
 ## Если чинить дальше
 
-* A8 f16/sparse — только если preview occupancy реально упирается (сейчас ~19% на 1080p + A2)
+* Track C — адаптивный RAM/VRAM (Phase 1 в дереве); диагностика T0 на реальном 8K
+* A8 f16/sparse — только если occupancy реально упирается (~19% на 1080p + A2)
 * B4c QA + pin/bump `flexlayout-react`
 * B7 — отдельное OS-окно, не побочный эффект drag
 * ICC / bit depth или явный sRGB-only
-* Halo-less preview composite; command-pattern undo (не приоритет)

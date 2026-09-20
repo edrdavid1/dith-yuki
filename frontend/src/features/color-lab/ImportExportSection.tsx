@@ -19,7 +19,7 @@ export default function ImportExportSection({
 }: ImportExportSectionProps) {
   return (
     <div className={cn("color-lab-column")}>
-      <div style={{ height: '15px' }} />
+      <div className={cn("color-lab-section-title")}>import / export</div>
 
       <Tooltip label="Import palette file">
         <button

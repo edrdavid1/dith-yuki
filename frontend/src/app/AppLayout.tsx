@@ -39,7 +39,6 @@ import FlexLayoutContainer from '../components/FlexLayoutContainer';
 import ResizeHandle from '../components/common/ResizeHandle';
 import { isPanelOnFlexLayout } from '../factories/layoutPanelFactory';
 import {
-  findTabByComponent,
   listDockedFlexComponents,
   listFlexComponents,
   useLayoutContext,
@@ -210,7 +209,6 @@ export default function AppLayout() {
     left: leftLayout,
     right: rightLayout,
     layoutEpoch,
-    floatPanel,
     swapFlexSides,
     layoutToast,
     clearLayoutToast,
@@ -391,29 +389,13 @@ export default function AppLayout() {
     }
   }, [panels]);
 
-  const handleOpenColorLab = useCallback(() => {
-    const onLeft = leftLayout.model
-      ? findTabByComponent(leftLayout.model, 'colorlab')
-      : null;
-    const onRight = rightLayout.model
-      ? findTabByComponent(rightLayout.model, 'colorlab')
-      : null;
-    if (onLeft && !onLeft.isFloating()) {
-      floatPanel('left', 'colorlab');
-      return;
-    }
-    if (onRight && !onRight.isFloating()) {
-      floatPanel('right', 'colorlab');
-      return;
-    }
-    // Already floating (or missing) — FlexPopoutChrome / model already owns it.
-  }, [floatPanel, leftLayout.model, rightLayout.model]);
-
   const handleOpenPreferences = useCallback(() => {
+    setHelpOpen(false);
     setPreferencesOpen(true);
   }, []);
 
   const handleOpenHelp = useCallback(() => {
+    setPreferencesOpen(false);
     setHelpOpen(true);
   }, []);
 
@@ -455,9 +437,6 @@ export default function AppLayout() {
         case 'import-pattern':
           if (doc.hasDocument) void doc.importPattern();
           break;
-        case 'color-lab':
-          void handleOpenColorLab();
-          break;
         case 'preferences':
           handleOpenPreferences();
           break;
@@ -488,7 +467,6 @@ export default function AppLayout() {
     canUndo,
     dispatch,
     doc,
-    handleOpenColorLab,
     handleOpenHelp,
     handleOpenPreferences,
     onSaveImage,
@@ -603,7 +581,6 @@ export default function AppLayout() {
               onSaveProjectAs={onSaveProjectAs}
               onExportPattern={() => void doc.exportPattern()}
               onImportPattern={() => void doc.importPattern()}
-              onOpenColorLab={handleOpenColorLab}
               onOpenPreferences={handleOpenPreferences}
               onOpenHelp={handleOpenHelp}
               onUndo={() => {

@@ -10,9 +10,7 @@
 use crate::layer::{Layer, LayerNode};
 use crate::serialize::migrate::{ProjectError, SOFT_SIZE_WARN_BYTES};
 use crate::types::{LayerId, LayerKind, TileBounds};
-use engine_tiles::{
-    CacheStage, TileCache, TileCoord, TileKey, HALO, TILE_SIZE,
-};
+use engine_tiles::{CacheStage, TileCache, TileCoord, TileKey, HALO, TILE_SIZE};
 use image::RgbaImage;
 use std::io::Cursor;
 
@@ -23,8 +21,8 @@ pub fn uncompressed_layer_bytes(width: u32, height: u32) -> u64 {
 
 /// Sum uncompressed estimates for all raster layers; `true` if ≥ soft warn threshold.
 pub fn soft_size_warning(doc_width: u32, doc_height: u32, raster_layer_count: usize) -> bool {
-    let total = uncompressed_layer_bytes(doc_width, doc_height)
-        .saturating_mul(raster_layer_count as u64);
+    let total =
+        uncompressed_layer_bytes(doc_width, doc_height).saturating_mul(raster_layer_count as u64);
     total >= SOFT_SIZE_WARN_BYTES
 }
 
@@ -130,9 +128,8 @@ pub fn encode_rgba8_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>,
             height
         )));
     }
-    let img = RgbaImage::from_raw(width, height, rgba.to_vec()).ok_or_else(|| {
-        ProjectError::Codec("failed to wrap RGBA buffer as image".into())
-    })?;
+    let img = RgbaImage::from_raw(width, height, rgba.to_vec())
+        .ok_or_else(|| ProjectError::Codec("failed to wrap RGBA buffer as image".into()))?;
     let mut buf = Cursor::new(Vec::new());
     img.write_to(&mut buf, image::ImageFormat::Png)
         .map_err(|e| ProjectError::Codec(e.to_string()))?;

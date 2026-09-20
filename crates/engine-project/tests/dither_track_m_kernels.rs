@@ -80,10 +80,26 @@ fn m1_kernels_2x2_seam_sample() {
     let lut_cache = PaletteLutCache::new();
     let blocks = BlockRepresentativeCache::new();
     let coords = [
-        TileCoord { level: 0, x: 0, y: 0 },
-        TileCoord { level: 0, x: 1, y: 0 },
-        TileCoord { level: 0, x: 0, y: 1 },
-        TileCoord { level: 0, x: 1, y: 1 },
+        TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        },
+        TileCoord {
+            level: 0,
+            x: 1,
+            y: 0,
+        },
+        TileCoord {
+            level: 0,
+            x: 0,
+            y: 1,
+        },
+        TileCoord {
+            level: 0,
+            x: 1,
+            y: 1,
+        },
     ];
 
     for mode in M1_KERNELS {
@@ -130,16 +146,23 @@ fn m1_kernels_2x2_seam_sample() {
         )
         .unwrap();
 
-        let differs = (HALO..(HALO + 16)).any(|y| {
-            right_seeded.at(HALO, y, 0) != right_iso.at(HALO, y, 0)
-        });
+        let differs =
+            (HALO..(HALO + 16)).any(|y| right_seeded.at(HALO, y, 0) != right_iso.at(HALO, y, 0));
         assert!(
             differs,
             "{mode:?}: left residuals must change tile (1,0) left edge"
         );
         assert!(
             store
-                .get_diag(1, layer_id, TileCoord { level: 0, x: 1, y: 1 })
+                .get_diag(
+                    1,
+                    layer_id,
+                    TileCoord {
+                        level: 0,
+                        x: 1,
+                        y: 1
+                    }
+                )
                 .is_some(),
             "{mode:?}: corner residuals must be stored from (0,0)"
         );
@@ -155,7 +178,11 @@ fn m1_fs_atkinson_still_quantize() {
     let palette_cache = PaletteKdCache::new();
     let lut_cache = PaletteLutCache::new();
     let blocks = BlockRepresentativeCache::new();
-    let coord = TileCoord { level: 0, x: 0, y: 0 };
+    let coord = TileCoord {
+        level: 0,
+        x: 0,
+        y: 0,
+    };
     for mode in [DitherModeV2::FloydSteinberg, DitherModeV2::Atkinson] {
         let p = params(mode.clone());
         let store = ErrorResidualsStore::new();
@@ -199,8 +226,16 @@ fn m2_serpentine_even_and_odd_global_row_seam() {
     p.serpentine = true;
     p.levels = 4;
 
-    let left_c = TileCoord { level: 0, x: 0, y: 0 };
-    let right_c = TileCoord { level: 0, x: 1, y: 0 };
+    let left_c = TileCoord {
+        level: 0,
+        x: 0,
+        y: 0,
+    };
+    let right_c = TileCoord {
+        level: 0,
+        x: 1,
+        y: 0,
+    };
     let store = ErrorResidualsStore::new();
     let left = apply_error_diffusion_with_cache(
         &gradient_tile(left_c, &rgba),
@@ -245,11 +280,13 @@ fn m2_serpentine_even_and_odd_global_row_seam() {
         .get_left(1, layer_id, right_c)
         .expect("left tile must store right-edge residuals");
     let energy: f32 = incoming.right.iter().map(|v| v.abs()).sum();
-    assert!(energy > 1e-6, "serpentine must produce horizontal residuals");
+    assert!(
+        energy > 1e-6,
+        "serpentine must produce horizontal residuals"
+    );
 
-    let any_seed = (HALO..(HALO + TILE_SIZE)).any(|y| {
-        (0..4u32).any(|dx| right.at(HALO + dx, y, 0) != right_iso.at(HALO + dx, y, 0))
-    });
+    let any_seed = (HALO..(HALO + TILE_SIZE))
+        .any(|y| (0..4u32).any(|dx| right.at(HALO + dx, y, 0) != right_iso.at(HALO + dx, y, 0)));
     assert!(any_seed, "left residuals must change tile (1,0) output");
 
     for odd in [false, true] {

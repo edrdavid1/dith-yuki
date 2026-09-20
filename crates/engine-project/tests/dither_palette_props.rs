@@ -13,8 +13,8 @@ use engine_color::palette_cache::PaletteKdCache;
 use engine_color::palette_lut::PaletteLutCache;
 use engine_color::threshold_map::ThresholdMapCache;
 use engine_project::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
-use engine_project::filters::dither_ordered::apply_ordered;
 use engine_project::filters::dither_diffusion::apply_error_diffusion;
+use engine_project::filters::dither_ordered::apply_ordered;
 use engine_project::filters::dither_residuals::ErrorResidualsStore;
 use engine_project::types::{DocumentId, LayerId};
 use engine_project::Document;
@@ -70,7 +70,9 @@ fn palette_colors_from_seed(seed: u64, count: usize) -> Vec<LinearColor> {
 
 /// Check that a pixel's RGB matches one of the palette colors exactly.
 fn pixel_matches_palette(r: f32, g: f32, b: f32, palette_colors: &[LinearColor]) -> bool {
-    palette_colors.iter().any(|c| c.r == r && c.g == g && c.b == b)
+    palette_colors
+        .iter()
+        .any(|c| c.r == r && c.g == g && c.b == b)
 }
 
 // ─── Strategies ───────────────────────────────────────────────────────────────

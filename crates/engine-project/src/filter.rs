@@ -1,13 +1,10 @@
 //! Filter instance model and application.
 
 use crate::error::EngineError;
-use crate::filters::glitch::GlitchType;
 use crate::filters::curves::CurveChannel;
+use crate::filters::glitch::GlitchType;
 use crate::types::{BlendMode, FilterInstanceId, PaletteId};
-use engine_tiles::types::CacheStage;
-use engine_tiles::tile::PixelTile;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 fn default_channel_enabled() -> bool {
     true
@@ -18,6 +15,9 @@ fn default_filter_opacity() -> f32 {
 }
 
 /// Filter kind enumeration.
+///
+/// Legacy serde alias — use AlgorithmId for new code. Kept for
+/// `FilterInstanceFile.kind` backwards compatibility (task 4.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FilterKind {
     Curves,
@@ -78,7 +78,9 @@ pub enum DiffusionKernel {
 }
 
 impl DiffusionKernel {
-    /// Standard published (dx, dy, weight) tables. Reach is at most 2 px.
+    /// Standard published (dx, dy, weight) tables. Cell reach is at most 2
+    /// (JJN / Atkinson / Sierra). Cross-tile residual margin is
+    /// `pixel_size × max_offset()` because hops are `dx × pixel_size`.
     pub fn offsets(self) -> &'static [(i32, i32, f32)] {
         match self {
             Self::FloydSteinberg => &[
@@ -159,11 +161,28 @@ impl DiffusionKernel {
             _ => None,
         }
     }
+
+    /// Max |dx| / |dy| in kernel cells (FS = 1, Atkinson / JJN / … = 2).
+    pub fn max_offset(self) -> usize {
+        self.offsets()
+            .iter()
+            .map(|&(dx, dy, _)| dx.unsigned_abs().max(dy.unsigned_abs()) as usize)
+            .max()
+            .unwrap_or(1)
+    }
+
+    /// Cross-tile residual columns/rows: `pixel_size × max_offset()`.
+    pub fn edge_margin(self, pixel_size: u32) -> usize {
+        pixel_size.max(1) as usize * self.max_offset()
+    }
 }
 
 // ─── Dither V2 types (redesign) ───────────────────────────────────────────────
 
 /// Redesigned dither mode with full parameter set.
+///
+/// Legacy serde alias — use AlgorithmId for new code. Kept as the
+/// `DitherParamsV2.mode` field (task 4.4).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DitherModeV2 {
@@ -173,7 +192,9 @@ pub enum DitherModeV2 {
     Bayer4x4,
     #[serde(rename = "bayer_8x8")]
     Bayer8x8,
-    CustomPng { path: String },
+    CustomPng {
+        path: String,
+    },
     FloydSteinberg,
     Atkinson,
     JarvisJudiceNinke,
@@ -210,6 +231,25 @@ impl DitherModeV2 {
             Self::Burkes => Some(DiffusionKernel::Burkes),
             Self::Sierra => Some(DiffusionKernel::Sierra),
             _ => None,
+        }
+    }
+
+    /// Stable registry id for this mode, if the mode is a built-in algorithm.
+    /// `CustomPng` is file-backed and is not in `ALGORITHM_ID_REGISTRY.txt`.
+    pub fn algorithm_id(&self) -> Option<&'static str> {
+        match self {
+            Self::Bayer2x2 => Some("bayer_2x2"),
+            Self::Bayer4x4 => Some("bayer_4x4"),
+            Self::Bayer8x8 => Some("bayer_8x8"),
+            Self::FloydSteinberg => Some("floyd_steinberg"),
+            Self::Atkinson => Some("atkinson"),
+            Self::JarvisJudiceNinke => Some("jarvis_judice_ninke"),
+            Self::Stucki => Some("stucki"),
+            Self::Burkes => Some("burkes"),
+            Self::Sierra => Some("sierra"),
+            Self::CmykHalftone => Some("cmyk_halftone"),
+            Self::Wave => Some("wave"),
+            Self::CustomPng { .. } => None,
         }
     }
 }
@@ -610,13 +650,60 @@ pub enum FilterParams {
         /// Deterministic RGB noise amount (0 .. 1). 0 = skip.
         noise: f32,
     },
-    /// Placeholder for future filters
-    Placeholder(String),
+    /// Placeholder for unknown or future filters.
+    ///
+    /// Old JSON `{"Placeholder": "x"}` still deserialises (`raw_params: None`).
+    Placeholder(PlaceholderParams),
+}
+
+/// Wire format for [`FilterParams::Placeholder`].
+///
+/// Accepts a legacy JSON string or the v2 `{ label, raw_params }` object.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "PlaceholderDe", into = "PlaceholderDe")]
+pub struct PlaceholderParams {
+    pub label: String,
+    pub raw_params: Option<serde_json::Value>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum PlaceholderDe {
+    Legacy(String),
+    Record {
+        label: String,
+        #[serde(default)]
+        raw_params: Option<serde_json::Value>,
+    },
+}
+
+impl From<PlaceholderDe> for PlaceholderParams {
+    fn from(value: PlaceholderDe) -> Self {
+        match value {
+            PlaceholderDe::Legacy(label) => Self {
+                label,
+                raw_params: None,
+            },
+            PlaceholderDe::Record { label, raw_params } => Self { label, raw_params },
+        }
+    }
+}
+
+impl From<PlaceholderParams> for PlaceholderDe {
+    fn from(value: PlaceholderParams) -> Self {
+        PlaceholderDe::Record {
+            label: value.label,
+            raw_params: value.raw_params,
+        }
+    }
 }
 
 impl Default for FilterParams {
     fn default() -> Self {
-        FilterParams::Placeholder("default".to_string())
+        FilterParams::Placeholder(PlaceholderParams {
+            label: "default".to_string(),
+            raw_params: None,
+        })
     }
 }
 
@@ -646,6 +733,15 @@ pub struct FilterInstance {
     /// Blend of full filter output over the pre-filter tile. Default Normal.
     #[serde(default)]
     pub blend_mode: BlendMode,
+
+    /// Stable algorithm identity when this instance is dispatched via the
+    /// Registry. `None` keeps the legacy `match &filter.params` path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub algorithm_id: Option<String>,
+
+    /// Parameter schema version written next to `algorithm_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_version: Option<u32>,
 }
 
 impl FilterInstance {
@@ -664,6 +760,8 @@ impl FilterInstance {
             requires_full_row,
             opacity: 1.0,
             blend_mode: BlendMode::Normal,
+            algorithm_id: None,
+            schema_version: None,
         }
     }
 
@@ -858,41 +956,129 @@ impl FilterInstance {
     }
 }
 
-/// Apply a filter to a tile at a specific cache stage.
+/// Infer a registry id from persisted params when `FilterInstance.algorithm_id` is unset.
+pub fn algorithm_id_for_params(params: &FilterParams) -> Option<&'static str> {
+    match params {
+        FilterParams::DitherV2(p) => p.mode.algorithm_id(),
+        FilterParams::Dither { mode, color_depth } => {
+            DitherParamsV2::from((mode.clone(), *color_depth))
+                .mode
+                .algorithm_id()
+        }
+        FilterParams::PaletteQuantize { .. } => Some("palette_quantize"),
+        FilterParams::Crt { .. } => Some("crt"),
+        FilterParams::Glow { .. } => Some("glow"),
+        FilterParams::Adjust { .. } => Some("adjust"),
+        FilterParams::Curves { .. } => Some("curves"),
+        FilterParams::Glitch { .. } => Some("glitch"),
+        FilterParams::Levels { .. } | FilterParams::Placeholder(_) => None,
+    }
+}
+
+/// Map a built-in `AlgorithmId` to the serde `FilterKind` alias.
+pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
+    match id {
+        "bayer_2x2"
+        | "bayer_4x4"
+        | "bayer_8x8"
+        | "floyd_steinberg"
+        | "atkinson"
+        | "jarvis_judice_ninke"
+        | "stucki"
+        | "burkes"
+        | "sierra"
+        | "cmyk_halftone"
+        | "wave" => Some(FilterKind::Dither),
+        "palette_quantize" => Some(FilterKind::PaletteQuantize),
+        "crt" => Some(FilterKind::Crt),
+        "glow" => Some(FilterKind::Glow),
+        "adjust" => Some(FilterKind::Adjust),
+        "curves" => Some(FilterKind::Curves),
+        "glitch" => Some(FilterKind::Glitch),
+        _ => None,
+    }
+}
+
+/// Explicit `algorithm_id`, or an inference from [`FilterParams`].
 ///
-/// # Panics
-/// Panics if `requires_full_row` is true (must be handled separately).
-pub fn apply_filter_to_tile(
-    _tile: &PixelTile,
-    filter: &FilterInstance,
-    stage: CacheStage,
-) -> Arc<PixelTile> {
-    // If filter is disabled or at Composite stage, return wrapped in Arc
-    if !filter.enabled || stage == CacheStage::Composite {
-        return Arc::new(PixelTile::new());
+/// For [`FilterParams::DitherV2`], **`params.mode` wins** over a stored
+/// `algorithm_id`. The Effects UI edits `mode` in place; if `algorithm_id` is
+/// left stale (e.g. still `floyd_steinberg` after switching to Bayer), preferring
+/// the id would run ED without `requires_full_row` wavefront ordering and show
+/// tile-boundary seams.
+pub fn resolve_algorithm_id(filter: &FilterInstance) -> Option<String> {
+    if let FilterParams::DitherV2(p) = &filter.params {
+        return p.mode.algorithm_id().map(str::to_string);
     }
+    if let Some(id) = filter.algorithm_id.as_deref() {
+        return Some(id.to_string());
+    }
+    algorithm_id_for_params(&filter.params).map(str::to_string)
+}
 
-    // Panic if requires_full_row
-    if filter.requires_full_row {
-        panic!(
-            "Filter {:?} requires full-row processing, cannot apply in tiled context",
-            filter.kind
-        );
+/// Serialise params to the JSON object `FilterAlgorithm::apply` expects (inner, not tagged).
+pub fn filter_params_to_json(params: &FilterParams) -> Result<serde_json::Value, EngineError> {
+    match params {
+        FilterParams::DitherV2(p) => serde_json::to_value(p),
+        FilterParams::Dither { mode, color_depth } => {
+            serde_json::to_value(&DitherParamsV2::from((mode.clone(), *color_depth)))
+        }
+        FilterParams::PaletteQuantize {
+            palette_id,
+            diffusion,
+        } => Ok(serde_json::json!({
+            "palette_id": palette_id,
+            "diffusion": diffusion,
+        })),
+        FilterParams::Crt {
+            period,
+            strength,
+            mask_strength,
+        } => Ok(serde_json::json!({
+            "period": period,
+            "strength": strength,
+            "mask_strength": mask_strength,
+        })),
+        FilterParams::Glow {
+            radius,
+            intensity,
+            threshold,
+        } => Ok(serde_json::json!({
+            "radius": radius,
+            "intensity": intensity,
+            "threshold": threshold,
+        })),
+        FilterParams::Adjust {
+            contrast,
+            brightness,
+            saturation,
+            blur,
+            sharpness,
+            noise,
+        } => Ok(serde_json::json!({
+            "contrast": contrast,
+            "brightness": brightness,
+            "saturation": saturation,
+            "blur": blur,
+            "sharpness": sharpness,
+            "noise": noise,
+        })),
+        FilterParams::Curves { curve, channel } => Ok(serde_json::json!({
+            "curve": curve,
+            "channel": channel,
+        })),
+        FilterParams::Glitch {
+            glitch_type,
+            intensity,
+            seed,
+        } => Ok(serde_json::json!({
+            "glitch_type": glitch_type,
+            "intensity": intensity,
+            "seed": seed,
+        })),
+        other => serde_json::to_value(other),
     }
-
-    // For now, placeholder implementations return empty tile
-    // Phase 3 will add actual filter algorithms
-    match filter.kind {
-        FilterKind::Curves => Arc::new(PixelTile::new()),
-        FilterKind::Levels => Arc::new(PixelTile::new()),
-        FilterKind::Dither => Arc::new(PixelTile::new()),
-        FilterKind::PaletteQuantize => Arc::new(PixelTile::new()),
-        FilterKind::Glitch => Arc::new(PixelTile::new()),
-        FilterKind::Glow => Arc::new(PixelTile::new()),
-        FilterKind::Crt => Arc::new(PixelTile::new()),
-        FilterKind::Adjust => Arc::new(PixelTile::new()),
-        FilterKind::Placeholder => Arc::new(PixelTile::new()),
-    }
+    .map_err(|e| EngineError::invalid_filter_params(e.to_string()))
 }
 
 #[cfg(test)]
@@ -902,10 +1088,40 @@ mod tests {
     use serde_json;
 
     #[test]
+    fn placeholder_roundtrip() {
+        let legacy = serde_json::json!({"Placeholder": "x"});
+        let decoded: FilterParams = serde_json::from_value(legacy).unwrap();
+        match decoded {
+            FilterParams::Placeholder(p) => {
+                assert_eq!(p.label, "x");
+                assert!(p.raw_params.is_none());
+            }
+            other => panic!("expected Placeholder, got {other:?}"),
+        }
+
+        let full = FilterParams::Placeholder(PlaceholderParams {
+            label: "y".into(),
+            raw_params: Some(serde_json::json!({"custom_key": 42})),
+        });
+        let json = serde_json::to_value(&full).unwrap();
+        let round: FilterParams = serde_json::from_value(json).unwrap();
+        match round {
+            FilterParams::Placeholder(p) => {
+                assert_eq!(p.label, "y");
+                assert_eq!(p.raw_params, Some(serde_json::json!({"custom_key": 42})));
+            }
+            other => panic!("expected Placeholder, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn filter_instance_new_is_enabled() {
         let filter = FilterInstance::new(
             FilterKind::Curves,
-            FilterParams::Curves { curve: vec![], channel: CurveChannel::All },
+            FilterParams::Curves {
+                curve: vec![],
+                channel: CurveChannel::All,
+            },
         );
         assert!(filter.enabled);
         assert!(!filter.requires_full_row);
@@ -1025,7 +1241,9 @@ mod tests {
         let filter = FilterInstance::new(
             FilterKind::Dither,
             FilterParams::Dither {
-                mode: DitherMode::ErrorDiffusion { kernel: DiffusionKernel::FloydSteinberg },
+                mode: DitherMode::ErrorDiffusion {
+                    kernel: DiffusionKernel::FloydSteinberg,
+                },
                 color_depth: 4,
             },
         );
@@ -1076,7 +1294,9 @@ mod tests {
         let invalid = FilterInstance::new(
             FilterKind::Dither,
             FilterParams::Dither {
-                mode: DitherMode::ThresholdMap { path: String::new() },
+                mode: DitherMode::ThresholdMap {
+                    path: String::new(),
+                },
                 color_depth: 4,
             },
         );
@@ -1130,40 +1350,6 @@ mod tests {
     }
 
     #[test]
-    fn filter_disabled_returns_wrapped() {
-        let tile = PixelTile::default();
-        let mut filter = FilterInstance::new(
-            FilterKind::Curves,
-            FilterParams::Curves { curve: vec![], channel: CurveChannel::All },
-        );
-        filter.enabled = false;
-
-        let result = apply_filter_to_tile(&tile, &filter, CacheStage::Raw);
-        assert!(result.data.len() > 0);
-    }
-
-    #[test]
-    fn filter_composite_stage_returns_wrapped() {
-        let tile = PixelTile::default();
-        let filter =
-            FilterInstance::new(FilterKind::Curves, FilterParams::Curves { curve: vec![], channel: CurveChannel::All });
-
-        let result = apply_filter_to_tile(&tile, &filter, CacheStage::Composite);
-        assert!(result.data.len() > 0);
-    }
-
-    #[test]
-    #[should_panic(expected = "requires full-row processing")]
-    fn filter_requires_full_row_panics() {
-        let tile = PixelTile::default();
-        let mut filter =
-            FilterInstance::new(FilterKind::Curves, FilterParams::Curves { curve: vec![], channel: CurveChannel::All });
-        filter.requires_full_row = true;
-
-        apply_filter_to_tile(&tile, &filter, CacheStage::Raw);
-    }
-
-    #[test]
     fn filter_kind_display() {
         assert_eq!(FilterKind::Curves.to_string(), "Curves");
         assert_eq!(FilterKind::Levels.to_string(), "Levels");
@@ -1180,24 +1366,62 @@ mod tests {
 
     #[test]
     fn dither_mode_v2_simple_variants_serialize_as_snake_case_strings() {
-        assert_eq!(serde_json::to_value(&DitherModeV2::Bayer2x2).unwrap(), serde_json::json!("bayer_2x2"));
-        assert_eq!(serde_json::to_value(&DitherModeV2::Bayer4x4).unwrap(), serde_json::json!("bayer_4x4"));
-        assert_eq!(serde_json::to_value(&DitherModeV2::Bayer8x8).unwrap(), serde_json::json!("bayer_8x8"));
-        assert_eq!(serde_json::to_value(&DitherModeV2::FloydSteinberg).unwrap(), serde_json::json!("floyd_steinberg"));
-        assert_eq!(serde_json::to_value(&DitherModeV2::Atkinson).unwrap(), serde_json::json!("atkinson"));
-        assert_eq!(serde_json::to_value(&DitherModeV2::JarvisJudiceNinke).unwrap(), serde_json::json!("jarvis_judice_ninke"));
-        assert_eq!(serde_json::to_value(&DitherModeV2::Stucki).unwrap(), serde_json::json!("stucki"));
-        assert_eq!(serde_json::to_value(&DitherModeV2::Burkes).unwrap(), serde_json::json!("burkes"));
-        assert_eq!(serde_json::to_value(&DitherModeV2::Sierra).unwrap(), serde_json::json!("sierra"));
-        assert_eq!(serde_json::to_value(&DitherModeV2::CmykHalftone).unwrap(), serde_json::json!("cmyk_halftone"));
-        assert_eq!(serde_json::to_value(&DitherModeV2::Wave).unwrap(), serde_json::json!("wave"));
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::Bayer2x2).unwrap(),
+            serde_json::json!("bayer_2x2")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::Bayer4x4).unwrap(),
+            serde_json::json!("bayer_4x4")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::Bayer8x8).unwrap(),
+            serde_json::json!("bayer_8x8")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::FloydSteinberg).unwrap(),
+            serde_json::json!("floyd_steinberg")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::Atkinson).unwrap(),
+            serde_json::json!("atkinson")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::JarvisJudiceNinke).unwrap(),
+            serde_json::json!("jarvis_judice_ninke")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::Stucki).unwrap(),
+            serde_json::json!("stucki")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::Burkes).unwrap(),
+            serde_json::json!("burkes")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::Sierra).unwrap(),
+            serde_json::json!("sierra")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::CmykHalftone).unwrap(),
+            serde_json::json!("cmyk_halftone")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::Wave).unwrap(),
+            serde_json::json!("wave")
+        );
     }
 
     #[test]
     fn dither_mode_v2_custom_png_serializes_as_object() {
-        let mode = DitherModeV2::CustomPng { path: "/some/path.png".to_string() };
+        let mode = DitherModeV2::CustomPng {
+            path: "/some/path.png".to_string(),
+        };
         let value = serde_json::to_value(&mode).unwrap();
-        assert_eq!(value, serde_json::json!({"custom_png": {"path": "/some/path.png"}}));
+        assert_eq!(
+            value,
+            serde_json::json!({"custom_png": {"path": "/some/path.png"}})
+        );
     }
 
     #[test]
@@ -1226,7 +1450,9 @@ mod tests {
 
     #[test]
     fn dither_mode_v2_roundtrip_custom_png() {
-        let mode = DitherModeV2::CustomPng { path: "/Users/artist/patterns/halftone.png".to_string() };
+        let mode = DitherModeV2::CustomPng {
+            path: "/Users/artist/patterns/halftone.png".to_string(),
+        };
         let json = serde_json::to_string(&mode).unwrap();
         let deserialized: DitherModeV2 = serde_json::from_str(&json).unwrap();
         let json2 = serde_json::to_string(&deserialized).unwrap();
@@ -1236,18 +1462,22 @@ mod tests {
     #[test]
     fn dither_mode_v2_deserialization_from_string() {
         let mode: DitherModeV2 = serde_json::from_str(r#""bayer_2x2""#).unwrap();
-        assert_eq!(serde_json::to_value(&mode).unwrap(), serde_json::json!("bayer_2x2"));
+        assert_eq!(
+            serde_json::to_value(&mode).unwrap(),
+            serde_json::json!("bayer_2x2")
+        );
 
         let mode: DitherModeV2 = serde_json::from_str(r#""floyd_steinberg""#).unwrap();
-        assert_eq!(serde_json::to_value(&mode).unwrap(), serde_json::json!("floyd_steinberg"));
+        assert_eq!(
+            serde_json::to_value(&mode).unwrap(),
+            serde_json::json!("floyd_steinberg")
+        );
     }
 
     #[test]
     fn serpentine_missing_field_defaults_false() {
-        let p: DitherParamsV2 = serde_json::from_str(
-            r#"{"mode":"floyd_steinberg","levels":4}"#,
-        )
-        .unwrap();
+        let p: DitherParamsV2 =
+            serde_json::from_str(r#"{"mode":"floyd_steinberg","levels":4}"#).unwrap();
         assert!(!p.serpentine);
         let json = serde_json::to_value(&p).unwrap();
         assert_eq!(json["serpentine"], serde_json::json!(false));
@@ -1255,7 +1485,8 @@ mod tests {
 
     #[test]
     fn dither_mode_v2_deserialization_from_object() {
-        let mode: DitherModeV2 = serde_json::from_str(r#"{"custom_png": {"path": "/tmp/test.png"}}"#).unwrap();
+        let mode: DitherModeV2 =
+            serde_json::from_str(r#"{"custom_png": {"path": "/tmp/test.png"}}"#).unwrap();
         assert_eq!(
             serde_json::to_value(&mode).unwrap(),
             serde_json::json!({"custom_png": {"path": "/tmp/test.png"}})
@@ -1275,10 +1506,39 @@ mod tests {
                 pixel_size: 1,
                 color_mode: DitherColorMode::Rgb,
                 palette_id: None,
-            ..Default::default()
+                ..Default::default()
             }),
         );
-        assert!(filter.requires_full_row, "FloydSteinberg should require full row processing");
+        assert!(
+            filter.requires_full_row,
+            "FloydSteinberg should require full row processing"
+        );
+    }
+
+    #[test]
+    fn resolve_algorithm_id_prefers_dither_mode_over_stale_id() {
+        let mut filter = FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::Bayer4x4,
+                levels: 4,
+                threshold_scale: 1.0,
+                pixel_size: 1,
+                color_mode: DitherColorMode::Rgb,
+                palette_id: None,
+                ..Default::default()
+            }),
+        );
+        filter.algorithm_id = Some("floyd_steinberg".into());
+        assert_eq!(
+            resolve_algorithm_id(&filter).as_deref(),
+            Some("bayer_4x4"),
+            "stale ED algorithm_id must not override live Bayer mode (seam bug)"
+        );
+        assert!(
+            !filter.requires_full_row,
+            "scheduler flag must follow Bayer params, not stale id"
+        );
     }
 
     #[test]
@@ -1292,10 +1552,13 @@ mod tests {
                 pixel_size: 1,
                 color_mode: DitherColorMode::Rgb,
                 palette_id: None,
-            ..Default::default()
+                ..Default::default()
             }),
         );
-        assert!(filter.requires_full_row, "Atkinson should require full row processing");
+        assert!(
+            filter.requires_full_row,
+            "Atkinson should require full row processing"
+        );
     }
 
     #[test]
@@ -1332,10 +1595,13 @@ mod tests {
                 pixel_size: 1,
                 color_mode: DitherColorMode::Rgb,
                 palette_id: None,
-            ..Default::default()
+                ..Default::default()
             }),
         );
-        assert!(!filter.requires_full_row, "Bayer4x4 should NOT require full row processing");
+        assert!(
+            !filter.requires_full_row,
+            "Bayer4x4 should NOT require full row processing"
+        );
     }
 
     #[test]
@@ -1343,11 +1609,16 @@ mod tests {
         let filter = FilterInstance::new(
             FilterKind::Dither,
             FilterParams::Dither {
-                mode: DitherMode::ErrorDiffusion { kernel: DiffusionKernel::FloydSteinberg },
+                mode: DitherMode::ErrorDiffusion {
+                    kernel: DiffusionKernel::FloydSteinberg,
+                },
                 color_depth: 4,
             },
         );
-        assert!(filter.requires_full_row, "Legacy error diffusion should require full row processing");
+        assert!(
+            filter.requires_full_row,
+            "Legacy error diffusion should require full row processing"
+        );
     }
 
     #[test]
@@ -1359,7 +1630,10 @@ mod tests {
                 color_depth: 4,
             },
         );
-        assert!(!filter.requires_full_row, "Legacy Bayer should NOT require full row processing");
+        assert!(
+            !filter.requires_full_row,
+            "Legacy Bayer should NOT require full row processing"
+        );
     }
 
     // ─── DitherParamsV2::from_legacy / From<(DitherMode, u8)> Tests ─────
@@ -1411,7 +1685,9 @@ mod tests {
     #[test]
     fn from_legacy_floyd_steinberg() {
         let params = DitherParamsV2::from_legacy(
-            DitherMode::ErrorDiffusion { kernel: DiffusionKernel::FloydSteinberg },
+            DitherMode::ErrorDiffusion {
+                kernel: DiffusionKernel::FloydSteinberg,
+            },
             4,
         );
         assert!(matches!(params.mode, DitherModeV2::FloydSteinberg));
@@ -1421,7 +1697,9 @@ mod tests {
     #[test]
     fn from_legacy_atkinson() {
         let params = DitherParamsV2::from_legacy(
-            DitherMode::ErrorDiffusion { kernel: DiffusionKernel::Atkinson },
+            DitherMode::ErrorDiffusion {
+                kernel: DiffusionKernel::Atkinson,
+            },
             2,
         );
         assert!(matches!(params.mode, DitherModeV2::Atkinson));
@@ -1431,7 +1709,9 @@ mod tests {
     #[test]
     fn from_legacy_jjn_maps_to_jjn() {
         let params = DitherParamsV2::from_legacy(
-            DitherMode::ErrorDiffusion { kernel: DiffusionKernel::JarvisJudiceNinke },
+            DitherMode::ErrorDiffusion {
+                kernel: DiffusionKernel::JarvisJudiceNinke,
+            },
             3,
         );
         assert!(matches!(params.mode, DitherModeV2::JarvisJudiceNinke));
@@ -1441,7 +1721,9 @@ mod tests {
     #[test]
     fn from_legacy_stucki_maps_to_stucki() {
         let params = DitherParamsV2::from_legacy(
-            DitherMode::ErrorDiffusion { kernel: DiffusionKernel::Stucki },
+            DitherMode::ErrorDiffusion {
+                kernel: DiffusionKernel::Stucki,
+            },
             6,
         );
         assert!(matches!(params.mode, DitherModeV2::Stucki));
@@ -1451,12 +1733,16 @@ mod tests {
     #[test]
     fn from_legacy_burkes_and_sierra() {
         let burkes = DitherParamsV2::from_legacy(
-            DitherMode::ErrorDiffusion { kernel: DiffusionKernel::Burkes },
+            DitherMode::ErrorDiffusion {
+                kernel: DiffusionKernel::Burkes,
+            },
             2,
         );
         assert!(matches!(burkes.mode, DitherModeV2::Burkes));
         let sierra = DitherParamsV2::from_legacy(
-            DitherMode::ErrorDiffusion { kernel: DiffusionKernel::Sierra },
+            DitherMode::ErrorDiffusion {
+                kernel: DiffusionKernel::Sierra,
+            },
             2,
         );
         assert!(matches!(sierra.mode, DitherModeV2::Sierra));
@@ -1465,7 +1751,9 @@ mod tests {
     #[test]
     fn from_legacy_threshold_map() {
         let params = DitherParamsV2::from_legacy(
-            DitherMode::ThresholdMap { path: "/path/to/map.png".to_string() },
+            DitherMode::ThresholdMap {
+                path: "/path/to/map.png".to_string(),
+            },
             2,
         );
         assert!(matches!(params.mode, DitherModeV2::CustomPng { .. }));
@@ -1500,13 +1788,31 @@ mod tests {
             (DitherMode::Bayer { matrix_size: 2 }, 1u8),
             (DitherMode::Bayer { matrix_size: 4 }, 4u8),
             (DitherMode::Bayer { matrix_size: 8 }, 8u8),
-            (DitherMode::ThresholdMap { path: "/test.png".to_string() }, 3u8),
-            (DitherMode::ErrorDiffusion { kernel: DiffusionKernel::FloydSteinberg }, 5u8),
-            (DitherMode::ErrorDiffusion { kernel: DiffusionKernel::Atkinson }, 2u8),
+            (
+                DitherMode::ThresholdMap {
+                    path: "/test.png".to_string(),
+                },
+                3u8,
+            ),
+            (
+                DitherMode::ErrorDiffusion {
+                    kernel: DiffusionKernel::FloydSteinberg,
+                },
+                5u8,
+            ),
+            (
+                DitherMode::ErrorDiffusion {
+                    kernel: DiffusionKernel::Atkinson,
+                },
+                2u8,
+            ),
         ];
         for (mode, depth) in test_cases {
             let params = DitherParamsV2::from((mode, depth));
-            assert!(params.validate().is_ok(), "Converted params should be valid");
+            assert!(
+                params.validate().is_ok(),
+                "Converted params should be valid"
+            );
         }
     }
 
@@ -1514,22 +1820,21 @@ mod tests {
 
     #[test]
     fn missing_bias_and_angle_fields_deserialize_as_zero() {
-        let params: DitherParamsV2 = serde_json::from_str(
-            r#"{"mode":"bayer_4x4","levels":4}"#,
-        )
-        .unwrap();
+        let params: DitherParamsV2 =
+            serde_json::from_str(r#"{"mode":"bayer_4x4","levels":4}"#).unwrap();
         assert_eq!(params.threshold_bias, 0.0);
         assert_eq!(params.pattern_angle, 0.0);
-        assert!(params.dither_alpha, "missing dither_alpha deserializes as true");
+        assert!(
+            params.dither_alpha,
+            "missing dither_alpha deserializes as true"
+        );
         assert!(params.validate().is_ok());
     }
 
     #[test]
     fn dither_v2_legacy_document_defaults_to_strict_palette_mode() {
-        let params: DitherParamsV2 = serde_json::from_str(
-            r#"{"mode":"bayer_4x4","levels":4}"#,
-        )
-        .unwrap();
+        let params: DitherParamsV2 =
+            serde_json::from_str(r#"{"mode":"bayer_4x4","levels":4}"#).unwrap();
         assert_eq!(params.palette_dither_mode, PaletteDitherMode::Strict);
         let mut guided = DitherParamsV2::default();
         guided.palette_dither_mode = PaletteDitherMode::Guided {
@@ -1572,7 +1877,10 @@ mod tests {
     fn dithered_rgba_clears_rgb_when_alpha_punched() {
         let mut params = DitherParamsV2::default();
         params.dither_alpha = true;
-        assert_eq!(params.dithered_rgba(0.8, 0.2, 0.1, 0.0, 0.5), [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(
+            params.dithered_rgba(0.8, 0.2, 0.1, 0.0, 0.5),
+            [0.0, 0.0, 0.0, 0.0]
+        );
         let on = params.dithered_rgba(0.8, 0.2, 0.1, 1.0, 0.5);
         assert_eq!(on, [0.8, 0.2, 0.1, 1.0]);
     }

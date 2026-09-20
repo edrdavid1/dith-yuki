@@ -99,8 +99,11 @@ SVG export (document composite → greedy meshing / contour paths) lives in
 тайла ошибка "перетекает" в соседний тайл через `ErrorResidualsStore`.
 
 **Зависимость:** тайл (X, Y) нуждается в residuals от:
-- (X-1, Y) — правый край соседа слева → первые 2 колонки текущего тайла
-- (X, Y-1) — нижний край соседа сверху → первые 2 строки текущего тайла
+- (X-1, Y) — правый край соседа слева → первые `margin` колонок текущего тайла
+- (X, Y-1) — нижний край соседа сверху → первые `margin` строк текущего тайла
+
+`margin = pixel_size × kernel_max_offset` (FS: offset 1; Atkinson/JJN/Stucki/Burkes/Sierra: 2).
+Фиксированные «2 колонки / 2 ряда» обрезают hop `dx × pixel_size` при `pixel_size > 1`.
 
 ---
 
@@ -114,9 +117,10 @@ pub struct ErrorResidualsStore {
 }
 
 pub struct ErrorResiduals {
-    pub right: Vec<f32>,   // TILE_SIZE rows × 2 cols × 3 channels
-    pub bottom: Vec<f32>,  // 2 rows × TILE_SIZE cols × 3 channels
-    pub corner: Vec<f32>,  // CORNER_PATCH×CORNER_PATCH×3 → tile (tx+1, ty+1)
+    pub margin: usize,     // pixel_size × kernel_max_offset
+    pub right: Vec<f32>,   // TILE_SIZE rows × margin cols × 3 channels
+    pub bottom: Vec<f32>,  // margin rows × TILE_SIZE cols × 3 channels
+    pub corner: Vec<f32>,  // margin×margin×3 → tile (tx+1, ty+1)
 }
 ```
 
@@ -222,6 +226,10 @@ for y in 0..TILE_FULL_SIZE {        // 0..260 (including halo)
 - Only representative participates in error diffusion
 - Non-representatives copy color from representative
 - Global coordinate alignment через `coord.x * TILE_SIZE + tile_x`
+- Cross-tile residual **margin** масштабируется: `pixel_size × kernel_max_offset`.
+  При `pixel_size=1` это совпадает со старыми 2 рядами для широких ядер (offset 2)
+  и 1 колонкой для FS. Константа «2» при `ps>1` обрезает overflow и даёт шов
+  с периодом 256 px (не переоткрывать serpentine/wavefront — это другой баг).
 
 ---
 

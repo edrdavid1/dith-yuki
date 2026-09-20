@@ -9,7 +9,9 @@ use engine_color::palette_lut::PaletteLutCache;
 use engine_color::threshold_map::ThresholdMapCache;
 use engine_project::compositor::blend_tile;
 use engine_project::document::Document;
-use engine_project::filter::{DitherColorMode, DitherModeV2, DitherParamsV2, FilterInstance, FilterKind, FilterParams};
+use engine_project::filter::{
+    DitherColorMode, DitherModeV2, DitherParamsV2, FilterInstance, FilterKind, FilterParams,
+};
 use engine_project::filters::apply_filter_to_tile_with_caches;
 use engine_project::filters::dither_residuals::ErrorResidualsStore;
 use engine_project::layer::Layer;
@@ -111,7 +113,11 @@ fn vertical_seam_jump(left: &PixelTile, right: &PixelTile) -> f32 {
 #[test]
 fn fast_path_opacity_one_normal_matches_full_apply() {
     let rgba = gradient_rgba();
-    let coord = TileCoord { level: 0, x: 0, y: 0 };
+    let coord = TileCoord {
+        level: 0,
+        x: 0,
+        y: 0,
+    };
     let pre = gradient_tile(coord, &rgba);
 
     let mut layer_default = Layer::new(LayerId::new(1), LayerKind::Raster, IMG_W, IMG_H);
@@ -130,7 +136,11 @@ fn fast_path_opacity_one_normal_matches_full_apply() {
 #[test]
 fn ed_opacity_50_is_mix_with_pre() {
     let rgba = gradient_rgba();
-    let coord = TileCoord { level: 0, x: 0, y: 0 };
+    let coord = TileCoord {
+        level: 0,
+        x: 0,
+        y: 0,
+    };
     let pre = gradient_tile(coord, &rgba);
 
     let mut layer_full = Layer::new(LayerId::new(1), LayerKind::Raster, IMG_W, IMG_H);
@@ -162,8 +172,16 @@ fn ed_opacity_50_is_mix_with_pre() {
 #[test]
 fn ed_opacity_50_2x2_no_worse_seam_than_full() {
     let rgba = gradient_rgba();
-    let left_c = TileCoord { level: 0, x: 0, y: 0 };
-    let right_c = TileCoord { level: 0, x: 1, y: 0 };
+    let left_c = TileCoord {
+        level: 0,
+        x: 0,
+        y: 0,
+    };
+    let right_c = TileCoord {
+        level: 0,
+        x: 1,
+        y: 0,
+    };
     let left_pre = gradient_tile(left_c, &rgba);
     let right_pre = gradient_tile(right_c, &rgba);
 

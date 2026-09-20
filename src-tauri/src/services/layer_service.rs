@@ -2,9 +2,9 @@ use std::sync::Arc;
 use tauri::AppHandle;
 
 use engine_project::commands as engine_commands;
+use engine_project::commands::{AddLayerArgs, LayerPropsPatch};
 use engine_project::layer::LayerNode;
 use engine_project::types::{BlendMode, LayerId, LayerKind};
-use engine_project::commands::{AddLayerArgs, LayerPropsPatch};
 use serde::{Deserialize, Serialize};
 
 use crate::commands::{emit_document_changed, schedule_dirty_viewport_tiles, AppState};
@@ -130,7 +130,11 @@ impl LayerService {
         };
 
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             let width = snapshot.width;
             let height = snapshot.height;
             let engine_doc_id = snapshot.id;
@@ -151,8 +155,15 @@ impl LayerService {
                 args,
             ) {
                 Ok(layer_id) => {
-                    emit_document_changed(app_handle, "layer_added", Some(layer_id.0), Some(doc_id));
-                    Ok(LayerIdResponse { layer_id: layer_id.0 })
+                    emit_document_changed(
+                        app_handle,
+                        "layer_added",
+                        Some(layer_id.0),
+                        Some(doc_id),
+                    );
+                    Ok(LayerIdResponse {
+                        layer_id: layer_id.0,
+                    })
                 }
                 Err(e) => Err(format!("Failed to add layer: {:?}", e)),
             }
@@ -167,7 +178,11 @@ impl LayerService {
         layer_id: u32,
     ) -> Result<(), AppError> {
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             let engine_doc_id = snapshot.id;
             drop(snapshot);
 
@@ -178,7 +193,12 @@ impl LayerService {
                 LayerId::new(layer_id),
             ) {
                 Ok(_) => {
-                    emit_document_changed(app_handle, "layer_removed", Some(layer_id), Some(doc_id));
+                    emit_document_changed(
+                        app_handle,
+                        "layer_removed",
+                        Some(layer_id),
+                        Some(doc_id),
+                    );
                     Ok(())
                 }
                 Err(e) => Err(format!("Failed to remove layer: {:?}", e)),
@@ -221,7 +241,11 @@ impl LayerService {
             offset: req.offset,
         };
 
-        let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+        let snapshot = self
+            .state
+            .require_session(doc_id)?
+            .document_handle
+            .snapshot();
         let engine_doc_id = snapshot.id;
         drop(snapshot);
 
@@ -237,7 +261,12 @@ impl LayerService {
                     if is_visual_change && self.state.active_id() == Some(doc_id) {
                         schedule_dirty_viewport_tiles(&self.state);
                     }
-                    emit_document_changed(app_handle, "layer_changed", Some(layer_id), Some(doc_id));
+                    emit_document_changed(
+                        app_handle,
+                        "layer_changed",
+                        Some(layer_id),
+                        Some(doc_id),
+                    );
                     Ok(())
                 }
                 Err(e) => Err(format!("Failed to set layer props: {:?}", e)),
@@ -253,7 +282,11 @@ impl LayerService {
     ) -> Result<(), AppError> {
         let doc_id = req.doc_id;
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             let engine_doc_id = snapshot.id;
             drop(snapshot);
 

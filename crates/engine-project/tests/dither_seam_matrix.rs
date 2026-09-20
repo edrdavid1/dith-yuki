@@ -62,7 +62,7 @@ fn bayer_params(ps: u8) -> DitherParamsV2 {
         pixel_size: ps,
         color_mode: DitherColorMode::Grayscale,
         palette_id: None,
-            ..Default::default()
+        ..Default::default()
     }
 }
 
@@ -74,7 +74,7 @@ fn fs_params(ps: u8) -> DitherParamsV2 {
         pixel_size: ps,
         color_mode: DitherColorMode::Grayscale,
         palette_id: None,
-            ..Default::default()
+        ..Default::default()
     }
 }
 
@@ -86,7 +86,7 @@ fn atkinson_params(ps: u8) -> DitherParamsV2 {
         pixel_size: ps,
         color_mode: DitherColorMode::Grayscale,
         palette_id: None,
-            ..Default::default()
+        ..Default::default()
     }
 }
 
@@ -104,8 +104,16 @@ fn boundary_block_metrics(left: &PixelTile, right: &PixelTile, ps: u32) -> (f64,
     if ps <= 1 {
         return (0.0, 0.0);
     }
-    let left_c = TileCoord { level: 0, x: 0, y: 0 };
-    let right_c = TileCoord { level: 0, x: 1, y: 0 };
+    let left_c = TileCoord {
+        level: 0,
+        x: 0,
+        y: 0,
+    };
+    let right_c = TileCoord {
+        level: 0,
+        x: 1,
+        y: 0,
+    };
     let boundary = TILE_SIZE as i32;
     let block_gx = (boundary / ps as i32) * ps as i32;
     let straddles = block_gx < boundary && block_gx + ps as i32 > boundary;
@@ -119,9 +127,7 @@ fn boundary_block_metrics(left: &PixelTile, right: &PixelTile, ps: u32) -> (f64,
             let Some((rlx, rly)) = global_to_local(right_c, boundary, gy) else {
                 continue;
             };
-            cross = cross.max(
-                (left.at(llx, lly, 0) as f64 - right.at(rlx, rly, 0) as f64).abs(),
-            );
+            cross = cross.max((left.at(llx, lly, 0) as f64 - right.at(rlx, rly, 0) as f64).abs());
         }
     }
 
@@ -161,8 +167,16 @@ fn step1_fs_divisors_of_256_clean() {
     let lut_cache = PaletteLutCache::new();
     let doc = Document::new(DocumentId::new(1), IMG_W, IMG_H);
     let layer_id = LayerId::new(LAYER);
-    let left_c = TileCoord { level: 0, x: 0, y: 0 };
-    let right_c = TileCoord { level: 0, x: 1, y: 0 };
+    let left_c = TileCoord {
+        level: 0,
+        x: 0,
+        y: 0,
+    };
+    let right_c = TileCoord {
+        level: 0,
+        x: 1,
+        y: 0,
+    };
     let left_src = gradient_tile(left_c, &rgba);
     let right_src = gradient_tile(right_c, &rgba);
 
@@ -173,11 +187,27 @@ fn step1_fs_divisors_of_256_clean() {
         let fs = fs_params(ps);
         let store = ErrorResidualsStore::new();
         let left = apply_error_diffusion_with_cache(
-            &left_src, left_c, &fs, &store, layer_id, &palette_cache, &lut_cache, &doc, &blocks,
+            &left_src,
+            left_c,
+            &fs,
+            &store,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+            &blocks,
         )
         .unwrap();
         let right = apply_error_diffusion_with_cache(
-            &right_src, right_c, &fs, &store, layer_id, &palette_cache, &lut_cache, &doc, &blocks,
+            &right_src,
+            right_c,
+            &fs,
+            &store,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+            &blocks,
         )
         .unwrap();
         let (c, u) = boundary_block_metrics(&left, &right, ps as u32);
@@ -197,8 +227,16 @@ fn step2_full_seam_matrix_clean() {
     let lut_cache = PaletteLutCache::new();
     let doc = Document::new(DocumentId::new(1), IMG_W, IMG_H);
     let layer_id = LayerId::new(LAYER);
-    let left_c = TileCoord { level: 0, x: 0, y: 0 };
-    let right_c = TileCoord { level: 0, x: 1, y: 0 };
+    let left_c = TileCoord {
+        level: 0,
+        x: 0,
+        y: 0,
+    };
+    let right_c = TileCoord {
+        level: 0,
+        x: 1,
+        y: 0,
+    };
     let left_src = gradient_tile(left_c, &rgba);
     let right_src = gradient_tile(right_c, &rgba);
 
@@ -220,7 +258,9 @@ fn step2_full_seam_matrix_clean() {
             left_c,
             &bayer,
             &threshold_cache,
-            &palette_cache, &lut_cache, &doc,
+            &palette_cache,
+            &lut_cache,
+            &doc,
             &blocks,
             layer_id,
         )
@@ -230,7 +270,9 @@ fn step2_full_seam_matrix_clean() {
             right_c,
             &bayer,
             &threshold_cache,
-            &palette_cache, &lut_cache, &doc,
+            &palette_cache,
+            &lut_cache,
+            &doc,
             &blocks,
             layer_id,
         )
@@ -239,11 +281,27 @@ fn step2_full_seam_matrix_clean() {
         let fs = fs_params(ps);
         let store = ErrorResidualsStore::new();
         let left_f = apply_error_diffusion_with_cache(
-            &left_src, left_c, &fs, &store, layer_id, &palette_cache, &lut_cache, &doc, &blocks,
+            &left_src,
+            left_c,
+            &fs,
+            &store,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+            &blocks,
         )
         .unwrap();
         let right_f = apply_error_diffusion_with_cache(
-            &right_src, right_c, &fs, &store, layer_id, &palette_cache, &lut_cache, &doc, &blocks,
+            &right_src,
+            right_c,
+            &fs,
+            &store,
+            layer_id,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+            &blocks,
         )
         .unwrap();
 
@@ -328,8 +386,16 @@ fn track_a_atkinson_seam_sample_clean() {
         if ps > 1 {
             blocks.populate_from_buffer(&rgba, IMG_W, IMG_H, 1, LAYER, ps as u32);
         }
-        let left_c = TileCoord { level: 0, x: 0, y: 0 };
-        let right_c = TileCoord { level: 0, x: 1, y: 0 };
+        let left_c = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
+        let right_c = TileCoord {
+            level: 0,
+            x: 1,
+            y: 0,
+        };
         let store = ErrorResidualsStore::new();
         let atk = atkinson_params(ps);
         let left = apply_error_diffusion_with_cache(
@@ -338,7 +404,9 @@ fn track_a_atkinson_seam_sample_clean() {
             &atk,
             &store,
             layer_id,
-            &palette_cache, &lut_cache, &doc,
+            &palette_cache,
+            &lut_cache,
+            &doc,
             &blocks,
         )
         .unwrap();
@@ -348,7 +416,9 @@ fn track_a_atkinson_seam_sample_clean() {
             &atk,
             &store,
             layer_id,
-            &palette_cache, &lut_cache, &doc,
+            &palette_cache,
+            &lut_cache,
+            &doc,
             &blocks,
         )
         .unwrap();
@@ -375,10 +445,26 @@ fn track_a_fs_2x2_diagonal_seed_no_boundary_darkening() {
     let store = ErrorResidualsStore::new();
 
     let coords = [
-        TileCoord { level: 0, x: 0, y: 0 },
-        TileCoord { level: 0, x: 1, y: 0 },
-        TileCoord { level: 0, x: 0, y: 1 },
-        TileCoord { level: 0, x: 1, y: 1 },
+        TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        },
+        TileCoord {
+            level: 0,
+            x: 1,
+            y: 0,
+        },
+        TileCoord {
+            level: 0,
+            x: 0,
+            y: 1,
+        },
+        TileCoord {
+            level: 0,
+            x: 1,
+            y: 1,
+        },
     ];
     let mut tiles = Vec::new();
     for c in coords {
@@ -389,7 +475,9 @@ fn track_a_fs_2x2_diagonal_seed_no_boundary_darkening() {
                 &params,
                 &store,
                 layer_id,
-                &palette_cache, &lut_cache, &doc,
+                &palette_cache,
+                &lut_cache,
+                &doc,
                 &blocks,
             )
             .unwrap(),
@@ -416,7 +504,17 @@ fn track_a_fs_2x2_diagonal_seed_no_boundary_darkening() {
         "tile (1,1) corner lum={corner_lum} vs interior={interior_mean} — possible diagonal loss"
     );
     assert!(
-        store.get_diag(1, layer_id, TileCoord { level: 0, x: 1, y: 1 }).is_some(),
+        store
+            .get_diag(
+                1,
+                layer_id,
+                TileCoord {
+                    level: 0,
+                    x: 1,
+                    y: 1
+                }
+            )
+            .is_some(),
         "corner channel must be stored from (0,0)"
     );
 }

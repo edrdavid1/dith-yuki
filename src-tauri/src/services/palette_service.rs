@@ -155,19 +155,20 @@ pub fn find_layers_referencing_palette(
     for node in nodes {
         match node {
             LayerNode::Leaf(layer) => {
-                let references_palette = layer.filters.iter().any(|filter| {
-                    match &filter.params {
-                        FilterParams::DitherV2(params) => params.palette_id == Some(palette_id),
-                        FilterParams::PaletteQuantize { palette_id: pid, .. } => *pid == palette_id,
-                        _ => false,
-                    }
+                let references_palette = layer.filters.iter().any(|filter| match &filter.params {
+                    FilterParams::DitherV2(params) => params.palette_id == Some(palette_id),
+                    FilterParams::PaletteQuantize {
+                        palette_id: pid, ..
+                    } => *pid == palette_id,
+                    _ => false,
                 });
                 if references_palette {
                     result.push(layer.id);
                 }
             }
             LayerNode::Group(group) => {
-                let mut child_results = find_layers_referencing_palette(&group.children, palette_id);
+                let mut child_results =
+                    find_layers_referencing_palette(&group.children, palette_id);
                 result.append(&mut child_results);
             }
         }
@@ -184,7 +185,9 @@ fn invalidate_palette_changed(palette_id: engine_project::types::PaletteId, stat
     for layer_id in &affected_layers {
         engine_tiles::invalidation::invalidate(
             &state.tiles.tile_cache,
-            engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { doc: snapshot.id.0, layer: layer_id.0,
+            engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
+                doc: snapshot.id.0,
+                layer: layer_id.0,
             },
         );
     }
@@ -199,13 +202,15 @@ pub fn palette_to_dto(palette: &engine_color::palette::Palette) -> PaletteDto {
     let colors: Vec<[u8; 3]> = palette
         .colors
         .iter()
-        .map(|c| [linear_to_srgb(c.r), linear_to_srgb(c.g), linear_to_srgb(c.b)])
+        .map(|c| {
+            [
+                linear_to_srgb(c.r),
+                linear_to_srgb(c.g),
+                linear_to_srgb(c.b),
+            ]
+        })
         .collect();
-    let hex_colors: Vec<String> = palette
-        .colors
-        .iter()
-        .map(|c| linear_to_hex(c))
-        .collect();
+    let hex_colors: Vec<String> = palette.colors.iter().map(|c| linear_to_hex(c)).collect();
     let color_count = colors.len();
     PaletteDto {
         id: palette.id,
@@ -242,11 +247,7 @@ impl PaletteService {
             .map(|p| BuiltinPaletteDto {
                 id: p.id.to_string(),
                 name: p.name.to_string(),
-                colors: p
-                    .colors_srgb
-                    .iter()
-                    .map(|&(r, g, b)| [r, g, b])
-                    .collect(),
+                colors: p.colors_srgb.iter().map(|&(r, g, b)| [r, g, b]).collect(),
                 color_count: p.colors_srgb.len(),
             })
             .collect())
@@ -279,13 +280,20 @@ impl PaletteService {
 
         let mut palette_id_raw = 0u32;
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
-            self.state.require_session(doc_id)?.document_handle.mutate(|doc| {
-                let pid = doc.add_palette(preset.name.to_string(), linear_colors);
-                palette_id_raw = pid.0;
-                doc.increment_generation();
-            });
+            self.state
+                .require_session(doc_id)?
+                .document_handle
+                .mutate(|doc| {
+                    let pid = doc.add_palette(preset.name.to_string(), linear_colors);
+                    palette_id_raw = pid.0;
+                    doc.increment_generation();
+                });
 
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             let palette = snapshot
                 .palettes
                 .iter()
@@ -319,10 +327,16 @@ impl PaletteService {
             "pal" => PaletteFormat::Pal,
             "csv" => PaletteFormat::Csv,
             "json" => PaletteFormat::Json,
-            _ => return Err(AppError::Generic(format!("Unsupported palette format: .{}", ext))),
+            _ => {
+                return Err(AppError::Generic(format!(
+                    "Unsupported palette format: .{}",
+                    ext
+                )))
+            }
         };
 
-        let linear_colors = do_import(file_path, format).map_err(|e| AppError::Generic(format!("{}", e)))?;
+        let linear_colors =
+            do_import(file_path, format).map_err(|e| AppError::Generic(format!("{}", e)))?;
 
         let name = file_path
             .file_stem()
@@ -332,13 +346,20 @@ impl PaletteService {
 
         let mut palette_id_raw = 0u32;
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
-            self.state.require_session(doc_id)?.document_handle.mutate(|doc| {
-                let pid = doc.add_palette(name.clone(), linear_colors.clone());
-                palette_id_raw = pid.0;
-                doc.increment_generation();
-            });
+            self.state
+                .require_session(doc_id)?
+                .document_handle
+                .mutate(|doc| {
+                    let pid = doc.add_palette(name.clone(), linear_colors.clone());
+                    palette_id_raw = pid.0;
+                    doc.increment_generation();
+                });
 
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             let palette = snapshot
                 .palettes
                 .iter()
@@ -369,13 +390,20 @@ impl PaletteService {
 
         let mut palette_id_raw = 0u32;
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
-            self.state.require_session(doc_id)?.document_handle.mutate(|doc| {
-                let pid = doc.add_palette(req.name.clone(), linear_colors);
-                palette_id_raw = pid.0;
-                doc.increment_generation();
-            });
+            self.state
+                .require_session(doc_id)?
+                .document_handle
+                .mutate(|doc| {
+                    let pid = doc.add_palette(req.name.clone(), linear_colors);
+                    palette_id_raw = pid.0;
+                    doc.increment_generation();
+                });
 
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             let palette = snapshot
                 .palettes
                 .iter()
@@ -397,16 +425,27 @@ impl PaletteService {
 
         let trimmed = req.name.trim().to_string();
         if trimmed.is_empty() || trimmed.len() > 255 {
-            return Err(AppError::InvalidOperation("Name must be 1–255 characters".to_string()));
+            return Err(AppError::InvalidOperation(
+                "Name must be 1–255 characters".to_string(),
+            ));
         }
         if req.colors.is_empty() {
-            return Err(AppError::InvalidOperation("Palette must contain at least one color".to_string()));
+            return Err(AppError::InvalidOperation(
+                "Palette must contain at least one color".to_string(),
+            ));
         }
 
         {
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             if !snapshot.palettes.iter().any(|p| p.id == req.palette_id) {
-                return Err(AppError::Generic(format!("Palette {} not found", req.palette_id)));
+                return Err(AppError::Generic(format!(
+                    "Palette {} not found",
+                    req.palette_id
+                )));
             }
         }
 
@@ -421,17 +460,26 @@ impl PaletteService {
             .collect();
 
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
-            self.state.require_session(doc_id)?.document_handle.mutate(|doc| {
-                let _ = doc.modify_palette(PaletteId::new(req.palette_id), linear_colors.clone());
-                if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id) {
-                    palette.name = trimmed.clone();
-                }
-                doc.increment_generation();
-            });
+            self.state
+                .require_session(doc_id)?
+                .document_handle
+                .mutate(|doc| {
+                    let _ =
+                        doc.modify_palette(PaletteId::new(req.palette_id), linear_colors.clone());
+                    if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id)
+                    {
+                        palette.name = trimmed.clone();
+                    }
+                    doc.increment_generation();
+                });
 
             invalidate_palette_changed(PaletteId::new(req.palette_id), &self.state);
 
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             let palette = snapshot
                 .palettes
                 .iter()
@@ -452,16 +500,17 @@ impl PaletteService {
 
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
             let mut result: Result<(), String> = Ok(());
-            self.state.require_session(doc_id)?.document_handle.mutate(|doc| {
-                match doc.remove_palette(PaletteId::new(palette_id)) {
+            self.state
+                .require_session(doc_id)?
+                .document_handle
+                .mutate(|doc| match doc.remove_palette(PaletteId::new(palette_id)) {
                     Ok(_) => {
                         doc.increment_generation();
                     }
                     Err(e) => {
                         result = Err(format!("{}", e));
                     }
-                }
-            });
+                });
             result
         })
         .map_err(AppError::Generic)
@@ -475,24 +524,41 @@ impl PaletteService {
         let doc_id = req.doc_id;
         let trimmed_name = req.name.trim().to_string();
         if trimmed_name.is_empty() || trimmed_name.len() > 255 {
-            return Err(AppError::InvalidOperation("Name must be 1–255 characters".to_string()));
+            return Err(AppError::InvalidOperation(
+                "Name must be 1–255 characters".to_string(),
+            ));
         }
 
         {
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             if !snapshot.palettes.iter().any(|p| p.id == req.palette_id) {
-                return Err(AppError::Generic(format!("Palette {} not found", req.palette_id)));
+                return Err(AppError::Generic(format!(
+                    "Palette {} not found",
+                    req.palette_id
+                )));
             }
         }
 
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
-            self.state.require_session(doc_id)?.document_handle.mutate(|doc| {
-                if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id) {
-                    palette.name = trimmed_name;
-                }
-            });
+            self.state
+                .require_session(doc_id)?
+                .document_handle
+                .mutate(|doc| {
+                    if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id)
+                    {
+                        palette.name = trimmed_name;
+                    }
+                });
 
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             let palette = snapshot
                 .palettes
                 .iter()
@@ -511,18 +577,27 @@ impl PaletteService {
         let doc_id = req.doc_id;
         let trimmed_name = req.name.trim().to_string();
         if trimmed_name.is_empty() || trimmed_name.len() > 255 {
-            return Err(AppError::InvalidOperation("Name must be 1–255 characters".to_string()));
+            return Err(AppError::InvalidOperation(
+                "Name must be 1–255 characters".to_string(),
+            ));
         }
 
         let mut palette_id_raw = 0u32;
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
-            self.state.require_session(doc_id)?.document_handle.mutate(|doc| {
-                let pid = doc.add_palette(trimmed_name.clone(), vec![]);
-                palette_id_raw = pid.0;
-                doc.increment_generation();
-            });
+            self.state
+                .require_session(doc_id)?
+                .document_handle
+                .mutate(|doc| {
+                    let pid = doc.add_palette(trimmed_name.clone(), vec![]);
+                    palette_id_raw = pid.0;
+                    doc.increment_generation();
+                });
 
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             let palette = snapshot
                 .palettes
                 .iter()
@@ -537,7 +612,11 @@ impl PaletteService {
         let doc_id = req.doc_id;
         use engine_color::palette::{export_palette as do_export, PaletteFormat};
 
-        let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+        let snapshot = self
+            .state
+            .require_session(doc_id)?
+            .document_handle
+            .snapshot();
         let palette = snapshot
             .palettes
             .iter()
@@ -545,7 +624,9 @@ impl PaletteService {
             .ok_or_else(|| AppError::Generic(format!("Palette {} not found", req.palette_id)))?;
 
         if palette.colors.is_empty() {
-            return Err(AppError::InvalidOperation("Palette is empty and cannot be exported".to_string()));
+            return Err(AppError::InvalidOperation(
+                "Palette is empty and cannot be exported".to_string(),
+            ));
         }
 
         let format = match req.format.to_lowercase().as_str() {
@@ -555,7 +636,12 @@ impl PaletteService {
             "pal" => PaletteFormat::Pal,
             "csv" => PaletteFormat::Csv,
             "json" => PaletteFormat::Json,
-            _ => return Err(AppError::Generic(format!("Unsupported export format: {}", req.format))),
+            _ => {
+                return Err(AppError::Generic(format!(
+                    "Unsupported export format: {}",
+                    req.format
+                )))
+            }
         };
 
         let bytes = do_export(palette, format).map_err(|e| AppError::Generic(format!("{}", e)))?;
@@ -577,28 +663,44 @@ impl PaletteService {
         let color = hex_to_linear(&req.hex)?;
 
         {
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             let palette = snapshot
                 .palettes
                 .iter()
                 .find(|p| p.id == req.palette_id)
-                .ok_or_else(|| AppError::Generic(format!("Palette {} not found", req.palette_id)))?;
+                .ok_or_else(|| {
+                    AppError::Generic(format!("Palette {} not found", req.palette_id))
+                })?;
             if palette.colors.len() >= 65536 {
-                return Err(AppError::InvalidOperation("Palette has reached maximum size (65536 colors)".to_string()));
+                return Err(AppError::InvalidOperation(
+                    "Palette has reached maximum size (65536 colors)".to_string(),
+                ));
             }
         }
 
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
-            self.state.require_session(doc_id)?.document_handle.mutate(|doc| {
-                if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id) {
-                    palette.colors.push(color);
-                    palette.revision += 1;
-                }
-            });
+            self.state
+                .require_session(doc_id)?
+                .document_handle
+                .mutate(|doc| {
+                    if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id)
+                    {
+                        palette.colors.push(color);
+                        palette.revision += 1;
+                    }
+                });
 
             invalidate_palette_changed(PaletteId::new(req.palette_id), &self.state);
 
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             let palette = snapshot
                 .palettes
                 .iter()
@@ -620,12 +722,18 @@ impl PaletteService {
         let color = hex_to_linear(&req.hex)?;
 
         {
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             let palette = snapshot
                 .palettes
                 .iter()
                 .find(|p| p.id == req.palette_id)
-                .ok_or_else(|| AppError::Generic(format!("Palette {} not found", req.palette_id)))?;
+                .ok_or_else(|| {
+                    AppError::Generic(format!("Palette {} not found", req.palette_id))
+                })?;
 
             let color_count = palette.colors.len();
             if req.index >= color_count {
@@ -637,16 +745,24 @@ impl PaletteService {
         }
 
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
-            self.state.require_session(doc_id)?.document_handle.mutate(|doc| {
-                if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id) {
-                    palette.colors[req.index] = color;
-                    palette.revision += 1;
-                }
-            });
+            self.state
+                .require_session(doc_id)?
+                .document_handle
+                .mutate(|doc| {
+                    if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id)
+                    {
+                        palette.colors[req.index] = color;
+                        palette.revision += 1;
+                    }
+                });
 
             invalidate_palette_changed(PaletteId::new(req.palette_id), &self.state);
 
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             let palette = snapshot
                 .palettes
                 .iter()
@@ -666,12 +782,18 @@ impl PaletteService {
         use engine_project::types::PaletteId;
 
         {
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             let palette = snapshot
                 .palettes
                 .iter()
                 .find(|p| p.id == req.palette_id)
-                .ok_or_else(|| AppError::Generic(format!("Palette {} not found", req.palette_id)))?;
+                .ok_or_else(|| {
+                    AppError::Generic(format!("Palette {} not found", req.palette_id))
+                })?;
 
             let color_count = palette.colors.len();
             if req.index >= color_count {
@@ -693,16 +815,24 @@ impl PaletteService {
         }
 
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
-            self.state.require_session(doc_id)?.document_handle.mutate(|doc| {
-                if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id) {
-                    palette.colors.remove(req.index);
-                    palette.revision += 1;
-                }
-            });
+            self.state
+                .require_session(doc_id)?
+                .document_handle
+                .mutate(|doc| {
+                    if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id)
+                    {
+                        palette.colors.remove(req.index);
+                        palette.revision += 1;
+                    }
+                });
 
             invalidate_palette_changed(PaletteId::new(req.palette_id), &self.state);
 
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             let palette = snapshot
                 .palettes
                 .iter()
@@ -722,12 +852,18 @@ impl PaletteService {
         use engine_project::types::PaletteId;
 
         {
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             let palette = snapshot
                 .palettes
                 .iter()
                 .find(|p| p.id == req.palette_id)
-                .ok_or_else(|| AppError::Generic(format!("Palette {} not found", req.palette_id)))?;
+                .ok_or_else(|| {
+                    AppError::Generic(format!("Palette {} not found", req.palette_id))
+                })?;
 
             let color_count = palette.colors.len();
             if req.from_index >= color_count || req.to_index >= color_count {
@@ -736,27 +872,41 @@ impl PaletteService {
         }
 
         if req.from_index == req.to_index {
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             let palette = snapshot
                 .palettes
                 .iter()
                 .find(|p| p.id == req.palette_id)
-                .ok_or_else(|| AppError::Generic(format!("Palette {} not found", req.palette_id)))?;
+                .ok_or_else(|| {
+                    AppError::Generic(format!("Palette {} not found", req.palette_id))
+                })?;
             return Ok(palette_to_dto(palette));
         }
 
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
-            self.state.require_session(doc_id)?.document_handle.mutate(|doc| {
-                if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id) {
-                    let color = palette.colors.remove(req.from_index);
-                    palette.colors.insert(req.to_index, color);
-                    palette.revision += 1;
-                }
-            });
+            self.state
+                .require_session(doc_id)?
+                .document_handle
+                .mutate(|doc| {
+                    if let Some(palette) = doc.palettes.iter_mut().find(|p| p.id == req.palette_id)
+                    {
+                        let color = palette.colors.remove(req.from_index);
+                        palette.colors.insert(req.to_index, color);
+                        palette.revision += 1;
+                    }
+                });
 
             invalidate_palette_changed(PaletteId::new(req.palette_id), &self.state);
 
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             let palette = snapshot
                 .palettes
                 .iter()
@@ -778,9 +928,16 @@ impl PaletteService {
         let pid = PaletteId::new(palette_id);
 
         {
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             if !snapshot.palettes.iter().any(|p| p.id == palette_id) {
-                return Err(AppError::Generic(format!("Palette {} not found", palette_id)));
+                return Err(AppError::Generic(format!(
+                    "Palette {} not found",
+                    palette_id
+                )));
             }
         }
 
@@ -885,7 +1042,9 @@ impl PaletteService {
         };
 
         if req.target_count < 2 || req.target_count > 256 {
-            return Err(AppError::InvalidOperation("target_count must be between 2 and 256".to_string()));
+            return Err(AppError::InvalidOperation(
+                "target_count must be between 2 and 256".to_string(),
+            ));
         }
 
         let weights = engine_color::palette::generate::GenerateWeights {
@@ -896,7 +1055,11 @@ impl PaletteService {
             .validated()
             .map_err(|e| AppError::Generic(e.to_string()))?;
 
-        let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+        let snapshot = self
+            .state
+            .require_session(doc_id)?
+            .document_handle
+            .snapshot();
         let doc_width = snapshot.width;
         let doc_height = snapshot.height;
         drop(snapshot);
@@ -957,35 +1120,45 @@ impl PaletteService {
         }
 
         if pixels.is_empty() {
-            return Err(AppError::InvalidOperation("No tile data available for this layer. Load an image first.".to_string()));
+            return Err(AppError::InvalidOperation(
+                "No tile data available for this layer. Load an image first.".to_string(),
+            ));
         }
 
         let mut palette_id_raw = 0u32;
         crate::undo::with_document_undo(&self.state, app, doc_id, || {
-            self.state.require_session(doc_id)?.document_handle.mutate(|doc| {
-                match engine_project::palette_gen::generate_palette_from_layer_weighted(
-                    doc,
-                    engine_project::types::LayerId::new(req.layer_id),
-                    pixels.into_iter(),
-                    req.target_count,
-                    method,
-                    weights,
-                ) {
-                    Ok(pid) => {
-                        palette_id_raw = pid.0;
-                        doc.increment_generation();
+            self.state
+                .require_session(doc_id)?
+                .document_handle
+                .mutate(|doc| {
+                    match engine_project::palette_gen::generate_palette_from_layer_weighted(
+                        doc,
+                        engine_project::types::LayerId::new(req.layer_id),
+                        pixels.into_iter(),
+                        req.target_count,
+                        method,
+                        weights,
+                    ) {
+                        Ok(pid) => {
+                            palette_id_raw = pid.0;
+                            doc.increment_generation();
+                        }
+                        Err(_) => {}
                     }
-                    Err(_) => {}
-                }
-            });
+                });
 
             if palette_id_raw == 0 {
                 return Err(
-                    "Palette generation failed. Ensure the layer has non-transparent pixels.".to_string(),
+                    "Palette generation failed. Ensure the layer has non-transparent pixels."
+                        .to_string(),
                 );
             }
 
-            let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
             let palette = snapshot
                 .palettes
                 .iter()

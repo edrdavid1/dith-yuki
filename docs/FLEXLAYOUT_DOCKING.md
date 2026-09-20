@@ -4,7 +4,7 @@
 **Статус:** as-built (B3 + B4a + B4b + B4c)  
 **Библиотека:** [`flexlayout-react`](https://github.com/caplin/FlexLayout) **0.7.15** (MIT; см. [`legal/flexlayout-license-snapshot.md`](./legal/flexlayout-license-snapshot.md))  
 **ADR:** [`B2_ADR_flexlayout_docking.md`](./B2_ADR_flexlayout_docking.md)  
-**Канбан:** [`KANBAN_gpu_and_docking.md`](./KANBAN_gpu_and_docking.md) (трек B)
+**Открытая работа:** [`KANBAN_gpu_and_docking.md`](./KANBAN_gpu_and_docking.md)
 
 Этот документ — актуальная картина: как библиотека подключена, какие окна мигрированы, кто чем владеет, как устроены float/redock и persistence.
 
@@ -309,7 +309,7 @@ ADR — целевое состояние после **полной** мигра
 | **Dual SoT layout** (FL + PanelManager для colorlab) | **Закрыто в B4b.** |
 | **`global_mouseup` + OS `startDragging` для Flex redock** | **Закрыто в B4c (path A):** JS `setPosition` + in-WebView mouseup; `global_mouseup.rs` удалён. Linux drag-redock больше не зависит от NSEvent/GetAsyncKeyState. Hit-test зон (`dock_affinity` + `update_dock_zone`) оставлен как тонкий мост — не platform mouse sync. |
 | **Полная замена PanelManager / урезание panel commands** | Preview/Preferences + presets ещё на PanelManager. Не блокер redock. |
-| **flexlayout-react 0.7.15 вместо ~0.10.x из ADR** | На B3/spike в lockfile попал точный пин **0.7.15** (последний 0.7.x; peer React 18). Spike-лог фиксирует «0.7.15 integrates cleanly», **без** сравнения с 0.10.x и без записи «0.10 сломался → откат». На дату установки (≈2026-08-31) линейка 0.10.x уже была на npm. **Вердикт: незакрытый апдейт / неуточнённый пин, не документированный сознательный откат.** Перед bump — заново прогнать popout + патч FloatingWindow на целевой версии. |
+| **flexlayout-react 0.7.15 вместо ~0.10.x из ADR** | Пин с B3/spike: «0.7.15 integrates cleanly», **без** сравнения с 0.10.x и без записи «0.10 сломался → откат». После B4c путь OS `startDragging` / `global_mouseup` для Flex **снят** — bump больше не упирается в тот риск. Остаётся совместимость **патча FloatingWindow** (occlusion / named window / portal) с 0.10.x. **Вердикт по-прежнему открыт:** либо bump + полный перегон патча, либо явная запись «сознательный пин 0.7.15». Не закрывать карточку молчанием. Делать после B4c manual QA. |
 | **Снимок MIT LICENSE** | Закрыто: [`docs/legal/flexlayout-license-snapshot.md`](./legal/flexlayout-license-snapshot.md) (+ сырой [`flexlayout-LICENSE.MIT.txt`](./legal/flexlayout-LICENSE.MIT.txt)). npm metadata 0.7.15 пишет ISC; текст `LICENSE` — MIT (SoT = файл). |
 
 ---
@@ -342,5 +342,4 @@ ADR — целевое состояние после **полной** мигра
 |----------|------------|
 | [`B2_ADR_flexlayout_docking.md`](./B2_ADR_flexlayout_docking.md) | Решение «почему FlexLayout» и целевая архитектура |
 | [`legal/flexlayout-license-snapshot.md`](./legal/flexlayout-license-snapshot.md) | Снимок MIT LICENSE для 0.7.15 |
-| `.cursor-spec/track-b-infra/AUDIT_docking_current_implementation.md` | B1: affinity / Linux |
-| `.cursor-spec/track-r-docking/SPIKE_EXECUTION_LOG.md` | Spike: Path A + пин 0.7.15 |
+| [`.cursor-spec/track-r-docking/B4c_js_popout_drag_spec.md`](../.cursor-spec/track-r-docking/B4c_js_popout_drag_spec.md) | B4c JS popout drag + QA |

@@ -56,7 +56,7 @@ export type ColorLabFeatureProps = PanelChromeProps & {
 };
 
 /**
- * Connected Color Lab — shared draft in RTK; sidebar (compact) and full window stay synced.
+ * Connected Color Lab — shared draft in RTK; docked and popout stay synced.
  */
 export default function ColorLabFeature({
   variant,

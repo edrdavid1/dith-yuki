@@ -2,7 +2,7 @@
 
 use crate::error::EngineError;
 use crate::filter::FilterParams;
-use crate::layer::{LayerNode};
+use crate::layer::LayerNode;
 use crate::types::{ColorProfileRef, DocumentId, FilterInstanceId, PaletteId};
 use arc_swap::ArcSwap;
 use engine_color::palette::{LinearColor, Palette};
@@ -210,7 +210,9 @@ impl Document {
     /// Check if a filter's params reference the given palette.
     fn filter_references_palette(params: &FilterParams, palette_id: PaletteId) -> bool {
         match params {
-            FilterParams::PaletteQuantize { palette_id: pid, .. } => *pid == palette_id,
+            FilterParams::PaletteQuantize {
+                palette_id: pid, ..
+            } => *pid == palette_id,
             FilterParams::DitherV2(params) => params.palette_id == Some(palette_id),
             FilterParams::Curves { .. }
             | FilterParams::Levels { .. }
@@ -290,7 +292,7 @@ impl Clone for DocumentHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::filter::{FilterInstance, FilterKind, FilterParams, DitherMode, DiffusionKernel};
+    use crate::filter::{DiffusionKernel, DitherMode, FilterInstance, FilterKind, FilterParams};
     use crate::layer::{Layer, LayerNode};
     use crate::types::LayerKind;
 
@@ -378,8 +380,16 @@ mod tests {
         let mut doc = Document::new(DocumentId::new(1), 256, 256);
 
         let colors = vec![
-            LinearColor { r: 1.0, g: 0.0, b: 0.0 },
-            LinearColor { r: 0.0, g: 1.0, b: 0.0 },
+            LinearColor {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            LinearColor {
+                r: 0.0,
+                g: 1.0,
+                b: 0.0,
+            },
         ];
 
         let id1 = doc.add_palette("Palette 1".to_string(), colors.clone());
@@ -394,7 +404,11 @@ mod tests {
     #[test]
     fn add_palette_sets_revision_to_1() {
         let mut doc = Document::new(DocumentId::new(1), 256, 256);
-        let colors = vec![LinearColor { r: 0.5, g: 0.5, b: 0.5 }];
+        let colors = vec![LinearColor {
+            r: 0.5,
+            g: 0.5,
+            b: 0.5,
+        }];
 
         let id = doc.add_palette("Test".to_string(), colors);
         let palette = doc.get_palette(id).unwrap();
@@ -406,8 +420,16 @@ mod tests {
     fn get_palette_returns_correct_palette() {
         let mut doc = Document::new(DocumentId::new(1), 256, 256);
         let colors = vec![
-            LinearColor { r: 1.0, g: 0.0, b: 0.0 },
-            LinearColor { r: 0.0, g: 0.0, b: 1.0 },
+            LinearColor {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            LinearColor {
+                r: 0.0,
+                g: 0.0,
+                b: 1.0,
+            },
         ];
 
         let id = doc.add_palette("My Palette".to_string(), colors.clone());
@@ -428,12 +450,24 @@ mod tests {
     #[test]
     fn modify_palette_updates_colors_and_increments_revision() {
         let mut doc = Document::new(DocumentId::new(1), 256, 256);
-        let colors = vec![LinearColor { r: 1.0, g: 0.0, b: 0.0 }];
+        let colors = vec![LinearColor {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+        }];
         let id = doc.add_palette("Test".to_string(), colors);
 
         let new_colors = vec![
-            LinearColor { r: 0.0, g: 1.0, b: 0.0 },
-            LinearColor { r: 0.0, g: 0.0, b: 1.0 },
+            LinearColor {
+                r: 0.0,
+                g: 1.0,
+                b: 0.0,
+            },
+            LinearColor {
+                r: 0.0,
+                g: 0.0,
+                b: 1.0,
+            },
         ];
         let result = doc.modify_palette(id, new_colors.clone());
         assert!(result.is_ok());
@@ -448,11 +482,19 @@ mod tests {
     #[test]
     fn modify_palette_multiple_times_increments_revision() {
         let mut doc = Document::new(DocumentId::new(1), 256, 256);
-        let colors = vec![LinearColor { r: 1.0, g: 0.0, b: 0.0 }];
+        let colors = vec![LinearColor {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+        }];
         let id = doc.add_palette("Test".to_string(), colors);
 
         for i in 0..5 {
-            let new_colors = vec![LinearColor { r: i as f32 * 0.1, g: 0.0, b: 0.0 }];
+            let new_colors = vec![LinearColor {
+                r: i as f32 * 0.1,
+                g: 0.0,
+                b: 0.0,
+            }];
             doc.modify_palette(id, new_colors).unwrap();
         }
 
@@ -464,16 +506,17 @@ mod tests {
     fn modify_palette_not_found() {
         let mut doc = Document::new(DocumentId::new(1), 256, 256);
         let result = doc.modify_palette(PaletteId::new(999), vec![]);
-        assert!(matches!(
-            result,
-            Err(EngineError::PaletteNotFound { .. })
-        ));
+        assert!(matches!(result, Err(EngineError::PaletteNotFound { .. })));
     }
 
     #[test]
     fn remove_palette_succeeds_when_unreferenced() {
         let mut doc = Document::new(DocumentId::new(1), 256, 256);
-        let colors = vec![LinearColor { r: 1.0, g: 0.0, b: 0.0 }];
+        let colors = vec![LinearColor {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+        }];
         let id = doc.add_palette("Test".to_string(), colors);
 
         let result = doc.remove_palette(id);
@@ -485,16 +528,17 @@ mod tests {
     fn remove_palette_not_found() {
         let mut doc = Document::new(DocumentId::new(1), 256, 256);
         let result = doc.remove_palette(PaletteId::new(999));
-        assert!(matches!(
-            result,
-            Err(EngineError::PaletteNotFound { .. })
-        ));
+        assert!(matches!(result, Err(EngineError::PaletteNotFound { .. })));
     }
 
     #[test]
     fn add_remove_add_lifecycle() {
         let mut doc = Document::new(DocumentId::new(1), 256, 256);
-        let colors = vec![LinearColor { r: 1.0, g: 0.0, b: 0.0 }];
+        let colors = vec![LinearColor {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+        }];
 
         let id1 = doc.add_palette("First".to_string(), colors.clone());
         doc.remove_palette(id1).unwrap();
@@ -512,13 +556,27 @@ mod tests {
     fn palette_serialization_round_trip() {
         let mut doc = Document::new(DocumentId::new(1), 512, 512);
         let colors = vec![
-            LinearColor { r: 0.5, g: 0.25, b: 0.75 },
-            LinearColor { r: 1.0, g: 0.0, b: 0.0 },
+            LinearColor {
+                r: 0.5,
+                g: 0.25,
+                b: 0.75,
+            },
+            LinearColor {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+            },
         ];
         let id = doc.add_palette("Round Trip Test".to_string(), colors);
-        doc.modify_palette(id, vec![
-            LinearColor { r: 0.1, g: 0.2, b: 0.3 },
-        ]).unwrap();
+        doc.modify_palette(
+            id,
+            vec![LinearColor {
+                r: 0.1,
+                g: 0.2,
+                b: 0.3,
+            }],
+        )
+        .unwrap();
 
         let json = serde_json::to_string(&doc).unwrap();
         let deserialized: Document = serde_json::from_str(&json).unwrap();
@@ -538,20 +596,21 @@ mod tests {
     fn remove_palette_referential_integrity_no_reference() {
         // When no filters reference a palette, removal succeeds
         let mut doc = Document::new(DocumentId::new(1), 256, 256);
-        let colors = vec![LinearColor { r: 1.0, g: 0.0, b: 0.0 }];
+        let colors = vec![LinearColor {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+        }];
         let palette_id = doc.add_palette("Test".to_string(), colors);
 
         // Add a layer with a filter that does NOT reference any palette
-        let mut layer = Layer::new(
-            crate::types::LayerId::new(1),
-            LayerKind::Raster,
-            256,
-            256,
-        );
+        let mut layer = Layer::new(crate::types::LayerId::new(1), LayerKind::Raster, 256, 256);
         layer.filters.push(FilterInstance::new(
             FilterKind::Dither,
             FilterParams::Dither {
-                mode: DitherMode::ErrorDiffusion { kernel: DiffusionKernel::FloydSteinberg },
+                mode: DitherMode::ErrorDiffusion {
+                    kernel: DiffusionKernel::FloydSteinberg,
+                },
                 color_depth: 4,
             },
         ));

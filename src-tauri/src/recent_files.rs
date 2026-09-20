@@ -42,11 +42,7 @@ pub fn load_recent_files(file: &Path) -> Vec<RecentFileEntry> {
         Ok(c) => c,
         Err(e) => {
             if e.kind() != std::io::ErrorKind::NotFound {
-                log::warn!(
-                    "Failed to read recent files at {}: {}",
-                    file.display(),
-                    e
-                );
+                log::warn!("Failed to read recent files at {}: {}", file.display(), e);
             }
             return Vec::new();
         }
@@ -66,11 +62,7 @@ pub fn load_recent_files(file: &Path) -> Vec<RecentFileEntry> {
 }
 
 /// Insert `path` at the front (dedup by exact path string), cap at `MAX_RECENT`, write.
-pub fn record_recent_file(
-    file: &Path,
-    path: &str,
-    kind: RecentFileKind,
-) -> Result<(), String> {
+pub fn record_recent_file(file: &Path, path: &str, kind: RecentFileKind) -> Result<(), String> {
     let mut entries = load_recent_files(file);
     entries.retain(|e| e.path != path);
     entries.insert(
@@ -136,7 +128,10 @@ pub fn load_prune_and_maybe_rewrite(file: &Path) -> Vec<RecentFileEntry> {
 fn save_recent_files(file: &Path, entries: &[RecentFileEntry]) -> Result<(), String> {
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
-            format!("Failed to create recent-files directory {}: {e}", parent.display())
+            format!(
+                "Failed to create recent-files directory {}: {e}",
+                parent.display()
+            )
         })?;
     }
     let json = serde_json::to_string_pretty(entries).map_err(|e| e.to_string())?;
@@ -267,18 +262,8 @@ mod tests {
         std::fs::write(&existing, b"x").unwrap();
         let missing = dir.path().join("gone.png");
 
-        record_recent_file(
-            &json,
-            missing.to_str().unwrap(),
-            RecentFileKind::Image,
-        )
-        .unwrap();
-        record_recent_file(
-            &json,
-            existing.to_str().unwrap(),
-            RecentFileKind::Project,
-        )
-        .unwrap();
+        record_recent_file(&json, missing.to_str().unwrap(), RecentFileKind::Image).unwrap();
+        record_recent_file(&json, existing.to_str().unwrap(), RecentFileKind::Project).unwrap();
 
         let kept = load_prune_and_maybe_rewrite(&json);
         assert_eq!(kept.len(), 1);

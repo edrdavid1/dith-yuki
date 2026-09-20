@@ -252,6 +252,8 @@
   border: none !important;
   opacity: 1 !important;
   z-index: 6 !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
 }
 
 /* Pull lower stack up by one border so frames meet; padding = drag hit band. */
@@ -283,15 +285,43 @@
 
 .flexlayout__splitter_extra {
   background: transparent !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+/* While the splitter is dragged, do not select panel text. */
+.flexlayout__layout:has(.flexlayout__splitter_drag) {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  cursor: row-resize;
+}
+
+.flexlayout__splitter_drag {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  background: transparent !important;
 }
 
 /* ── Drag / dock outlines ──────────────────────────────────────────────────── */
 
 .flexlayout__outline_rect,
 .flexlayout__outline_rect_edge {
+  /* Hidden until marked as a vertical-stack (top/bottom) drop. */
+  visibility: hidden !important;
+  opacity: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  pointer-events: none !important;
+  border-radius: 0 !important;
+}
+
+.flexlayout__outline_rect[data-drop-axis='stack'],
+.flexlayout__outline_rect_edge[data-drop-axis='stack'] {
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: none !important;
   border: 2px solid var(--color-primary, #8181FF) !important;
   background: color-mix(in srgb, var(--color-primary, #8181FF) 16%, transparent) !important;
-  border-radius: 0 !important;
 }
 
 .flexlayout__drag_rect {

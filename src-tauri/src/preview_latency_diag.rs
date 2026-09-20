@@ -13,7 +13,9 @@ use engine_gpu::{
     GpuCompositeFrameJob, GpuCompositeLayerOp, GpuCompositeTileWork, GpuFrameJob, GpuTileWork,
 };
 use engine_project::document::DocumentHandle;
-use engine_project::filter::{DitherModeV2, DitherParamsV2, FilterInstance, FilterKind, FilterParams};
+use engine_project::filter::{
+    DitherModeV2, DitherParamsV2, FilterInstance, FilterKind, FilterParams,
+};
 use engine_project::filters::gpu_graph::compile_layer_graph;
 use engine_project::layer::{Layer, LayerNode};
 use engine_project::types::{BlendMode, DocumentId, LayerId, LayerKind};
@@ -200,7 +202,10 @@ fn simulate_invalidate_only(state: &AppState) {
     }
     engine_tiles::invalidation::invalidate(
         &state.tiles.tile_cache,
-        InvalidationEvent::LayerFilterChanged { doc: 1, layer: LAYER },
+        InvalidationEvent::LayerFilterChanged {
+            doc: 1,
+            layer: LAYER,
+        },
     );
 }
 
@@ -252,7 +257,8 @@ fn drain_until_visible(
                                 processed_calls.fetch_add(1, Ordering::Relaxed);
                                 let _ = compute_processed_tile(task.key, &state);
                             }
-                            CacheStage::Composite => match compute_composite_tile(task.key, &state) {
+                            CacheStage::Composite => match compute_composite_tile(task.key, &state)
+                            {
                                 Ok(_) => {
                                     composite_ok.fetch_add(1, Ordering::Relaxed);
                                     if visible.contains(&task.key.coord) {
@@ -671,7 +677,9 @@ fn run_resident_viewport_benchmark(
     // Warm: promote + first dispatch (excluded from steady-state p95).
     let warm_job = build_resident_frame_job(&state, &graph).expect("warm job");
     let warm_t0 = Instant::now();
-    executor.submit_frame_blocking(warm_job).expect("gpu submit");
+    executor
+        .submit_frame_blocking(warm_job)
+        .expect("gpu submit");
     let cold_promote_ms = warm_t0.elapsed().as_secs_f64() * 1000.0;
 
     // Steady-state: same generation, resident slots already warm — re-dispatch only.
@@ -873,20 +881,55 @@ fn ed_prefix_ab() {
     let origin = compute_visible_tiles(1.0, 0.0, 0.0, VP_W, VP_H, 0, DOC, DOC);
     let far = compute_visible_tiles(1.0, 2048.0, 2048.0, VP_W, VP_H, 0, DOC, DOC);
     let far_prefix = {
-        let max = far.iter().fold(TileCoord { level: 0, x: 0, y: 0 }, |a, c| TileCoord {
-            level: 0,
-            x: a.x.max(c.x),
-            y: a.y.max(c.y),
-        });
+        let max = far.iter().fold(
+            TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            },
+            |a, c| TileCoord {
+                level: 0,
+                x: a.x.max(c.x),
+                y: a.y.max(c.y),
+            },
+        );
         prefix_to(max)
     };
     let all_l0 = l0_grid();
 
     let cases: Vec<(&str, DitherModeV2, f64, f64, f64, &[TileCoord])> = vec![
-        ("FS far-corner 100%", DitherModeV2::FloydSteinberg, 1.0, 2048.0, 2048.0, &far_prefix),
-        ("FS origin 100%", DitherModeV2::FloydSteinberg, 1.0, 0.0, 0.0, &origin),
-        ("FS fit 25%", DitherModeV2::FloydSteinberg, 0.25, 0.0, 0.0, &all_l0),
-        ("Bayer fit 25% (control)", DitherModeV2::Bayer8x8, 0.25, 0.0, 0.0, &all_l0),
+        (
+            "FS far-corner 100%",
+            DitherModeV2::FloydSteinberg,
+            1.0,
+            2048.0,
+            2048.0,
+            &far_prefix,
+        ),
+        (
+            "FS origin 100%",
+            DitherModeV2::FloydSteinberg,
+            1.0,
+            0.0,
+            0.0,
+            &origin,
+        ),
+        (
+            "FS fit 25%",
+            DitherModeV2::FloydSteinberg,
+            0.25,
+            0.0,
+            0.0,
+            &all_l0,
+        ),
+        (
+            "Bayer fit 25% (control)",
+            DitherModeV2::Bayer8x8,
+            0.25,
+            0.0,
+            0.0,
+            &all_l0,
+        ),
     ];
 
     println!(
@@ -1042,13 +1085,18 @@ fn preview_latency_diag_3k() {
     );
 
     let far_prefix = {
-        let max = far.iter().fold(TileCoord { level: 0, x: 0, y: 0 }, |a, c| {
+        let max = far.iter().fold(
             TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            },
+            |a, c| TileCoord {
                 level: 0,
                 x: a.x.max(c.x),
                 y: a.y.max(c.y),
-            }
-        });
+            },
+        );
         prefix_to(max)
     };
     run_viewport_scenario(
@@ -1116,13 +1164,7 @@ fn run_gpu_viewport_timing(origin: &[TileCoord]) {
             let cpu_p95 = {
                 let mut cpu_samples = Vec::with_capacity(RESIDENT_REPEATS);
                 for _ in 0..RESIDENT_REPEATS {
-                    let (wall, _) = measure_scenario(
-                        DitherModeV2::Bayer8x8,
-                        1.0,
-                        0.0,
-                        0.0,
-                        origin,
-                    );
+                    let (wall, _) = measure_scenario(DitherModeV2::Bayer8x8, 1.0, 0.0, 0.0, origin);
                     cpu_samples.push(wall.as_secs_f64() * 1000.0);
                 }
                 p95(cpu_samples)
@@ -1133,8 +1175,7 @@ fn run_gpu_viewport_timing(origin: &[TileCoord]) {
                 "=== T6 Path B summary (origin ~{resident_n} L0 tiles, {RESIDENT_REPEATS} repeats) ===\n  CPU worker pool p95 (Bayer8)     = {cpu_p95:7.1}ms\n  GPU-resident frame p95 (Bayer4)  = {resident_p95:7.3}ms\n  gate (resident p95 < CPU p95)    = {gate_pass}\n"
             );
 
-            let composite_p95 =
-                run_resident_composite_benchmark(origin, &gpu, RESIDENT_REPEATS);
+            let composite_p95 = run_resident_composite_benchmark(origin, &gpu, RESIDENT_REPEATS);
             println!(
                 "=== T7.5 multi-layer composite (same origin, 3 layers) ===\n  GPU-resident composite p95 = {composite_p95:7.3}ms\n"
             );
@@ -1195,7 +1236,10 @@ fn preview_latency_diag_realistic_stack() {
         tiles.len(),
         r_p95 / b_p95.max(1e-9),
     );
-    assert!(has_ed_checkpoint, "realistic stack must compile with ED checkpoint");
+    assert!(
+        has_ed_checkpoint,
+        "realistic stack must compile with ED checkpoint"
+    );
 }
 
 // ─── Industrial gate (gpu-industrial-gate T1–T4) ───────────────────────────
@@ -1207,10 +1251,7 @@ fn print_industrial_row(name: &str, s: &SampleStats) {
 }
 
 /// One cold resident frame: fresh AppState + first submit (promote + dispatch).
-fn measure_resident_cold_ms(
-    origin: &[TileCoord],
-    gpu: &Arc<engine_gpu::GpuContext>,
-) -> f64 {
+fn measure_resident_cold_ms(origin: &[TileCoord], gpu: &Arc<engine_gpu::GpuContext>) -> f64 {
     std::env::set_var("DITHER_GPU_RESIDENT", "1");
     std::env::set_var("DITHER_GPU_RESIDENT_DIAG", "1");
     let state = make_state(DitherModeV2::Bayer4x4, Some(Arc::clone(gpu)));
@@ -1266,9 +1307,7 @@ fn measure_resident_steady_samples(
     let graph = std::sync::Arc::new(compile_layer_graph(&layer.filters).expect("graph"));
     let executor = state.gpu_executor.as_ref().unwrap().lock().unwrap();
     let warm = build_resident_frame_job(&state, &graph).expect("warm job (raw+viewport mismatch?)");
-    executor
-        .submit_frame_blocking(warm)
-        .expect("warm submit");
+    executor.submit_frame_blocking(warm).expect("warm submit");
     let mut samples = Vec::with_capacity(n);
     for _ in 0..n {
         let job = build_resident_frame_job(&state, &graph).expect("job");
@@ -1352,7 +1391,10 @@ fn make_palette_fs_state(gpu: Option<Arc<engine_gpu::GpuContext>>) -> Arc<AppSta
     Arc::new(state)
 }
 
-fn measure_filter_stack_cpu_ms(state_factory: impl Fn() -> Arc<AppState>, tiles: &[TileCoord]) -> f64 {
+fn measure_filter_stack_cpu_ms(
+    state_factory: impl Fn() -> Arc<AppState>,
+    tiles: &[TileCoord],
+) -> f64 {
     let state = state_factory();
     let max = tiles.iter().fold(
         TileCoord {
@@ -1516,7 +1558,10 @@ fn preview_latency_diag_industrial_gate() {
     let cold_cpu_s = sample_stats(&cold_cpu);
     print_industrial_row("cold path GPU-resident", &cold_gpu_s);
     print_industrial_row("cold path CPU", &cold_cpu_s);
-    println!("  {}", verdict_faster(&cold_gpu_s, &cold_cpu_s, "cold resident vs CPU"));
+    println!(
+        "  {}",
+        verdict_faster(&cold_gpu_s, &cold_cpu_s, "cold resident vs CPU")
+    );
     println!();
 
     // ── T7.5 composite n=20 (same session) ──
@@ -1537,7 +1582,9 @@ fn preview_latency_diag_industrial_gate() {
         ];
         let executor = state.gpu_executor.as_ref().unwrap().lock().unwrap();
         if let Some(job) = build_resident_composite_job(&state, &layer_ids, &modes) {
-            executor.submit_composite_blocking(job).expect("warm composite");
+            executor
+                .submit_composite_blocking(job)
+                .expect("warm composite");
         }
         for _ in 0..INDUSTRIAL_N {
             let job = build_resident_composite_job(&state, &layer_ids, &modes).expect("job");
@@ -1557,7 +1604,8 @@ fn preview_latency_diag_industrial_gate() {
         for layer in [1u32, 2, 3] {
             for coord in &origin {
                 let raw = state
-                    .tiles.tile_cache
+                    .tiles
+                    .tile_cache
                     .get_entry(TileKey {
                         doc: 1,
                         layer,
@@ -1644,10 +1692,7 @@ fn preview_latency_diag_industrial_gate() {
     );
     println!(
         "  Preset B GPU-only eligible: {} — checkpoint stacks stay CPU for preview",
-        b_graph
-            .as_ref()
-            .map(|g| g.is_gpu_only())
-            .unwrap_or(false)
+        b_graph.as_ref().map(|g| g.is_gpu_only()).unwrap_or(false)
     );
 
     // C: CRT → Halftone (no ED) — resident eligible
@@ -1900,8 +1945,10 @@ fn preview_latency_diag_auto_dispatch() {
     let opt_o = sample_stats(&opt_open);
     let opt_p = sample_stats(&opt_pan);
 
-    let open_ok = engine_gpu::not_worse_than(auto_o.median, auto_o.sigma, cpu_o.median, cpu_o.sigma, n);
-    let pan_ok = engine_gpu::not_worse_than(auto_p.median, auto_p.sigma, cpu_p.median, cpu_p.sigma, n);
+    let open_ok =
+        engine_gpu::not_worse_than(auto_o.median, auto_o.sigma, cpu_o.median, cpu_o.sigma, n);
+    let pan_ok =
+        engine_gpu::not_worse_than(auto_p.median, auto_p.sigma, cpu_p.median, cpu_p.sigma, n);
     println!(
         "\n  gate auto vs CPU open: {}\n  gate auto vs CPU pan: {}\n  opt-in vs CPU open: {}\n  opt-in vs CPU pan: {}\n",
         if open_ok { "PASS (not worse)" } else { "FAIL (worse)" },
@@ -1989,10 +2036,7 @@ fn measure_export_cpu_seq(state: &AppState, coords: &[TileCoord]) -> (f64, Vec<u
         .expect("apply");
         pack_tile_into_rgba(&processed, coord.x, coord.y, &mut rgba);
     }
-    (
-        t0.elapsed().as_secs_f64() * 1000.0,
-        rgba,
-    )
+    (t0.elapsed().as_secs_f64() * 1000.0, rgba)
 }
 
 /// Parallel CPU apply (same work as export, N worker threads) then pack.
@@ -2057,7 +2101,12 @@ fn measure_export_gpu(
     let doc = snapshot.id.0;
     let ctx = state.gpu.as_ref().expect("gpu");
     let cache = state.gpu_resident.as_ref().expect("resident");
-    let executor = state.gpu_executor.as_ref().expect("executor").lock().unwrap();
+    let executor = state
+        .gpu_executor
+        .as_ref()
+        .expect("executor")
+        .lock()
+        .unwrap();
     let mut rgba = vec![0u8; (DOC * DOC * 4) as usize];
     let t0 = Instant::now();
     for chunk in coords.chunks(A5_GPU_BATCH) {
@@ -2095,10 +2144,7 @@ fn measure_export_gpu(
                 coord: *coord,
                 stage: CacheStage::Processed,
             };
-            let processed = cache
-                .download(ctx, &key)
-                .expect("download")
-                .expect("slot");
+            let processed = cache.download(ctx, &key).expect("download").expect("slot");
             pack_tile_into_rgba(&processed, coord.x, coord.y, &mut rgba);
         }
     }
@@ -2254,7 +2300,10 @@ fn preview_latency_diag_vram() {
     print_vram_row("after origin CPU + A2 prefetch warmup", &cache.vram_stats());
 
     let _ = measure_export_gpu(&state, &coords, &graph);
-    print_vram_row("after full-doc GPU compute (144 tiles)", &cache.vram_stats());
+    print_vram_row(
+        "after full-doc GPU compute (144 tiles)",
+        &cache.vram_stats(),
+    );
 
     let _ = measure_export_gpu(&state, &coords, &graph);
     print_vram_row("after second full-doc GPU pass", &cache.vram_stats());

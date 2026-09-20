@@ -7,7 +7,10 @@ import type { FilterKind } from './index';
 /** Effect types available in the new design */
 export type EffectType = 'Dithering' | 'Glitching' | 'Curves' | 'RGBChannels' | 'Glow' | 'CRT' | 'Adjust';
 
-/** Maps EffectType to the corresponding FilterKind used in IPC */
+/** Maps EffectType to the corresponding FilterKind used in IPC.
+ * Registry algorithms are added via `specForAlgorithm` / `onSelectAlgorithm`.
+ * This map remains for the legacy EffectType path (shortcuts, RGB channels).
+ */
 export const EFFECT_TO_FILTER_KIND: Record<EffectType, FilterKind> = {
   Dithering: 'DitherV2',
   Glitching: 'Glitch',
@@ -76,6 +79,69 @@ export const EFFECT_DEFAULTS: Record<EffectType, Record<string, unknown>> = {
     noise: 0,
   },
 };
+
+export interface AlgorithmAddSpec {
+  kind: string;
+  params: Record<string, unknown>;
+}
+
+/** Registry AlgorithmIds that are dither modes of the single Dithering effect. */
+export const DITHERING_ALGORITHM_IDS: readonly string[] = [
+  'bayer_2x2',
+  'bayer_4x4',
+  'bayer_8x8',
+  'floyd_steinberg',
+  'atkinson',
+  'jarvis_judice_ninke',
+  'stucki',
+  'burkes',
+  'sierra',
+  'cmyk_halftone',
+  'wave',
+];
+
+export function isDitheringAlgorithmId(algorithmId: string): boolean {
+  return DITHERING_ALGORITHM_IDS.includes(algorithmId);
+}
+
+function ditherSpec(mode: string): AlgorithmAddSpec {
+  return {
+    kind: 'DitherV2',
+    params: { ...EFFECT_DEFAULTS.Dithering, mode },
+  };
+}
+
+/** Map a registry AlgorithmId to FilterKind + default params for `add_filter`. */
+export function specForAlgorithm(
+  algorithmId: string,
+  lastCreatedPaletteId: number | null
+): AlgorithmAddSpec | null {
+  if (isDitheringAlgorithmId(algorithmId)) {
+    return ditherSpec(algorithmId);
+  }
+  switch (algorithmId) {
+    case 'palette_quantize':
+      return {
+        kind: 'PaletteQuantize',
+        params: {
+          palette_id: lastCreatedPaletteId,
+          diffusion: null,
+        },
+      };
+    case 'crt':
+      return { kind: 'Crt', params: { ...EFFECT_DEFAULTS.CRT } };
+    case 'glow':
+      return { kind: 'Glow', params: { ...EFFECT_DEFAULTS.Glow } };
+    case 'adjust':
+      return { kind: 'Adjust', params: { ...EFFECT_DEFAULTS.Adjust } };
+    case 'curves':
+      return { kind: 'Curves', params: { ...EFFECT_DEFAULTS.Curves } };
+    case 'glitch':
+      return { kind: 'Glitch', params: { ...EFFECT_DEFAULTS.Glitching } };
+    default:
+      return null;
+  }
+}
 
 // =============================================================================
 // Zoom Model

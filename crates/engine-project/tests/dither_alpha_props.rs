@@ -58,9 +58,9 @@ fn arb_ordered_mode() -> impl Strategy<Value = DitherModeV2> {
 fn arb_ordered_params() -> impl Strategy<Value = DitherParamsV2> {
     (
         arb_ordered_mode(),
-        2u16..=256u16,        // valid levels
-        (10u32..=400u32),     // maps to threshold_scale 0.1..=4.0
-        1u8..=32u8,           // valid pixel_size
+        2u16..=256u16,    // valid levels
+        (10u32..=400u32), // maps to threshold_scale 0.1..=4.0
+        1u8..=32u8,       // valid pixel_size
         prop_oneof![Just(DitherColorMode::Rgb), Just(DitherColorMode::Grayscale)],
     )
         .prop_map(|(mode, levels, ts_raw, pixel_size, color_mode)| {
@@ -73,7 +73,7 @@ fn arb_ordered_params() -> impl Strategy<Value = DitherParamsV2> {
                 color_mode,
                 palette_id: None, // skip palette to avoid needing doc setup,
                 dither_alpha: false,
-            ..Default::default()
+                ..Default::default()
             }
         })
 }

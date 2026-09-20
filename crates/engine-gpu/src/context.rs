@@ -21,6 +21,9 @@ pub struct GpuContext {
     pub(crate) bayer: Option<BayerPipelines>,
     pub(crate) halftone: Option<HalftonePipeline>,
     pub(crate) crt: Option<CrtPipeline>,
+    /// Track C Phase 1: chosen once at adapter init.
+    pub vram_budget_bytes: u64,
+    pub vram_budget_source: crate::VramBudgetSource,
 }
 
 impl GpuContext {
@@ -50,6 +53,24 @@ impl GpuContext {
             info.name,
             info.backend
         );
+
+        let queried = crate::query_adapter_memory(&adapter);
+        let vram = crate::resolve_vram_budget(queried);
+        eprintln!(
+            "[engine-gpu] vram_budget_mib={} source={} queried_mib={}",
+            vram.bytes / (1024 * 1024),
+            vram.source.as_str(),
+            queried.map(|b| b / (1024 * 1024)).unwrap_or(0)
+        );
+        log::info!(
+            "engine-gpu: vram_budget_mib={} source={} queried_mib={}",
+            vram.bytes / (1024 * 1024),
+            vram.source.as_str(),
+            queried.map(|b| b / (1024 * 1024)).unwrap_or(0)
+        );
+        if queried.is_none() && vram.source == crate::VramBudgetSource::MinFallback {
+            log::info!("engine-gpu: vram budget fallback (no reliable adapter memory)");
+        }
 
         let mut required_features = wgpu::Features::empty();
         if adapter
@@ -81,6 +102,8 @@ impl GpuContext {
             bayer: None,
             halftone: None,
             crt: None,
+            vram_budget_bytes: vram.bytes,
+            vram_budget_source: vram.source,
         };
 
         ctx.bayer = BayerPipelines::create(&ctx.device).ok();

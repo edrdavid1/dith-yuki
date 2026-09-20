@@ -12,8 +12,8 @@ use engine_project::filter::{
     DitherColorMode, DitherModeV2, DitherParamsV2, FilterInstance, FilterKind, FilterParams,
 };
 use engine_project::filters::apply::apply_filter_to_tile;
-use engine_project::{Document, DocumentHandle, Layer, LayerNode};
 use engine_project::types::{DocumentId, LayerId, LayerKind};
+use engine_project::{Document, DocumentHandle, Layer, LayerNode};
 use engine_tiles::{PixelTile, TileCoord, HALO, TILE_SIZE};
 
 /// Helper: create a tile filled with a uniform color (all pixels same RGBA).
@@ -56,7 +56,9 @@ fn valid_uniform_levels(levels: u16) -> Vec<f32> {
 
 /// Check if a value matches one of the valid quantized levels (with tolerance).
 fn is_valid_level(value: f32, valid_levels: &[f32]) -> bool {
-    valid_levels.iter().any(|&level| (value - level).abs() < 1e-5)
+    valid_levels
+        .iter()
+        .any(|&level| (value - level).abs() < 1e-5)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -92,15 +94,31 @@ fn ordered_bayer4x4_uniform_quantization() {
 
     // Create a gradient tile for interesting dither patterns
     let tile = make_gradient_tile();
-    let coord = TileCoord { level: 0, x: 0, y: 0 };
+    let coord = TileCoord {
+        level: 0,
+        x: 0,
+        y: 0,
+    };
 
     // Apply the filter
     let layer_ref = match &doc.root[0] {
         LayerNode::Leaf(l) => l,
         _ => panic!("Expected leaf layer"),
     };
-    let result = apply_filter_to_tile(&tile, layer_ref, coord, &palette_cache, &lut_cache, &threshold_cache, &doc);
-    assert!(result.is_ok(), "apply_filter_to_tile failed: {:?}", result.err());
+    let result = apply_filter_to_tile(
+        &tile,
+        layer_ref,
+        coord,
+        &palette_cache,
+        &lut_cache,
+        &threshold_cache,
+        &doc,
+    );
+    assert!(
+        result.is_ok(),
+        "apply_filter_to_tile failed: {:?}",
+        result.err()
+    );
 
     let output = result.unwrap();
 
@@ -118,17 +136,24 @@ fn ordered_bayer4x4_uniform_quantization() {
             assert!(
                 is_valid_level(r, &valid_levels),
                 "Pixel ({}, {}): R={} not a valid level for levels=4. Valid: {:?}",
-                x, y, r, valid_levels
+                x,
+                y,
+                r,
+                valid_levels
             );
             assert!(
                 is_valid_level(g, &valid_levels),
                 "Pixel ({}, {}): G={} not a valid level for levels=4",
-                x, y, g
+                x,
+                y,
+                g
             );
             assert!(
                 is_valid_level(b, &valid_levels),
                 "Pixel ({}, {}): B={} not a valid level for levels=4",
-                x, y, b
+                x,
+                y,
+                b
             );
             // Alpha should be preserved
             assert_eq!(a, 1.0, "Pixel ({}, {}): alpha not preserved", x, y);
@@ -166,14 +191,30 @@ fn error_diffusion_floyd_steinberg_uniform_quantization() {
     let threshold_cache = ThresholdMapCache::new();
 
     let tile = make_gradient_tile();
-    let coord = TileCoord { level: 0, x: 0, y: 0 };
+    let coord = TileCoord {
+        level: 0,
+        x: 0,
+        y: 0,
+    };
 
     let layer_ref = match &doc.root[0] {
         LayerNode::Leaf(l) => l,
         _ => panic!("Expected leaf layer"),
     };
-    let result = apply_filter_to_tile(&tile, layer_ref, coord, &palette_cache, &lut_cache, &threshold_cache, &doc);
-    assert!(result.is_ok(), "apply_filter_to_tile failed: {:?}", result.err());
+    let result = apply_filter_to_tile(
+        &tile,
+        layer_ref,
+        coord,
+        &palette_cache,
+        &lut_cache,
+        &threshold_cache,
+        &doc,
+    );
+    assert!(
+        result.is_ok(),
+        "apply_filter_to_tile failed: {:?}",
+        result.err()
+    );
 
     let output = result.unwrap();
 
@@ -193,17 +234,24 @@ fn error_diffusion_floyd_steinberg_uniform_quantization() {
             assert!(
                 is_valid_level(r, &valid_levels),
                 "Pixel ({}, {}): R={} not a valid level for levels=4. Valid: {:?}",
-                x, y, r, valid_levels
+                x,
+                y,
+                r,
+                valid_levels
             );
             assert!(
                 is_valid_level(g, &valid_levels),
                 "Pixel ({}, {}): G={} not a valid level for levels=4",
-                x, y, g
+                x,
+                y,
+                g
             );
             assert!(
                 is_valid_level(b, &valid_levels),
                 "Pixel ({}, {}): B={} not a valid level for levels=4",
-                x, y, b
+                x,
+                y,
+                b
             );
             assert_eq!(a, 1.0, "Pixel ({}, {}): alpha not preserved", x, y);
         }
@@ -220,12 +268,36 @@ fn ordered_bayer8x8_palette_constrained() {
 
     // Add a palette to the document
     let palette_colors = vec![
-        LinearColor { r: 0.0, g: 0.0, b: 0.0 },   // black
-        LinearColor { r: 1.0, g: 0.0, b: 0.0 },   // red
-        LinearColor { r: 0.0, g: 1.0, b: 0.0 },   // green
-        LinearColor { r: 0.0, g: 0.0, b: 1.0 },   // blue
-        LinearColor { r: 1.0, g: 1.0, b: 1.0 },   // white
-        LinearColor { r: 1.0, g: 1.0, b: 0.0 },   // yellow
+        LinearColor {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+        }, // black
+        LinearColor {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+        }, // red
+        LinearColor {
+            r: 0.0,
+            g: 1.0,
+            b: 0.0,
+        }, // green
+        LinearColor {
+            r: 0.0,
+            g: 0.0,
+            b: 1.0,
+        }, // blue
+        LinearColor {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+        }, // white
+        LinearColor {
+            r: 1.0,
+            g: 1.0,
+            b: 0.0,
+        }, // yellow
     ];
     let palette_id = doc.add_palette("Test Palette".to_string(), palette_colors.clone());
 
@@ -252,14 +324,30 @@ fn ordered_bayer8x8_palette_constrained() {
     let threshold_cache = ThresholdMapCache::new();
 
     let tile = make_gradient_tile();
-    let coord = TileCoord { level: 0, x: 0, y: 0 };
+    let coord = TileCoord {
+        level: 0,
+        x: 0,
+        y: 0,
+    };
 
     let layer_ref = match &doc.root[0] {
         LayerNode::Leaf(l) => l,
         _ => panic!("Expected leaf layer"),
     };
-    let result = apply_filter_to_tile(&tile, layer_ref, coord, &palette_cache, &lut_cache, &threshold_cache, &doc);
-    assert!(result.is_ok(), "apply_filter_to_tile failed: {:?}", result.err());
+    let result = apply_filter_to_tile(
+        &tile,
+        layer_ref,
+        coord,
+        &palette_cache,
+        &lut_cache,
+        &threshold_cache,
+        &doc,
+    );
+    assert!(
+        result.is_ok(),
+        "apply_filter_to_tile failed: {:?}",
+        result.err()
+    );
 
     let output = result.unwrap();
 
@@ -294,11 +382,31 @@ fn error_diffusion_floyd_steinberg_palette_constrained() {
 
     // Add a palette
     let palette_colors = vec![
-        LinearColor { r: 0.0, g: 0.0, b: 0.0 },   // black
-        LinearColor { r: 1.0, g: 0.0, b: 0.0 },   // red
-        LinearColor { r: 0.0, g: 1.0, b: 0.0 },   // green
-        LinearColor { r: 0.0, g: 0.0, b: 1.0 },   // blue
-        LinearColor { r: 1.0, g: 1.0, b: 1.0 },   // white
+        LinearColor {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+        }, // black
+        LinearColor {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+        }, // red
+        LinearColor {
+            r: 0.0,
+            g: 1.0,
+            b: 0.0,
+        }, // green
+        LinearColor {
+            r: 0.0,
+            g: 0.0,
+            b: 1.0,
+        }, // blue
+        LinearColor {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+        }, // white
     ];
     let palette_id = doc.add_palette("Diffusion Palette".to_string(), palette_colors.clone());
 
@@ -325,14 +433,30 @@ fn error_diffusion_floyd_steinberg_palette_constrained() {
     let threshold_cache = ThresholdMapCache::new();
 
     let tile = make_uniform_tile(0.5, 0.3, 0.7, 1.0);
-    let coord = TileCoord { level: 0, x: 0, y: 0 };
+    let coord = TileCoord {
+        level: 0,
+        x: 0,
+        y: 0,
+    };
 
     let layer_ref = match &doc.root[0] {
         LayerNode::Leaf(l) => l,
         _ => panic!("Expected leaf layer"),
     };
-    let result = apply_filter_to_tile(&tile, layer_ref, coord, &palette_cache, &lut_cache, &threshold_cache, &doc);
-    assert!(result.is_ok(), "apply_filter_to_tile failed: {:?}", result.err());
+    let result = apply_filter_to_tile(
+        &tile,
+        layer_ref,
+        coord,
+        &palette_cache,
+        &lut_cache,
+        &threshold_cache,
+        &doc,
+    );
+    assert!(
+        result.is_ok(),
+        "apply_filter_to_tile failed: {:?}",
+        result.err()
+    );
 
     let output = result.unwrap();
 
@@ -386,7 +510,11 @@ fn legacy_dither_auto_migration() {
     let threshold_cache = ThresholdMapCache::new();
 
     let tile = make_gradient_tile();
-    let coord = TileCoord { level: 0, x: 0, y: 0 };
+    let coord = TileCoord {
+        level: 0,
+        x: 0,
+        y: 0,
+    };
 
     let layer_ref = match &doc.root[0] {
         LayerNode::Leaf(l) => l,
@@ -394,7 +522,15 @@ fn legacy_dither_auto_migration() {
     };
 
     // The filter dispatcher should auto-migrate the legacy filter to V2 and process it
-    let result = apply_filter_to_tile(&tile, layer_ref, coord, &palette_cache, &lut_cache, &threshold_cache, &doc);
+    let result = apply_filter_to_tile(
+        &tile,
+        layer_ref,
+        coord,
+        &palette_cache,
+        &lut_cache,
+        &threshold_cache,
+        &doc,
+    );
     assert!(
         result.is_ok(),
         "Legacy dither auto-migration failed: {:?}",
@@ -415,17 +551,23 @@ fn legacy_dither_auto_migration() {
             assert!(
                 is_valid_level(r, &valid_levels),
                 "Legacy migration: Pixel ({}, {}): R={} not valid for levels=8",
-                x, y, r
+                x,
+                y,
+                r
             );
             assert!(
                 is_valid_level(g, &valid_levels),
                 "Legacy migration: Pixel ({}, {}): G={} not valid for levels=8",
-                x, y, g
+                x,
+                y,
+                g
             );
             assert!(
                 is_valid_level(b, &valid_levels),
                 "Legacy migration: Pixel ({}, {}): B={} not valid for levels=8",
-                x, y, b
+                x,
+                y,
+                b
             );
         }
     }
@@ -461,14 +603,26 @@ fn legacy_error_diffusion_auto_migration() {
     let threshold_cache = ThresholdMapCache::new();
 
     let tile = make_uniform_tile(0.6, 0.4, 0.8, 1.0);
-    let coord = TileCoord { level: 0, x: 0, y: 0 };
+    let coord = TileCoord {
+        level: 0,
+        x: 0,
+        y: 0,
+    };
 
     let layer_ref = match &doc.root[0] {
         LayerNode::Leaf(l) => l,
         _ => panic!("Expected leaf layer"),
     };
 
-    let result = apply_filter_to_tile(&tile, layer_ref, coord, &palette_cache, &lut_cache, &threshold_cache, &doc);
+    let result = apply_filter_to_tile(
+        &tile,
+        layer_ref,
+        coord,
+        &palette_cache,
+        &lut_cache,
+        &threshold_cache,
+        &doc,
+    );
     assert!(
         result.is_ok(),
         "Legacy error diffusion auto-migration failed: {:?}",
@@ -490,17 +644,23 @@ fn legacy_error_diffusion_auto_migration() {
             assert!(
                 is_valid_level(r, &valid_levels),
                 "Legacy FS: Pixel ({}, {}): R={} not valid for levels=4",
-                x, y, r
+                x,
+                y,
+                r
             );
             assert!(
                 is_valid_level(g, &valid_levels),
                 "Legacy FS: Pixel ({}, {}): G={} not valid for levels=4",
-                x, y, g
+                x,
+                y,
+                g
             );
             assert!(
                 is_valid_level(b, &valid_levels),
                 "Legacy FS: Pixel ({}, {}): B={} not valid for levels=4",
-                x, y, b
+                x,
+                y,
+                b
             );
         }
     }
@@ -529,7 +689,7 @@ fn full_pipeline_via_document_handle() {
                 pixel_size: 1,
                 color_mode: DitherColorMode::Rgb,
                 palette_id: None,
-            ..Default::default()
+                ..Default::default()
             }),
         );
         layer.filters.push(filter);
@@ -541,7 +701,11 @@ fn full_pipeline_via_document_handle() {
     let lut_cache = PaletteLutCache::new();
     let threshold_cache = ThresholdMapCache::new();
     let tile = make_uniform_tile(0.5, 0.5, 0.5, 1.0);
-    let coord = TileCoord { level: 0, x: 0, y: 0 };
+    let coord = TileCoord {
+        level: 0,
+        x: 0,
+        y: 0,
+    };
 
     // Get snapshot and apply filter
     let snapshot = handle.snapshot();
@@ -550,7 +714,15 @@ fn full_pipeline_via_document_handle() {
         _ => panic!("Expected leaf layer"),
     };
 
-    let result = apply_filter_to_tile(&tile, layer_ref, coord, &palette_cache, &lut_cache, &threshold_cache, &snapshot);
+    let result = apply_filter_to_tile(
+        &tile,
+        layer_ref,
+        coord,
+        &palette_cache,
+        &lut_cache,
+        &threshold_cache,
+        &snapshot,
+    );
     assert!(result.is_ok(), "Full pipeline failed: {:?}", result.err());
 
     let output = result.unwrap();
@@ -563,7 +735,9 @@ fn full_pipeline_via_document_handle() {
             assert!(
                 is_valid_level(r, &valid_levels),
                 "Binary dither: Pixel ({}, {}): R={} should be 0.0 or 1.0",
-                x, y, r
+                x,
+                y,
+                r
             );
         }
     }

@@ -506,7 +506,7 @@ impl TileCache {
         }
     }
 
-    /// Protocol Ready: 200 only when the entry is clean and not behind `doc_gen`.
+    /// Fresh preview: clean and not behind `doc_gen`. Dirty still serves stale bytes.
     pub fn tile_entry_is_ready(dirty: bool, entry_generation: u64, doc_gen: u64) -> bool {
         !dirty && entry_generation >= doc_gen
     }

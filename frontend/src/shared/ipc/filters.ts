@@ -9,10 +9,16 @@ export async function addFilter(
   docId: number,
   layerId: number,
   kind: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  extras?: { algorithmId?: string }
 ): Promise<{ filter_id: string }> {
   return invoke<{ filter_id: string }>('add_filter', {
-    req: withDocId(docId, { layer_id: layerId, kind, params }),
+    req: withDocId(docId, {
+      layer_id: layerId,
+      kind,
+      params,
+      algorithm_id: extras?.algorithmId ?? null,
+    }),
   });
 }
 

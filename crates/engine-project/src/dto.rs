@@ -2,7 +2,7 @@
 
 use crate::document::Document;
 use crate::filter::FilterInstance;
-use crate::layer::{LayerNode};
+use crate::layer::LayerNode;
 use crate::types::{DocumentId, FilterInstanceId, LayerId};
 use serde::{Deserialize, Serialize};
 
@@ -64,6 +64,10 @@ pub struct FilterInstanceDto {
     pub enabled: bool,
     pub opacity: f32,
     pub blend_mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub algorithm_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_version: Option<u32>,
 }
 
 /// Convert a Document to a DocumentSnapshotDto.
@@ -76,7 +80,11 @@ pub fn document_to_dto(doc: &Document) -> DocumentSnapshotDto {
         height: doc.height,
         revision: doc.revision,
         layers,
-        palettes: doc.palettes.iter().map(|p| crate::types::PaletteId::new(p.id)).collect(),
+        palettes: doc
+            .palettes
+            .iter()
+            .map(|p| crate::types::PaletteId::new(p.id))
+            .collect(),
     }
 }
 
@@ -137,6 +145,8 @@ fn filter_to_dto(filter: &FilterInstance) -> FilterInstanceDto {
         enabled: filter.enabled,
         opacity: filter.opacity,
         blend_mode: filter.blend_mode.to_string(),
+        algorithm_id: filter.algorithm_id.clone(),
+        schema_version: filter.schema_version,
     }
 }
 
@@ -178,7 +188,10 @@ mod tests {
     fn filter_to_dto_serializes() {
         let filter = crate::filter::FilterInstance::new(
             crate::filter::FilterKind::Curves,
-            crate::filter::FilterParams::Curves { curve: vec![], channel: crate::filters::curves::CurveChannel::All },
+            crate::filter::FilterParams::Curves {
+                curve: vec![],
+                channel: crate::filters::curves::CurveChannel::All,
+            },
         );
         let dto = filter_to_dto(&filter);
 

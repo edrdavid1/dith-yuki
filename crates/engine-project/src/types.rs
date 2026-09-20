@@ -252,8 +252,14 @@ mod tests {
     #[test]
     fn blend_mode_from_name_accepts_ui_and_rejects_reserved() {
         assert_eq!(BlendMode::from_name("Normal"), Some(BlendMode::Normal));
-        assert_eq!(BlendMode::from_name("color_dodge"), Some(BlendMode::ColorDodge));
-        assert_eq!(BlendMode::from_name("ColorDodge"), Some(BlendMode::ColorDodge));
+        assert_eq!(
+            BlendMode::from_name("color_dodge"),
+            Some(BlendMode::ColorDodge)
+        );
+        assert_eq!(
+            BlendMode::from_name("ColorDodge"),
+            Some(BlendMode::ColorDodge)
+        );
         assert!(BlendMode::from_name("Reserved").is_none());
         assert!(BlendMode::from_name("Reserved12").is_none());
         assert!(BlendMode::Reserved12.is_reserved());

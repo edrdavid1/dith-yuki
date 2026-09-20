@@ -47,10 +47,15 @@ export default function DropdownMenu({
 }: DropdownMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const fieldRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const [menuPosition, setMenuPosition] = useState<{ top: number; left: number; width: number } | null>(null);
 
   const selectedOption = options.find((option) => option.value === value);
   const displayLabel = selectedOption ? selectedOption.label : value;
+
+  const hostDocument = () =>
+    containerRef.current?.ownerDocument ?? fieldRef.current?.ownerDocument ?? document;
 
   const toggleOpen = useCallback(() => {
     if (disabled) return;
@@ -66,13 +71,12 @@ export default function DropdownMenu({
     [disabled, onSelect]
   );
 
-  // Calculate menu position when opening via portal
   useLayoutEffect(() => {
-    if (!isOpen || !containerRef.current) {
+    if (!isOpen || !fieldRef.current) {
       setMenuPosition(null);
       return;
     }
-    const rect = containerRef.current.getBoundingClientRect();
+    const rect = fieldRef.current.getBoundingClientRect();
     setMenuPosition({
       top: rect.bottom,
       left: rect.left,
@@ -82,13 +86,14 @@ export default function DropdownMenu({
 
   useEffect(() => {
     if (!isOpen) return;
+    const doc = hostDocument();
+    const view = doc.defaultView ?? window;
     const handleClickOutside = (event: MouseEvent) => {
-      if (!containerRef.current?.contains(event.target as Node)) {
-        // Also check if click is inside the portal-rendered menu
-        const portalTarget = document.getElementById('overlay-portal');
-        if (portalTarget?.contains(event.target as Node)) return;
-        setIsOpen(false);
-      }
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (containerRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
+      setIsOpen(false);
     };
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -96,72 +101,31 @@ export default function DropdownMenu({
       }
     };
 
-    window.addEventListener('mousedown', handleClickOutside);
-    window.addEventListener('keydown', handleEscape);
+    doc.addEventListener('mousedown', handleClickOutside);
+    view.addEventListener('keydown', handleEscape);
+    const handleScroll = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Node && menuRef.current?.contains(target)) return;
+      setIsOpen(false);
+    };
+    doc.addEventListener('scroll', handleScroll, true);
+    view.addEventListener('wheel', handleScroll, { capture: true, passive: true });
     return () => {
-      window.removeEventListener('mousedown', handleClickOutside);
-      window.removeEventListener('keydown', handleEscape);
+      doc.removeEventListener('mousedown', handleClickOutside);
+      view.removeEventListener('keydown', handleEscape);
+      doc.removeEventListener('scroll', handleScroll, true);
+      view.removeEventListener('wheel', handleScroll, true);
     };
   }, [isOpen]);
 
-  const renderMenu = () => {
-    const menuContent = (
-      <div
-        className={cn("lp-dropdown-menu")}
-        style={menuPosition ? {
-          position: 'fixed',
-          top: `${menuPosition.top}px`,
-          left: `${menuPosition.left}px`,
-          width: `${menuPosition.width}px`,
-          right: 'auto',
-        } : undefined}
-      >
-        <SimpleBar style={{ maxHeight: '220px' }}>
-          <ul role="listbox" aria-label="Options list" style={{ margin: 0, padding: '2px 0', listStyle: 'none' }}>
-            {options.map((option, index) => {
-              const prev = options[index - 1];
-              const showGroup = Boolean(option.group) && option.group !== prev?.group;
-              return (
-                <li key={option.value}>
-                  {showGroup && (
-                    <div className={cn('lp-dropdown-group')} role="presentation">
-                      {option.group}
-                    </div>
-                  )}
-                  <div
-                    className={cn(
-                      'lp-dropdown-menu-item',
-                      option.value === value && 'active',
-                      option.disabled && 'disabled'
-                    )}
-                    role="option"
-                    aria-selected={option.value === value}
-                    onClick={() => !option.disabled && handleSelect(option.value)}
-                  >
-                    {renderOption ? renderOption(option) : option.label}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        </SimpleBar>
-      </div>
-    );
-
-    // Try to render via portal to #overlay-portal
-    const portalTarget = document.getElementById('overlay-portal');
-    if (portalTarget && menuPosition) {
-      return createPortal(menuContent, portalTarget);
-    }
-
-    // Graceful fallback: render inline if portal target not found
-    return menuContent;
-  };
+  const portalParent = hostDocument().body;
+  const showMenu = isOpen && menuPosition != null && portalParent != null;
 
   return (
     <div className={cn('lp-dropdown-wrap', className)} ref={containerRef}>
       {label ? <label className={cn("slider-label")}>{label}</label> : null}
       <div
+        ref={fieldRef}
         className={cn('lp-dropdown-field', disabled && 'disabled')}
         role="button"
         aria-haspopup="listbox"
@@ -190,7 +154,51 @@ export default function DropdownMenu({
           aria-label="Open dropdown"
         />
       </div>
-      {isOpen && renderMenu()}
+      {showMenu &&
+        createPortal(
+          <div
+            ref={menuRef}
+            className={cn("lp-dropdown-menu")}
+            style={{
+              position: 'fixed',
+              top: `${menuPosition.top}px`,
+              left: `${menuPosition.left}px`,
+              width: `${menuPosition.width}px`,
+              right: 'auto',
+            }}
+          >
+            <SimpleBar style={{ maxHeight: '220px' }}>
+              <ul role="listbox" aria-label="Options list" style={{ margin: 0, padding: '2px 0', listStyle: 'none' }}>
+                {options.map((option, index) => {
+                  const prev = options[index - 1];
+                  const showGroup = Boolean(option.group) && option.group !== prev?.group;
+                  return (
+                    <li key={option.value}>
+                      {showGroup && (
+                        <div className={cn('lp-dropdown-group')} role="presentation">
+                          {option.group}
+                        </div>
+                      )}
+                      <div
+                        className={cn(
+                          'lp-dropdown-menu-item',
+                          option.value === value && 'active',
+                          option.disabled && 'disabled'
+                        )}
+                        role="option"
+                        aria-selected={option.value === value}
+                        onClick={() => !option.disabled && handleSelect(option.value)}
+                      >
+                        {renderOption ? renderOption(option) : option.label}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </SimpleBar>
+          </div>,
+          portalParent
+        )}
     </div>
   );
 }

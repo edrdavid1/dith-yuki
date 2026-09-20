@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import SimpleBar from 'simplebar-react';
 import { useShell } from '../../app/shell/ShellContext';
 import {
@@ -6,10 +6,9 @@ import {
   previewBackgroundStyle,
 } from '../preview/previewBackground';
 import {
-  applyWorkspacePreset,
-  builtinWorkspacePresets,
-  type WorkspacePreset,
-} from '../panels/workspacePresets';
+  WELCOME_BACKGROUNDS,
+  welcomeBackgroundStyle,
+} from '../preview/welcomeBackground';
 import {
   eventToChord,
   formatChords,
@@ -23,25 +22,19 @@ import { bind } from '../../shared/ui/cn';
 
 const cn = bind({ ...styles, ...paramStyles });
 
-const LAYOUT_PRESETS = builtinWorkspacePresets();
-
 /**
  * Application preferences body (chrome comes from PreferencesDialog).
  */
 export default function PreferencesPanel() {
   const {
-    setSidebarCollapsed,
-    setSidebarWidth,
-    setSplitRatio,
     autoExtractPalettes,
     setAutoExtractPalettes,
     previewBackground,
     setPreviewBackground,
+    welcomeBackground,
+    setWelcomeBackground,
   } = useShell();
   const { bindings, capturing, setCapturing, setBinding, resetDefaults } = useShortcuts();
-
-  const [busy, setBusy] = useState(false);
-  const [activePresetId, setActivePresetId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!capturing) return;
@@ -60,60 +53,11 @@ export default function PreferencesPanel() {
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [capturing, setBinding, setCapturing]);
 
-  const handleApplyPreset = useCallback(
-    async (preset: WorkspacePreset) => {
-      setBusy(true);
-      try {
-        await applyWorkspacePreset(preset, {
-          setSidebarWidth,
-          setSidebarCollapsed,
-          setSplitRatio,
-        });
-        setActivePresetId(preset.id);
-      } catch (err) {
-        console.error('Apply workspace preset failed:', err);
-      } finally {
-        setBusy(false);
-      }
-    },
-    [setSidebarWidth, setSidebarCollapsed, setSplitRatio]
-  );
-
   return (
     <div className={cn('preferences-panel')}>
       <SimpleBar className={cn('preferences-scroll')} style={{ height: '100%' }}>
         <div className={cn('preferences-body')}>
       <details className={cn('preferences-section')} open>
-        <summary id="prefs-layout-heading" className={cn('preferences-section-title')}>
-          Layout
-        </summary>
-
-        <p className={cn('preferences-hint')}>
-          Starting layouts: pick which panel sits on the left, the rest go to the
-          right. You can still rearrange everything yourself — drag panels between
-          sides or into floating windows.
-        </p>
-
-        <div className={cn('preferences-btn-row')} role="group" aria-label="Workspace layout">
-          {LAYOUT_PRESETS.map((preset) => (
-            <button
-              key={preset.id}
-              type="button"
-              className={cn(
-                'preferences-button',
-                activePresetId === preset.id && 'preferences-button-active'
-              )}
-              disabled={busy}
-              aria-pressed={activePresetId === preset.id}
-              onClick={() => void handleApplyPreset(preset)}
-            >
-              {preset.name}
-            </button>
-          ))}
-        </div>
-      </details>
-
-      <details className={cn('preferences-section')}>
         <summary id="prefs-color-heading" className={cn('preferences-section-title')}>
           Color / Palettes
         </summary>
@@ -131,9 +75,11 @@ export default function PreferencesPanel() {
       </details>
 
       <details className={cn('preferences-section')}>
-        <summary id="prefs-preview-heading" className={cn('preferences-section-title')}>
-          Preview
+        <summary id="prefs-theme-heading" className={cn('preferences-section-title')}>
+          Theme
         </summary>
+
+        <p className={cn('preferences-label')}>Preview background</p>
         <p className={cn('preferences-hint')}>
           Fill behind the image in the preview canvas.
         </p>
@@ -153,6 +99,33 @@ export default function PreferencesPanel() {
                 aria-pressed={selected}
                 title={preset.label}
                 onClick={() => setPreviewBackground(preset.id)}
+              />
+            );
+          })}
+        </div>
+
+        <p className={cn('preferences-label', 'preferences-label-spaced')}>
+          Welcome background
+        </p>
+        <div
+          className={cn('preferences-thumb-row')}
+          role="group"
+          aria-label="Welcome background"
+        >
+          {WELCOME_BACKGROUNDS.map((preset) => {
+            const selected = welcomeBackground === preset.id;
+            return (
+              <button
+                key={preset.id}
+                type="button"
+                className={cn(
+                  'preferences-thumb',
+                  selected && 'preferences-thumb-active'
+                )}
+                style={welcomeBackgroundStyle(preset.id)}
+                aria-label={preset.label}
+                aria-pressed={selected}
+                onClick={() => setWelcomeBackground(preset.id)}
               />
             );
           })}

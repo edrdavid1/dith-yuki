@@ -42,7 +42,7 @@ fn make_fs_params(levels: u16) -> DitherParamsV2 {
         pixel_size: 1,
         color_mode: DitherColorMode::Rgb,
         palette_id: None,
-            ..Default::default()
+        ..Default::default()
     }
 }
 
@@ -83,7 +83,9 @@ fn cross_tile_propagation_affects_neighbor_output() {
         &params,
         &store,
         layer_id,
-        &palette_cache, &lut_cache, &doc,
+        &palette_cache,
+        &lut_cache,
+        &doc,
     )
     .unwrap();
 
@@ -94,7 +96,9 @@ fn cross_tile_propagation_affects_neighbor_output() {
         &params,
         &store,
         layer_id,
-        &palette_cache, &lut_cache, &doc,
+        &palette_cache,
+        &lut_cache,
+        &doc,
     )
     .unwrap();
 
@@ -105,7 +109,9 @@ fn cross_tile_propagation_affects_neighbor_output() {
         &params,
         &store,
         layer_id,
-        &palette_cache, &lut_cache, &doc,
+        &palette_cache,
+        &lut_cache,
+        &doc,
     )
     .unwrap();
 
@@ -116,7 +122,9 @@ fn cross_tile_propagation_affects_neighbor_output() {
         &params,
         &store,
         layer_id,
-        &palette_cache, &lut_cache, &doc,
+        &palette_cache,
+        &lut_cache,
+        &doc,
     )
     .unwrap();
 
@@ -130,7 +138,9 @@ fn cross_tile_propagation_affects_neighbor_output() {
         &params,
         &isolated_store,
         layer_id,
-        &palette_cache, &lut_cache, &doc,
+        &palette_cache,
+        &lut_cache,
+        &doc,
     )
     .unwrap();
 
@@ -174,7 +184,9 @@ fn cross_tile_propagation_affects_neighbor_output() {
             &params,
             &isolated_store_2,
             layer_id,
-            &palette_cache, &lut_cache, &doc,
+            &palette_cache,
+            &lut_cache,
+            &doc,
         )
         .unwrap();
 
@@ -209,7 +221,9 @@ fn cross_tile_propagation_affects_neighbor_output() {
         &params,
         &isolated_store_3,
         layer_id,
-        &palette_cache, &lut_cache, &doc,
+        &palette_cache,
+        &lut_cache,
+        &doc,
     )
     .unwrap();
 
@@ -250,14 +264,50 @@ fn residuals_stored_and_retrievable_for_2x2_grid() {
     let store = ErrorResidualsStore::new();
 
     // Process all 4 tiles in row-major order
-    apply_error_diffusion(&tile, tc(0, 0), &params, &store, layer_id, &palette_cache, &lut_cache, &doc)
-        .unwrap();
-    apply_error_diffusion(&tile, tc(1, 0), &params, &store, layer_id, &palette_cache, &lut_cache, &doc)
-        .unwrap();
-    apply_error_diffusion(&tile, tc(0, 1), &params, &store, layer_id, &palette_cache, &lut_cache, &doc)
-        .unwrap();
-    apply_error_diffusion(&tile, tc(1, 1), &params, &store, layer_id, &palette_cache, &lut_cache, &doc)
-        .unwrap();
+    apply_error_diffusion(
+        &tile,
+        tc(0, 0),
+        &params,
+        &store,
+        layer_id,
+        &palette_cache,
+        &lut_cache,
+        &doc,
+    )
+    .unwrap();
+    apply_error_diffusion(
+        &tile,
+        tc(1, 0),
+        &params,
+        &store,
+        layer_id,
+        &palette_cache,
+        &lut_cache,
+        &doc,
+    )
+    .unwrap();
+    apply_error_diffusion(
+        &tile,
+        tc(0, 1),
+        &params,
+        &store,
+        layer_id,
+        &palette_cache,
+        &lut_cache,
+        &doc,
+    )
+    .unwrap();
+    apply_error_diffusion(
+        &tile,
+        tc(1, 1),
+        &params,
+        &store,
+        layer_id,
+        &palette_cache,
+        &lut_cache,
+        &doc,
+    )
+    .unwrap();
 
     // After processing, residuals should exist for all 4 tiles:
     // - (0,0)'s right residuals readable by (1,0) via get_left
@@ -306,12 +356,24 @@ fn minimal_left_propagation_test() {
 
     // Step 1: Process tile (0,0) — stores residuals
     let store = ErrorResidualsStore::new();
-    apply_error_diffusion(&tile, tc(0, 0), &params, &store, layer_id, &palette_cache, &lut_cache, &doc)
-        .unwrap();
+    apply_error_diffusion(
+        &tile,
+        tc(0, 0),
+        &params,
+        &store,
+        layer_id,
+        &palette_cache,
+        &lut_cache,
+        &doc,
+    )
+    .unwrap();
 
     // Verify residuals were stored
     let left_residuals = store.get_left(1, layer_id, tc(1, 0));
-    assert!(left_residuals.is_some(), "Residuals from (0,0) should be available");
+    assert!(
+        left_residuals.is_some(),
+        "Residuals from (0,0) should be available"
+    );
 
     // Step 2: Check that stored residuals have non-zero values
     let residuals = left_residuals.unwrap();
@@ -328,7 +390,9 @@ fn minimal_left_propagation_test() {
         &params,
         &store,
         layer_id,
-        &palette_cache, &lut_cache, &doc,
+        &palette_cache,
+        &lut_cache,
+        &doc,
     )
     .unwrap();
 
@@ -340,7 +404,9 @@ fn minimal_left_propagation_test() {
         &params,
         &empty_store,
         layer_id,
-        &palette_cache, &lut_cache, &doc,
+        &palette_cache,
+        &lut_cache,
+        &doc,
     )
     .unwrap();
 
@@ -385,8 +451,17 @@ fn atkinson_cross_tile_propagation() {
 
     // Process (0,0) then (1,0) with propagation
     let store = ErrorResidualsStore::new();
-    apply_error_diffusion(&tile, tc(0, 0), &params, &store, layer_id, &palette_cache, &lut_cache, &doc)
-        .unwrap();
+    apply_error_diffusion(
+        &tile,
+        tc(0, 0),
+        &params,
+        &store,
+        layer_id,
+        &palette_cache,
+        &lut_cache,
+        &doc,
+    )
+    .unwrap();
 
     let result_with = apply_error_diffusion(
         &tile,
@@ -394,7 +469,9 @@ fn atkinson_cross_tile_propagation() {
         &params,
         &store,
         layer_id,
-        &palette_cache, &lut_cache, &doc,
+        &palette_cache,
+        &lut_cache,
+        &doc,
     )
     .unwrap();
 
@@ -406,7 +483,9 @@ fn atkinson_cross_tile_propagation() {
         &params,
         &empty_store,
         layer_id,
-        &palette_cache, &lut_cache, &doc,
+        &palette_cache,
+        &lut_cache,
+        &doc,
     )
     .unwrap();
 

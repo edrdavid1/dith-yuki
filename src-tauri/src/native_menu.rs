@@ -34,8 +34,13 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
         true,
         Some("CmdOrCtrl+,"),
     )?;
-    let check_updates =
-        MenuItem::with_id(app, "check-updates", "Check for Updates…", true, None::<&str>)?;
+    let check_updates = MenuItem::with_id(
+        app,
+        "check-updates",
+        "Check for Updates…",
+        true,
+        None::<&str>,
+    )?;
 
     let app_menu = Submenu::with_items(
         app,
@@ -62,8 +67,7 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
         true,
         Some("CmdOrCtrl+N"),
     )?;
-    let open_image =
-        MenuItem::with_id(app, "open-image", "Open Image", true, Some("CmdOrCtrl+O"))?;
+    let open_image = MenuItem::with_id(app, "open-image", "Open Image", true, Some("CmdOrCtrl+O"))?;
     let import_layer = MenuItem::with_id(
         app,
         "import-image-layer",
@@ -78,8 +82,13 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
         true,
         Some("CmdOrCtrl+Shift+O"),
     )?;
-    let save_project =
-        MenuItem::with_id(app, "save-project", "Save Project", true, Some("CmdOrCtrl+S"))?;
+    let save_project = MenuItem::with_id(
+        app,
+        "save-project",
+        "Save Project",
+        true,
+        Some("CmdOrCtrl+S"),
+    )?;
     let save_project_as = MenuItem::with_id(
         app,
         "save-project-as",
@@ -116,12 +125,14 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
     let presets_menu =
         Submenu::with_items(app, "Presets", true, &[&export_pattern, &import_pattern])?;
 
-    let color_lab = MenuItem::with_id(app, "color-lab", "Open Color Lab", true, None::<&str>)?;
-    let color_lab_menu = Submenu::with_items(app, "Color Lab", true, &[&color_lab])?;
-
     let help_item = MenuItem::with_id(app, "help", "Dither Yuki Help", true, None::<&str>)?;
-    let help_updates =
-        MenuItem::with_id(app, "help-check-updates", "Check for Updates…", true, None::<&str>)?;
+    let help_updates = MenuItem::with_id(
+        app,
+        "help-check-updates",
+        "Check for Updates…",
+        true,
+        None::<&str>,
+    )?;
     let help_menu = Submenu::with_items(app, "Help", true, &[&help_item, &help_updates])?;
 
     Menu::with_items(
@@ -131,7 +142,6 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
             &file_menu,
             &edit_menu,
             &presets_menu,
-            &color_lab_menu,
             &help_menu,
         ],
     )
@@ -223,26 +233,24 @@ fn observe_edit_menu_for_system_items() {
 
     unsafe {
         let name: id = NSString::alloc(nil).init_str("NSMenuDidBeginTrackingNotification");
-        let block = ConcreteBlock::new(|notification: id| {
-            unsafe {
-                let menu: id = msg_send![notification, object];
-                if menu == nil {
-                    return;
-                }
-                let count: usize = msg_send![menu, numberOfItems];
-                if count == 0 {
-                    return;
-                }
-                let first: id = msg_send![menu, itemAtIndex: 0usize];
-                if first == nil {
-                    return;
-                }
-                let title: id = msg_send![first, title];
-                let undo: id = NSString::alloc(nil).init_str("Undo");
-                let is_undo: bool = msg_send![title, isEqualToString: undo];
-                if is_undo {
-                    strip_unwanted_edit_items(menu);
-                }
+        let block = ConcreteBlock::new(|notification: id| unsafe {
+            let menu: id = msg_send![notification, object];
+            if menu == nil {
+                return;
+            }
+            let count: usize = msg_send![menu, numberOfItems];
+            if count == 0 {
+                return;
+            }
+            let first: id = msg_send![menu, itemAtIndex: 0usize];
+            if first == nil {
+                return;
+            }
+            let title: id = msg_send![first, title];
+            let undo: id = NSString::alloc(nil).init_str("Undo");
+            let is_undo: bool = msg_send![title, isEqualToString: undo];
+            if is_undo {
+                strip_unwanted_edit_items(menu);
             }
         });
         let block = block.copy();

@@ -183,6 +183,8 @@ function applyAppChromePolicy(model: Model): Model {
       // Invisible overlap splitter — borders of stacked panels share one line.
       splitterSize: 0,
       splitterExtra: 4,
+      // No left/right edge-dock hit targets (sidebar is a vertical stack only).
+      enableEdgeDock: false,
     })
   );
   normalizeSideToVerticalStack(model);

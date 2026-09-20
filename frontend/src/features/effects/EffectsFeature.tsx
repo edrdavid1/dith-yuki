@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import EffectSettingsPanel from './EffectSettingsPanel';
 import type { LayerWithFilters } from './EffectSettingsPanel';
 import { useAppDispatch, useAppSelector } from '../../app/hooks';
-import { addLayerWithEffect } from '../../app/slices/layersSlice';
+import { addLayerWithAlgorithm, addLayerWithEffect } from '../../app/slices/layersSlice';
 import { refreshFilters, selectFiltersList } from '../../app/slices/filtersSlice';
 import { setSelection } from '../../app/slices/selectionSlice';
 import { useEffectLayer } from '../../hooks/useEffectLayer';
@@ -59,7 +59,10 @@ export default function EffectsFeature({
 
   const selectedLayerWithFilters: LayerWithFilters | null = useMemo(() => {
     if (selectedFilterId === null) return null;
-    if (!effectLayer.effectType || !effectLayer.effectParams || !effectLayer.filterId) {
+    if (!effectLayer.effectParams || !effectLayer.filterId) {
+      return null;
+    }
+    if (!effectLayer.effectType && !selectedFilter?.algorithm_id) {
       return null;
     }
     const layerId = currentLayerForEffect ?? selectedLayerId;
@@ -77,6 +80,7 @@ export default function EffectsFeature({
           enabled: selectedFilter?.enabled ?? true,
           opacity: effectLayer.opacity,
           blend_mode: effectLayer.blendMode,
+          algorithm_id: selectedFilter?.algorithm_id ?? null,
         },
       ],
     };
@@ -88,6 +92,7 @@ export default function EffectsFeature({
     effectLayer.opacity,
     effectLayer.blendMode,
     selectedFilter?.enabled,
+    selectedFilter?.algorithm_id,
     currentLayerForEffect,
     selectedLayerId,
     layers,
@@ -174,11 +179,24 @@ export default function EffectsFeature({
     [dispatch, docId, layers]
   );
 
+  const handleSelectAlgorithm = useCallback(
+    (algorithmId: string) => {
+      void dispatch(addLayerWithAlgorithm({ docId, layers, algorithmId })).then((result) => {
+        if (addLayerWithAlgorithm.fulfilled.match(result) && result.payload != null) {
+          void dispatch(setSelection({ layerId: result.payload, filterId: null }));
+          void dispatch(refreshFilters());
+        }
+      });
+    },
+    [dispatch, docId, layers]
+  );
+
   return (
     <EffectSettingsPanel
       selectedLayer={selectedLayerWithFilters}
       onUpdateParams={handleUpdateParams}
       onSelectEffect={handleSelectEffect}
+      onSelectAlgorithm={handleSelectAlgorithm}
       onTitleBarMouseDown={onTitleBarMouseDown}
       dockSide={dockSide}
       onMoveToSide={onMoveToSide}

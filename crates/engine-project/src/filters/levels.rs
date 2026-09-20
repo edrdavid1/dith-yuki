@@ -109,7 +109,11 @@ impl LevelsFilter {
     }
 
     /// Apply levels into an existing buffer (full 260² write, no alloc).
-    pub fn apply_to_tile_into(&self, tile: &PixelTile, dst: &mut PixelTile) -> Result<(), EngineError> {
+    pub fn apply_to_tile_into(
+        &self,
+        tile: &PixelTile,
+        dst: &mut PixelTile,
+    ) -> Result<(), EngineError> {
         use crate::simd::levels_row_simd;
         use engine_tiles::{HALO, TILE_SIZE};
 
@@ -140,7 +144,10 @@ impl Default for LevelsFilter {
 /// This is an exact copy of the current `apply_to_tile` implementation at the time of snapshotting.
 /// Used to verify that optimized versions (LUT-based) produce identical or near-identical output.
 #[cfg(test)]
-pub fn reference_levels_apply_to_tile(filter: &LevelsFilter, tile: &PixelTile) -> Result<PixelTile, EngineError> {
+pub fn reference_levels_apply_to_tile(
+    filter: &LevelsFilter,
+    tile: &PixelTile,
+) -> Result<PixelTile, EngineError> {
     let mut result = PixelTile::new();
 
     // Iterate over all pixels in the tile (256+4 for halo)
@@ -149,7 +156,8 @@ pub fn reference_levels_apply_to_tile(filter: &LevelsFilter, tile: &PixelTile) -
             // Apply to RGB channels
             for c in 0..3 {
                 let val = tile.at(x, y, c);
-                let adjusted = if [filter.channel_r, filter.channel_g, filter.channel_b][c as usize] {
+                let adjusted = if [filter.channel_r, filter.channel_g, filter.channel_b][c as usize]
+                {
                     filter.apply_to_value(val)
                 } else {
                     0.0

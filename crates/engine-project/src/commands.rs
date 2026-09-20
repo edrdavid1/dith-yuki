@@ -9,8 +9,8 @@ use crate::document::DocumentHandle;
 use crate::error::EngineError;
 use crate::invalidation::*;
 use crate::layer::LayerNode;
-use crate::types::{LayerId, LayerKind, BlendMode, DocumentId};
-use crate::{Layer};
+use crate::types::{BlendMode, DocumentId, LayerId, LayerKind};
+use crate::Layer;
 use engine_tiles::TileCache;
 
 /// Mutation patch for layer properties.
@@ -55,7 +55,12 @@ pub fn add_layer(
 
         // Find parent and insert
         if let Some(parent_id) = args.parent_group {
-            insert_layer_into_parent(&mut doc.root, parent_id, LayerNode::Leaf(new_layer), args.index);
+            insert_layer_into_parent(
+                &mut doc.root,
+                parent_id,
+                LayerNode::Leaf(new_layer),
+                args.index,
+            );
         } else {
             // Insert at root level
             if args.index <= doc.root.len() {
@@ -85,7 +90,7 @@ pub fn remove_layer(
         validate_document_consistency(doc, layer_id)
             .ok()
             .unwrap_or(());
-        
+
         remove_layer_from_tree_vec(&mut doc.root, layer_id);
         doc.increment_generation();
     });

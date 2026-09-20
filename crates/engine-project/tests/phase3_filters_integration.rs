@@ -4,11 +4,10 @@
 //! to documents, layers, and tiles. These tests demonstrate the complete filter
 //! system working together.
 
-use engine_project::{
-    Document, DocumentHandle, FilterInstance, FilterKind, FilterParams,
-    Layer, LayerKind, LayerId,
-};
 use engine_project::filters::curves::CurveChannel;
+use engine_project::{
+    Document, DocumentHandle, FilterInstance, FilterKind, FilterParams, Layer, LayerId, LayerKind,
+};
 use engine_tiles::PixelTile;
 use std::time::Instant;
 
@@ -204,9 +203,9 @@ fn disable_and_reenable_filter() {
 
 #[test]
 fn filter_performance_benchmark() {
+    use engine_project::filters::curves::CurveChannel;
     use engine_project::filters::curves::CurvesFilter;
     use engine_project::filters::levels::LevelsFilter;
-    use engine_project::filters::curves::CurveChannel;
 
     let tile = PixelTile::new();
 
@@ -220,7 +219,11 @@ fn filter_performance_benchmark() {
     let per_tile_micros = curves_time.as_micros() / 10;
     println!("Curves filter: {:.2} μs per tile", per_tile_micros);
     // In release mode: <5 μs, in debug mode: expect more but should be reasonable
-    assert!(per_tile_micros < 10_000, "Curves too slow: {} μs per tile", per_tile_micros);
+    assert!(
+        per_tile_micros < 10_000,
+        "Curves too slow: {} μs per tile",
+        per_tile_micros
+    );
 
     // Benchmark Levels filter
     let levels_filter = LevelsFilter::new();
@@ -231,7 +234,11 @@ fn filter_performance_benchmark() {
     let levels_time = start.elapsed();
     let per_tile_micros = levels_time.as_micros() / 10;
     println!("Levels filter: {:.2} μs per tile", per_tile_micros);
-    assert!(per_tile_micros < 10_000, "Levels too slow: {} μs per tile", per_tile_micros);
+    assert!(
+        per_tile_micros < 10_000,
+        "Levels too slow: {} μs per tile",
+        per_tile_micros
+    );
 }
 
 #[test]

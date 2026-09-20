@@ -1,7 +1,7 @@
-use std::sync::Mutex;
 use crate::commands::selection::SelectionState;
 use crate::panel_manager::PanelManager;
 use crate::viewport::ViewportState;
+use std::sync::Mutex;
 
 pub struct UiState {
     pub viewport: Mutex<ViewportState>,

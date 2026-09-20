@@ -1,12 +1,12 @@
 # Вкладки и мультипроектность
 
 > As-built документация: несколько открытых проектов в одном процессе, tab bar, shared tile cache.  
-> Версия приложения: **0.2.0**. Последнее обновление: 4 сентября 2026.
+> Версия приложения: **0.2.0**. Последнее обновление: 5 сентября 2026.
 >
 > **См. также:**
 > - [architecture.md](./architecture.md) — общий стек и IPC
 > - [tile-pipeline.md](./tile-pipeline.md) — тайлы, стадии Raw / Processed / Composite
-> - Спеки: `.cursor-spec/runtime-document-id/`, `window-chrome-tabs/`, `multi-doc-cache-budget/`, `multi-doc-save-export-raw/`, **`multi-doc-global-fix/`** (P0 data-safety + tab UX)
+> - Память на больших доках: [`.cursor-spec/track-c-memory/SPEC.md`](../.cursor-spec/track-c-memory/SPEC.md)
 
 ---
 
@@ -161,7 +161,7 @@ EvictContext {
 | Soft trim на deactivate | **Явно не делаем** (гарантированный cold return-to-tab). Но тот же эффект уже есть: **pressure** при multi-doc часто сносит inactive Composite/Processed — return на вкладку то warm, то full recompute (в т.ч. far-corner FS — секунды в debug). Это **текущее** поведение, не «отложенная фича» |
 | Activate / open | Только `evict_inactive_for_pressure_if_needed` (пустой viewport) |
 
-**Следствие:** N больших изображений ≈ N × ~149 MiB Raw pinned в RAM. 512 MiB — потолок в основном для Processed/Composite preview, не для process RAM и не для произвольного N×Raw. Warning при многих opens + долгосрочно out-of-cache raster source (ADR **D**) — см. `multi-doc-global-fix` M4.
+**Следствие:** N больших изображений ≈ N × ~149 MiB Raw pinned в RAM. 512 MiB — потолок в основном для Processed/Composite preview, не для process RAM и не для произвольного N×Raw. Warning при многих opens + долгосрочно out-of-cache raster source — follow-up Track C.
 
 Pressure вызывается на write path (worker, tile_pipeline, open/install) и на activate.
 
@@ -305,21 +305,15 @@ close_document(A)
 
 ## 11. Известные ограничения и follow-ups
 
-План M1–M7: [`.cursor-spec/multi-doc-global-fix/`](../.cursor-spec/multi-doc-global-fix/SPEC.md). Статус после `fix/multi-doc-global`:
+M1–M7 закрыты в as-built (явный `doc_id`, per-tab Guard, neighbor close, lint `doc: 1`). Осталось:
 
-| Тема | Статус | Spec |
-|------|--------|------|
-| Мутации IPC с явным `doc_id` | Done — `require_session(doc_id)` на writes | **M1 P0** |
-| UnsavedGuard на close вкладки | Done — per-tab Save / Don’t Save / Cancel | **M2 P0** |
-| Soft trim Composite на deactivate | Явный trim **не** делаем; **pressure уже** сносит inactive Composite/Processed недетерминированно (warm vs cold return-to-tab) | **M3** (docs) |
-| 512 MiB «Budget» | Потолок в основном Processed/Composite; N×Raw ~149 MiB pinned вне него; warning при ≥3 docs | **M4a**; **ADR D** later |
-| Raw вне TileCache / reload (ADR **D**) | Follow-up; единственный реальный потолок process RAM | **M4b** ↑ priority |
-| Neighbor activation после close | Done — right else left | **M5** |
-| `dirty-changed` / undo events с `doc_id` | Done — listeners ignore foreign | **M6** |
-| Литерал `doc: 1` | CI: `lint:no-magic-doc1` | **M7** |
-| Quit multi-dirty | Done — sequential UnsavedGuard for all dirty tabs | — |
-| Per-doc доли бюджета / memory UI | Follow-up | — |
-| Split view / два холста | Non-goal | — |
+| Тема | Статус |
+|------|--------|
+| Soft trim Composite на deactivate | Явный trim нет; pressure уже сносит inactive Composite/Processed |
+| RAM budget | Adaptive 25% / 512 MiB–4 GiB (Track C Phase 1); Raw open sessions pinned |
+| Raw вне TileCache / reload | Follow-up |
+| Per-doc доли бюджета / memory UI | Follow-up ([track-c-memory](../.cursor-spec/track-c-memory/SPEC.md)) |
+| Split view / два холста | Non-goal |
 
 ---
 
@@ -342,9 +336,9 @@ close_document(A)
 
 1. **Registry + monotonic runtime id** — не второй глобальный handle; id не reuse.
 2. **`TileKey.doc`** — изоляция тайлов / residuals / BRC.
-3. **Budget 512 MiB + pressure** — inactive first; Raw open sessions hard-pinned; viewport protect includes finer pyramid children of visible L>0 tiles (otherwise 8K fit-to-view starves Composite parents).
+3. **Adaptive RAM budget + pressure** — inactive first; Raw open sessions hard-pinned; viewport protect includes finer pyramid children of visible L>0 tiles.
 4. **Doc-aware assemble + split errors** — SessionGone vs RawIncomplete.
 5. **Palette caches `(doc, palette_id)`** — нет cross-doc LUT collision.
 6. **Tab chrome** — вкладки в title area; registry уже готов до UI.
 
-Спеки-источники лежат в `.cursor-spec/`; этот файл — стабильный as-built обзор для разработчиков и QA.
+Этот файл — as-built обзор. Новая работа по памяти — [track-c-memory](../.cursor-spec/track-c-memory/SPEC.md).

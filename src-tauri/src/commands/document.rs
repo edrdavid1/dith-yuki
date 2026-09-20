@@ -1,17 +1,19 @@
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tauri::{AppHandle, State};
 
-use crate::commands::{AppState, QuitGuard, DocumentResponse, emit_document_changed, schedule_dirty_viewport_tiles};
-use crate::document_session::{emit_tabs_changed, OpenDocumentsPayload};
-use crate::services::{DocumentService, AppError};
-pub use crate::services::document_service::{
-    BlankBackground, DocumentResponse as DocResponse, ExportImageRequest, ExportPatternRequest,
-    ImportPatternRequest, ImportPatternResponse, LoadImageResponse, OpenProjectResponse,
-    SaveProjectResponse, MAX_DOCUMENT_DIMENSION, IMAGE_IMPORT_EXTENSIONS,
-    validate_document_dimensions, place_image_at_origin, blank_rgba_f32, f32_to_u8,
-    encode_rgba_to_png,
+use crate::commands::{
+    emit_document_changed, schedule_dirty_viewport_tiles, AppState, DocumentResponse, QuitGuard,
 };
+use crate::document_session::{emit_tabs_changed, OpenDocumentsPayload};
+pub use crate::services::document_service::{
+    blank_rgba_f32, encode_rgba_to_png, f32_to_u8, place_image_at_origin,
+    validate_document_dimensions, BlankBackground, DocumentResponse as DocResponse,
+    ExportImageRequest, ExportPatternRequest, ImportPatternRequest, ImportPatternResponse,
+    LoadImageResponse, OpenProjectResponse, SaveProjectResponse, IMAGE_IMPORT_EXTENSIONS,
+    MAX_DOCUMENT_DIMENSION,
+};
+use crate::services::{AppError, DocumentService};
 
 #[tauri::command]
 pub fn allow_app_exit(gate: State<'_, Arc<QuitGuard>>) {
@@ -37,9 +39,7 @@ pub fn new_document(
 }
 
 #[tauri::command]
-pub fn get_document_snapshot(
-    state: State<'_, Arc<AppState>>,
-) -> Result<DocumentResponse, String> {
+pub fn get_document_snapshot(state: State<'_, Arc<AppState>>) -> Result<DocumentResponse, String> {
     DocumentService::new(state.inner().clone())
         .get_document_snapshot()
         .map_err(|e| e.to_string())

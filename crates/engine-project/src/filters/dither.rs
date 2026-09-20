@@ -14,10 +14,7 @@ use std::path::Path;
 const TILE_FULL_SIZE: u32 = 260;
 
 /// 2x2 Bayer matrix normalized to [0, 1) range.
-const BAYER_2X2: [[f32; 2]; 2] = [
-    [0.0 / 4.0, 2.0 / 4.0],
-    [3.0 / 4.0, 1.0 / 4.0],
-];
+const BAYER_2X2: [[f32; 2]; 2] = [[0.0 / 4.0, 2.0 / 4.0], [3.0 / 4.0, 1.0 / 4.0]];
 
 /// 4x4 Bayer matrix normalized to [0, 1) range.
 #[rustfmt::skip]
@@ -64,7 +61,10 @@ impl DitherFilter {
                 reason: "Color depth must be 1-8 bits".to_string(),
             });
         }
-        Ok(DitherFilter { algorithm, color_depth })
+        Ok(DitherFilter {
+            algorithm,
+            color_depth,
+        })
     }
 
     /// Quantize a pixel value to the target color depth (round to nearest).
@@ -75,7 +75,11 @@ impl DitherFilter {
     }
 
     /// Legacy apply method for backward compatibility.
-    pub fn apply_to_tile(&self, tile: &PixelTile, coord: TileCoord) -> Result<PixelTile, EngineError> {
+    pub fn apply_to_tile(
+        &self,
+        tile: &PixelTile,
+        coord: TileCoord,
+    ) -> Result<PixelTile, EngineError> {
         let cache = ThresholdMapCache::new();
         let mode = match self.algorithm {
             DitherAlgorithm::FloydSteinberg => DitherMode::ErrorDiffusion {
@@ -104,13 +108,24 @@ impl DitherFilter {
             });
         }
         match mode {
-            DitherMode::Bayer { matrix_size } => Self::apply_bayer(tile, coord, *matrix_size, color_depth),
-            DitherMode::ThresholdMap { path } => Self::apply_threshold_map(tile, coord, path, color_depth, threshold_cache),
-            DitherMode::ErrorDiffusion { kernel } => Self::apply_error_diffusion(tile, *kernel, color_depth),
+            DitherMode::Bayer { matrix_size } => {
+                Self::apply_bayer(tile, coord, *matrix_size, color_depth)
+            }
+            DitherMode::ThresholdMap { path } => {
+                Self::apply_threshold_map(tile, coord, path, color_depth, threshold_cache)
+            }
+            DitherMode::ErrorDiffusion { kernel } => {
+                Self::apply_error_diffusion(tile, *kernel, color_depth)
+            }
         }
     }
 
-    fn apply_bayer(tile: &PixelTile, coord: TileCoord, matrix_size: u8, color_depth: u8) -> Result<PixelTile, EngineError> {
+    fn apply_bayer(
+        tile: &PixelTile,
+        coord: TileCoord,
+        matrix_size: u8,
+        color_depth: u8,
+    ) -> Result<PixelTile, EngineError> {
         if !matches!(matrix_size, 2 | 4 | 8) {
             return Err(EngineError::InvalidFilterParams {
                 reason: "Bayer matrix_size must be 2, 4, or 8".to_string(),
@@ -132,7 +147,8 @@ impl DitherFilter {
                 let threshold_offset = threshold - 0.5;
                 for c in 0..3u32 {
                     let pixel = tile.at(x, y, c);
-                    let quantized = ((pixel * levels + threshold_offset).round()).clamp(0.0, levels) / levels;
+                    let quantized =
+                        ((pixel * levels + threshold_offset).round()).clamp(0.0, levels) / levels;
                     result.set(x, y, c, quantized);
                 }
                 result.set(x, y, 3, tile.at(x, y, 3));
@@ -141,10 +157,19 @@ impl DitherFilter {
         Ok(result)
     }
 
-    fn apply_threshold_map(tile: &PixelTile, coord: TileCoord, path: &str, color_depth: u8, threshold_cache: &ThresholdMapCache) -> Result<PixelTile, EngineError> {
-        let map = threshold_cache.get_or_load(Path::new(path)).map_err(|e| EngineError::IoError {
-            reason: format!("Failed to load threshold map: {}", e),
-        })?;
+    fn apply_threshold_map(
+        tile: &PixelTile,
+        coord: TileCoord,
+        path: &str,
+        color_depth: u8,
+        threshold_cache: &ThresholdMapCache,
+    ) -> Result<PixelTile, EngineError> {
+        let map =
+            threshold_cache
+                .get_or_load(Path::new(path))
+                .map_err(|e| EngineError::IoError {
+                    reason: format!("Failed to load threshold map: {}", e),
+                })?;
         let levels = ((1u32 << color_depth) - 1) as f32;
         let mut result = PixelTile::new();
         for y in 0u32..TILE_FULL_SIZE {
@@ -154,7 +179,8 @@ impl DitherFilter {
                 let threshold_offset = threshold - 0.5;
                 for c in 0..3u32 {
                     let pixel = tile.at(x, y, c);
-                    let quantized = ((pixel * levels + threshold_offset).round()).clamp(0.0, levels) / levels;
+                    let quantized =
+                        ((pixel * levels + threshold_offset).round()).clamp(0.0, levels) / levels;
                     result.set(x, y, c, quantized);
                 }
                 result.set(x, y, 3, tile.at(x, y, 3));
@@ -163,7 +189,11 @@ impl DitherFilter {
         Ok(result)
     }
 
-    fn apply_error_diffusion(tile: &PixelTile, kernel: DiffusionKernel, color_depth: u8) -> Result<PixelTile, EngineError> {
+    fn apply_error_diffusion(
+        tile: &PixelTile,
+        kernel: DiffusionKernel,
+        color_depth: u8,
+    ) -> Result<PixelTile, EngineError> {
         let levels = ((1u32 << color_depth) - 1) as f32;
         let size = TILE_FULL_SIZE as usize;
         let mut buffer = vec![0.0f32; size * size * 3];
@@ -192,12 +222,28 @@ impl DitherFilter {
     }
 }
 
-fn distribute_error(buffer: &mut [f32], x: usize, y: usize, c: usize, size: usize, error: f32, kernel: DiffusionKernel) {
+fn distribute_error(
+    buffer: &mut [f32],
+    x: usize,
+    y: usize,
+    c: usize,
+    size: usize,
+    error: f32,
+    kernel: DiffusionKernel,
+) {
     apply_offsets(buffer, x, y, c, size, error, kernel.offsets());
 }
 
 #[inline]
-fn apply_offsets(buffer: &mut [f32], x: usize, y: usize, c: usize, size: usize, error: f32, offsets: &[(i32, i32, f32)]) {
+fn apply_offsets(
+    buffer: &mut [f32],
+    x: usize,
+    y: usize,
+    c: usize,
+    size: usize,
+    error: f32,
+    offsets: &[(i32, i32, f32)],
+) {
     for &(dx, dy, weight) in offsets {
         let nx = x as i32 + dx;
         let ny = y as i32 + dy;
@@ -306,7 +352,9 @@ mod tests {
     fn floyd_steinberg_produces_valid_levels() {
         let tile = make_uniform_tile(0.5, 0.3, 0.7, 1.0);
         let cache = ThresholdMapCache::new();
-        let mode = DitherMode::ErrorDiffusion { kernel: DiffusionKernel::FloydSteinberg };
+        let mode = DitherMode::ErrorDiffusion {
+            kernel: DiffusionKernel::FloydSteinberg,
+        };
         let result = DitherFilter::apply(&tile, tc(0, 0), &mode, 4, &cache).unwrap();
         let levels = 15.0f32;
         for y in 0u32..TILE_FULL_SIZE {
@@ -322,7 +370,9 @@ mod tests {
     fn atkinson_produces_valid_levels() {
         let tile = make_uniform_tile(0.6, 0.4, 0.2, 1.0);
         let cache = ThresholdMapCache::new();
-        let mode = DitherMode::ErrorDiffusion { kernel: DiffusionKernel::Atkinson };
+        let mode = DitherMode::ErrorDiffusion {
+            kernel: DiffusionKernel::Atkinson,
+        };
         let result = DitherFilter::apply(&tile, tc(0, 0), &mode, 3, &cache).unwrap();
         let levels = 7.0f32;
         for y in 0u32..TILE_FULL_SIZE {
@@ -338,7 +388,9 @@ mod tests {
     fn jjn_produces_valid_levels() {
         let tile = make_uniform_tile(0.1, 0.9, 0.5, 1.0);
         let cache = ThresholdMapCache::new();
-        let mode = DitherMode::ErrorDiffusion { kernel: DiffusionKernel::JarvisJudiceNinke };
+        let mode = DitherMode::ErrorDiffusion {
+            kernel: DiffusionKernel::JarvisJudiceNinke,
+        };
         let result = DitherFilter::apply(&tile, tc(0, 0), &mode, 2, &cache).unwrap();
         let levels = 3.0f32;
         for y in 0u32..TILE_FULL_SIZE {
@@ -354,7 +406,9 @@ mod tests {
     fn stucki_produces_valid_levels() {
         let tile = make_uniform_tile(0.33, 0.67, 0.5, 1.0);
         let cache = ThresholdMapCache::new();
-        let mode = DitherMode::ErrorDiffusion { kernel: DiffusionKernel::Stucki };
+        let mode = DitherMode::ErrorDiffusion {
+            kernel: DiffusionKernel::Stucki,
+        };
         let result = DitherFilter::apply(&tile, tc(0, 0), &mode, 4, &cache).unwrap();
         let levels = 15.0f32;
         for y in 0u32..TILE_FULL_SIZE {
@@ -370,7 +424,9 @@ mod tests {
     fn error_diffusion_preserves_alpha() {
         let tile = make_uniform_tile(0.5, 0.5, 0.5, 0.77);
         let cache = ThresholdMapCache::new();
-        let mode = DitherMode::ErrorDiffusion { kernel: DiffusionKernel::FloydSteinberg };
+        let mode = DitherMode::ErrorDiffusion {
+            kernel: DiffusionKernel::FloydSteinberg,
+        };
         let result = DitherFilter::apply(&tile, tc(0, 0), &mode, 4, &cache).unwrap();
         for y in 0u32..TILE_FULL_SIZE {
             for x in 0u32..TILE_FULL_SIZE {
@@ -419,7 +475,9 @@ mod tests {
     fn error_diffusion_is_deterministic() {
         let tile = make_uniform_tile(0.5, 0.3, 0.7, 1.0);
         let cache = ThresholdMapCache::new();
-        let mode = DitherMode::ErrorDiffusion { kernel: DiffusionKernel::FloydSteinberg };
+        let mode = DitherMode::ErrorDiffusion {
+            kernel: DiffusionKernel::FloydSteinberg,
+        };
         let r1 = DitherFilter::apply(&tile, tc(0, 0), &mode, 4, &cache).unwrap();
         let r2 = DitherFilter::apply(&tile, tc(0, 0), &mode, 4, &cache).unwrap();
         assert_eq!(r1.data, r2.data);

@@ -23,6 +23,7 @@ mod prefer;
 pub mod resident;
 mod stats;
 mod warmup;
+mod vram_budget;
 
 pub use bayer::{apply_bayer_gpu, BayerGpuParams, BayerMatrixSize};
 pub use composite::{
@@ -52,6 +53,10 @@ pub use stats::not_worse_than;
 pub use warmup::{
     cap_warmup_coords, select_warmup_coords, slots_per_warmup_coord, viewport_vram_reserve,
     warmup_slot_budget,
+};
+pub use vram_budget::{
+    compute_vram_budget, query_adapter_memory, resolve_vram_budget, VramBudget, VramBudgetSource,
+    MAX_VRAM_BUDGET_BYTES, MIN_VRAM_BUDGET_BYTES,
 };
 pub use resident::{
     GpuTileCache, GpuVramStats, ResidentBayerPipelines, ResidentCompositePipelines,

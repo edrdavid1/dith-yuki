@@ -4,17 +4,14 @@
 //! These commands are called from the React frontend when the layout changes or
 //! at startup/shutdown to persist layout state to disk.
 
-use tauri::{State, Manager};
 use std::sync::Arc;
+use tauri::{Manager, State};
 
 use crate::commands::AppState;
 use crate::flexlayout_persistence::{FlexLayoutPersistence, LayoutPersistenceError};
 
 #[tauri::command]
-pub fn save_layout(
-    state: State<Arc<AppState>>,
-    json: String,
-) -> Result<(), String> {
+pub fn save_layout(state: State<Arc<AppState>>, json: String) -> Result<(), String> {
     let persistence = state
         .flexlayout_persistence
         .lock()
@@ -80,36 +77,42 @@ pub fn reset_layout_to_default(state: State<Arc<AppState>>) -> Result<String, St
 
 #[tauri::command]
 pub fn load_layout_left(state: State<Arc<AppState>>) -> Result<String, String> {
-    let p = state.flexlayout_left.lock()
+    let p = state
+        .flexlayout_left
+        .lock()
         .map_err(|e| format!("Failed to lock left persistence: {}", e))?;
-    p.load().map_err(|e| format!("Failed to load left layout: {:?}", e))
+    p.load()
+        .map_err(|e| format!("Failed to load left layout: {:?}", e))
 }
 
 #[tauri::command]
-pub fn save_layout_left(
-    state: State<Arc<AppState>>,
-    json: String,
-) -> Result<(), String> {
-    let p = state.flexlayout_left.lock()
+pub fn save_layout_left(state: State<Arc<AppState>>, json: String) -> Result<(), String> {
+    let p = state
+        .flexlayout_left
+        .lock()
         .map_err(|e| format!("Failed to lock left persistence: {}", e))?;
-    p.save(&json).map_err(|e| format!("Failed to save left layout: {:?}", e))
+    p.save(&json)
+        .map_err(|e| format!("Failed to save left layout: {:?}", e))
 }
 
 #[tauri::command]
 pub fn load_layout_right(state: State<Arc<AppState>>) -> Result<String, String> {
-    let p = state.flexlayout_right.lock()
+    let p = state
+        .flexlayout_right
+        .lock()
         .map_err(|e| format!("Failed to lock right persistence: {}", e))?;
-    p.load().map_err(|e| format!("Failed to load right layout: {:?}", e))
+    p.load()
+        .map_err(|e| format!("Failed to load right layout: {:?}", e))
 }
 
 #[tauri::command]
-pub fn save_layout_right(
-    state: State<Arc<AppState>>,
-    json: String,
-) -> Result<(), String> {
-    let p = state.flexlayout_right.lock()
+pub fn save_layout_right(state: State<Arc<AppState>>, json: String) -> Result<(), String> {
+    let p = state
+        .flexlayout_right
+        .lock()
         .map_err(|e| format!("Failed to lock right persistence: {}", e))?;
-    p.save(&json).map_err(|e| format!("Failed to save right layout: {:?}", e))
+    p.save(&json)
+        .map_err(|e| format!("Failed to save right layout: {:?}", e))
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
-use std::sync::{Arc, Mutex};
-use engine_project::document::Document;
 use crate::undo::UndoManager;
+use engine_project::document::Document;
+use std::sync::{Arc, Mutex};
 
 pub struct HistoryState {
     pub undo_manager: Mutex<UndoManager>,

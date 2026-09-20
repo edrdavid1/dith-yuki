@@ -7,9 +7,29 @@ members = [
     "crates/engine-io",
     "crates/engine-project",
     "crates/engine-gpu",
+    "crates/engine-registry",
 ]
 
 resolver = "2"
 
 [workspace.package]
 edition = "2021"
+
+# Hot path crates: keep symbols for debugging but avoid glacial debug codegen.
+# `tauri:dev` still uses the dev profile; for full speed use `npm run tauri:dev:release`.
+[profile.dev.package.engine-project]
+opt-level = 2
+[profile.dev.package.engine-tiles]
+opt-level = 2
+[profile.dev.package.engine-color]
+opt-level = 2
+[profile.dev.package.engine-gpu]
+opt-level = 2
+[profile.dev.package.engine-registry]
+opt-level = 2
+[profile.dev.package.engine-core]
+opt-level = 2
+[profile.dev.package.engine-io]
+opt-level = 2
+[profile.dev.package.dither]
+opt-level = 2

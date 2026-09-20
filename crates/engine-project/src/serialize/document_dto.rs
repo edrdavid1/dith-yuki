@@ -9,6 +9,7 @@ use crate::layer::{Layer, LayerGroup, LayerNode};
 use crate::mask::MaskRef;
 use crate::types::{BlendMode, ColorProfileRef, LayerId, LayerKind, TileBounds};
 use engine_color::palette::{LinearColor, Palette};
+use engine_registry::AlgorithmRegistry;
 use serde::{Deserialize, Serialize};
 
 /// Root of `document.json`.
@@ -78,12 +79,17 @@ fn default_filter_opacity() -> f32 {
 pub struct FilterInstanceFile {
     pub id: crate::types::FilterInstanceId,
     pub kind: FilterKind,
-    pub params: FilterParams,
+    /// Tagged `FilterParams` JSON, or verbatim unknown-algorithm params (task 5.2).
+    pub params: serde_json::Value,
     pub enabled: bool,
     #[serde(default = "default_filter_opacity")]
     pub opacity: f32,
     #[serde(default)]
     pub blend_mode: BlendMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub algorithm_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_version: Option<u32>,
 }
 
 impl DocumentFile {
@@ -164,25 +170,95 @@ fn layer_to_file(
     }
 }
 
-fn filter_to_file(f: &FilterInstance) -> FilterInstanceFile {
+pub fn filter_to_file(f: &FilterInstance) -> FilterInstanceFile {
+    let params = match &f.params {
+        FilterParams::Placeholder(p) if p.raw_params.is_some() => p.raw_params.clone().unwrap(),
+        other => serde_json::to_value(other).unwrap_or(serde_json::Value::Null),
+    };
     FilterInstanceFile {
         id: f.id,
         kind: f.kind,
-        params: f.params.clone(),
+        params,
         enabled: f.enabled,
         opacity: f.opacity,
         blend_mode: f.blend_mode,
+        algorithm_id: f.algorithm_id.clone(),
+        schema_version: f.schema_version,
     }
 }
 
 /// Rebuild a runtime [`FilterInstance`] with fresh `requires_full_row` from kind/params.
-pub fn filter_from_file(f: &FilterInstanceFile) -> FilterInstance {
-    let mut inst = FilterInstance::new(f.kind, f.params.clone());
+///
+/// When `algorithm_id` is unknown, the instance becomes a disabled Placeholder
+/// that round-trips `params` verbatim (Req 8.1, 8.4).
+pub fn filter_from_file(
+    f: &FilterInstanceFile,
+    registry: Option<&AlgorithmRegistry>,
+) -> FilterInstance {
+    let registry = registry.unwrap_or_else(|| crate::algorithms::builtin_registry());
+    let mut params_json = f.params.clone();
+
+    if let Some(id) = f.algorithm_id.as_deref() {
+        if registry.get_by_str(id).is_none() {
+            let mut inst = FilterInstance::new(
+                FilterKind::Placeholder,
+                FilterParams::Placeholder(crate::filter::PlaceholderParams {
+                    label: id.to_string(),
+                    raw_params: Some(f.params.clone()),
+                }),
+            );
+            inst.id = f.id;
+            inst.enabled = false;
+            inst.opacity = f.opacity;
+            inst.blend_mode = f.blend_mode;
+            inst.algorithm_id = Some(id.to_string());
+            inst.schema_version = f.schema_version;
+            return inst;
+        }
+        if let Some(algo) = registry.get_by_str(id) {
+            let mut inner = inner_params_json(&params_json);
+            let before = inner.clone();
+            let old_ver = f.schema_version.unwrap_or(1);
+            algo.migrate_params(old_ver, &mut inner);
+            if inner != before {
+                params_json = rewrap_params_json(&f.params, inner);
+            }
+        }
+    }
+
+    let params = serde_json::from_value::<FilterParams>(params_json.clone()).unwrap_or_else(|_| {
+        FilterParams::Placeholder(crate::filter::PlaceholderParams {
+            label: f.algorithm_id.clone().unwrap_or_else(|| "invalid".into()),
+            raw_params: Some(params_json),
+        })
+    });
+    let mut inst = FilterInstance::new(f.kind, params);
     inst.id = f.id;
     inst.enabled = f.enabled;
     inst.opacity = f.opacity;
     inst.blend_mode = f.blend_mode;
+    inst.algorithm_id = f.algorithm_id.clone();
+    inst.schema_version = f.schema_version;
     inst
+}
+
+fn inner_params_json(params: &serde_json::Value) -> serde_json::Value {
+    if let Ok(fp) = serde_json::from_value::<FilterParams>(params.clone()) {
+        crate::filter::filter_params_to_json(&fp).unwrap_or_else(|_| params.clone())
+    } else {
+        params.clone()
+    }
+}
+
+fn rewrap_params_json(original: &serde_json::Value, inner: serde_json::Value) -> serde_json::Value {
+    if let Some(obj) = original.as_object() {
+        if obj.len() == 1 {
+            if let Some(tag) = obj.keys().next() {
+                return serde_json::json!({ tag: inner });
+            }
+        }
+    }
+    inner
 }
 
 /// Convert file layer node to runtime (ids already remapped).
@@ -197,7 +273,11 @@ pub fn layer_node_from_file(node: &LayerNodeFile) -> LayerNode {
             visible: layer.visible,
             offset: layer.offset,
             mask: layer.mask.clone(),
-            filters: layer.filters.iter().map(filter_from_file).collect(),
+            filters: layer
+                .filters
+                .iter()
+                .map(|f| filter_from_file(f, None))
+                .collect(),
             bounds_l0: layer.bounds_l0,
         }),
         LayerNodeFile::Group(group) => LayerNode::Group(LayerGroup {
@@ -232,6 +312,10 @@ mod tests {
     use crate::filter::{DitherModeV2, DitherParamsV2};
     use crate::mask::MaskStorage;
     use crate::types::{DocumentId, FilterInstanceId, PaletteId};
+
+    fn file_params(p: FilterParams) -> serde_json::Value {
+        serde_json::to_value(p).unwrap()
+    }
 
     #[test]
     fn document_file_omits_requires_full_row_and_sets_raw_asset() {
@@ -281,16 +365,18 @@ mod tests {
         let f = FilterInstanceFile {
             id: FilterInstanceId::new(),
             kind: FilterKind::Dither,
-            params: FilterParams::DitherV2(DitherParamsV2 {
+            params: file_params(FilterParams::DitherV2(DitherParamsV2 {
                 mode: DitherModeV2::Atkinson,
                 levels: 4,
                 ..DitherParamsV2::default()
-            }),
+            })),
             enabled: true,
             opacity: 1.0,
             blend_mode: BlendMode::Normal,
+            algorithm_id: None,
+            schema_version: None,
         };
-        let inst = filter_from_file(&f);
+        let inst = filter_from_file(&f, None);
         assert!(inst.requires_full_row);
         assert_eq!(inst.id, f.id);
         assert_eq!(inst.opacity, 1.0);
@@ -302,14 +388,16 @@ mod tests {
         let f = FilterInstanceFile {
             id: FilterInstanceId::new(),
             kind: FilterKind::Dither,
-            params: FilterParams::DitherV2(DitherParamsV2 {
+            params: file_params(FilterParams::DitherV2(DitherParamsV2 {
                 mode: DitherModeV2::Atkinson,
                 levels: 4,
                 ..DitherParamsV2::default()
-            }),
+            })),
             enabled: true,
             opacity: 0.5,
             blend_mode: BlendMode::Multiply,
+            algorithm_id: None,
+            schema_version: None,
         };
         let mut value = serde_json::to_value(&f).unwrap();
         let obj = value.as_object_mut().unwrap();
@@ -318,7 +406,7 @@ mod tests {
         let restored: FilterInstanceFile = serde_json::from_value(value).unwrap();
         assert_eq!(restored.opacity, 1.0);
         assert_eq!(restored.blend_mode, BlendMode::Normal);
-        let inst = filter_from_file(&restored);
+        let inst = filter_from_file(&restored, None);
         assert_eq!(inst.opacity, 1.0);
         assert_eq!(inst.blend_mode, BlendMode::Normal);
     }
@@ -328,20 +416,46 @@ mod tests {
         let f = FilterInstanceFile {
             id: FilterInstanceId::new(),
             kind: FilterKind::Dither,
-            params: FilterParams::DitherV2(DitherParamsV2 {
+            params: file_params(FilterParams::DitherV2(DitherParamsV2 {
                 mode: DitherModeV2::CustomPng {
                     path: "abcdef0123456789abcdef0123456789.png".into(),
                 },
                 levels: 2,
                 ..DitherParamsV2::default()
-            }),
+            })),
             enabled: true,
             opacity: 1.0,
             blend_mode: BlendMode::Normal,
+            algorithm_id: None,
+            schema_version: None,
         };
         let s = serde_json::to_string(&f).unwrap();
         assert!(s.contains("abcdef0123456789abcdef0123456789.png"));
         assert!(!s.contains('/'));
+    }
+
+    #[test]
+    fn algorithm_id_and_schema_version_roundtrip() {
+        let mut inst = FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::Bayer4x4,
+                levels: 4,
+                ..DitherParamsV2::default()
+            }),
+        );
+        inst.algorithm_id = Some("bayer_4x4".into());
+        inst.schema_version = Some(1);
+        let file = filter_to_file(&inst);
+        assert_eq!(file.algorithm_id.as_deref(), Some("bayer_4x4"));
+        assert_eq!(file.schema_version, Some(1));
+        let json = serde_json::to_value(&file).unwrap();
+        assert_eq!(json["algorithm_id"], "bayer_4x4");
+        assert_eq!(json["schema_version"], 1);
+        let restored: FilterInstanceFile = serde_json::from_value(json).unwrap();
+        let loaded = filter_from_file(&restored, None);
+        assert_eq!(loaded.algorithm_id.as_deref(), Some("bayer_4x4"));
+        assert_eq!(loaded.schema_version, Some(1));
     }
 
     #[test]
@@ -363,7 +477,8 @@ mod tests {
             bounds_l0: TileBounds::full_document(16, 16),
             raw_asset: Some("1.png".into()),
         };
-        let back: LayerFile = serde_json::from_str(&serde_json::to_string(&layer).unwrap()).unwrap();
+        let back: LayerFile =
+            serde_json::from_str(&serde_json::to_string(&layer).unwrap()).unwrap();
         assert_eq!(
             back.mask.unwrap().storage,
             MaskStorage::External(LayerId::new(99))

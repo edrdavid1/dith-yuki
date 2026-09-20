@@ -148,6 +148,66 @@ pub fn downsample_tile(parent: &PixelTile) -> PixelTile {
     child
 }
 
+/// Coarser tile that covers `coord` after `steps` pyramid steps up.
+pub fn ancestor_coord(coord: TileCoord, steps: u8) -> TileCoord {
+    TileCoord {
+        level: coord.level.saturating_add(steps),
+        x: coord.x >> steps,
+        y: coord.y >> steps,
+    }
+}
+
+/// Nearest-neighbor upsample of an ancestor tile into `child`'s 256² core.
+///
+/// Used as a preview stand-in when the child was evicted (Track C Phase 2).
+pub fn upsample_from_ancestor(
+    ancestor: &PixelTile,
+    child: TileCoord,
+    ancestor_c: TileCoord,
+) -> PixelTile {
+    debug_assert!(ancestor_c.level > child.level);
+    let level_diff = ancestor_c.level.saturating_sub(child.level);
+    let scale = 1u32 << level_diff;
+    let src_size = TILE_SIZE / scale;
+    let offset_x = child.x - ancestor_c.x * scale;
+    let offset_y = child.y - ancestor_c.y * scale;
+    let src_x0 = offset_x * src_size;
+    let src_y0 = offset_y * src_size;
+
+    let mut out = PixelTile::new();
+    for y in 0..TILE_SIZE {
+        for x in 0..TILE_SIZE {
+            let sx = src_x0 + x / scale;
+            let sy = src_y0 + y / scale;
+            for c in 0..4 {
+                let v = ancestor.at(sx + HALO, sy + HALO, c);
+                out.set(x + HALO, y + HALO, c, v);
+            }
+        }
+    }
+    out
+}
+
+/// First cached ancestor (L+1 … L+8) for `key`, if any.
+pub fn find_cached_ancestor(
+    cache: &TileCache,
+    key: TileKey,
+) -> Option<(TileCoord, Arc<PixelTile>)> {
+    for steps in 1u8..=8 {
+        let coord = ancestor_coord(key.coord, steps);
+        let ancestor_key = TileKey {
+            doc: key.doc,
+            layer: key.layer,
+            coord,
+            stage: key.stage,
+        };
+        if let Some(tile) = cache.get_entry(ancestor_key) {
+            return Some((coord, tile));
+        }
+    }
+    None
+}
+
 /// Generate a pyramid tile at level N by downsampling 4 child tiles at level N-1.
 ///
 /// Each pixel in the output tile is the average of a 2×2 block of pixels from
@@ -546,6 +606,57 @@ mod tests {
         let tile = l1.unwrap();
         assert!((tile.at(HALO, HALO, 0) - 0.4).abs() < 1e-5);
         assert_eq!(cache.entry_count(), 5);
+    }
+
+    #[test]
+    fn ancestor_coord_walks_up() {
+        let c = TileCoord { level: 0, x: 5, y: 7 };
+        assert_eq!(ancestor_coord(c, 1), TileCoord { level: 1, x: 2, y: 3 });
+        assert_eq!(ancestor_coord(c, 2), TileCoord { level: 2, x: 1, y: 1 });
+    }
+
+    #[test]
+    fn upsample_from_l1_copies_quadrant() {
+        let mut parent = PixelTile::new();
+        // Distinct values in the four 128² quadrants of the L1 core.
+        for y in 0..TILE_SIZE {
+            for x in 0..TILE_SIZE {
+                let q = (if x >= 128 { 1.0 } else { 0.0 }) + (if y >= 128 { 2.0 } else { 0.0 });
+                parent.set(x + HALO, y + HALO, 0, q);
+            }
+        }
+        let child = TileCoord { level: 0, x: 1, y: 1 };
+        let ancestor = TileCoord { level: 1, x: 0, y: 0 };
+        let up = upsample_from_ancestor(&parent, child, ancestor);
+        // BR quadrant of L1 is value 3.0
+        assert!((up.at(HALO, HALO, 0) - 3.0).abs() < 1e-5);
+        assert!((up.at(HALO + 255, HALO + 255, 0) - 3.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn find_cached_ancestor_skips_missing_l1() {
+        use std::sync::Arc;
+        let cache = TileCache::new(50_000_000);
+        let mut l2 = PixelTile::new();
+        l2.set(HALO, HALO, 0, 0.25);
+        cache.insert_fresh(
+            TileKey {
+                doc: 1,
+                layer: 0,
+                coord: TileCoord { level: 2, x: 0, y: 0 },
+                stage: CacheStage::Composite,
+            },
+            Arc::new(l2),
+        );
+        let key = TileKey {
+            doc: 1,
+            layer: 0,
+            coord: TileCoord { level: 0, x: 1, y: 0 },
+            stage: CacheStage::Composite,
+        };
+        let (coord, tile) = find_cached_ancestor(&cache, key).expect("L2");
+        assert_eq!(coord.level, 2);
+        assert!((tile.at(HALO, HALO, 0) - 0.25).abs() < 1e-5);
     }
 }
 

@@ -9,16 +9,17 @@
 //! - Adjust: Contrast / brightness / saturation / blur / sharpness / noise
 
 pub mod adjust;
-pub mod curves;
+pub mod context;
 pub mod crt;
+pub mod curves;
 pub mod dither;
 pub mod dither_diffusion;
 pub mod dither_ordered;
 pub mod dither_residuals;
 pub mod glitch;
 pub mod glow;
-pub mod gpu_graph;
 pub mod gpu_bridge;
+pub mod gpu_graph;
 pub mod levels;
 pub mod palette_quantize;
 
@@ -26,9 +27,9 @@ pub mod apply;
 
 // Re-export main API
 pub use apply::apply_filter_to_tile;
-pub use apply::apply_filter_to_tile_with_residuals;
 pub use apply::apply_filter_to_tile_with_caches;
 pub use apply::apply_filter_to_tile_with_park;
+pub use apply::apply_filter_to_tile_with_residuals;
 pub use curves::{CurveChannel, CurvesFilter};
 pub use dither::{DitherAlgorithm, DitherFilter};
 pub use glitch::{GlitchFilter, GlitchType};
@@ -43,3 +44,6 @@ pub use dither_residuals::{ErrorResiduals, ErrorResidualsStore, CORNER_PATCH};
 
 // Re-export error diffusion engine
 pub use dither_diffusion::{apply_error_diffusion, apply_error_diffusion_with_cache};
+
+// Re-export FilterContext
+pub use context::FilterContext;

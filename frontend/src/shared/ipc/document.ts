@@ -26,6 +26,8 @@ export interface SnapshotFilterInfo {
   enabled: boolean;
   opacity?: number;
   blend_mode?: string;
+  algorithm_id?: string | null;
+  schema_version?: number | null;
 }
 
 export type BlankBackground = 'transparent' | 'white';

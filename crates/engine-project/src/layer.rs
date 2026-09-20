@@ -68,7 +68,10 @@ impl Layer {
     }
 
     /// Find a filter by ID in this layer
-    pub fn find_filter(&self, filter_id: crate::types::FilterInstanceId) -> Option<&FilterInstance> {
+    pub fn find_filter(
+        &self,
+        filter_id: crate::types::FilterInstanceId,
+    ) -> Option<&FilterInstance> {
         self.filters.iter().find(|f| f.id == filter_id)
     }
 
@@ -97,7 +100,8 @@ impl Layer {
         match self.filters.iter().rev().find(|f| f.enabled) {
             Some(f) => matches!(
                 f.params,
-                crate::filter::FilterParams::DitherV2(_) | crate::filter::FilterParams::Dither { .. }
+                crate::filter::FilterParams::DitherV2(_)
+                    | crate::filter::FilterParams::Dither { .. }
             ),
             None => false,
         }
@@ -281,7 +285,11 @@ mod tests {
 
         // TreeWalker emits: GroupStart, Leaf(10), Leaf(20), then GroupEnd
         // (current placeholder impl may differ slightly)
-        assert!(walked.len() >= 3, "Expected at least 3 items, got {}", walked.len());
+        assert!(
+            walked.len() >= 3,
+            "Expected at least 3 items, got {}",
+            walked.len()
+        );
     }
 
     #[test]
@@ -289,13 +297,18 @@ mod tests {
         let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, 256, 256);
         let filter = crate::filter::FilterInstance::new(
             crate::filter::FilterKind::Curves,
-            crate::filter::FilterParams::Curves { curve: vec![], channel: crate::filters::curves::CurveChannel::All },
+            crate::filter::FilterParams::Curves {
+                curve: vec![],
+                channel: crate::filters::curves::CurveChannel::All,
+            },
         );
         let filter_id = filter.id;
         layer.filters.push(filter);
 
         assert!(layer.find_filter(filter_id).is_some());
-        assert!(layer.find_filter(crate::types::FilterInstanceId::new()).is_none());
+        assert!(layer
+            .find_filter(crate::types::FilterInstanceId::new())
+            .is_none());
     }
 
     #[test]

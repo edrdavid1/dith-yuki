@@ -6,12 +6,13 @@ use engine_color::palette_lut::{PaletteLutCache, DEFAULT_LUT_SIZE};
 use engine_gpu::{
     compile_graph, palette_guided_params, palette_mixed_params_from_palette,
     palette_quantize_params_from_lut, BayerPassParams, ComputeGraph, CpuCheckpointKind,
-    CrtPassParams, GraphCompileError, GraphLayerFilter, GpuPipelineKey, HalftonePassParams,
+    CrtPassParams, GpuPipelineKey, GraphCompileError, GraphLayerFilter, HalftonePassParams,
 };
 
 use crate::document::Document;
 use crate::filter::{
-    DitherColorMode, DitherModeV2, DitherParamsV2, FilterInstance, FilterParams, PaletteDitherMode,
+    filter_params_to_json, resolve_algorithm_id, DitherColorMode, DitherModeV2, DitherParamsV2,
+    FilterInstance, FilterParams, PaletteDitherMode,
 };
 
 /// Session palettes + LUT cache so Strict/Guided/Mixed/PaletteQuantize can be GPU nodes.
@@ -48,7 +49,47 @@ pub fn compile_layer_graph_with_palettes(
     compile_graph(&layer_to_graph_specs_with_palettes(filters, palettes))
 }
 
-fn filter_to_spec(filter: &FilterInstance, palettes: Option<&PaletteGraphCtx<'_>>) -> GraphLayerFilter {
+fn map_cpu_kind(kind: engine_registry::CpuCheckpointKind) -> CpuCheckpointKind {
+    match kind {
+        engine_registry::CpuCheckpointKind::ErrorDiffusion => CpuCheckpointKind::ErrorDiffusion,
+        engine_registry::CpuCheckpointKind::BlockGranularity => CpuCheckpointKind::BlockGranularity,
+        engine_registry::CpuCheckpointKind::IneligibleDither => CpuCheckpointKind::IneligibleDither,
+        engine_registry::CpuCheckpointKind::AdjustBlur => CpuCheckpointKind::AdjustBlur,
+        engine_registry::CpuCheckpointKind::UnsupportedFilter => {
+            CpuCheckpointKind::UnsupportedFilter
+        }
+        engine_registry::CpuCheckpointKind::FullStackFallback => {
+            CpuCheckpointKind::FullStackFallback
+        }
+    }
+}
+
+fn filter_to_spec(
+    filter: &FilterInstance,
+    palettes: Option<&PaletteGraphCtx<'_>>,
+) -> GraphLayerFilter {
+    if let Some(id) = resolve_algorithm_id(filter) {
+        if let Some(algo) = crate::algorithms::builtin_registry().get_by_str(&id) {
+            let params_json =
+                filter_params_to_json(&filter.params).unwrap_or(serde_json::Value::Null);
+            match algo.gpu_eligibility(&params_json) {
+                engine_registry::GpuEligibility::Eligible => {
+                    return build_gpu_layer_filter(filter, palettes);
+                }
+                engine_registry::GpuEligibility::Cpu(kind) => {
+                    return GraphLayerFilter::CpuCheckpoint(map_cpu_kind(kind));
+                }
+            }
+        }
+    }
+    build_gpu_layer_filter(filter, palettes)
+}
+
+/// Explicit GPU-graph boundary (Invariant 4): closed match on `FilterParams`.
+fn build_gpu_layer_filter(
+    filter: &FilterInstance,
+    palettes: Option<&PaletteGraphCtx<'_>>,
+) -> GraphLayerFilter {
     match &filter.params {
         FilterParams::DitherV2(p) => dither_v2_spec(p, palettes),
         FilterParams::PaletteQuantize {
@@ -287,8 +328,11 @@ mod tests {
                 ..Default::default()
             }),
         );
-        let g = compile_layer_graph(&[f]).unwrap();
-        assert!(g.is_gpu_only());
+        let specs = layer_to_graph_specs(&[f]);
+        assert!(matches!(
+            specs[0],
+            GraphLayerFilter::CpuCheckpoint(CpuCheckpointKind::IneligibleDither)
+        ));
     }
 
     #[test]

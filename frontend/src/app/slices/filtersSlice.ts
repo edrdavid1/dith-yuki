@@ -46,6 +46,8 @@ export const refreshFilters = createAsyncThunk(
         enabled: f.enabled ?? true,
         opacity: typeof f.opacity === 'number' ? f.opacity : 1,
         blend_mode: typeof f.blend_mode === 'string' ? f.blend_mode : 'Normal',
+        algorithm_id: f.algorithm_id ?? null,
+        schema_version: f.schema_version ?? null,
       })) as unknown as FilterInfo[];
     } catch (err) {
       logIpcError('filters.refresh', err);

@@ -16,8 +16,8 @@ use super::*;
 ///
 /// This is the fixture used by all integration tests to avoid interference.
 pub(crate) fn make_test_app_state() -> Arc<AppState> {
-    use engine_project::Document;
     use engine_project::types::DocumentId;
+    use engine_project::Document;
 
     let state = AppState::empty_process(None, 512 * 1024 * 1024, true);
     let mut doc = Document::new(DocumentId::new(1), 800, 600);
@@ -279,7 +279,10 @@ fn colors_to_oklab_gameboy_matches_linear_to_oklab() {
         assert!((got.l - want.l).abs() < 1e-4);
         assert!((got.a - want.a).abs() < 1e-4);
         assert!((got.b - want.b).abs() < 1e-4);
-        assert_eq!(got.srgb_hex.to_ascii_uppercase(), want.srgb_hex.to_ascii_uppercase());
+        assert_eq!(
+            got.srgb_hex.to_ascii_uppercase(),
+            want.srgb_hex.to_ascii_uppercase()
+        );
     }
 }
 
@@ -308,11 +311,13 @@ fn snapshot_palette_oklab(
     Ok(palette
         .colors
         .iter()
-        .map(|c| engine_color::linear_to_oklab(engine_color::LinRgb {
-            r: c.r,
-            g: c.g,
-            b: c.b,
-        }))
+        .map(|c| {
+            engine_color::linear_to_oklab(engine_color::LinRgb {
+                r: c.r,
+                g: c.g,
+                b: c.b,
+            })
+        })
         .collect())
 }
 
@@ -387,7 +392,8 @@ fn find_layers_referencing_palette_empty_tree() {
 fn find_layers_referencing_palette_no_references() {
     let state = make_test_app_state();
     let snapshot = state.active_session().unwrap().document_handle.snapshot();
-    let result = find_layers_referencing_palette(&snapshot.root, engine_project::types::PaletteId::new(1));
+    let result =
+        find_layers_referencing_palette(&snapshot.root, engine_project::types::PaletteId::new(1));
     assert!(result.is_empty());
 }
 
@@ -601,18 +607,16 @@ fn integration_palette_crud_lifecycle() {
     // Create palette
     let palette_id = PaletteId::new(1);
     session.document_handle.mutate(|doc| {
-            doc.palettes.push(engine_color::palette::Palette {
-                id: palette_id.0,
-                name: "Test Palette".to_string(),
-                colors: vec![
-                    engine_color::palette::LinearColor {
-                        r: 1.0,
-                        g: 0.0,
-                        b: 0.0,
-                    },
-                ],
-                revision: 1,
-            });
+        doc.palettes.push(engine_color::palette::Palette {
+            id: palette_id.0,
+            name: "Test Palette".to_string(),
+            colors: vec![engine_color::palette::LinearColor {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+            }],
+            revision: 1,
+        });
     });
 
     let snap = session.document_handle.snapshot();
@@ -711,18 +715,16 @@ fn integration_invalidation_cascade_on_palette_modify() {
     let palette_id = PaletteId::new(10);
     let session = state.must_active();
     session.document_handle.mutate(|doc| {
-            doc.palettes.push(engine_color::palette::Palette {
-                id: palette_id.0,
-                name: "Test".to_string(),
-                colors: vec![
-                    engine_color::palette::LinearColor {
-                        r: 1.0,
-                        g: 0.0,
-                        b: 0.0,
-                    },
-                ],
-                revision: 1,
-            });
+        doc.palettes.push(engine_color::palette::Palette {
+            id: palette_id.0,
+            name: "Test".to_string(),
+            colors: vec![engine_color::palette::LinearColor {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+            }],
+            revision: 1,
+        });
 
         if let engine_project::layer::LayerNode::Leaf(layer) = &mut doc.root[0] {
             layer.filters.push(FilterInstance::new(
@@ -742,7 +744,10 @@ fn integration_invalidation_cascade_on_palette_modify() {
     invalidate_palette_changed(palette_id, &state);
 
     let after_invalidate = cache_dirty_count(&state);
-    assert!(after_invalidate > initial_dirty, "Palette modification should dirty cache");
+    assert!(
+        after_invalidate > initial_dirty,
+        "Palette modification should dirty cache"
+    );
 }
 
 #[test]
@@ -754,12 +759,12 @@ fn integration_no_invalidation_for_unreferenced_palette() {
     // Create palette but don't use it
     let unused_palette_id = PaletteId::new(99);
     state.must_active().document_handle.mutate(|doc| {
-            doc.palettes.push(engine_color::palette::Palette {
-                id: unused_palette_id.0,
-                name: "Unused".to_string(),
-                colors: vec![],
-                revision: 1,
-            });
+        doc.palettes.push(engine_color::palette::Palette {
+            id: unused_palette_id.0,
+            name: "Unused".to_string(),
+            colors: vec![],
+            revision: 1,
+        });
     });
 
     seed_processed_tile(&state, 1);
@@ -785,12 +790,12 @@ fn integration_force_delete_palette_clears_references() {
 
     // Setup palette + reference
     state.must_active().document_handle.mutate(|doc| {
-            doc.palettes.push(engine_color::palette::Palette {
-                id: palette_id.0,
-                name: "Will Delete".to_string(),
-                colors: vec![],
-                revision: 1,
-            });
+        doc.palettes.push(engine_color::palette::Palette {
+            id: palette_id.0,
+            name: "Will Delete".to_string(),
+            colors: vec![],
+            revision: 1,
+        });
 
         if let engine_project::layer::LayerNode::Leaf(layer) = &mut doc.root[0] {
             layer.filters.push(FilterInstance::new(
@@ -843,7 +848,10 @@ fn invalid_create_size_leaves_document_unchanged() {
 #[test]
 fn blank_buffer_transparent_is_zeros_white_is_ones() {
     let transparent = blank_rgba_f32(2, 2, BlankBackground::Transparent);
-    assert!(transparent.iter().all(|&v| v == 0.0), "Transparent should be all zeros");
+    assert!(
+        transparent.iter().all(|&v| v == 0.0),
+        "Transparent should be all zeros"
+    );
 
     let white = blank_rgba_f32(2, 2, BlankBackground::White);
     for chunk in white.chunks(4) {
@@ -857,18 +865,15 @@ fn blank_buffer_transparent_is_zeros_white_is_ones() {
 #[test]
 fn create_blank_document_one_leaf_project_path_none() {
     let state = make_test_app_state();
-    let result =
-        create_blank_document(&state, 100, 100, BlankBackground::Transparent).unwrap();
+    let result = create_blank_document(&state, 100, 100, BlankBackground::Transparent).unwrap();
 
     let snap = state.must_active().document_handle.snapshot();
     assert_eq!(snap.root.len(), 1);
-    assert!(matches!(snap.root[0], engine_project::layer::LayerNode::Leaf(_)));
-    let path = state
-        .must_active()
-        .project_path
-        .lock()
-        .unwrap()
-        .clone();
+    assert!(matches!(
+        snap.root[0],
+        engine_project::layer::LayerNode::Leaf(_)
+    ));
+    let path = state.must_active().project_path.lock().unwrap().clone();
     assert!(path.is_none());
     assert_eq!(result.width, 100);
     assert_eq!(result.height, 100);
@@ -973,8 +978,7 @@ fn raw_pixel_at(state: &AppState, layer: u32, x: u32, y: u32) -> [f32; 4] {
 }
 
 fn solid_rgba(w: u32, h: u32, r: f32, g: f32, b: f32, a: f32) -> Vec<f32> {
-    vec![r, g, b, a]
-        .repeat((w * h) as usize)
+    vec![r, g, b, a].repeat((w * h) as usize)
 }
 
 #[test]
@@ -1006,7 +1010,12 @@ fn place_image_at_origin_pads_smaller_and_clips_larger() {
 
 fn raw_pixel_at_placed(buffer: &[f32], x: u32, y: u32, width: u32) -> [f32; 4] {
     let idx = ((y as usize) * (width as usize) + (x as usize)) * 4;
-    [buffer[idx], buffer[idx + 1], buffer[idx + 2], buffer[idx + 3]]
+    [
+        buffer[idx],
+        buffer[idx + 1],
+        buffer[idx + 2],
+        buffer[idx + 3],
+    ]
 }
 
 #[test]

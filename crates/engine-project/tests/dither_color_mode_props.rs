@@ -12,9 +12,9 @@ use engine_color::palette_cache::PaletteKdCache;
 use engine_color::palette_lut::PaletteLutCache;
 use engine_color::threshold_map::ThresholdMapCache;
 use engine_project::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
+use engine_project::filters::dither_diffusion::apply_error_diffusion;
 use engine_project::filters::dither_ordered::apply_ordered;
 use engine_project::filters::dither_residuals::ErrorResidualsStore;
-use engine_project::filters::dither_diffusion::apply_error_diffusion;
 use engine_project::types::{DocumentId, LayerId};
 use engine_project::Document;
 use engine_tiles::{PixelTile, TileCoord, HALO, TILE_SIZE};
@@ -73,9 +73,9 @@ fn arb_diffusion_mode() -> impl Strategy<Value = DitherModeV2> {
 fn arb_grayscale_ordered_params() -> impl Strategy<Value = DitherParamsV2> {
     (
         arb_ordered_mode(),
-        2u16..=256u16,        // valid levels
-        (10u32..=400u32),     // maps to threshold_scale 0.1..=4.0
-        1u8..=32u8,           // valid pixel_size
+        2u16..=256u16,    // valid levels
+        (10u32..=400u32), // maps to threshold_scale 0.1..=4.0
+        1u8..=32u8,       // valid pixel_size
     )
         .prop_map(|(mode, levels, ts_raw, pixel_size)| {
             let threshold_scale = ts_raw as f32 / 100.0;
@@ -86,7 +86,7 @@ fn arb_grayscale_ordered_params() -> impl Strategy<Value = DitherParamsV2> {
                 pixel_size,
                 color_mode: DitherColorMode::Grayscale,
                 palette_id: None,
-            ..Default::default()
+                ..Default::default()
             }
         })
 }
@@ -95,8 +95,8 @@ fn arb_grayscale_ordered_params() -> impl Strategy<Value = DitherParamsV2> {
 fn arb_grayscale_diffusion_params() -> impl Strategy<Value = DitherParamsV2> {
     (
         arb_diffusion_mode(),
-        2u16..=256u16,        // valid levels
-        1u8..=32u8,           // valid pixel_size
+        2u16..=256u16, // valid levels
+        1u8..=32u8,    // valid pixel_size
     )
         .prop_map(|(mode, levels, pixel_size)| {
             DitherParamsV2 {
@@ -106,7 +106,7 @@ fn arb_grayscale_diffusion_params() -> impl Strategy<Value = DitherParamsV2> {
                 pixel_size,
                 color_mode: DitherColorMode::Grayscale,
                 palette_id: None,
-            ..Default::default()
+                ..Default::default()
             }
         })
 }

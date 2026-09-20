@@ -81,15 +81,20 @@ impl AppState {
                     ..engine_gpu::resident::default_vram_config()
                 }
             } else {
-                engine_gpu::resident::default_vram_config()
+                let mut cfg = engine_gpu::resident::default_vram_config();
+                cfg.vram_budget_bytes = ctx.vram_budget_bytes;
+                cfg
             };
             std::sync::Arc::new(engine_gpu::GpuTileCache::new(&ctx.device, cfg))
         });
         let gpu_executor = gpu_resident.as_ref().and_then(|cache| {
             gpu.as_ref().and_then(|ctx| {
-                engine_gpu::GpuExecutor::spawn(std::sync::Arc::clone(ctx), std::sync::Arc::clone(cache))
-                    .ok()
-                    .map(|ex| std::sync::Mutex::new(ex))
+                engine_gpu::GpuExecutor::spawn(
+                    std::sync::Arc::clone(ctx),
+                    std::sync::Arc::clone(cache),
+                )
+                .ok()
+                .map(|ex| std::sync::Mutex::new(ex))
             })
         });
 
@@ -111,23 +116,22 @@ impl AppState {
             pending_preview_refresh: Mutex::new(None),
             // B3: FlexLayout persistence (initialized with temp dir, updated in main.rs)
             flexlayout_persistence: Mutex::new(
-                crate::flexlayout_persistence::FlexLayoutPersistence::new(
-                    std::env::temp_dir(),
-                )
+                crate::flexlayout_persistence::FlexLayoutPersistence::new(std::env::temp_dir()),
             ),
             // B4a: per-side FlexLayout persistence (updated in main.rs)
             flexlayout_left: Mutex::new(
                 crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
                     std::env::temp_dir(),
                     "flexlayout_left.json",
-                )
+                ),
             ),
             flexlayout_right: Mutex::new(
                 crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
                     std::env::temp_dir(),
                     "flexlayout_right.json",
-                )
+                ),
             ),
+            ram_budget_source: crate::memory_budget::RamBudgetSource::TestOverride,
         }
     }
 
@@ -181,9 +185,8 @@ impl AppState {
     /// Resolve a session by explicit runtime id (Photoshop/Figma/VS Code style).
     /// Prefer this over [`Self::active_session`] for any mutating IPC.
     pub fn require_session(&self, doc_id: u32) -> Result<Arc<DocumentSession>, String> {
-        self.session(doc_id).map_err(|_| {
-            format!("Document was closed; cannot apply change (id {doc_id})")
-        })
+        self.session(doc_id)
+            .map_err(|_| format!("Document was closed; cannot apply change (id {doc_id})"))
     }
 
     pub fn active_id(&self) -> Option<u32> {
@@ -242,10 +245,7 @@ impl AppState {
     }
 
     /// Push the same `EvictContext` the CPU RAM tier uses onto the GPU atlas.
-    pub(crate) fn sync_gpu_evict_policy(
-        &self,
-        viewport_coords: &HashSet<engine_tiles::TileCoord>,
-    ) {
+    pub(crate) fn sync_gpu_evict_policy(&self, viewport_coords: &HashSet<engine_tiles::TileCoord>) {
         let Some(gpu) = self.gpu_resident.as_ref() else {
             return;
         };
@@ -286,6 +286,7 @@ impl AppState {
             viewport_coords: &empty,
         };
         if self.tiles.tile_cache.used_bytes_count() > self.tiles.tile_cache.budget_bytes_count() {
+            log_cpu_pressure("inactive", self);
             self.tiles.tile_cache.evict_for_pressure(&ctx);
         }
         if let Some(gpu) = self.gpu_resident.as_ref() {
@@ -304,6 +305,7 @@ impl AppState {
             viewport_coords: &viewport_coords,
         };
         if self.tiles.tile_cache.used_bytes_count() > self.tiles.tile_cache.budget_bytes_count() {
+            log_cpu_pressure("viewport", self);
             self.tiles.tile_cache.evict_for_pressure(&ctx);
         }
         if let Some(gpu) = self.gpu_resident.as_ref() {
@@ -321,9 +323,7 @@ impl AppState {
                 .get(&doc)
                 .ok_or_else(|| format!("No document session {doc}"))?;
             if session.io_inflight() > 0 {
-                return Err(
-                    "Cannot close document while save or export is in progress".to_string(),
-                );
+                return Err("Cannot close document while save or export is in progress".to_string());
             }
             map.remove(&doc)
                 .ok_or_else(|| format!("No document session {doc}"))?;
@@ -357,46 +357,62 @@ impl AppState {
                 };
             }
         };
-        let mut tabs: Vec<OpenDocumentTabDto> = map
-            .values()
-            .map(|s| {
-                // Try project_path first, then source_path for loaded images
-                let path = s
-                    .project_path
-                    .lock()
-                    .ok()
-                    .and_then(|p| p.as_ref().map(|p| p.to_string_lossy().into_owned()))
-                    .or_else(|| {
-                        s.source_path
+        let mut tabs: Vec<OpenDocumentTabDto> =
+            map.values()
+                .map(|s| {
+                    // Try project_path first, then source_path for loaded images
+                    let path =
+                        s.project_path
                             .lock()
                             .ok()
                             .and_then(|p| p.as_ref().map(|p| p.to_string_lossy().into_owned()))
-                    });
-                let title = path
-                    .as_deref()
-                    .and_then(|p| std::path::Path::new(p).file_name())
-                    .and_then(|n| n.to_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| format!("Untitled {}", s.id.0));
-                let live = s.document_handle.snapshot();
-                let dirty = match s.history.saved_snapshot.lock() {
-                    Ok(guard) => match guard.as_ref() {
-                        Some(saved) => !Arc::ptr_eq(saved, &live),
-                        None => !live.root.is_empty(),
-                    },
-                    Err(_) => true,
-                };
-                OpenDocumentTabDto {
-                    id: s.id.0,
-                    title,
-                    dirty,
-                    path,
-                }
-            })
-            .collect();
+                            .or_else(|| {
+                                s.source_path.lock().ok().and_then(|p| {
+                                    p.as_ref().map(|p| p.to_string_lossy().into_owned())
+                                })
+                            });
+                    let title = path
+                        .as_deref()
+                        .and_then(|p| std::path::Path::new(p).file_name())
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| format!("Untitled {}", s.id.0));
+                    let live = s.document_handle.snapshot();
+                    let dirty = match s.history.saved_snapshot.lock() {
+                        Ok(guard) => match guard.as_ref() {
+                            Some(saved) => !Arc::ptr_eq(saved, &live),
+                            None => !live.root.is_empty(),
+                        },
+                        Err(_) => true,
+                    };
+                    OpenDocumentTabDto {
+                        id: s.id.0,
+                        title,
+                        dirty,
+                        path,
+                    }
+                })
+                .collect();
         tabs.sort_by_key(|t| t.id);
         OpenDocumentsPayload { tabs, active_id }
     }
+}
+
+fn log_cpu_pressure(kind: &str, state: &AppState) {
+    let used = state.tiles.tile_cache.used_bytes_count();
+    let budget = state.tiles.tile_cache.budget_bytes_count();
+    let pct = if budget == 0 {
+        0
+    } else {
+        (used as u128 * 100 / budget as u128) as u64
+    };
+    log::info!(
+        "tile-cache pressure ({kind}): used_mib={} budget_mib={} pct={} source={:?}",
+        used / (1024 * 1024),
+        budget / (1024 * 1024),
+        pct,
+        state.ram_budget_source
+    );
 }
 
 pub fn emit_tabs_changed(app: Option<&AppHandle>, state: &AppState) {
@@ -438,7 +454,9 @@ mod pressure_tests {
         fill_stage(&state.tiles.tile_cache, 1, CacheStage::Raw, 1);
         fill_stage(&state.tiles.tile_cache, 1, CacheStage::Composite, 1);
         fill_stage(&state.tiles.tile_cache, 2, CacheStage::Raw, 1);
-        assert!(state.tiles.tile_cache.used_bytes_count() > state.tiles.tile_cache.budget_bytes_count());
+        assert!(
+            state.tiles.tile_cache.used_bytes_count() > state.tiles.tile_cache.budget_bytes_count()
+        );
 
         {
             let mut vp = state.ui.viewport.lock().unwrap();
