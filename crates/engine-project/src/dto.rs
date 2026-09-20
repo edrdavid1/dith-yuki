@@ -106,11 +106,18 @@ fn layer_node_to_dto(node: &LayerNode) -> LayerNodeDto {
                 offset: layer.offset,
                 has_mask: layer.mask.is_some(),
                 filters: layer.filters.iter().map(filter_to_dto).collect(),
-                thumbnail_url: format!(
-                    "tile://doc/{}/layer/{}/stage/composite/l/8/0/0",
-                    doc_id_to_u32(layer.id),
-                    layer.id.0
-                ),
+                thumbnail_url: {
+                    // Match Tauri's platform URL form for the `tile` custom protocol.
+                    #[cfg(any(target_os = "windows", target_os = "android"))]
+                    let origin = "http://tile.localhost";
+                    #[cfg(not(any(target_os = "windows", target_os = "android")))]
+                    let origin = "tile://localhost";
+                    format!(
+                        "{origin}/doc/{}/layer/{}/stage/composite/l/8/0/0",
+                        doc_id_to_u32(layer.id),
+                        layer.id.0
+                    )
+                },
             };
 
             match kind_str {

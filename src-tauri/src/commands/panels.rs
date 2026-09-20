@@ -309,13 +309,15 @@ pub fn undock_panel(
     let title = format!("Dither – {}", panel_display_name(&panel_id));
     let url = tauri::WebviewUrl::App(result.url.into());
 
-    let builder = WebviewWindowBuilder::new(&app_handle, &result.window_label, url)
-        .title(&title)
-        .inner_size(bounds.width as f64, bounds.height as f64)
-        .position(bounds.x as f64, bounds.y as f64)
-        .resizable(true)
-        .decorations(false)
-        .min_inner_size(280.0, 200.0);
+    let builder = crate::webview_debug::apply(
+        WebviewWindowBuilder::new(&app_handle, &result.window_label, url)
+            .title(&title)
+            .inner_size(bounds.width as f64, bounds.height as f64)
+            .position(bounds.x as f64, bounds.y as f64)
+            .resizable(true)
+            .decorations(false)
+            .min_inner_size(280.0, 200.0),
+    );
     #[cfg(target_os = "macos")]
     let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay);
     let (max_w, max_h) = panel_max_inner_size(&panel_id);
@@ -493,16 +495,18 @@ pub fn undock_panel_with_size(
     let title = format!("Dither – {}", panel_display_name(&panel_id));
     let url = tauri::WebviewUrl::App(result.url.into());
 
-    let builder = WebviewWindowBuilder::new(&app_handle, &result.window_label, url)
-        .title(&title)
-        .inner_size(
-            corrected_bounds.width as f64,
-            corrected_bounds.height as f64,
-        )
-        .position(corrected_bounds.x as f64, corrected_bounds.y as f64)
-        .resizable(true)
-        .decorations(false)
-        .min_inner_size(280.0, 200.0);
+    let builder = crate::webview_debug::apply(
+        WebviewWindowBuilder::new(&app_handle, &result.window_label, url)
+            .title(&title)
+            .inner_size(
+                corrected_bounds.width as f64,
+                corrected_bounds.height as f64,
+            )
+            .position(corrected_bounds.x as f64, corrected_bounds.y as f64)
+            .resizable(true)
+            .decorations(false)
+            .min_inner_size(280.0, 200.0),
+    );
     #[cfg(target_os = "macos")]
     let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay);
     let (max_w, max_h) = panel_max_inner_size(&panel_id);

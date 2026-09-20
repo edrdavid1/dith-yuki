@@ -6,6 +6,7 @@
 mod commands;
 mod dock_affinity;
 mod document_session;
+mod file_log;
 mod flexlayout_persistence;
 mod gpu_resident_shadow;
 #[cfg(target_os = "macos")]
@@ -24,6 +25,7 @@ mod tile_protocol;
 mod tile_serve;
 mod undo;
 mod viewport;
+mod webview_debug;
 mod worker;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -42,6 +44,11 @@ use tile_protocol::{parse_tile_url, LayerTarget};
 use worker::WorkerWake;
 
 fn main() {
+    // Capture Rust-side failures (GPU init, tile://, panics) to
+    // `%APPDATA%\com.dither.app\logs\app.log` (or the macOS/Linux equivalent)
+    // before any window exists.
+    file_log::init();
+
     // B4c: affinity enabled on all platforms — Flex popout completes via JS mouseup,
     // not global_mouseup (which was unavailable on Linux).
     let dock_affinity_enabled = true;
@@ -219,7 +226,7 @@ fn main() {
             // WKWebView/Retina; clamp like Color Lab undock so the window is visible.
             let app_for_popout = app.handle().clone();
             static FLEX_POPOUT_SEQ: AtomicU64 = AtomicU64::new(1);
-            let main_window = WebviewWindowBuilder::from_config(app, &main_conf)?
+            let main_window = webview_debug::apply(WebviewWindowBuilder::from_config(app, &main_conf)?)
                 .on_new_window(move |url, features| {
                     let n = FLEX_POPOUT_SEQ.fetch_add(1, Ordering::Relaxed);
                     let label = format!("flex-popout-{n}");
@@ -227,16 +234,18 @@ fn main() {
                     let req_pos = features.position();
                     let req_size = features.size();
 
-                    let builder = WebviewWindowBuilder::new(
-                        &app_for_popout,
-                        &label,
-                        tauri::WebviewUrl::External(url),
-                    )
-                    .window_features(features)
-                    .title("Dither")
-                    .resizable(true)
-                    .decorations(false)
-                    .min_inner_size(280.0, 200.0);
+                    let builder = webview_debug::apply(
+                        WebviewWindowBuilder::new(
+                            &app_for_popout,
+                            &label,
+                            tauri::WebviewUrl::External(url),
+                        )
+                        .window_features(features)
+                        .title("Dither")
+                        .resizable(true)
+                        .decorations(false)
+                        .min_inner_size(280.0, 200.0),
+                    );
                     #[cfg(target_os = "macos")]
                     let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay);
 
@@ -435,13 +444,15 @@ fn main() {
 
                         // All panels use custom titlebar with decorations disabled
                         // and Overlay title bar style (for macOS traffic lights).
-                        let builder = WebviewWindowBuilder::new(&app_handle, &label, url)
-                            .title(&title)
-                            .inner_size(bounds.width as f64, bounds.height as f64)
-                            .position(bounds.x as f64, bounds.y as f64)
-                            .resizable(true)
-                            .decorations(false)
-                            .min_inner_size(280.0, 200.0);
+                        let builder = webview_debug::apply(
+                            WebviewWindowBuilder::new(&app_handle, &label, url)
+                                .title(&title)
+                                .inner_size(bounds.width as f64, bounds.height as f64)
+                                .position(bounds.x as f64, bounds.y as f64)
+                                .resizable(true)
+                                .decorations(false)
+                                .min_inner_size(280.0, 200.0),
+                        );
                         #[cfg(target_os = "macos")]
                         let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay);
                         let (max_w, max_h) = commands::panels::panel_max_inner_size(&panel.id);
@@ -641,6 +652,7 @@ fn handle_tile_request(
     let parsed = match parse_tile_url(&uri) {
         Ok(p) => p,
         Err(e) => {
+            log::warn!("tile:// parse error for {uri}: {e}");
             let msg = format!("400 Bad Request: {}", e);
             return tile_response(400, "text/plain", msg.into_bytes(), None, &[]);
         }
@@ -650,6 +662,10 @@ fn handle_tile_request(
     let session = match state.session(parsed.doc_id) {
         Ok(s) => s,
         Err(_) => {
+            log::warn!(
+                "tile:// document {} not found (uri={uri})",
+                parsed.doc_id
+            );
             let msg = format!("404 Not Found: document {} not found", parsed.doc_id);
             return tile_response(404, "text/plain", msg.into_bytes(), None, &[]);
         }

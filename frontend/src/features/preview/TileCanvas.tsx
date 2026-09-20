@@ -11,8 +11,15 @@ import {
 } from './previewBackground';
 import { snapCssPx } from './zoomSnap';
 import { findFallbackTile } from '../../utils/tileFallback';
+import { getPlatform } from '../../lib/platform';
+import { tileProtocolBase } from '../../lib/tileProtocol';
 
 const cn = bind(styles);
+
+/** Platform-aware tile origin for the worker (WebView2 vs WKWebView). */
+function workerTileProtocolBase(): string {
+  return tileProtocolBase(getPlatform());
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -652,6 +659,7 @@ export default function TileCanvas({
           tiles,
           docId,
           rev: tileRevRef.current,
+          protocolBase: workerTileProtocolBase(),
         });
       }
     }
@@ -677,6 +685,7 @@ export default function TileCanvas({
         y,
         docId,
         rev: tileRevRef.current,
+        protocolBase: workerTileProtocolBase(),
       });
     });
     return () => { unlisten.then((fn) => fn()); };
@@ -717,6 +726,7 @@ export default function TileCanvas({
         tiles: visible,
         docId,
         rev: tileRevRef.current,
+        protocolBase: workerTileProtocolBase(),
       });
     });
     return () => {
@@ -755,6 +765,7 @@ export default function TileCanvas({
           tiles: visible,
           docId,
           rev: tileRevRef.current,
+          protocolBase: workerTileProtocolBase(),
         });
       }
     }
@@ -775,6 +786,7 @@ export default function TileCanvas({
         tiles: visible,
         docId,
         rev: tileRevRef.current,
+        protocolBase: workerTileProtocolBase(),
       });
     }, 300);
 

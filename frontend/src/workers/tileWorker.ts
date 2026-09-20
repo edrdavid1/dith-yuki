@@ -1,7 +1,10 @@
 /**
- * Tile Web Worker — fetches tiles from the tile:// custom protocol,
+ * Tile Web Worker — fetches tiles from the Tauri `tile` custom protocol,
  * decodes raw RGBA8 bytes into ImageBitmaps, and transfers them back
  * to the main thread for canvas rendering.
+ *
+ * On Windows/Android the origin is `http://tile.localhost` (WebView2);
+ * elsewhere it is `tile://localhost`.
  *
  * Message types received:
  *   - { type: 'request-tiles', tiles: TileRequest[], docId: number }
@@ -12,6 +15,8 @@
  *   - { type: 'tile-pending', key: string }
  *   - { type: 'tile-error', key: string, error: string }
  */
+
+import { buildTileUrl } from '../lib/tileProtocol';
 
 // Worker-scoped postMessage with transferable support
 declare function postMessage(message: unknown, transfer: Transferable[]): void;
@@ -28,6 +33,8 @@ export interface RequestTilesMessage {
   tiles: TileRequest[];
   docId: number;
   rev?: number;
+  /** Override protocol origin; main thread should pass platform-aware base. */
+  protocolBase?: string;
 }
 
 export interface FetchTileMessage {
@@ -37,6 +44,7 @@ export interface FetchTileMessage {
   y: number;
   docId: number;
   rev?: number;
+  protocolBase?: string;
 }
 
 export type WorkerInMessage = RequestTilesMessage | FetchTileMessage;
@@ -68,26 +76,17 @@ const TILE_SIZE = 256;
 const TILE_BYTE_LENGTH = TILE_SIZE * TILE_SIZE * 4; // 262,144 bytes RGBA8
 
 /**
- * Build a tile:// URL for the given document and tile coordinates.
- * In Tauri's webview, the tile:// protocol URLs may be normalized to
- * tile://localhost/... so we use the format that Tauri expects.
- */
-function buildTileUrl(docId: number, tile: TileRequest, rev?: number): string {
-  const base = `tile://localhost/doc/${docId}/layer/composite/stage/composite/l/${tile.level}/${tile.x}/${tile.y}`;
-  return typeof rev === 'number' ? `${base}?g=${rev}` : base;
-}
-
-/**
- * Fetch a single tile from the tile:// protocol, decode the raw RGBA8
+ * Fetch a single tile from the tile protocol, decode the raw RGBA8
  * bytes into an ImageBitmap, and post it back to the main thread.
  */
 async function fetchAndDecodeTile(
   docId: number,
   tile: TileRequest,
   rev?: number,
+  protocolBase?: string,
 ): Promise<void> {
   const key = `${tile.level}/${tile.x}/${tile.y}`;
-  const url = buildTileUrl(docId, tile, rev);
+  const url = buildTileUrl(docId, tile, rev, { base: protocolBase });
 
   try {
     const response = await fetch(url);
@@ -186,13 +185,20 @@ self.onmessage = async (e: MessageEvent<WorkerInMessage>) => {
     // Batch fetch: process all requested tiles in parallel. Each
     // fetchAndDecodeTile handles its own error and posts results independently.
     await Promise.all(
-      msg.tiles.map(tile => fetchAndDecodeTile(msg.docId, tile, msg.rev))
+      msg.tiles.map(tile =>
+        fetchAndDecodeTile(msg.docId, tile, msg.rev, msg.protocolBase),
+      ),
     );
   } else if (msg.type === 'fetch-tile') {
-    await fetchAndDecodeTile(msg.docId, {
-      level: msg.level,
-      x: msg.x,
-      y: msg.y,
-    }, msg.rev);
+    await fetchAndDecodeTile(
+      msg.docId,
+      {
+        level: msg.level,
+        x: msg.x,
+        y: msg.y,
+      },
+      msg.rev,
+      msg.protocolBase,
+    );
   }
 };
