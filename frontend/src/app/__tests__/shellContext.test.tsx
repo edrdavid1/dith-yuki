@@ -173,6 +173,9 @@ describe('ShellContext', () => {
     expect(migrateShellPrefs({ version: 2, welcomeBackground: 'artwork' }).welcomeBackground).toBe(
       'artwork'
     );
+    expect(migrateShellPrefs({ version: 2, welcomeBackground: 'gradient' }).welcomeBackground).toBe(
+      'gradient'
+    );
     expect(migrateShellPrefs({ version: 2, welcomeBackground: 'none' }).welcomeBackground).toBe(
       'artwork'
     );

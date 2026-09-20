@@ -1,28 +1,35 @@
 import type { CSSProperties } from 'react';
 
-/** Only welcome background shipped for now. */
-export type WelcomeBackground = 'artwork';
+export type WelcomeBackground = 'artwork' | 'gradient';
 
 export const DEFAULT_WELCOME_BACKGROUND: WelcomeBackground = 'artwork';
 
 export const WELCOME_BACKGROUNDS: { id: WelcomeBackground; label: string }[] = [
   { id: 'artwork', label: 'Artwork' },
+  { id: 'gradient', label: 'Gradient' },
 ];
 
 export function parseWelcomeBackground(value: unknown): WelcomeBackground {
-  if (value === 'artwork') return value;
-  // Former ids collapse to the single remaining option.
+  if (value === 'artwork' || value === 'gradient') return value;
+  // Former ids collapse to the default option.
   return DEFAULT_WELCOME_BACKGROUND;
 }
 
-/** Visual for the welcome / empty-state surface. */
-export function welcomeBackgroundStyle(_kind?: WelcomeBackground): CSSProperties {
+function coverImageStyle(src: string): CSSProperties {
   return {
     backgroundColor: '#000000',
-    backgroundImage: 'url(/img/background-img-1.png)',
+    backgroundImage: `url(${src})`,
     backgroundSize: 'cover',
     backgroundRepeat: 'no-repeat',
     backgroundPosition: 'center',
     imageRendering: 'pixelated',
   };
+}
+
+/** Visual for the welcome / empty-state surface. */
+export function welcomeBackgroundStyle(kind: WelcomeBackground = DEFAULT_WELCOME_BACKGROUND): CSSProperties {
+  if (kind === 'gradient') {
+    return coverImageStyle('/img/background-img-2.png');
+  }
+  return coverImageStyle('/img/background-img-1.png');
 }
