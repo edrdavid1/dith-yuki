@@ -17,8 +17,6 @@ npm-debug.log*
 .gemini-spec/
 .cursor-spec/
 .kiro/
-.github/
-
 
 # IDE
 .vscode/

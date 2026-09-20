@@ -1,7 +1,7 @@
 # Архитектура Dither Yuki 2
 
 > Комплексный архитектурный документ. As-built **0.2.0**.
-> Последнее обновление: 4 сентября 2026.
+> Последнее обновление: 5 сентября 2026.
 >
 > Оптимизация: начинать с **§13** (стоимость тайла / где теряется время) и
 > [tile-pipeline.md](./tile-pipeline.md) §11. Не трогать фильтры, пока не ясно,
@@ -56,6 +56,7 @@ dither-yuki-2/
 │       ├── commands/           # IPC modules + AppState (document / filters / palettes / …)
 │       ├── services/           # document / viewport / layer / filter / palette / panel
 │       ├── document_session.rs # multi-doc registry
+│       ├── memory_budget.rs    # adaptive RAM tile-cache budget
 │       ├── tile_protocol.rs    # tile:// URL → RGBA8
 │       ├── tile_pipeline.rs    # compute_processed_tile / compute_composite_tile
 │       ├── viewport.rs         # set_viewport, visible + prefetch
@@ -265,7 +266,7 @@ graph TB
 ```rust
 pub struct AppState {
     pub document_handle: DocumentHandle,     // Lock-free доступ к Document
-    pub tile_cache: TileCache,               // LRU кэш тайлов (256 MB бюджет) + evict_layer
+    pub tile_cache: TileCache,               // LRU; RAM budget adaptive (512 MiB–4 GiB) + evict_layer
     pub scheduler: Scheduler,                // Priority task queues для worker pool
     pub viewport: Mutex<ViewportState>,      // Текущий viewport для priority decisions
     pub palette_cache: PaletteKdCache,       // Concurrent KD-tree кэш палитр
@@ -286,7 +287,7 @@ pub struct AppState {
 
 **Инициализация** (в `main.rs`):
 - Создаётся пустой `Document` (800×600)
-- `TileCache` с бюджетом 256 MB
+- `TileCache` с адаптивным RAM-бюджетом (25% system RAM, clamp 512 MiB–4 GiB; `DITHER_RAM_BUDGET_MIB`)
 - `Scheduler::new()` — пустые очереди задач
 - `ViewportState::default()` — zoom 1.0, pan (0,0)
 - Palette / threshold / residuals caches — empty
@@ -329,7 +330,7 @@ pub struct DocumentHandle {
 
 ### 3.2.2 Dirty flag (Track P)
 
-`saved_snapshot` is the live `Arc<Document>` at the last clean point (successful save, or `clear_history` after open / load / create). Dirty is `!Arc::ptr_eq(live, saved_mark)` — not `Document.revision`. Empty / welcome (no layers) is not dirty. Frontend title: `{• }{basename | Untitled} — Dither Engine`. One Unsaved_Guard (Save / Don’t Save / Cancel) on main-window close and File New/Open. GPU: auto-dispatch (warm download + A2); cold compute `DITHER_GPU_PREVIEW=1`; force CPU `DITHER_FORCE_CPU=1`. In-app updates start at **0.2.0** (`tauri-plugin-updater` + GitHub `latest.json`); **0.1.0 cannot self-update** — install the 0.2.0 DMG once. Minisign pubkey is in `tauri.conf.json`; the private key is a CI secret, never git. Apple notarization is optional (Gatekeeper warning on first DMG open is a known beta limit). File → Import Image as Layer places at origin, clips, no scale.
+`saved_snapshot` is the live `Arc<Document>` at the last clean point (successful save, or `clear_history` after open / load / create). Dirty is `!Arc::ptr_eq(live, saved_mark)` — not `Document.revision`. Empty / welcome (no layers) is not dirty. Frontend title: `{• }{basename | Untitled} — Dither Engine`. One Unsaved_Guard (Save / Don’t Save / Cancel) on main-window close and File New/Open. GPU: auto-dispatch (warm download + A2); cold compute `DITHER_GPU_PREVIEW=1`; force CPU `DITHER_FORCE_CPU=1`. In-app updates start at **0.2.0** (`tauri-plugin-updater` + GitHub `latest.json`); **0.1.0 cannot self-update** — install the 0.2.0 DMG once. Minisign pubkey is in `tauri.conf.json`; the private key is a CI secret, never git. Apple notarization is wired in CI when Apple secrets are present; without them Gatekeeper may warn on first DMG open (closed-alpha OK). See [RELEASE.md](./RELEASE.md). File → Import Image as Layer places at origin, clips, no scale.
 
 ### 3.3 Tile Protocol Handler (tile://)
 
@@ -525,7 +526,7 @@ pub struct TileCache {
 ```
 
 - **Concurrent reads:** DashMap (lock-free шардированная хеш-таблица)
-- **Eviction:** LRU через SegQueue, budget 256 MB по умолчанию
+- **Eviction:** LRU через SegQueue; бюджет задаёт `memory_budget` (не фикс 256 MB)
 - **Dirty marking:** AtomicBool (mark, не delete — stale data доступна для instant 200 response)
 - **Viewport-aware eviction:** `evict_preserving_viewport` защищает visible tiles
 
@@ -905,6 +906,10 @@ SIMD-ускорение: `levels_row_simd` (wide f32x4) для batch processing 
 
 **Error diffusion (FS, Atkinson, JJN, Stucki, Burkes, Sierra):**
 - Processing L→R, T→B internal to tile; `serpentine` → odd **global** Y rows R→L, kernel mirrored X
+- Serpentine×wavefront уже сделан в Track M; не переоткрывать без нового seam-бага
+- Known follow-up (margin scaling, `pixel_size>1`): edge/corner residual depth is
+  `pixel_size × kernel_max_offset`, not a fixed 2 columns/rows. A seam that appears
+  only for `pixel_size>1` (and is clean at `ps=1`) is this buffer, not serpentine.
 - `ErrorResidualsStore` (DashMap per LayerId+TileCoord) для cross-tile:
   - После тайла: store right-edge, bottom-edge, **corner** (IncomingErrorBuffer)
   - Перед: seed от left/top/diag neighbors
@@ -1529,15 +1534,15 @@ Composite-задачи **не** stale-discard (см. §3.5). Processed-зада�
 | GPU core (256²×4 f32) | 1.00 MB | `extract_core` / `write_core` |
 | Protocol RGBA8 (256²×4 u8) | 256 KB | `tile://` 200 |
 
-Кэш 256 MB ≈ **~250 тайлов** всех стадий. Viewport 40 Composite + 40 Processed + 40 Raw
-уже ~120 MB на один слой без пирамиды.
+Кэш 512 MiB ≈ **~500 тайлов** всех стадий; на большой машине потолок до 4 GiB.
+Viewport 40 Composite + 40 Processed + 40 Raw уже ~120 MB на один слой без пирамиды.
 
 **Два разных бюджета (не путать):**
 
 | | Cache footprint | Compute temps |
 |--|-----------------|---------------|
 | Что считает | `Arc<PixelTile>` в `TileCache` (Raw/Processed/Composite) | Одновременно живые owned `PixelTile` на worker apply |
-| Рычаг | budget / eviction ([multi-doc-cache-budget](../.cursor-spec/multi-doc-cache-budget/SPEC.md)) | In-place + park ([tile-memory-inplace](../.cursor-spec/tile-memory-inplace/SPEC.md)) |
+| Рычаг | adaptive budget / eviction ([track-c-memory](../.cursor-spec/track-c-memory/SPEC.md)) | In-place + park (as-built) |
 
 **Аллокации на один Processed (один Dither, opacity=1, Normal, CPU) — as-built after in-place:**
 
@@ -1601,7 +1606,7 @@ Immediate > ViewportCenter > ViewportEdge > Prefetch
 
 ### 13.6 Кэш
 
-- Budget 256 MB, approximate LRU (`SegQueue`), `evict_preserving_viewport`
+- Adaptive RAM budget, approximate LRU (`SegQueue`), `evict_preserving_viewport`
 - Dirty = mark, не delete (stale-while-revalidate → instant 200 на `tile://`)
 - `schedule_dirty_viewport_tiles` ставит **только Composite**; Processed — inline
 - Orphan GC: `evict_layer` при undo/redo для LayerId, которых нет ни в live, ни в стеках
@@ -1645,13 +1650,15 @@ Halftone/CRT ≤ 1/255), debounce undo = 100ms в `useEffectLayer`.
 | No mask editing UI | `MaskRef` + `apply_mask` есть, UI нет |
 | Luminance simplified | `CurveChannel::Luminance` ≠ Oklab L* |
 | Paint-aware undo | Snapshot структуры; пиксельный paint в модели нет |
-| Apple notarization | Optional; Gatekeeper warning на первом DMG — известный beta limit |
+| Apple notarization | Wired in CI when Apple secrets present; without them Gatekeeper warn on first DMG (closed alpha OK) — see [RELEASE.md](./RELEASE.md) |
 
 ### 14.2 Будущие улучшения
 
 - [x] Pyramid display (level > 0) — box-filter of L0 Composite; filters always L0
 - [x] In-place / ping-pong `PixelTile` в filter stack (peak live temps ≤2 Normal / ≤3 Track I; park)
-- [x] Path B resident + auto-dispatch A1–A4; A5 export NO-GO; A8 f16 not started
+- [x] Path B resident + auto-dispatch A1–A4; A5 export NO-GO
+- [ ] A8 f16/sparse (occupancy ~19% — не приоритет)
+- [ ] Track C phases 2–3 (VRAM adaptive / disk scratch) — Phase 1 RAM adaptive in tree
 - [ ] SIMD Bayer / Oklab; LUT для Curves
 - [ ] Не blend'ить halo в preview composite
 - [x] Undo/redo snapshot (Track N); paint-aware out of scope
@@ -1785,5 +1792,5 @@ cargo bench -p engine-project
 
 ---
 
-**Last Updated:** 4 September 2026
+**Last Updated:** 5 September 2026
 **Version:** 0.2.0

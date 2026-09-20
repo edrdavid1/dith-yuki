@@ -2,9 +2,9 @@
 
 Desktop studio for **dithering**, palettes, and layered pixel-art images. Tile-based preview keeps large documents responsive.
 
-Built with **Rust** (Tauri 2) and **React**. Current version: **0.2.0**.
+Built with **Rust** (Tauri 2) and **React**. Current version: **0.2.0** (public alpha track).
 
-[Features](#features) · [Install](#install) · [Develop](#develop) · [Docs](./docs/README.md) · [License](#license)
+[Features](#features) · [Install](#install) · [Develop](#develop) · [Docs](./docs/README.md) · [Release](./docs/RELEASE.md) · [License](#license)
 
 ## Features
 
@@ -18,7 +18,24 @@ Built with **Rust** (Tauri 2) and **React**. Current version: **0.2.0**.
 
 ## Install
 
-macOS builds are published on [GitHub Releases](https://github.com/edrdavid1/dith-yuki/releases). After 0.2.0, Help → Check for Updates pulls `latest.json` (Minisign-verified).
+**Download:** [GitHub Releases](https://github.com/edrdavid1/dith-yuki/releases) (macOS DMG, Windows NSIS) or the [download page](https://edrdavid1.github.io/dith-yuki/) once Pages is enabled.
+
+After **0.2.0**, Help → Check for Updates pulls `latest.json` (Minisign-verified).
+
+### Alpha scope
+
+This is a **dither / palette studio**, not a full paint or print app. No paint tools, ICC/print pipeline, or video/batch yet. GPU acceleration is warm-viewport; cold compute is opt-in (`DITHER_GPU_PREVIEW=1`).
+
+### macOS Gatekeeper
+
+Unsigned or not-yet-notarized builds may show “cannot be opened because the developer cannot be verified”:
+
+1. Right-click **Dither Yuki** → **Open** → confirm **Open**.
+2. Or System Settings → Privacy & Security → **Open Anyway**.
+
+### Feedback
+
+Use the [bug report template](https://github.com/edrdavid1/dith-yuki/issues/new?template=bug_report.yml) (OS + app version + steps). Release process: [docs/RELEASE.md](./docs/RELEASE.md).
 
 **From source**
 
@@ -39,7 +56,7 @@ Production bundle:
 npm run tauri:build
 ```
 
-Artifacts land under `src-tauri/target/release/bundle/` (DMG on macOS).
+Artifacts land under `src-tauri/target/release/bundle/` (DMG on macOS, NSIS on Windows).
 
 GPU: warm resident download + background warmup are on when a wgpu adapter exists. Cold GPU compute: `DITHER_GPU_PREVIEW=1`. Force CPU: `DITHER_FORCE_CPU=1`. There is no Preferences GPU toggle.
 
@@ -51,6 +68,7 @@ cargo test --all           # Rust tests
 npm test --prefix frontend # Vitest
 cargo fmt --all
 cargo clippy --all -- -D warnings
+npm run release:verify     # updater config + latest.json smoke
 ```
 
 See [Contributing](./docs/CONTRIBUTING.md) for style and workflow.
@@ -67,6 +85,7 @@ crates/
   engine-io/        # Image decode / encode
   engine-core/      # Legacy stub
 frontend/           # React + Redux Toolkit UI
+site/               # Public download landing (GitHub Pages)
 docs/               # Architecture and contributor guides
 ```
 
@@ -76,6 +95,7 @@ docs/               # Architecture and contributor guides
 |---|---|
 | [docs/README.md](./docs/README.md) | Full index (as-built vs historical) |
 | [docs/architecture.md](./docs/architecture.md) | As-built system map |
+| [docs/RELEASE.md](./docs/RELEASE.md) | Tags, updater secrets, notarization, alpha |
 | [docs/tile-pipeline.md](./docs/tile-pipeline.md) | Tiles, coordinates, error-diffusion wavefront, GPU |
 | [docs/gpu-as-built.md](./docs/gpu-as-built.md) | Path B GPU + auto-dispatch |
 | [docs/FLEXLAYOUT_DOCKING.md](./docs/FLEXLAYOUT_DOCKING.md) | Docking as-built |
