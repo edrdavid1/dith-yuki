@@ -18,7 +18,7 @@ jobs:
   macos:
     runs-on: macos-latest
     outputs:
-      release_id: ${{ steps.tauri.outputs.releaseId }}
+      release_id: ${{ steps.tauri.outputs.releaseId || steps.tauri_signed.outputs.releaseId }}
     steps:
       - name: Require updater signing secrets
         env:
@@ -94,18 +94,14 @@ jobs:
           echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> "$GITHUB_ENV"
           echo "Imported: $CERT_ID"
 
-      - name: Build and publish (macOS)
+      - name: Build and publish (macOS, unsigned)
         id: tauri
+        if: ${{ env.APPLE_SIGNING_IDENTITY == '' }}
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Notarization — only effective when all four are set after cert import.
-          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Dither Yuki ${{ github.ref_name }}${{ steps.meta.outputs.title_suffix }}
@@ -114,11 +110,12 @@ jobs:
 
             **Channel:** ${{ steps.meta.outputs.channel }}
             **Platforms in this workflow:** macOS (DMG) · Windows (NSIS, when windows job succeeds)
+            **Code signing:** unsigned (Gatekeeper: Right-click → Open)
 
             ### Install (macOS)
             1. Download the `.dmg` from Assets.
             2. Drag **Dither Yuki** to Applications.
-            3. If Gatekeeper blocks the app (unsigned / not-yet-notarized builds):
+            3. If Gatekeeper blocks the app:
                - Right-click the app → **Open** → confirm **Open**.
                - Or: System Settings → Privacy & Security → **Open Anyway**.
 
@@ -135,7 +132,47 @@ jobs:
             See [docs/RELEASE.md](https://github.com/edrdavid1/dith-yuki/blob/main/docs/RELEASE.md) for the release process.
           releaseDraft: false
           # Keep false so /releases/latest (updater endpoint) resolves during alpha-only.
-          # Channel is communicated via tag + release title suffix, not GitHub prerelease flag.
+          prerelease: false
+          args: --bundles app,dmg
+
+      - name: Build and publish (macOS, notarized)
+        id: tauri_signed
+        if: ${{ env.APPLE_SIGNING_IDENTITY != '' }}
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Dither Yuki ${{ github.ref_name }}${{ steps.meta.outputs.title_suffix }}
+          releaseBody: |
+            ## Dither Yuki ${{ github.ref_name }}
+
+            **Channel:** ${{ steps.meta.outputs.channel }}
+            **Platforms in this workflow:** macOS (DMG) · Windows (NSIS, when windows job succeeds)
+            **Code signing:** Developer ID + notarization
+
+            ### Install (macOS)
+            1. Download the `.dmg` from Assets.
+            2. Drag **Dither Yuki** to Applications.
+
+            ### Updates
+            From **0.2.0** onward: Help → Check for Updates (Minisign-verified via `latest.json`).
+
+            ### Alpha scope
+            Dither / palette studio — not paint, not print/ICC, not video/batch.
+            GPU is warm-viewport only; cold compute is opt-in (`DITHER_GPU_PREVIEW=1`).
+
+            ### Feedback
+            File a bug with the [bug report template](https://github.com/edrdavid1/dith-yuki/issues/new?template=bug_report.yml).
+
+            See [docs/RELEASE.md](https://github.com/edrdavid1/dith-yuki/blob/main/docs/RELEASE.md) for the release process.
+          releaseDraft: false
           prerelease: false
           args: --bundles app,dmg
 
