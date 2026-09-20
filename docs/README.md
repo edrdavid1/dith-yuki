@@ -1,19 +1,38 @@
-# Documentation
+# Documentation (developers)
 
-As-built notes for Dither Yuki **0.2.0**. Start with the [root README](../README.md).
+As-built notes for Dither Yuki. Product overview and install: [root README](../README.md).
 
-| File | What it covers |
+**Canon (read these first):** [`architecture.md`](./architecture.md) · [`tile-pipeline.md`](./tile-pipeline.md) · [`FLEXLAYOUT_DOCKING.md`](./FLEXLAYOUT_DOCKING.md) · [`gpu-as-built.md`](./gpu-as-built.md)
+
+Working specs (not as-built) live under [`.cursor-spec/`](../.cursor-spec/README.md) locally — do not duplicate TZ into `docs/`.
+
+## Contributor
+
+| Doc | Contents |
+|---|---|
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | Setup, tests, conventions |
+| [RELEASE.md](./RELEASE.md) | Tags, updater secrets, notarization, alpha |
+| [HOW_TO_ADD_ALGORITHM.md](./HOW_TO_ADD_ALGORITHM.md) | Built-in `FilterAlgorithm` checklist |
+
+## As-built
+
+| Doc | Contents |
 |---|---|
 | [architecture.md](./architecture.md) | Stack, crates, IPC, preview, cost model |
-| [multi-doc-tabs.md](./multi-doc-tabs.md) | Tabs, multi-project sessions, shared cache, save/export |
-| [tile-pipeline.md](./tile-pipeline.md) | 256×256 tiles, global coords, ED, optional GPU |
-| [gpu-as-built.md](./gpu-as-built.md) | Path B Resident GPU vs CPU architecture, scope & industrial opt-in verdict |
-| [GPU_ARCHITECTURE_path_B.md](./GPU_ARCHITECTURE_path_B.md) | Path B plan: GPU-resident graph, phases |
-| [gpu-path-b-adr.md](./gpu-path-b-adr.md) | ADR: closed decisions for Path B implementation |
-| [`.cursor-spec/gpu-path-b/REPORT.md`](../.cursor-spec/gpu-path-b/REPORT.md) | Path B code report; preview **OPT_IN ONLY** |
-| [`.cursor-spec/gpu-path-b/PREVIEW_GATE.md`](../.cursor-spec/gpu-path-b/PREVIEW_GATE.md) | Gate sign-off: opt-in only, not default-on |
-| [GPU_FINAL_TZ_no_shortcuts.md](./GPU_FINAL_TZ_no_shortcuts.md) | TZ: evidence + holes before industrial default |
-| [`.cursor-spec/gpu-industrial-gate/`](../.cursor-spec/gpu-industrial-gate/REPORT.md) | Industrial evidence + R1 OPT_IN_ONLY |
-| [palette-dither.md](./palette-dither.md) | How a bound palette colors the dither filter |
-| [color-lab.md](./color-lab.md) | Palette data, Oklab, generators, Color Lab UI |
-| [CONTRIBUTING.md](./CONTRIBUTING.md) | Local setup, tests, style |
+| [multi-doc-tabs.md](./multi-doc-tabs.md) | Tabs, sessions, shared cache, save/export |
+| [tile-pipeline.md](./tile-pipeline.md) | 256×256 tiles, coords, ED, GPU routing |
+| [gpu-as-built.md](./gpu-as-built.md) | Path B resident GPU, auto-dispatch |
+| [FLEXLAYOUT_DOCKING.md](./FLEXLAYOUT_DOCKING.md) | Layers / Effect / Color Lab docking |
+| [palette-dither.md](./palette-dither.md) | Bound palette vs dither filter |
+| [color-lab.md](./color-lab.md) | Palettes, Oklab, Color Lab UI |
+| [dither_yuki_0.2.0_overview.md](./dither_yuki_0.2.0_overview.md) | What’s real vs still beta |
+
+## Design decisions & backlog
+
+| Doc | Contents |
+|---|---|
+| [gpu-path-b-adr.md](./gpu-path-b-adr.md) | ADR: Path B decisions |
+| [B2_ADR_flexlayout_docking.md](./B2_ADR_flexlayout_docking.md) | Why FlexLayout |
+| [TRACK_E_extensibility_architecture.md](./TRACK_E_extensibility_architecture.md) | Registry + format versioning |
+| [KANBAN_gpu_and_docking.md](./KANBAN_gpu_and_docking.md) | Open work only |
+| [legal/flexlayout-license-snapshot.md](./legal/flexlayout-license-snapshot.md) | MIT snapshot for flexlayout-react 0.7.15 |
