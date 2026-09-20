@@ -97,12 +97,12 @@ src-tauri/     # Tauri app: IPC, workers, tile://, menus, panels
 crates/        # engines (project, tiles, color, gpu, io)
 frontend/      # React + Redux Toolkit UI
 site/          # public download landing (GitHub Pages)
-docs/          # as-built architecture & contributor guides
+docs/          # as-built architecture & developer guides
 ```
 
 ### Documentation
 
-Start with [docs/README.md](./docs/README.md) (index). Day-to-day: [Contributing](./docs/CONTRIBUTING.md) · [Release](./docs/RELEASE.md) · [Architecture](./docs/architecture.md).
+Start with [docs/README.md](./docs/README.md) (index). Day-to-day: [Dev setup](./docs/dev-setup.md) · [Release](./docs/RELEASE.md) · [Architecture](./docs/architecture.md).
 
 ---
 

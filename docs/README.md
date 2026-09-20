@@ -6,11 +6,11 @@ As-built notes for Dither Yuki. Product overview and install: [root README](../R
 
 Working specs (not as-built) live under [`.cursor-spec/`](../.cursor-spec/README.md) locally — do not duplicate TZ into `docs/`.
 
-## Contributor
+## Dev
 
 | Doc | Contents |
 |---|---|
-| [CONTRIBUTING.md](./CONTRIBUTING.md) | Setup, tests, conventions |
+| [dev-setup.md](./dev-setup.md) | Setup, tests, conventions |
 | [RELEASE.md](./RELEASE.md) | Tags, updater secrets, notarization, alpha |
 | [HOW_TO_ADD_ALGORITHM.md](./HOW_TO_ADD_ALGORITHM.md) | Built-in `FilterAlgorithm` checklist |
 
