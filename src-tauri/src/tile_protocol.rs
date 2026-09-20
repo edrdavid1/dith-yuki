@@ -3,6 +3,9 @@
 //! Parses URLs of the form:
 //! `tile://doc/{doc_id}/layer/{layer_id}/stage/{stage}/l/{level}/{x}/{y}`
 //!
+//! Also accepts Tauri's WebView2 workaround form on Windows/Android:
+//! `http://tile.localhost/doc/...` (and `https://` when configured).
+//!
 //! Where:
 //! - doc_id: u32 document identifier
 //! - layer_id: u32 layer identifier, or "composite" for the final composite
@@ -104,13 +107,19 @@ pub struct ParsedTileUrl {
 /// assert_eq!(parsed.y, 4);
 /// ```
 pub fn parse_tile_url(uri: &str) -> Result<ParsedTileUrl, TileProtocolError> {
-    // Strip the scheme. Accept both "tile://" and "tile://localhost/" prefixes
-    // (Tauri may normalize custom protocol URLs with a localhost authority).
+    // Strip the scheme / Windows WebView2 workaround host.
+    // - macOS/Linux: `tile://localhost/...` or `tile://...`
+    // - Windows/Android (if not already reverted by wry): `http(s)://tile.localhost/...`
     let path = uri
         .strip_prefix("tile://localhost/")
         .or_else(|| uri.strip_prefix("tile://"))
+        .or_else(|| uri.strip_prefix("http://tile.localhost/"))
+        .or_else(|| uri.strip_prefix("https://tile.localhost/"))
         .ok_or_else(|| {
-            TileProtocolError::MalformedUrl(format!("URL must start with 'tile://', got: {}", uri))
+            TileProtocolError::MalformedUrl(format!(
+                "URL must start with 'tile://' or 'http(s)://tile.localhost/', got: {}",
+                uri
+            ))
         })?;
 
     // Cache-bust query (`?g=`) must not count as extra path segments.
@@ -335,6 +344,27 @@ mod tests {
         assert_eq!(parsed.level, 0);
         assert_eq!(parsed.x, 5);
         assert_eq!(parsed.y, 6);
+    }
+
+    #[test]
+    fn parse_windows_http_localhost_workaround() {
+        let url = "http://tile.localhost/doc/1/layer/composite/stage/composite/l/0/3/4?g=99";
+        let parsed = parse_tile_url(url).unwrap();
+        assert_eq!(parsed.doc_id, 1);
+        assert_eq!(parsed.layer, LayerTarget::Composite);
+        assert_eq!(parsed.stage, CacheStage::Composite);
+        assert_eq!(parsed.level, 0);
+        assert_eq!(parsed.x, 3);
+        assert_eq!(parsed.y, 4);
+    }
+
+    #[test]
+    fn parse_https_localhost_workaround() {
+        let url = "https://tile.localhost/doc/7/layer/3/stage/processed/l/1/0/0";
+        let parsed = parse_tile_url(url).unwrap();
+        assert_eq!(parsed.doc_id, 7);
+        assert_eq!(parsed.layer, LayerTarget::Id(3));
+        assert_eq!(parsed.stage, CacheStage::Processed);
     }
 
     #[test]
