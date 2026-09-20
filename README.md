@@ -1,32 +1,48 @@
-# Dither Yuki
+<p align="center">
+  <img src="./git-hub/git-hub-cover-1.png" alt="Dither Yuki — dithered Yuki over a classical painting" width="720" />
+</p>
 
-Desktop studio for **dithering**, palettes, and layered pixel-art images. Tile-based preview keeps large documents responsive.
+<h1 align="center">Dither Yuki</h1>
 
-Built with **Rust** (Tauri 2) and **React**. Current version: **0.2.0** (public alpha track).
+<p align="center">
+  Desktop studio for dithering, palettes, and layered pixel-art images.<br />
+  Public <strong>alpha</strong> · macOS &amp; Windows
+</p>
 
-[Features](#features) · [Install](#install) · [Develop](#develop) · [Docs](./docs/README.md) · [Release](./docs/RELEASE.md) · [License](#license)
+<p align="center">
+  <a href="https://github.com/edrdavid1/dith-yuki/releases/latest"><strong>Download</strong></a>
+  ·
+  <a href="https://edrdavid1.github.io/dith-yuki/">Download page</a>
+  ·
+  <a href="https://github.com/edrdavid1/dith-yuki/issues/new?template=bug_report.yml">Report a bug</a>
+</p>
 
-## Features
+---
+
+## What it is
+
+A focused **dither / palette studio** — not a paint app, not a print pipeline.
 
 - Ordered dithering (Bayer, halftone, custom threshold maps) and error diffusion (Floyd–Steinberg, Atkinson, and others)
-- Palette quantization with Color Lab (Oklab, ramps, harmony, import ASE/GPL/…)
+- Palette quantization with Color Lab (Oklab, ramps, harmony, import ASE / GPL / …)
 - Palette dither modes: Strict, Guided, Mixed, Simple
-- Non-destructive layers, blend modes, undo/redo
+- Non-destructive layers, blend modes, undo / redo
 - Projects (`.dyproj`) and shareable patterns (`.dyuki`)
-- Dockable / floating panels (FlexLayout: Layers, Effect, Color Lab)
+- Dockable panels (Layers, Effect, Color Lab)
 - In-app updates from GitHub Releases (from 0.2.0)
 
-## Install
-
-**Download:** [GitHub Releases](https://github.com/edrdavid1/dith-yuki/releases) (macOS DMG, Windows NSIS) or the [download page](https://edrdavid1.github.io/dith-yuki/) once Pages is enabled.
-
-After **0.2.0**, Help → Check for Updates pulls `latest.json` (Minisign-verified).
+Tile-based preview keeps large documents responsive.
 
 ### Alpha scope
 
-This is a **dither / palette studio**, not a full paint or print app. No paint tools, ICC/print pipeline, or video/batch yet. GPU acceleration is warm-viewport; cold compute is opt-in (`DITHER_GPU_PREVIEW=1`).
+No paint tools, ICC / print pipeline, or video / batch yet. GPU acceleration is warm-viewport; cold compute is opt-in.
 
-### macOS Gatekeeper
+### Install
+
+1. Get the latest build from [Releases](https://github.com/edrdavid1/dith-yuki/releases/latest) (macOS DMG, Windows NSIS) or the [download page](https://edrdavid1.github.io/dith-yuki/).
+2. After **0.2.0**, use **Help → Check for Updates** (Minisign-verified).
+
+#### macOS Gatekeeper
 
 Alpha DMGs are **self-signed** as **L'eco non di Bergamo** (not Apple Developer ID):
 
@@ -34,13 +50,19 @@ Alpha DMGs are **self-signed** as **L'eco non di Bergamo** (not Apple Developer 
 2. **System Settings → Privacy & Security** → scroll down → **Open Anyway**.
 3. Confirm **Open**.
 
-When `APPLE_CERTIFICATE` (Developer ID) is set in CI, builds are notarized and this step goes away.
+When Developer ID notarization is wired in CI, this step goes away.
 
 ### Feedback
 
-Use the [bug report template](https://github.com/edrdavid1/dith-yuki/issues/new?template=bug_report.yml) (OS + app version + steps). Release process: [docs/RELEASE.md](./docs/RELEASE.md).
+Use the [bug report template](https://github.com/edrdavid1/dith-yuki/issues/new?template=bug_report.yml) — include OS, app version, and steps to reproduce.
 
-**From source**
+---
+
+## For developers
+
+Built with **Rust** (Tauri 2) and **React**. Source is under the Fair Core License 1.0 (MIT future license) — see [LICENSE](./LICENSE).
+
+### Run from source
 
 - Rust (stable) via [rustup](https://rustup.rs/)
 - Node.js 18+
@@ -53,17 +75,11 @@ npm run setup
 npm run tauri:dev
 ```
 
-Production bundle:
+Production bundle: `npm run tauri:build` → artifacts under `src-tauri/target/release/bundle/`.
 
-```bash
-npm run tauri:build
-```
+GPU env (no Preferences toggle): `DITHER_GPU_PREVIEW=1` (cold compute), `DITHER_FORCE_CPU=1`.
 
-Artifacts land under `src-tauri/target/release/bundle/` (DMG on macOS, NSIS on Windows).
-
-GPU: warm resident download + background warmup are on when a wgpu adapter exists. Cold GPU compute: `DITHER_GPU_PREVIEW=1`. Force CPU: `DITHER_FORCE_CPU=1`. There is no Preferences GPU toggle.
-
-## Develop
+### Checks
 
 ```bash
 npm run tauri:dev          # Vite + Tauri
@@ -74,40 +90,20 @@ cargo clippy --all -- -D warnings
 npm run release:verify     # updater config + latest.json smoke
 ```
 
-See [Contributing](./docs/CONTRIBUTING.md) for style and workflow.
-
-## Repository
+### Layout
 
 ```
-src-tauri/          # Tauri app: IPC, workers, tile://, menus, panels
-crates/
-  engine-project/   # Document, layers, filters, compositor, .dyproj / .dyuki
-  engine-tiles/     # Tile cache, coords, scheduler
-  engine-color/     # Oklab, palettes, KD-tree, LUT
-  engine-gpu/       # Path B resident wgpu (auto-dispatch; cold compute opt-in)
-  engine-io/        # Image decode / encode
-  engine-core/      # Legacy stub
-frontend/           # React + Redux Toolkit UI
-site/               # Public download landing (GitHub Pages)
-docs/               # Architecture and contributor guides
+src-tauri/     # Tauri app: IPC, workers, tile://, menus, panels
+crates/        # engines (project, tiles, color, gpu, io)
+frontend/      # React + Redux Toolkit UI
+site/          # public download landing (GitHub Pages)
+docs/          # as-built architecture & contributor guides
 ```
 
-## Docs
+### Documentation
 
-| Document | Contents |
-|---|---|
-| [docs/README.md](./docs/README.md) | Full index (as-built vs historical) |
-| [docs/architecture.md](./docs/architecture.md) | As-built system map |
-| [docs/RELEASE.md](./docs/RELEASE.md) | Tags, updater secrets, notarization, alpha |
-| [docs/tile-pipeline.md](./docs/tile-pipeline.md) | Tiles, coordinates, error-diffusion wavefront, GPU |
-| [docs/gpu-as-built.md](./docs/gpu-as-built.md) | Path B GPU + auto-dispatch |
-| [docs/FLEXLAYOUT_DOCKING.md](./docs/FLEXLAYOUT_DOCKING.md) | Docking as-built |
-| [docs/palette-dither.md](./docs/palette-dither.md) | Strict / Guided / Mixed / Simple |
-| [docs/color-lab.md](./docs/color-lab.md) | Palettes and Color Lab |
-| [docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md) | Setup and conventions |
+Start with [docs/README.md](./docs/README.md) (index). Day-to-day: [Contributing](./docs/CONTRIBUTING.md) · [Release](./docs/RELEASE.md) · [Architecture](./docs/architecture.md).
 
-## License
+---
 
 Copyright © 2026 L'eco non di Bergamo.
-
-Source is available under the **Fair Core License 1.0** (MIT future license). See [LICENSE](./LICENSE).
