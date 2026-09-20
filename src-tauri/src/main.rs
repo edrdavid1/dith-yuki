@@ -9,6 +9,7 @@ mod document_session;
 mod file_log;
 mod flexlayout_persistence;
 mod gpu_resident_shadow;
+mod journal;
 #[cfg(target_os = "macos")]
 mod macos_title;
 mod memory_budget;
@@ -353,7 +354,7 @@ fn main() {
                     );
                 let right_persistence =
                     crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
-                        app_data_dir,
+                        app_data_dir.clone(),
                         "flexlayout_right.json",
                     );
                 if let Ok(mut slot) = state.flexlayout_left.lock() {
@@ -362,6 +363,13 @@ fn main() {
                 if let Ok(mut slot) = state.flexlayout_right.lock() {
                     *slot = right_persistence;
                 }
+
+                // Crash-recovery journal root: {app_data}/recovery/
+                crate::journal::set_recovery_dir(
+                    &state,
+                    crate::journal::recovery_subdir(&app_data_dir),
+                );
+                crate::journal::start_heartbeat(app_handle.clone());
             }
 
             // Set native titlebar color on macOS

@@ -100,6 +100,7 @@ pub fn emit_dirty_doc(app: Option<&AppHandle>, state: &AppState, doc_id: u32) {
             },
         );
     }
+    crate::journal::schedule_dirty(app, state, doc_id);
 }
 
 pub fn emit_dirty(app: Option<&AppHandle>, state: &AppState) {

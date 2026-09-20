@@ -17,6 +17,8 @@ use crate::undo::UndoManager;
 /// One open document: tiles are keyed by `id`, undo/dirty/path are not shared.
 pub struct DocumentSession {
     pub id: DocumentId,
+    /// Stable across process restarts for crash-recovery journal filenames.
+    pub recovery_id: uuid::Uuid,
     pub document_handle: DocumentHandle,
     pub history: crate::state::HistoryState,
     pub project_path: Mutex<Option<PathBuf>>,
@@ -132,6 +134,7 @@ impl AppState {
                 ),
             ),
             ram_budget_source: crate::memory_budget::RamBudgetSource::TestOverride,
+            journal: Mutex::new(crate::journal::JournalRuntime::disabled()),
         }
     }
 
@@ -159,6 +162,7 @@ impl AppState {
         self.bump_next_past(id.0);
         let session = Arc::new(DocumentSession {
             id,
+            recovery_id: uuid::Uuid::new_v4(),
             document_handle: DocumentHandle::new(doc),
             history: crate::state::HistoryState::new(),
             project_path: Mutex::new(None),
