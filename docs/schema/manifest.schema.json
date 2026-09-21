@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dither.app/schema/manifest.schema.json",
+  "title": "Dither archive manifest.json",
+  "type": "object",
+  "required": ["format_version", "kind"],
+  "properties": {
+    "format_version": { "type": "integer", "minimum": 1 },
+    "kind": { "type": "string", "enum": ["dyproj", "dyuki"] },
+    "format": {
+      "type": "object",
+      "required": ["major", "minor"],
+      "properties": {
+        "major": { "type": "integer", "minimum": 1 },
+        "minor": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "min_reader": {
+      "type": "object",
+      "required": ["major", "minor"],
+      "properties": {
+        "major": { "type": "integer", "minimum": 1 },
+        "minor": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "features_required": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "features_optional": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "generator": {
+      "type": "object",
+      "properties": {
+        "app": { "type": "string" },
+        "version": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "files": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["size", "sha256"],
+        "properties": {
+          "size": { "type": "integer", "minimum": 0 },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "app_version": { "type": "string" },
+    "app_version_min": { "type": "string" },
+    "created_at": { "type": "string" },
+    "modified_at": { "type": "string" },
+    "width": { "type": "integer", "minimum": 1 },
+    "height": { "type": "integer", "minimum": 1 },
+    "document": {
+      "type": "object",
+      "properties": {
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": true
+    },
+    "name": { "type": "string" },
+    "description": { "type": "string" },
+    "author": { "type": "string" }
+  },
+  "additionalProperties": true
+}

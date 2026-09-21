@@ -548,6 +548,7 @@ fn find_layers_referencing_palette_recursive_group() {
             visible: true,
             mask: None,
             children,
+            extra: Default::default(),
         };
         doc.root.push(LayerNode::Group(group));
     });

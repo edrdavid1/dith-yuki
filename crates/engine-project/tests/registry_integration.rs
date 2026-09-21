@@ -16,6 +16,7 @@ fn unknown_algorithm_id_roundtrip() {
         blend_mode: BlendMode::Normal,
         algorithm_id: Some("algo_that_does_not_exist_v99".into()),
         schema_version: Some(1),
+        extra: Default::default(),
     };
 
     let loaded = filter_from_file(&file, None);

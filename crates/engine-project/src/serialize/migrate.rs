@@ -113,6 +113,44 @@ pub enum ProjectError {
 
     #[error("no filters to export")]
     EmptyExport,
+
+    #[error("secure zip: {0}")]
+    SecureZip(String),
+
+    #[error("invalid JSON: {0}")]
+    SecureJson(String),
+
+    #[error("corrupt archive data: {0}")]
+    Corrupt(String),
+
+    #[error("needs newer app: format {required_format} — {hint}")]
+    NeedsNewerApp {
+        required_format: String,
+        hint: String,
+    },
+
+    #[error("unsupported required features: {0:?}")]
+    UnsupportedFeatures(Vec<String>),
+}
+
+impl From<crate::serialize::secure_zip::SecureZipError> for ProjectError {
+    fn from(value: crate::serialize::secure_zip::SecureZipError) -> Self {
+        use crate::serialize::secure_zip::SecureZipError;
+        match value {
+            SecureZipError::KindMismatch { expected } => ProjectError::KindMismatch {
+                expected,
+                found: "mimetype/container".into(),
+            },
+            SecureZipError::EntryNotFound(name) => ProjectError::MissingEntry(name),
+            other => ProjectError::SecureZip(other.to_string()),
+        }
+    }
+}
+
+impl From<crate::serialize::secure_json::SecureJsonError> for ProjectError {
+    fn from(value: crate::serialize::secure_json::SecureJsonError) -> Self {
+        ProjectError::SecureJson(value.to_string())
+    }
 }
 
 /// Gate `format_version` for a known kind. Future versions error; older ones

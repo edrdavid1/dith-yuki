@@ -670,6 +670,7 @@ mod tests {
             visible: true,
             mask: None,
             children: vec![LayerNode::Leaf(leaf)],
+            extra: Default::default(),
         };
         assert!(root_has_groups(&[LayerNode::Group(group)]));
     }

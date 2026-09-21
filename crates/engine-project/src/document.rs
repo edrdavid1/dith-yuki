@@ -8,7 +8,12 @@ use arc_swap::ArcSwap;
 use engine_color::palette::{LinearColor, Palette};
 use engine_tiles::generation::GenerationTracker;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use std::sync::Arc;
+
+fn empty_json_map() -> Map<String, Value> {
+    Map::new()
+}
 
 /// The main document structure.
 #[derive(Clone)]
@@ -36,6 +41,12 @@ pub struct Document {
 
     /// Generation tracker for selective invalidation (not serialized)
     pub generations: GenerationTracker,
+
+    /// Forward-compat JSON bag from `document.json` (SPEC §9.1).
+    pub extra: Map<String, Value>,
+
+    /// Opaque `ext/...` zip entries preserved across open→save (SPEC §9.1).
+    pub ext_blobs: Vec<(String, Vec<u8>)>,
 }
 
 impl std::fmt::Debug for Document {
@@ -46,6 +57,7 @@ impl std::fmt::Debug for Document {
             .field("height", &self.height)
             .field("revision", &self.revision)
             .field("root_layers", &self.root.len())
+            .field("ext_blobs", &self.ext_blobs.len())
             .finish()
     }
 }
@@ -56,7 +68,7 @@ impl Serialize for Document {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("Document", 7)?;
+        let mut state = serializer.serialize_struct("Document", 8)?;
         state.serialize_field("id", &self.id)?;
         state.serialize_field("width", &self.width)?;
         state.serialize_field("height", &self.height)?;
@@ -64,6 +76,7 @@ impl Serialize for Document {
         state.serialize_field("root", &self.root)?;
         state.serialize_field("palettes", &self.palettes)?;
         state.serialize_field("revision", &self.revision)?;
+        state.serialize_field("extra", &self.extra)?;
         state.end()
     }
 }
@@ -82,6 +95,8 @@ impl<'de> Deserialize<'de> for Document {
             root: Vec<LayerNode>,
             palettes: Vec<Palette>,
             revision: u64,
+            #[serde(default = "empty_json_map")]
+            extra: Map<String, Value>,
         }
 
         let helper = DocumentHelper::deserialize(deserializer)?;
@@ -94,6 +109,8 @@ impl<'de> Deserialize<'de> for Document {
             palettes: helper.palettes,
             revision: helper.revision,
             generations: GenerationTracker::new(),
+            extra: helper.extra,
+            ext_blobs: Vec::new(),
         })
     }
 }
@@ -110,6 +127,8 @@ impl Document {
             palettes: Vec::new(),
             revision: 0,
             generations: GenerationTracker::new(),
+            extra: Map::new(),
+            ext_blobs: Vec::new(),
         }
     }
 

@@ -102,9 +102,21 @@ pub fn export(colors: &[LinearColor], name: Option<&str>) -> Result<Vec<u8>, Pal
     output.push_str("GIMP Palette\n");
 
     if let Some(name) = name {
-        // Truncate name to 256 chars
-        let truncated: String = name.chars().take(256).collect();
-        output.push_str(&format!("Name: {}\n", truncated));
+        // Single-line header only; strip controls / formula-ish prefixes (§9.9).
+        let safe: String = name
+            .chars()
+            .take(256)
+            .filter(|c| *c != '\n' && *c != '\r' && !c.is_control())
+            .collect();
+        let safe = safe.trim();
+        let safe = if safe.starts_with(['=', '+', '-', '@']) {
+            format!("'{safe}")
+        } else {
+            safe.to_string()
+        };
+        if !safe.is_empty() {
+            output.push_str(&format!("Name: {safe}\n"));
+        }
     }
 
     output.push_str("Columns: 16\n");

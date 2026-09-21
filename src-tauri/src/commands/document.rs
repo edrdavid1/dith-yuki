@@ -10,8 +10,8 @@ pub use crate::services::document_service::{
     blank_rgba_f32, encode_rgba_to_png, f32_to_u8, place_image_at_origin,
     validate_document_dimensions, BlankBackground, DocumentResponse as DocResponse,
     ExportImageRequest, ExportPatternRequest, ImportPatternRequest, ImportPatternResponse,
-    LoadImageResponse, OpenProjectResponse, SaveProjectResponse, IMAGE_IMPORT_EXTENSIONS,
-    MAX_DOCUMENT_DIMENSION,
+    LoadImageResponse, OpenProjectResponse, SaveProjectResponse, ShareProjectCopyOptions,
+    IMAGE_IMPORT_EXTENSIONS, MAX_DOCUMENT_DIMENSION,
 };
 use crate::services::{AppError, DocumentService};
 
@@ -124,6 +124,19 @@ pub async fn save_project_as(
 ) -> Result<SaveProjectResponse, String> {
     DocumentService::new(state.inner().clone())
         .save_project_as(doc_id, path, app_handle)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn share_project_copy(
+    doc_id: u32,
+    path: String,
+    opts: Option<ShareProjectCopyOptions>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<SaveProjectResponse, String> {
+    DocumentService::new(state.inner().clone())
+        .share_project_copy(doc_id, path, opts.unwrap_or_default())
         .await
         .map_err(|e| e.to_string())
 }

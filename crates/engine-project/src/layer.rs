@@ -4,6 +4,19 @@ use crate::filter::FilterInstance;
 use crate::mask::MaskRef;
 use crate::types::{BlendMode, LayerId, LayerKind, TileBounds};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+
+fn empty_extra_map() -> Map<String, Value> {
+    Map::new()
+}
+
+fn is_empty_extra(m: &Map<String, Value>) -> bool {
+    m.is_empty()
+}
+
+/// Key in [`Layer::extra`] holding an opaque unknown layer-node JSON blob (SPEC §9.1).
+pub const FORWARD_COMPAT_NODE_KEY: &str = "__forward_compat_node";
+
 
 /// A reference to a layer during tree traversal.
 #[derive(Debug, Clone)]
@@ -48,6 +61,10 @@ pub struct Layer {
 
     /// Bounds of layer content in tiles at MipLevel 0
     pub bounds_l0: TileBounds,
+
+    /// Forward-compat bag (SPEC §9.1). Not interpreted by the engine.
+    #[serde(default = "empty_extra_map", skip_serializing_if = "is_empty_extra")]
+    pub extra: Map<String, Value>,
 }
 
 impl Layer {
@@ -64,6 +81,7 @@ impl Layer {
             mask: None,
             filters: Vec::new(),
             bounds_l0: TileBounds::full_document(width, height),
+            extra: Map::new(),
         }
     }
 
@@ -131,6 +149,10 @@ pub struct LayerGroup {
 
     /// Child layers/groups, bottom-to-top
     pub children: Vec<LayerNode>,
+
+    /// Forward-compat bag (SPEC §9.1).
+    #[serde(default = "empty_extra_map", skip_serializing_if = "is_empty_extra")]
+    pub extra: Map<String, Value>,
 }
 
 impl LayerGroup {
@@ -144,6 +166,7 @@ impl LayerGroup {
             visible: true,
             mask: None,
             children: Vec::new(),
+            extra: Map::new(),
         }
     }
 }

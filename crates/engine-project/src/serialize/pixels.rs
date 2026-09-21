@@ -112,6 +112,137 @@ pub fn assemble_layer_rgba8(
     Ok(canvas)
 }
 
+/// Build a document-sized flat composite from Raw raster layers (insurance PNG).
+///
+/// Walks leaves in tree order (bottom → top). Visible rasters are alpha-composited
+/// with Porter-Duff **over** using each layer's opacity. Filter stacks and non-Normal
+/// blend modes are intentionally skipped — composite is a compatibility flat, not a
+/// full export render (see `docs/FORMAT_DECISIONS.md` Stage 4).
+pub fn build_composite_rgba8(
+    cache: &TileCache,
+    nodes: &[LayerNode],
+    doc_width: u32,
+    doc_height: u32,
+    doc_id: u32,
+) -> Result<Vec<u8>, ProjectError> {
+    let mut canvas = vec![0u8; (doc_width as usize) * (doc_height as usize) * 4];
+    paint_composite_nodes(nodes, cache, doc_width, doc_height, doc_id, &mut canvas)?;
+    Ok(canvas)
+}
+
+fn paint_composite_nodes(
+    nodes: &[LayerNode],
+    cache: &TileCache,
+    doc_width: u32,
+    doc_height: u32,
+    doc_id: u32,
+    canvas: &mut [u8],
+) -> Result<(), ProjectError> {
+    for node in nodes {
+        match node {
+            LayerNode::Leaf(layer) => {
+                if !layer.visible || layer.kind != LayerKind::Raster {
+                    continue;
+                }
+                let src = assemble_layer_rgba8(cache, layer, doc_width, doc_height, doc_id)?;
+                blend_over_rgba(canvas, &src, layer.opacity);
+            }
+            LayerNode::Group(g) => {
+                if !g.visible {
+                    continue;
+                }
+                // Group isolation / group opacity deferred; paint children flat.
+                paint_composite_nodes(&g.children, cache, doc_width, doc_height, doc_id, canvas)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn blend_over_rgba(dst: &mut [u8], src: &[u8], opacity: f32) {
+    let opacity = opacity.clamp(0.0, 1.0);
+    let n = dst.len().min(src.len()) / 4;
+    for i in 0..n {
+        let o = i * 4;
+        let sa = (src[o + 3] as f32 / 255.0) * opacity;
+        if sa <= 0.0 {
+            continue;
+        }
+        let da = dst[o + 3] as f32 / 255.0;
+        let out_a = sa + da * (1.0 - sa);
+        if out_a <= 0.0 {
+            dst[o] = 0;
+            dst[o + 1] = 0;
+            dst[o + 2] = 0;
+            dst[o + 3] = 0;
+            continue;
+        }
+        for c in 0..3 {
+            let s = src[o + c] as f32 / 255.0;
+            let d = dst[o + c] as f32 / 255.0;
+            let out = (s * sa + d * da * (1.0 - sa)) / out_a;
+            dst[o + c] = (out.clamp(0.0, 1.0) * 255.0).round() as u8;
+        }
+        dst[o + 3] = (out_a.clamp(0.0, 1.0) * 255.0).round() as u8;
+    }
+}
+
+/// Encode [`build_composite_rgba8`] as PNG.
+pub fn build_composite_png(
+    cache: &TileCache,
+    nodes: &[LayerNode],
+    doc_width: u32,
+    doc_height: u32,
+    doc_id: u32,
+) -> Result<Vec<u8>, ProjectError> {
+    let rgba = build_composite_rgba8(cache, nodes, doc_width, doc_height, doc_id)?;
+    encode_rgba8_png(&rgba, doc_width, doc_height)
+}
+
+/// Resize RGBA8 so the long side is ≤ `max_side` (SPEC: thumbnail ≤ 512).
+pub fn build_thumbnail_png(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    max_side: u32,
+) -> Result<Vec<u8>, ProjectError> {
+    if width == 0 || height == 0 {
+        return Err(ProjectError::Codec("thumbnail requires non-zero size".into()));
+    }
+    let expected = (width as usize) * (height as usize) * 4;
+    if rgba.len() != expected {
+        return Err(ProjectError::Codec(format!(
+            "thumbnail RGBA size {} != {}×{}×4",
+            rgba.len(),
+            width,
+            height
+        )));
+    }
+    let img = RgbaImage::from_raw(width, height, rgba.to_vec())
+        .ok_or_else(|| ProjectError::Codec("failed to wrap RGBA for thumbnail".into()))?;
+
+    let long = width.max(height);
+    let (tw, th) = if long <= max_side {
+        (width, height)
+    } else {
+        let scale = max_side as f32 / long as f32;
+        let tw = ((width as f32) * scale).round().max(1.0) as u32;
+        let th = ((height as f32) * scale).round().max(1.0) as u32;
+        (tw, th)
+    };
+
+    let resized = if tw == width && th == height {
+        img
+    } else {
+        image::imageops::resize(&img, tw, th, image::imageops::FilterType::Triangle)
+    };
+    let mut buf = Cursor::new(Vec::new());
+    resized
+        .write_to(&mut buf, image::ImageFormat::Png)
+        .map_err(|e| ProjectError::Codec(e.to_string()))?;
+    Ok(buf.into_inner())
+}
+
 /// Quantize linear-ish [0,1] float to u8 (see module lossless caveat).
 fn f32_to_u8(v: f32) -> u8 {
     (v.clamp(0.0, 1.0) * 255.0).round() as u8
@@ -136,21 +267,164 @@ pub fn encode_rgba8_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>,
     Ok(buf.into_inner())
 }
 
-/// Decode PNG → f32 RGBA (same path as `load_image`).
-pub fn decode_png_to_f32(png_bytes: &[u8]) -> Result<(u32, u32, Vec<f32>), ProjectError> {
+/// Decode PNG → re-encode as clean RGBA8 PNG (drops EXIF/XMP/iCCP/text chunks).
+pub fn reencode_png_clean(png_bytes: &[u8]) -> Result<Vec<u8>, ProjectError> {
     let img = image::load_from_memory(png_bytes)
-        .map_err(|e| ProjectError::Codec(e.to_string()))?
+        .map_err(|e| ProjectError::Codec(format!("PNG re-encode load: {e}")))?
         .to_rgba8();
-    let width = img.width();
-    let height = img.height();
-    let mut rgba_f32 = Vec::with_capacity((width as usize) * (height as usize) * 4);
-    for pixel in img.pixels() {
-        rgba_f32.push(pixel[0] as f32 / 255.0);
-        rgba_f32.push(pixel[1] as f32 / 255.0);
-        rgba_f32.push(pixel[2] as f32 / 255.0);
-        rgba_f32.push(pixel[3] as f32 / 255.0);
+    let (w, h) = img.dimensions();
+    encode_rgba8_png(img.as_raw(), w, h)
+}
+
+/// Decode PNG → f32 RGBA with resource limits (SPEC §7.6).
+///
+/// Reads IHDR through `png::Decoder` **before** allocating the float buffer;
+/// rejects oversized dimensions and caps decoder allocations via `png::Limits`.
+pub fn decode_png_to_f32(png_bytes: &[u8]) -> Result<(u32, u32, Vec<f32>), ProjectError> {
+    decode_png_to_f32_with_limits(png_bytes, PngDecodeLimits::default())
+}
+
+/// Limits for archive PNG decode (document layers / composites).
+#[derive(Debug, Clone, Copy)]
+pub struct PngDecodeLimits {
+    pub max_width: u32,
+    pub max_height: u32,
+    /// `width × height` cap (SPEC §7.3: 16384²).
+    pub max_pixels: u64,
+    /// Budget for `png::Limits::bytes` (decoded intermediate allocations).
+    pub max_decoder_bytes: usize,
+}
+
+impl Default for PngDecodeLimits {
+    fn default() -> Self {
+        Self {
+            max_width: 65_535,
+            max_height: 65_535,
+            max_pixels: 268_435_456,
+            max_decoder_bytes: 1024 * 1024 * 1024, // 1 GiB matches dyproj PNG entry cap
+        }
     }
+}
+
+/// Stricter limits for threshold-map PNGs (SPEC §7.4).
+pub fn threshold_map_png_limits() -> PngDecodeLimits {
+    PngDecodeLimits {
+        max_width: 4096,
+        max_height: 4096,
+        max_pixels: 4096 * 4096,
+        max_decoder_bytes: 64 * 1024 * 1024,
+    }
+}
+
+pub fn decode_png_to_f32_with_limits(
+    png_bytes: &[u8],
+    limits: PngDecodeLimits,
+) -> Result<(u32, u32, Vec<f32>), ProjectError> {
+    let (width, height) = peek_png_dimensions(png_bytes, limits)?;
+    let pixels = (width as u64)
+        .checked_mul(height as u64)
+        .ok_or_else(|| ProjectError::Corrupt(format!("PNG dimensions overflow {width}×{height}")))?;
+    if pixels == 0 || pixels > limits.max_pixels {
+        return Err(ProjectError::Corrupt(format!(
+            "PNG pixel count {pixels} outside 1..={}",
+            limits.max_pixels
+        )));
+    }
+    if width > limits.max_width || height > limits.max_height {
+        return Err(ProjectError::Corrupt(format!(
+            "PNG size {width}×{height} exceeds {}×{}",
+            limits.max_width, limits.max_height
+        )));
+    }
+
+    // Decode with the same budget so compressed bombs cannot expand past the cap.
+    let mut decoder = png::Decoder::new(Cursor::new(png_bytes));
+    decoder.set_limits(png::Limits {
+        bytes: limits.max_decoder_bytes,
+    });
+    // Expand to 8-bit and add alpha so output is predictable.
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::ALPHA);
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| ProjectError::Corrupt(format!("PNG header: {e}")))?;
+    let info = reader.info();
+    if info.width != width || info.height != height {
+        return Err(ProjectError::Corrupt("PNG IHDR mismatch on re-read".into()));
+    }
+
+    let output_size = reader.output_buffer_size();
+    let max_rgba = pixels
+        .checked_mul(4)
+        .ok_or_else(|| ProjectError::Corrupt("PNG RGBA size overflow".into()))?;
+    if (output_size as u64) > max_rgba.saturating_mul(2).max(64) {
+        return Err(ProjectError::Corrupt(format!(
+            "PNG output buffer {output_size} implausible for {width}×{height}"
+        )));
+    }
+    if output_size > limits.max_decoder_bytes {
+        return Err(ProjectError::Corrupt(format!(
+            "PNG output buffer {output_size} exceeds decoder budget"
+        )));
+    }
+
+    let mut buf = vec![0u8; output_size];
+    let frame = reader
+        .next_frame(&mut buf)
+        .map_err(|e| ProjectError::Corrupt(format!("PNG decode: {e}")))?;
+    let used = &buf[..frame.buffer_size()];
+
+    let mut rgba_f32 = Vec::new();
+    rgba_f32
+        .try_reserve_exact((pixels as usize).saturating_mul(4))
+        .map_err(|_| ProjectError::Corrupt("PNG float buffer alloc failed".into()))?;
+
+    match frame.color_type {
+        png::ColorType::Rgba => {
+            if used.len() < (pixels as usize) * 4 {
+                return Err(ProjectError::Corrupt("PNG RGBA truncated".into()));
+            }
+            for px in used.chunks_exact(4).take(pixels as usize) {
+                rgba_f32.push(px[0] as f32 / 255.0);
+                rgba_f32.push(px[1] as f32 / 255.0);
+                rgba_f32.push(px[2] as f32 / 255.0);
+                rgba_f32.push(px[3] as f32 / 255.0);
+            }
+        }
+        png::ColorType::GrayscaleAlpha => {
+            if used.len() < (pixels as usize) * 2 {
+                return Err(ProjectError::Corrupt("PNG GrayAlpha truncated".into()));
+            }
+            for px in used.chunks_exact(2).take(pixels as usize) {
+                let g = px[0] as f32 / 255.0;
+                rgba_f32.push(g);
+                rgba_f32.push(g);
+                rgba_f32.push(g);
+                rgba_f32.push(px[1] as f32 / 255.0);
+            }
+        }
+        other => {
+            return Err(ProjectError::Corrupt(format!(
+                "unsupported PNG color type after expand: {other:?}"
+            )));
+        }
+    }
+
     Ok((width, height, rgba_f32))
+}
+
+fn peek_png_dimensions(
+    png_bytes: &[u8],
+    limits: PngDecodeLimits,
+) -> Result<(u32, u32), ProjectError> {
+    let mut decoder = png::Decoder::new(Cursor::new(png_bytes));
+    decoder.set_limits(png::Limits {
+        bytes: limits.max_decoder_bytes,
+    });
+    let reader = decoder
+        .read_info()
+        .map_err(|e| ProjectError::Corrupt(format!("PNG header: {e}")))?;
+    let info = reader.info();
+    Ok((info.width, info.height))
 }
 
 /// Walk tree and collect raster layers (for save).

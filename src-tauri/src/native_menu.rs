@@ -96,6 +96,13 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
         true,
         Some("CmdOrCtrl+Shift+S"),
     )?;
+    let share_project_copy = MenuItem::with_id(
+        app,
+        "share-project-copy",
+        "Share Copy…",
+        true,
+        None::<&str>,
+    )?;
     let save_export = MenuItem::with_id(app, "save-export", "Save/Export", true, None::<&str>)?;
 
     let file_menu = Submenu::with_items(
@@ -110,6 +117,7 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
             &PredefinedMenuItem::separator(app)?,
             &save_project,
             &save_project_as,
+            &share_project_copy,
             &save_export,
         ],
     )?;

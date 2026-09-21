@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dither.app/schema/palettes.schema.json",
+  "title": "Dither palettes.json (dyuki)",
+  "type": "object",
+  "additionalProperties": {
+    "type": "object",
+    "required": ["name", "colors"],
+    "properties": {
+      "name": { "type": "string" },
+      "colors": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "r": { "type": "number" },
+            "g": { "type": "number" },
+            "b": { "type": "number" }
+          },
+          "additionalProperties": true
+        }
+      }
+    },
+    "additionalProperties": true
+  }
+}

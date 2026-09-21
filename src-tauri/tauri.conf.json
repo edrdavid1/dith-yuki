@@ -1,6 +1,6 @@
 {
   "productName": "Dither Yuki",
-  "version": "0.3.0-alpha.5",
+  "version": "0.3.0-alpha.6",
   "identifier": "com.dither.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -29,7 +29,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost https://asset.localhost blob: data: tile: http://tile.localhost; connect-src ipc: http://ipc.localhost; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
     }
   },
   "bundle": {
@@ -59,7 +59,7 @@
         "description": "Dither Yuki project archive",
         "role": "Editor",
         "rank": "Owner",
-        "mimeType": "application/x-dither-project",
+        "mimeType": "application/vnd.dither.project+zip",
         "exportedType": {
           "identifier": "com.dither.app.project",
           "conformsTo": [
@@ -76,7 +76,7 @@
         "description": "Dither Yuki sharable pattern",
         "role": "Editor",
         "rank": "Owner",
-        "mimeType": "application/x-dither-pattern",
+        "mimeType": "application/vnd.dither.pattern+zip",
         "exportedType": {
           "identifier": "com.dither.app.pattern",
           "conformsTo": [

@@ -7,6 +7,7 @@ import { refreshFilters, selectFiltersList } from '../../app/slices/filtersSlice
 import { setSelection } from '../../app/slices/selectionSlice';
 import { useEffectLayer } from '../../hooks/useEffectLayer';
 import { useDocument } from '../../hooks/useDocument';
+import { listPalettes } from '../../shared/ipc/palettes';
 import type { EffectType } from '../../types/effects';
 import type { FilterInfo } from '../../types';
 import type { PanelChromeProps } from '../panels/PanelChrome';
@@ -109,6 +110,7 @@ export default function EffectsFeature({
   // Send only DitherV2 fields (never the UI `type` tag) so serde accepts the payload.
   // Do not write `palette_id: null` just because this window's store has not
   // received lastCreatedId yet (floating Color Lab vs Effects).
+  // Skip ids that are not in the current document (stale localStorage binding).
   const lastSyncedKeyRef = useRef<string>('');
   useEffect(() => {
     if (effectLayer.effectType !== 'Dithering') return;
@@ -117,48 +119,62 @@ export default function EffectsFeature({
     const syncKey = `${effectLayer.filterId}:${lastCreatedId}`;
     if (lastSyncedKeyRef.current === syncKey) return;
 
-    const params = effectLayer.effectParams as unknown as Record<string, unknown>;
-    const current =
-      typeof params.palette_id === 'number' ? params.palette_id : null;
-    if (current === lastCreatedId) {
-      lastSyncedKeyRef.current = syncKey;
-      return;
-    }
-    lastSyncedKeyRef.current = syncKey;
+    let cancelled = false;
+    void listPalettes()
+      .then((list) => {
+        if (cancelled) return;
+        if (!list.some((p) => p.id === lastCreatedId)) return;
 
-    const {
-      mode,
-      levels,
-      threshold_scale,
-      pixel_size,
-      color_mode,
-      halftone_cell_size,
-      wave_wavelength,
-      wave_amplitude,
-      wave_phase,
-      wave_angle,
-      threshold_bias,
-      pattern_angle,
-      serpentine,
-      dither_alpha,
-    } = params;
-    effectLayer.updateParams({
-      mode,
-      levels,
-      threshold_scale,
-      pixel_size,
-      color_mode: color_mode ?? 'rgb',
-      palette_id: lastCreatedId,
-      halftone_cell_size: halftone_cell_size ?? 8,
-      wave_wavelength: wave_wavelength ?? 8,
-      wave_amplitude: wave_amplitude ?? 1,
-      wave_phase: wave_phase ?? 0,
-      wave_angle: wave_angle ?? 0,
-      threshold_bias: threshold_bias ?? 0,
-      pattern_angle: pattern_angle ?? 0,
-      serpentine: serpentine ?? false,
-      dither_alpha: dither_alpha !== false,
-    });
+        const params = effectLayer.effectParams as unknown as Record<string, unknown>;
+        const current =
+          typeof params.palette_id === 'number' ? params.palette_id : null;
+        if (current === lastCreatedId) {
+          lastSyncedKeyRef.current = syncKey;
+          return;
+        }
+        lastSyncedKeyRef.current = syncKey;
+
+        const {
+          mode,
+          levels,
+          threshold_scale,
+          pixel_size,
+          color_mode,
+          halftone_cell_size,
+          wave_wavelength,
+          wave_amplitude,
+          wave_phase,
+          wave_angle,
+          threshold_bias,
+          pattern_angle,
+          serpentine,
+          dither_alpha,
+        } = params;
+        effectLayer.updateParams({
+          mode,
+          levels,
+          threshold_scale,
+          pixel_size,
+          color_mode: color_mode ?? 'rgb',
+          palette_id: lastCreatedId,
+          halftone_cell_size: halftone_cell_size ?? 8,
+          wave_wavelength: wave_wavelength ?? 8,
+          wave_amplitude: wave_amplitude ?? 1,
+          wave_phase: wave_phase ?? 0,
+          wave_angle: wave_angle ?? 0,
+          threshold_bias: threshold_bias ?? 0,
+          pattern_angle: pattern_angle ?? 0,
+          serpentine: serpentine ?? false,
+          dither_alpha: dither_alpha !== false,
+        });
+      })
+      .catch(() => {
+        /* Color Lab listPalettes failure — skip sync this tick */
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     lastCreatedId,
     effectLayer.effectType,

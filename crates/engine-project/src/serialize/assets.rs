@@ -39,6 +39,13 @@ pub fn content_hash(png_bytes: &[u8]) -> String {
     hex_encode(&bytes[..16])
 }
 
+/// Full SHA-256 hex (64 lowercase chars) for `manifest.files` integrity.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(bytes);
+    hex_encode(&digest)
+}
+
 fn hex_encode(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);

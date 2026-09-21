@@ -9,6 +9,7 @@ members = [
     "crates/engine-gpu",
     "crates/engine-registry",
 ]
+exclude = ["fuzz"]
 
 resolver = "2"
 

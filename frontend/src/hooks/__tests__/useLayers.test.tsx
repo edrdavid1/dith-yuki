@@ -202,6 +202,7 @@ describe('useLayers', () => {
       mockInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'get_layer_tree') return makeLayers();
         if (cmd === 'get_document_snapshot') return makeValidSnapshot();
+        if (cmd === 'list_palettes') return [{ id: 42, name: 'P', colors: [], revision: 1 }];
         return undefined;
       });
       mockAddFilter.mockResolvedValue({ filter_id: 'new-filter-palette' });
@@ -224,6 +225,7 @@ describe('useLayers', () => {
       });
 
       expect(mockAddFilter).toHaveBeenCalledWith(
+        1,
         1,
         'DitherV2',
         expect.objectContaining({ palette_id: 42 })

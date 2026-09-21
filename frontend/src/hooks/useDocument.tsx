@@ -18,6 +18,7 @@ import { refreshFilters } from '../app/slices/filtersSlice';
 import { maybeAutoExtractPalette } from '../app/autoExtract';
 import { useShell } from '../app/shell/ShellContext';
 import { openDialog, saveDialog } from '../shared/ipc';
+import { shareProjectCopy as shareProjectCopyIPC } from '../shared/ipc/project';
 import { listOpenDocuments } from '../shared/ipc/document';
 import type { BlankBackground } from '../shared/ipc/document';
 import {
@@ -25,6 +26,8 @@ import {
   shouldWarnOpenDocMemory,
 } from '../shared/memoryWarning';
 import SvgExportDialog, { type SvgExportAlgorithm } from '../components/SvgExportDialog';
+import ShareCopyDialog from '../components/ShareCopyDialog';
+import type { ShareProjectCopyOptions } from '../shared/ipc/project';
 
 /**
  * Document open/save flows backed by RTK `document` slice.
@@ -36,6 +39,7 @@ export function useDocument() {
   const { autoExtractPalettes } = useShell();
   const [svgOpen, setSvgOpen] = useState(false);
   const svgResolver = useRef<((algo: SvgExportAlgorithm | null) => void) | null>(null);
+  const [shareCopyOpen, setShareCopyOpen] = useState(false);
 
   const maybeWarnMemory = useCallback(async () => {
     try {
@@ -191,6 +195,46 @@ export function useDocument() {
     }
   }, [dispatch, state.docId, state.hasDocument]);
 
+  const shareProjectCopyFn = useCallback(async () => {
+    if (!state.hasDocument || state.docId == null) return;
+    setShareCopyOpen(true);
+  }, [state.docId, state.hasDocument]);
+
+  const runShareCopyExport = useCallback(
+    async (opts: ShareProjectCopyOptions) => {
+      setShareCopyOpen(false);
+      if (!state.hasDocument || state.docId == null) return;
+      const docId = state.docId;
+      try {
+        const filePath = await saveDialog({
+          filters: [{ name: 'Dither Project (Share Copy)', extensions: ['dyproj'] }],
+        });
+        if (!filePath) return;
+        const path = filePath.toLowerCase().endsWith('.dyproj')
+          ? filePath
+          : `${filePath}.dyproj`;
+        const result = await shareProjectCopyIPC(docId, path, opts);
+        if (result.size_warning) {
+          dispatch(
+            setDocumentMeta({
+              notification:
+                'Share Copy saved. Large uncompressed raster size — recipients may need more memory.',
+            })
+          );
+        } else {
+          dispatch(setDocumentMeta({ notification: `Share Copy saved to ${result.path}` }));
+        }
+      } catch (err) {
+        dispatch(
+          setDocumentMeta({
+            error: err instanceof Error ? err.message : String(err),
+          })
+        );
+      }
+    },
+    [dispatch, state.docId, state.hasDocument]
+  );
+
   const exportPatternFn = useCallback(
     async (layerId?: number | null) => {
       const target = layerId ?? selectedLayerId;
@@ -300,17 +344,25 @@ export function useDocument() {
     openProjectAt: openProjectAtFn,
     saveProject: saveProjectFn,
     saveProjectAs: saveProjectAsFn,
+    shareProjectCopy: shareProjectCopyFn,
     createDocument: createDocumentFn,
     importImageLayer: importImageLayerFn,
     exportPattern: exportPatternFn,
     importPattern: importPatternFn,
     clearNotification: clearNotificationFn,
     svgDialog: (
-      <SvgExportDialog
-        isOpen={svgOpen}
-        onExport={(algo) => svgResolver.current?.(algo)}
-        onClose={() => svgResolver.current?.(null)}
-      />
+      <>
+        <SvgExportDialog
+          isOpen={svgOpen}
+          onExport={(algo) => svgResolver.current?.(algo)}
+          onClose={() => svgResolver.current?.(null)}
+        />
+        <ShareCopyDialog
+          isOpen={shareCopyOpen}
+          onExport={(opts) => void runShareCopyExport(opts)}
+          onCancel={() => setShareCopyOpen(false)}
+        />
+      </>
     ),
   };
 }

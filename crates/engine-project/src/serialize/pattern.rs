@@ -7,15 +7,22 @@
 use crate::document::Document;
 use crate::filter::{DitherModeV2, FilterInstance, FilterKind, FilterParams};
 use crate::layer::{Layer, LayerNode};
-use crate::serialize::archive::{create_zip, ZipArchiveReader};
+use crate::serialize::archive::{create_dither_archive, MIME_DYUKI};
 use crate::serialize::assets::{
     content_hash, materialize_threshold_map, parse_threshold_basename, threshold_map_basename,
     threshold_map_zip_entry,
 };
-use crate::serialize::migrate::{
-    migrate_dyuki, ArchiveKind, ProjectError, SUPPORTED_DYUKI_VERSION,
+use crate::serialize::features::required_version_for_features;
+use crate::serialize::limits::ArchiveLimits;
+use crate::serialize::manifest::{
+    build_dyuki_manifest_json, build_manifest_files, check_open_gate, normalize_manifest_value,
+    verify_manifest_files,
 };
+use crate::serialize::migrate::{migrate_dyuki, ArchiveKind, ProjectError};
 use crate::serialize::project::{chrono_like_now, read_threshold_png_for_save};
+use crate::serialize::sanitize::{sanitize_display_string, sanitize_display_string_or};
+use crate::serialize::secure_json::{parse_value, MAX_JSON_DEPTH};
+use crate::serialize::secure_zip::{ExpectedKind, SecureZipArchive};
 use crate::types::{BlendMode, FilterInstanceId, LayerId, PaletteId};
 
 fn default_filter_opacity() -> f32 {
@@ -31,6 +38,9 @@ use std::path::{Path, PathBuf};
 pub struct PatternManifest {
     pub format_version: u32,
     pub kind: ArchiveKind,
+    /// Legacy field — still written for older readers; **ignored** by open gates
+    /// (SPEC §5.1 / Stage 2). Missing in new files → default empty.
+    #[serde(default)]
     pub app_version_min: String,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -589,75 +599,125 @@ pub fn pack_pattern_to_bytes(
         })
         .collect::<Result<_, ProjectError>>()?;
 
-    let manifest = PatternManifest {
-        format_version: SUPPORTED_DYUKI_VERSION,
-        kind: ArchiveKind::Dyuki,
-        app_version_min: min_app_version_for_filters(filters, running_app_version),
-        name: if meta.name.is_empty() {
-            "Pattern".into()
-        } else {
-            meta.name.clone()
-        },
-        description: meta.description.clone(),
-        author: meta.author.clone(),
-        created_at: chrono_like_now(),
+    let format = required_version_for_features(std::iter::empty::<&str>());
+    let name = if meta.name.is_empty() {
+        "Pattern"
+    } else {
+        meta.name.as_str()
     };
-
-    let manifest_json =
-        serde_json::to_vec_pretty(&manifest).map_err(|e| ProjectError::Codec(e.to_string()))?;
+    // Legacy alias for old readers only — not used by open gates.
+    let app_version_min_legacy = min_app_version_for_filters(filters, running_app_version);
     let filters_json =
         serde_json::to_vec_pretty(&file_filters).map_err(|e| ProjectError::Codec(e.to_string()))?;
     let palettes_json = serde_json::to_vec_pretty(&palettes_file)
         .map_err(|e| ProjectError::Codec(e.to_string()))?;
 
-    let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
-    entries.push(("manifest.json".into(), manifest_json));
-    entries.push(("filters.json".into(), filters_json));
-    entries.push(("palettes.json".into(), palettes_json));
+    let mut payload: Vec<(String, Vec<u8>)> = Vec::new();
+    payload.push(("filters.json".into(), filters_json));
+    payload.push(("palettes.json".into(), palettes_json));
     for (basename, bytes) in &embeds {
-        entries.push((threshold_map_zip_entry(basename), bytes.clone()));
+        payload.push((threshold_map_zip_entry(basename), bytes.clone()));
     }
 
-    let refs: Vec<(&str, &[u8])> = entries
+    let files = build_manifest_files(&payload);
+    let manifest_json = build_dyuki_manifest_json(
+        format,
+        format,
+        &[],
+        &[],
+        name,
+        meta.description.as_deref(),
+        meta.author.as_deref(),
+        &chrono_like_now(),
+        &app_version_min_legacy,
+        &files,
+    )?;
+    payload.push(("manifest.json".into(), manifest_json));
+
+    let refs: Vec<(&str, &[u8])> = payload
         .iter()
         .map(|(n, b)| (n.as_str(), b.as_slice()))
         .collect();
-    create_zip(&refs).map_err(|e| ProjectError::Io(e.to_string()))
+    create_dither_archive(MIME_DYUKI, &refs).map_err(|e| ProjectError::Io(e.to_string()))
 }
 
-/// Open a `.dyuki`, migrate, enforce `app_version_min`, materialize maps.
+/// Open a `.dyuki`, migrate, materialize maps.
 /// Does not mutate a document.
+///
+/// Compatibility is feature-based ([`check_open_gate`]); legacy
+/// `app_version_min` is read but **not** enforced.
 pub fn unpack_pattern_from_bytes(
     zip_bytes: &[u8],
-    running_app_version: &str,
+    _running_app_version: &str,
 ) -> Result<UnpackedPattern, ProjectError> {
-    let mut reader = ZipArchiveReader::open(zip_bytes)
-        .map_err(|e| ProjectError::InvalidArchive(e.to_string()))?;
+    let mut reader =
+        SecureZipArchive::open(zip_bytes, ExpectedKind::Dyuki, ArchiveLimits::dyuki())?;
 
-    let manifest_bytes = reader
-        .read_entry("manifest.json")
-        .map_err(|_| ProjectError::MissingEntry("manifest.json".into()))?;
-    let manifest: PatternManifest = serde_json::from_slice(&manifest_bytes)
-        .map_err(|e| ProjectError::InvalidArchive(e.to_string()))?;
+    let manifest_bytes = reader.read_entry("manifest.json")?;
+    let manifest_value = parse_value(&manifest_bytes, MAX_JSON_DEPTH)?;
+    let mut normalized = normalize_manifest_value(manifest_value)?;
 
-    if manifest.kind != ArchiveKind::Dyuki {
+    if normalized.kind != ArchiveKind::Dyuki {
         return Err(ProjectError::KindMismatch {
             expected: "dyuki".into(),
-            found: manifest.kind.as_str().to_string(),
+            found: normalized.kind.as_str().to_string(),
         });
     }
+    check_open_gate(&normalized)?;
 
-    let filters_bytes = reader
-        .read_entry("filters.json")
-        .map_err(|_| ProjectError::MissingEntry("filters.json".into()))?;
-    let palettes_bytes = reader
-        .read_entry("palettes.json")
-        .map_err(|_| ProjectError::MissingEntry("palettes.json".into()))?;
+    let mut verified: HashMap<String, Vec<u8>> = HashMap::new();
+    if !normalized.files.is_empty() {
+        let files = normalized.files.clone();
+        verify_manifest_files(&files, &mut |path| {
+            let bytes = reader
+                .read_entry(path)
+                .map_err(|e| ProjectError::Corrupt(format!("{path}: {e}")))?;
+            verified.insert(path.to_string(), bytes.clone());
+            Ok(bytes)
+        })?;
+    }
 
-    let filters_value: serde_json::Value = serde_json::from_slice(&filters_bytes)
-        .map_err(|e| ProjectError::InvalidArchive(e.to_string()))?;
-    let palettes_value: serde_json::Value = serde_json::from_slice(&palettes_bytes)
-        .map_err(|e| ProjectError::InvalidArchive(e.to_string()))?;
+    let name = sanitize_display_string_or(
+        normalized.name.as_deref().unwrap_or(""),
+        256,
+        false,
+        "Pattern",
+    );
+    let description = normalized
+        .description
+        .take()
+        .map(|d| sanitize_display_string(&d, 4096, true))
+        .filter(|d| !d.is_empty());
+    let author = normalized
+        .author
+        .take()
+        .map(|a| sanitize_display_string(&a, 256, false))
+        .filter(|a| !a.is_empty());
+
+    let manifest = PatternManifest {
+        format_version: normalized.format_version,
+        kind: ArchiveKind::Dyuki,
+        app_version_min: normalized.app_version_min.unwrap_or_default(),
+        name,
+        description,
+        author,
+        created_at: normalized.created_at,
+    };
+
+    let read_cached = |reader: &mut SecureZipArchive, path: &str| -> Result<Vec<u8>, ProjectError> {
+        if let Some(b) = verified.get(path) {
+            return Ok(b.clone());
+        }
+        reader
+            .read_entry(path)
+            .map_err(|e| ProjectError::MissingEntry(format!("{path}: {e}")))
+    };
+
+    let filters_bytes = read_cached(&mut reader, "filters.json")?;
+    let palettes_bytes = read_cached(&mut reader, "palettes.json")?;
+
+    let filters_value = parse_value(&filters_bytes, MAX_JSON_DEPTH)?;
+    let palettes_value = parse_value(&palettes_bytes, MAX_JSON_DEPTH)?;
 
     let combined = serde_json::json!({
         "filters": filters_value,
@@ -673,15 +733,16 @@ pub fn unpack_pattern_from_bytes(
         .cloned()
         .ok_or_else(|| ProjectError::InvalidArchive("migrated payload missing palettes".into()))?;
 
-    check_app_version_min(&manifest.app_version_min, running_app_version)?;
-
     let filters: Vec<PatternFilterFile> = serde_json::from_value(filters_value).map_err(|e| {
         ProjectError::InvalidArchive(format!(
             "unknown or invalid filter kind/mode (update the app): {e}"
         ))
     })?;
-    let palettes: BTreeMap<String, PalettePayload> = serde_json::from_value(palettes_value)
+    let mut palettes: BTreeMap<String, PalettePayload> = serde_json::from_value(palettes_value)
         .map_err(|e| ProjectError::InvalidArchive(e.to_string()))?;
+    for pal in palettes.values_mut() {
+        pal.name = sanitize_display_string_or(&pal.name, 256, false, "Palette");
+    }
 
     for f in &filters {
         validate_params_shape(&f.params)?;
@@ -707,9 +768,7 @@ pub fn unpack_pattern_from_bytes(
             ProjectError::InvalidArchive(format!("invalid CustomPng basename '{basename}': {e}"))
         })?;
         let entry = threshold_map_zip_entry(&basename);
-        let bytes = reader
-            .read_entry(&entry)
-            .map_err(|_| ProjectError::MissingEntry(entry.clone()))?;
+        let bytes = read_cached(&mut reader, &entry)?;
         let actual = content_hash(&bytes);
         if actual != stem {
             return Err(ProjectError::HashMismatch {
@@ -807,7 +866,7 @@ mod tests {
     use crate::filter::{DitherColorMode, DitherParamsV2};
     use crate::filters::apply::apply_filter_to_tile;
     use crate::layer::LayerGroup;
-    use crate::serialize::archive::read_zip_entry;
+    use crate::serialize::archive::{create_zip, read_zip_entry, ZipArchiveReader};
     use crate::serialize::project::read_png_file;
     use crate::types::{DocumentId, LayerKind};
     use engine_color::palette_cache::PaletteKdCache;
@@ -1021,7 +1080,8 @@ mod tests {
     }
 
     #[test]
-    fn app_version_min_too_old_errors_without_mutating() {
+    fn app_version_min_is_ignored_by_open_gate() {
+        // Stage 2: compatibility is feature-based; legacy app_version_min must not block.
         let mut src = Document::new(DocumentId::new(1), 8, 8);
         let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, 8, 8);
         layer.filters.push(atkinson_filter());
@@ -1036,7 +1096,6 @@ mod tests {
         )
         .unwrap();
 
-        // Rewrite manifest with a future min version.
         let mut reader = ZipArchiveReader::open(&zip).unwrap();
         let mut manifest: PatternManifest =
             serde_json::from_slice(&reader.read_entry("manifest.json").unwrap()).unwrap();
@@ -1058,14 +1117,11 @@ mod tests {
             8,
             8,
         )));
-        let err =
-            import_pattern_into_document(&zip, &mut dest, LayerId::new(1), "0.1.0").unwrap_err();
-        assert!(
-            matches!(err, ProjectError::AppVersionTooOld { .. }),
-            "{err:?}"
-        );
+        let imported =
+            import_pattern_into_document(&zip, &mut dest, LayerId::new(1), "0.1.0").unwrap();
+        assert_eq!(imported.filter_ids.len(), 1);
         match &dest.root[0] {
-            LayerNode::Leaf(l) => assert!(l.filters.is_empty()),
+            LayerNode::Leaf(l) => assert_eq!(l.filters.len(), 1),
             _ => panic!("leaf"),
         }
     }
@@ -1109,7 +1165,11 @@ mod tests {
         let err =
             import_pattern_into_document(&zip, &mut dest, LayerId::new(1), "0.1.0").unwrap_err();
         assert!(
-            matches!(err, ProjectError::UnsupportedVersion { ref kind, .. } if kind == "dyuki"),
+            matches!(
+                err,
+                ProjectError::NeedsNewerApp { .. }
+                    | ProjectError::UnsupportedVersion { .. }
+            ),
             "{err:?}"
         );
         match &dest.root[0] {

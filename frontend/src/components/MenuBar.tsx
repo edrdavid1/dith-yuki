@@ -19,6 +19,7 @@ interface MenuBarProps {
   onOpenRecent?: (entry: RecentFileEntry) => void;
   onSaveProject: () => void;
   onSaveProjectAs: () => void;
+  onShareProjectCopy?: () => void;
   onExportPattern: () => void;
   onImportPattern: () => void;
   onOpenPreferences: () => void;
@@ -58,6 +59,7 @@ function MenuBar({
   onOpenRecent,
   onSaveProject,
   onSaveProjectAs,
+  onShareProjectCopy,
   onExportPattern,
   onImportPattern,
   onOpenPreferences,
@@ -204,6 +206,14 @@ function MenuBar({
             >
               <span>Save Project As…</span>
               <span className={cn('menubar-shortcut')}>{formatChords(shortcuts.saveProjectAs)}</span>
+            </button>
+            <button
+              className={cn("menubar-dropdown-item")}
+              role="menuitem"
+              onClick={() => onShareProjectCopy && handleAction(onShareProjectCopy)}
+              disabled={!hasDocument || !onShareProjectCopy}
+            >
+              <span>Share Copy…</span>
             </button>
             <button
               className={cn("menubar-dropdown-item")}

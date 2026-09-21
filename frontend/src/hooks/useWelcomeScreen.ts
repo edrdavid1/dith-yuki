@@ -68,6 +68,10 @@ export function useWelcomeScreen() {
     void runAndRefresh(doc.saveProjectAs);
   }, [doc.saveProjectAs, runAndRefresh]);
 
+  const onShareProjectCopy = useCallback(() => {
+    void runAndRefresh(doc.shareProjectCopy);
+  }, [doc.shareProjectCopy, runAndRefresh]);
+
   const handleCreate = useCallback(
     async (args: { width: number; height: number; background: BlankBackground }) => {
       const ok = await doc.createDocument(args);
@@ -103,6 +107,7 @@ export function useWelcomeScreen() {
     onSaveImage,
     onSaveProject,
     onSaveProjectAs,
+    onShareProjectCopy,
     confirmQuit,
     confirmCloseTab: requestCloseTab,
     unsavedDialog,

@@ -92,11 +92,22 @@ export default function ColorLabFeature({
   const [pickerAnchorRect, setPickerAnchorRect] = useState<DOMRect | null>(null);
   const lastLivePushRef = useRef('');
 
+  const lastCreatedId = useAppSelector((s) => s.palettes.lastCreatedId);
+
   useEffect(() => {
     let cancelled = false;
     listPalettes()
       .then((list) => {
-        if (!cancelled) setPalettes(list);
+        if (cancelled) return;
+        setPalettes(list);
+        // Persisted lastCreatedId from another project must not bind into this doc.
+        if (
+          lastCreatedId != null &&
+          !list.some((p) => p.id === lastCreatedId)
+        ) {
+          dispatch(clearLastCreatedId());
+          publishPaletteBinding(null);
+        }
       })
       .catch((err) => {
         if (!cancelled) logIpcError('ColorLabFeature.listPalettes', err);
@@ -104,7 +115,7 @@ export default function ColorLabFeature({
     return () => {
       cancelled = true;
     };
-  }, [palettesVersion]);
+  }, [palettesVersion, lastCreatedId, dispatch]);
 
   useEffect(() => {
     let cancelled = false;

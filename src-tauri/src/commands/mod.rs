@@ -51,8 +51,8 @@ pub use crate::services::document_service::{
     blank_rgba_f32, encode_rgba_to_png, f32_to_u8, import_raster_layer, install_raster_document,
     place_image_at_origin, validate_document_dimensions, BlankBackground, DocumentResponse,
     ExportImageRequest, ExportPatternRequest, ImportPatternRequest, ImportPatternResponse,
-    LoadImageResponse, OpenProjectResponse, SaveProjectResponse, IMAGE_IMPORT_EXTENSIONS,
-    MAX_DOCUMENT_DIMENSION,
+    LoadImageResponse, OpenProjectResponse, SaveProjectResponse, ShareProjectCopyOptions,
+    IMAGE_IMPORT_EXTENSIONS, MAX_DOCUMENT_DIMENSION,
 };
 pub use crate::services::palette_service::find_layers_referencing_palette;
 pub use crate::services::palette_service::{hex_to_linear, linear_to_hex};

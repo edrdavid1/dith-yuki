@@ -6,6 +6,7 @@ import {
   formatIpcError,
   getDocumentSnapshot,
   getLayerTree,
+  listPalettes,
   logIpcError,
   removeLayer as removeLayerIPC,
   reorderLayer as reorderLayerIPC,
@@ -145,14 +146,18 @@ export const addLayerWithEffect = createAsyncThunk(
       }
       const filterKind = EFFECT_TO_FILTER_KIND[args.effectType];
       const defaultParams = { ...EFFECT_DEFAULTS[args.effectType] };
-      // New palette-based filters default to lastCreatedId when params have empty/None palette_id
+      // New palette-based filters default to lastCreatedId when that id exists
+      // in the current document (not a stale localStorage binding).
       const lastCreatedId = (getState() as RootState).palettes.lastCreatedId;
       if (
         lastCreatedId != null &&
         'palette_id' in defaultParams &&
         (defaultParams.palette_id === null || defaultParams.palette_id === undefined)
       ) {
-        defaultParams.palette_id = lastCreatedId;
+        const pals = await listPalettes().catch(() => [] as { id: number }[]);
+        if (Array.isArray(pals) && pals.some((p) => p.id === lastCreatedId)) {
+          defaultParams.palette_id = lastCreatedId;
+        }
       }
       await addFilter(args.docId, imageSourceLayer.id, filterKind, defaultParams);
       await dispatch(refreshLayers(args.docId));
@@ -177,7 +182,14 @@ export const addLayerWithAlgorithm = createAsyncThunk(
         return rejectWithValue('No image source layer found');
       }
       const lastCreatedId = (getState() as RootState).palettes.lastCreatedId;
-      const spec = specForAlgorithm(args.algorithmId, lastCreatedId);
+      let boundPaletteId = lastCreatedId;
+      if (lastCreatedId != null) {
+        const pals = await listPalettes().catch(() => [] as { id: number }[]);
+        if (!Array.isArray(pals) || !pals.some((p) => p.id === lastCreatedId)) {
+          boundPaletteId = null;
+        }
+      }
+      const spec = specForAlgorithm(args.algorithmId, boundPaletteId);
       if (!spec) {
         return rejectWithValue(`Unknown algorithm: ${args.algorithmId}`);
       }

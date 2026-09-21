@@ -1,0 +1,52 @@
+[package]
+name = "engine-project-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Keep out of the root workspace (cargo-fuzz profile conflicts).
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+engine-project = { path = "../crates/engine-project" }
+engine-tiles = { path = "../crates/engine-tiles" }
+serde_json = "1"
+
+[[bin]]
+name = "fuzz_open_dyproj"
+path = "fuzz_targets/fuzz_open_dyproj.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_open_dyuki"
+path = "fuzz_targets/fuzz_open_dyuki.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_manifest"
+path = "fuzz_targets/fuzz_manifest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_png_limits"
+path = "fuzz_targets/fuzz_png_limits.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_migrate"
+path = "fuzz_targets/fuzz_migrate.rs"
+test = false
+doc = false
+bench = false

@@ -71,6 +71,7 @@ export default function AppLayout() {
     onSaveImage,
     onSaveProject,
     onSaveProjectAs,
+    onShareProjectCopy,
     confirmQuit,
     confirmCloseTab,
     unsavedDialog,
@@ -422,6 +423,9 @@ export default function AppLayout() {
         case 'save-project-as':
           if (doc.hasDocument) onSaveProjectAs();
           break;
+        case 'share-project-copy':
+          if (doc.hasDocument) onShareProjectCopy();
+          break;
         case 'save-export':
           if (doc.hasDocument) onSaveImage();
           break;
@@ -472,6 +476,7 @@ export default function AppLayout() {
     onSaveImage,
     onSaveProject,
     onSaveProjectAs,
+    onShareProjectCopy,
     requestQuit,
     updates,
     welcome,
@@ -579,6 +584,7 @@ export default function AppLayout() {
               onOpenRecent={welcome.onOpenRecent}
               onSaveProject={onSaveProject}
               onSaveProjectAs={onSaveProjectAs}
+              onShareProjectCopy={onShareProjectCopy}
               onExportPattern={() => void doc.exportPattern()}
               onImportPattern={() => void doc.importPattern()}
               onOpenPreferences={handleOpenPreferences}

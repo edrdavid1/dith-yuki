@@ -3,20 +3,21 @@
 use crate::document::Document;
 use crate::filter::{DitherModeV2, FilterParams};
 use crate::layer::LayerNode;
-use crate::serialize::archive::{create_zip, ZipArchiveReader};
 use crate::serialize::assets::{
     content_hash, materialize_threshold_map, parse_threshold_basename, threshold_map_basename,
     threshold_map_zip_entry, threshold_maps_cache_dir,
 };
 use crate::serialize::document_dto::DocumentFile;
 use crate::serialize::id_remap::remap_document_file;
-use crate::serialize::migrate::{
-    migrate_dyproj, ArchiveKind, Manifest, ProjectError, SUPPORTED_DYPROJ_VERSION,
+use crate::serialize::limits::ArchiveLimits;
+use crate::serialize::manifest::{
+    check_open_gate, normalize_manifest_value, verify_manifest_files,
 };
-use crate::serialize::pixels::{
-    assemble_layer_png, collect_raster_layers, count_raster_layers, decode_png_to_f32,
-    soft_size_warning,
-};
+use crate::serialize::migrate::{migrate_dyproj, ArchiveKind, ProjectError};
+use crate::serialize::sanitize::sanitize_display_string_or;
+use crate::serialize::secure_json::{parse_value, MAX_JSON_DEPTH};
+use crate::serialize::secure_zip::{ExpectedKind, SecureZipArchive};
+use crate::serialize::pixels::decode_png_to_f32;
 use crate::types::{DocumentId, LayerId};
 use engine_tiles::decompose::decompose_image_to_tiles;
 use engine_tiles::TileCache;
@@ -42,7 +43,7 @@ pub struct OpenProjectResult {
 
 /// Collect CustomPng user/synthetic paths from a live document and return
 /// basename → PNG bytes to embed (deduped by content hash).
-fn collect_custom_png_embeds(
+pub(crate) fn collect_custom_png_embeds(
     doc: &Document,
     read_png: &mut dyn FnMut(&str) -> Result<Vec<u8>, ProjectError>,
 ) -> Result<(HashMap<String, Vec<u8>>, HashMap<String, String>), ProjectError> {
@@ -113,7 +114,10 @@ pub(crate) fn read_threshold_png_for_save(
     }
 }
 
-fn rewrite_custom_png_paths(nodes: &mut [LayerNode], path_to_basename: &HashMap<String, String>) {
+pub(crate) fn rewrite_custom_png_paths(
+    nodes: &mut [LayerNode],
+    path_to_basename: &HashMap<String, String>,
+) {
     for node in nodes {
         match node {
             LayerNode::Leaf(layer) => {
@@ -167,67 +171,15 @@ pub fn save_project_to_bytes(
     doc: &Document,
     cache: &TileCache,
     app_version: &str,
-    mut read_threshold_png: impl FnMut(&str) -> Result<Vec<u8>, ProjectError>,
+    read_threshold_png: impl FnMut(&str) -> Result<Vec<u8>, ProjectError>,
 ) -> Result<SaveProjectResult, ProjectError> {
-    let size_warning = soft_size_warning(doc.width, doc.height, count_raster_layers(&doc.root));
-
-    let (embeds, path_to_basename) = collect_custom_png_embeds(doc, &mut read_threshold_png)?;
-
-    // Clone document to rewrite CustomPng paths to basenames for JSON.
-    let mut doc_for_json = doc.clone();
-    rewrite_custom_png_paths(&mut doc_for_json.root, &path_to_basename);
-
-    let rasters = collect_raster_layers(&doc.root);
-    let mut layer_pngs: HashMap<u32, Vec<u8>> = HashMap::new();
-    for layer in rasters {
-        let png = assemble_layer_png(cache, layer, doc.width, doc.height, doc.id.0)?;
-        layer_pngs.insert(layer.id.0, png);
-    }
-
-    let file = DocumentFile::from_document(&doc_for_json, |id| {
-        if layer_pngs.contains_key(&id.0) {
-            Some(format!("{}.png", id.0))
-        } else {
-            None
-        }
-    });
-
-    let now = chrono_like_now();
-    let manifest = Manifest {
-        format_version: SUPPORTED_DYPROJ_VERSION,
-        kind: ArchiveKind::Dyproj,
-        app_version: app_version.to_string(),
-        created_at: now.clone(),
-        modified_at: now,
-        width: Some(doc.width),
-        height: Some(doc.height),
-    };
-
-    let manifest_json =
-        serde_json::to_vec_pretty(&manifest).map_err(|e| ProjectError::Codec(e.to_string()))?;
-    let document_json =
-        serde_json::to_vec_pretty(&file).map_err(|e| ProjectError::Codec(e.to_string()))?;
-
-    let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
-    entries.push(("manifest.json".into(), manifest_json));
-    entries.push(("document.json".into(), document_json));
-    for (id, png) in &layer_pngs {
-        entries.push((format!("layers/{id}.png"), png.clone()));
-    }
-    for (basename, bytes) in &embeds {
-        entries.push((threshold_map_zip_entry(basename), bytes.clone()));
-    }
-
-    let refs: Vec<(&str, &[u8])> = entries
-        .iter()
-        .map(|(n, b)| (n.as_str(), b.as_slice()))
-        .collect();
-    let zip_bytes = create_zip(&refs).map_err(|e| ProjectError::Io(e.to_string()))?;
-
-    Ok(SaveProjectResult {
-        zip_bytes,
-        size_warning,
-    })
+    crate::serialize::share::write_project_to_bytes(
+        doc,
+        cache,
+        app_version,
+        read_threshold_png,
+        &crate::serialize::share::ProjectWriteOptions::normal(),
+    )
 }
 
 /// Write zip bytes to a filesystem path.
@@ -254,14 +206,12 @@ pub fn open_project_from_bytes(
     staging_cache: &TileCache,
     runtime_doc_id: DocumentId,
 ) -> Result<OpenProjectResult, ProjectError> {
-    let mut reader = ZipArchiveReader::open(zip_bytes)
-        .map_err(|e| ProjectError::InvalidArchive(e.to_string()))?;
+    let mut reader =
+        SecureZipArchive::open(zip_bytes, ExpectedKind::Dyproj, ArchiveLimits::dyproj())?;
 
-    let manifest_bytes = reader
-        .read_entry("manifest.json")
-        .map_err(|_| ProjectError::MissingEntry("manifest.json".into()))?;
-    let manifest: Manifest = serde_json::from_slice(&manifest_bytes)
-        .map_err(|e| ProjectError::InvalidArchive(e.to_string()))?;
+    let manifest_bytes = reader.read_entry("manifest.json")?;
+    let manifest_value = parse_value(&manifest_bytes, MAX_JSON_DEPTH)?;
+    let manifest = normalize_manifest_value(manifest_value)?;
 
     if manifest.kind != ArchiveKind::Dyproj {
         return Err(ProjectError::KindMismatch {
@@ -269,23 +219,41 @@ pub fn open_project_from_bytes(
             found: manifest.kind.as_str().to_string(),
         });
     }
+    check_open_gate(&manifest)?;
 
-    let doc_bytes = reader
-        .read_entry("document.json")
-        .map_err(|_| ProjectError::MissingEntry("document.json".into()))?;
-    let doc_value: serde_json::Value = serde_json::from_slice(&doc_bytes)
-        .map_err(|e| ProjectError::InvalidArchive(e.to_string()))?;
+    // When `manifest.files` is present, read+verify each listed entry once and reuse.
+    let mut verified: HashMap<String, Vec<u8>> = HashMap::new();
+    if !manifest.files.is_empty() {
+        verify_manifest_files(&manifest.files, &mut |path| {
+            let bytes = reader
+                .read_entry(path)
+                .map_err(|e| ProjectError::Corrupt(format!("{path}: {e}")))?;
+            verified.insert(path.to_string(), bytes.clone());
+            Ok(bytes)
+        })?;
+    }
+
+    let read_cached = |reader: &mut SecureZipArchive, path: &str| -> Result<Vec<u8>, ProjectError> {
+        if let Some(b) = verified.get(path) {
+            return Ok(b.clone());
+        }
+        reader
+            .read_entry(path)
+            .map_err(|e| ProjectError::MissingEntry(format!("{path}: {e}")))
+    };
+
+    let doc_bytes = read_cached(&mut reader, "document.json")?;
+    let doc_value = parse_value(&doc_bytes, MAX_JSON_DEPTH)?;
     let doc_value = migrate_dyproj(manifest.format_version, doc_value)?;
-    let file: DocumentFile = serde_json::from_value(doc_value)
+    let mut file: DocumentFile = serde_json::from_value(doc_value)
         .map_err(|e| ProjectError::InvalidArchive(e.to_string()))?;
+    sanitize_document_file_strings(&mut file);
 
     // Materialize threshold maps into the shared content-addressed asset cache.
     let mut basename_to_synth: HashMap<String, PathBuf> = HashMap::new();
     collect_custom_png_basenames_from_file(&file, &mut |basename| {
         let entry = threshold_map_zip_entry(basename);
-        let bytes = reader
-            .read_entry(&entry)
-            .map_err(|_| ProjectError::MissingEntry(entry.clone()))?;
+        let bytes = read_cached(&mut reader, &entry)?;
         let stem = parse_threshold_basename(basename).map_err(|e| {
             ProjectError::InvalidArchive(format!("invalid CustomPng basename '{basename}': {e}"))
         })?;
@@ -312,9 +280,7 @@ pub fn open_project_from_bytes(
         } else {
             format!("layers/{asset_name}")
         };
-        let png = reader
-            .read_entry(&entry)
-            .map_err(|_| ProjectError::MissingEntry(entry))?;
+        let png = read_cached(&mut reader, &entry)?;
         let (w, h, rgba) = decode_png_to_f32(&png)?;
         let new_id = remapped
             .tables
@@ -335,6 +301,15 @@ pub fn open_project_from_bytes(
     }
 
     // Ensure adjustment layers never required PNG (already skipped via raw_assets).
+
+    remapped.document.ext_blobs = {
+        let mut blobs = Vec::new();
+        for name in reader.ext_entry_names() {
+            let bytes = read_cached(&mut reader, &name)?;
+            blobs.push((name, bytes));
+        }
+        blobs
+    };
 
     Ok(OpenProjectResult {
         document: remapped.document,
@@ -375,11 +350,34 @@ fn collect_custom_png_basenames_from_file(
                     }
                 }
                 LayerNodeFile::Group(g) => walk(&g.children, visit)?,
+                LayerNodeFile::Unknown(_) => {}
             }
         }
         Ok(())
     }
     walk(&file.root, visit)
+}
+
+fn sanitize_document_file_strings(file: &mut DocumentFile) {
+    use crate::serialize::document_dto::LayerNodeFile;
+    for pal in &mut file.palettes {
+        pal.name = sanitize_display_string_or(&pal.name, 256, false, "Palette");
+    }
+    fn walk(nodes: &mut [LayerNodeFile]) {
+        for node in nodes {
+            match node {
+                LayerNodeFile::Leaf(layer) => {
+                    layer.name = sanitize_display_string_or(&layer.name, 256, false, "Layer");
+                }
+                LayerNodeFile::Group(g) => {
+                    g.name = sanitize_display_string_or(&g.name, 256, false, "Group");
+                    walk(&mut g.children);
+                }
+                LayerNodeFile::Unknown(_) => {}
+            }
+        }
+    }
+    walk(&mut file.root);
 }
 
 pub(crate) fn chrono_like_now() -> String {
@@ -403,6 +401,8 @@ mod tests {
     use super::*;
     use crate::filter::{DitherParamsV2, FilterInstance, FilterKind};
     use crate::layer::Layer;
+    use crate::serialize::archive::{create_zip, ZipArchiveReader};
+    use crate::serialize::migrate::Manifest;
     use crate::serialize::pixels::force_drop_raw_tile;
     use crate::types::LayerKind;
     use engine_tiles::decompose::decompose_image_to_tiles;
@@ -470,6 +470,56 @@ mod tests {
             stage: engine_tiles::CacheStage::Raw,
         };
         assert!(staging.get_entry(key).is_some());
+    }
+
+    #[test]
+    fn stage4_save_writes_mimetype_composite_thumbnail_and_files() {
+        let w = 16u32;
+        let h = 16u32;
+        let rgba = vec![1.0f32; (w * h * 4) as usize];
+        let cache = TileCache::new(20_000_000);
+        decompose_image_to_tiles(&rgba, w, h, 1, 1, &cache).unwrap();
+        let mut doc = Document::new(DocumentId::new(1), w, h);
+        doc.root.push(LayerNode::Leaf(Layer::new(
+            LayerId::new(1),
+            LayerKind::Raster,
+            w,
+            h,
+        )));
+        let saved = save_project_to_bytes(&doc, &cache, "0.3.0", |_| unreachable!()).unwrap();
+
+        let mut reader = ZipArchiveReader::open(&saved.zip_bytes).unwrap();
+        assert_eq!(
+            reader.read_entry("mimetype").unwrap(),
+            b"application/vnd.dither.project+zip"
+        );
+        assert!(reader.contains("composite.png"));
+        assert!(reader.contains("thumbnail.png"));
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&reader.read_entry("manifest.json").unwrap()).unwrap();
+        let files = manifest["files"].as_object().expect("files map");
+        assert!(files.contains_key("document.json"));
+        assert!(files.contains_key("composite.png"));
+        assert!(files.contains_key("layers/1.png"));
+
+        // Tamper document.json without updating hash → Corrupt.
+        let mut doc_bytes = reader.read_entry("document.json").unwrap();
+        doc_bytes.push(b' ');
+        let composite = reader.read_entry("composite.png").unwrap();
+        let thumbnail = reader.read_entry("thumbnail.png").unwrap();
+        let layer = reader.read_entry("layers/1.png").unwrap();
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).unwrap();
+        let bad = create_zip(&[
+            ("manifest.json", manifest_bytes.as_slice()),
+            ("document.json", doc_bytes.as_slice()),
+            ("composite.png", composite.as_slice()),
+            ("thumbnail.png", thumbnail.as_slice()),
+            ("layers/1.png", layer.as_slice()),
+        ])
+        .unwrap();
+        let staging = TileCache::new(20_000_000);
+        let err = open_project_from_bytes(&bad, &staging, DocumentId::new(1)).unwrap_err();
+        assert!(matches!(err, ProjectError::Corrupt(_)), "{err:?}");
     }
 
     #[test]
@@ -575,11 +625,19 @@ mod tests {
                         blend_mode: crate::types::BlendMode::Normal,
                         algorithm_id: None,
                         schema_version: None,
+                        extra: Default::default(),
                     });
             }
             _ => panic!(),
         }
-        let manifest = reader.read_entry("manifest.json").unwrap();
+        let mut manifest_val: serde_json::Value =
+            serde_json::from_slice(&reader.read_entry("manifest.json").unwrap()).unwrap();
+        // Drop integrity map so this fixture exercises content-hash mismatch, not
+        // missing composite/thumbnail listed in a fresh Stage-4 save.
+        if let Some(obj) = manifest_val.as_object_mut() {
+            obj.remove("files");
+        }
+        let manifest = serde_json::to_vec_pretty(&manifest_val).unwrap();
         let layer = reader.read_entry("layers/1.png").unwrap();
         let doc_bytes = serde_json::to_vec_pretty(&file).unwrap();
         // Real PNG bytes that won't match the fake zero hash name
@@ -670,10 +728,14 @@ mod tests {
 
         let staging = TileCache::new(20_000_000);
         let err = open_project_from_bytes(&zip, &staging, DocumentId::new(1)).unwrap_err();
-        assert!(matches!(
-            err,
-            ProjectError::UnsupportedVersion { found: 99, .. }
-        ));
+        assert!(
+            matches!(
+                err,
+                ProjectError::NeedsNewerApp { .. }
+                    | ProjectError::UnsupportedVersion { found: 99, .. }
+            ),
+            "{err:?}"
+        );
         assert_eq!(staging.entry_count(), 0);
     }
 }

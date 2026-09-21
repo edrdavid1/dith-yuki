@@ -76,6 +76,22 @@ pub fn raster_to_svg(
     ))
 }
 
+/// Escape text for XML attribute/text nodes (SPEC §9.9).
+pub fn escape_xml(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// Validate path via sandbox and write SVG to disk.
 pub fn write_svg_file(
     path: &str,
@@ -603,5 +619,30 @@ mod tests {
         let svg = raster_to_svg(1, 1, &rgba, &SvgExportOptions::default()).unwrap();
         let doc = roxmltree::Document::parse(&svg).unwrap();
         assert_eq!(doc.root_element().tag_name().name(), "svg");
+    }
+
+    #[test]
+    fn svg_has_no_script_or_external_hooks() {
+        let rgba = vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 0, 0, 0, 255];
+        let svg = raster_to_svg(2, 2, &rgba, &SvgExportOptions::default()).unwrap();
+        let lower = svg.to_ascii_lowercase();
+        for forbidden in [
+            "<script",
+            "foreignobject",
+            "xlink:href",
+            "javascript:",
+            "onload=",
+            "@import",
+        ] {
+            assert!(
+                !lower.contains(forbidden),
+                "SVG must not contain {forbidden}"
+            );
+        }
+    }
+
+    #[test]
+    fn escape_xml_entities() {
+        assert_eq!(escape_xml(r#"a&b<"'"#), "a&amp;b&lt;&quot;&apos;");
     }
 }

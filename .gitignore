@@ -30,3 +30,10 @@ npm-debug.log*
 # OS
 .DS_Store
 Thumbs.db
+
+# cargo-fuzz: local only — never commit mutated corpus / build trees
+/fuzz/target/
+/fuzz/artifacts/
+/fuzz/coverage/
+/fuzz/corpus/
+/fuzz/Cargo.lock

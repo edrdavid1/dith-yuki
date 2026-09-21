@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dither.app/schema/document.schema.json",
+  "title": "Dither document.json (dyproj)",
+  "type": "object",
+  "required": ["width", "height", "root"],
+  "properties": {
+    "width": { "type": "integer", "minimum": 1 },
+    "height": { "type": "integer", "minimum": 1 },
+    "root": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/layerNode" }
+    },
+    "palettes": {
+      "type": "array",
+      "items": { "type": "object", "additionalProperties": true }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "layerNode": {
+      "type": "object",
+      "required": ["node"],
+      "properties": {
+        "node": { "type": "string" },
+        "id": { "type": "integer" },
+        "name": { "type": "string" },
+        "visible": { "type": "boolean" },
+        "opacity": { "type": "number" },
+        "blend_mode": { "type": "string" },
+        "filters": {
+          "type": "array",
+          "items": { "type": "object", "additionalProperties": true }
+        },
+        "children": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/layerNode" }
+        },
+        "raw_asset": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dither.app/schema/filters.schema.json",
+  "title": "Dither filters.json (dyuki)",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["kind", "params"],
+    "properties": {
+      "kind": { "type": "string" },
+      "params": { "type": "object", "additionalProperties": true },
+      "enabled": { "type": "boolean" },
+      "opacity": { "type": "number" },
+      "blend_mode": { "type": "string" }
+    },
+    "additionalProperties": true
+  }
+}

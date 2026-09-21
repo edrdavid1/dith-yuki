@@ -12,7 +12,7 @@ pub mod svg_export;
 
 pub use atomic_write::atomic_write;
 pub use svg_export::{
-    raster_to_svg, write_svg_file, SvgAlgorithm, SvgExportError, SvgExportOptions,
+    escape_xml, raster_to_svg, write_svg_file, SvgAlgorithm, SvgExportError, SvgExportOptions,
 };
 
 #[cfg(test)]

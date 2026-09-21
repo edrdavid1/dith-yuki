@@ -9,6 +9,7 @@ mod document_session;
 mod file_log;
 mod flexlayout_persistence;
 mod gpu_resident_shadow;
+mod ipc_guard;
 mod journal;
 #[cfg(target_os = "macos")]
 mod macos_title;
@@ -527,6 +528,7 @@ fn main() {
             commands::export_image,
             commands::save_project,
             commands::save_project_as,
+            commands::share_project_copy,
             commands::open_project,
             commands::export_pattern,
             commands::import_pattern,

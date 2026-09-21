@@ -40,6 +40,15 @@ pub struct SaveProjectResponse {
     pub size_warning: bool,
 }
 
+/// Optional Share Copy knobs (SPEC §11 defaults when omitted).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ShareProjectCopyOptions {
+    pub strip_metadata: Option<bool>,
+    pub include_original_images: Option<bool>,
+    pub include_author: Option<bool>,
+    pub compact: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct OpenProjectResponse {
     pub doc_id: u32,
@@ -514,6 +523,60 @@ impl DocumentService {
         })
     }
 
+    /// Explicit Share Copy export (SPEC §11). Does **not** change the open
+    /// project path or dirty flag — it is not ordinary Save.
+    pub async fn share_project_copy(
+        &self,
+        doc_id: u32,
+        path: String,
+        opts: ShareProjectCopyOptions,
+    ) -> Result<SaveProjectResponse, AppError> {
+        use engine_io::sandbox;
+        use engine_project::serialize::{read_png_file, share_project_to_bytes, ShareCopyOptions};
+
+        let resolved = sandbox::resolve_export_path(&path, &["dyproj"])
+            .map_err(|e| format!("Path error: {e}"))?;
+
+        let session = self.state.require_session(doc_id)?;
+        let _io_guard = session.begin_io();
+        let snapshot = session.document_handle.snapshot();
+        let doc = (*snapshot).clone();
+        drop(snapshot);
+
+        let state_arc = Arc::clone(&self.state);
+        let share_opts = ShareCopyOptions {
+            strip_metadata: opts.strip_metadata.unwrap_or(true),
+            include_original_images: opts.include_original_images.unwrap_or(false),
+            include_author: opts.include_author.unwrap_or(false),
+            compact: opts.compact.unwrap_or(false),
+        };
+
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            crate::ipc_guard::catch_loader_panic(|| {
+                share_project_to_bytes(
+                    &doc,
+                    &state_arc.tiles.tile_cache,
+                    env!("CARGO_PKG_VERSION"),
+                    |p| read_png_file(p),
+                    &share_opts,
+                )
+            })
+        })
+        .await
+        .map_err(|_| {
+            "Something went wrong while exporting the share copy. The app stayed open — try again."
+                .to_string()
+        })??;
+
+        engine_io::atomic_write(&resolved, &result.zip_bytes)
+            .map_err(|e| format!("Share Copy write error: {e}"))?;
+
+        Ok(SaveProjectResponse {
+            path: resolved.to_string_lossy().into_owned(),
+            size_warning: result.size_warning,
+        })
+    }
+
     pub async fn open_project(
         &self,
         path: String,
@@ -538,12 +601,16 @@ impl DocumentService {
         let runtime_id = self.state.alloc_doc_id();
         let staging = TileCache::new(self.state.tiles.tile_cache.budget_bytes_count());
         let opened = tauri::async_runtime::spawn_blocking(move || {
-            open_project_from_bytes(&zip_bytes, &staging, DocumentId::new(runtime_id))
-                .map(|r| (r, staging))
-                .map_err(|e| e.to_string())
+            crate::ipc_guard::catch_loader_panic(|| {
+                open_project_from_bytes(&zip_bytes, &staging, DocumentId::new(runtime_id))
+                    .map(|r| (r, staging))
+            })
         })
         .await
-        .map_err(|e| format!("Open error: {e}"))??;
+        .map_err(|_| {
+            "Something went wrong while reading the file. The app stayed open — try again or update Dither."
+                .to_string()
+        })??;
 
         let (opened, staging) = opened;
         let live_gen = 1u64;
