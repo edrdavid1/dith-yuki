@@ -3,6 +3,7 @@ import {
   confirmUnsavedDocuments,
   confirmUnsavedIfNeeded,
   projectBasename,
+  type UnsavedDocumentRef,
 } from '../unsavedGuard';
 
 describe('projectBasename', () => {
@@ -117,7 +118,7 @@ describe('confirmUnsavedDocuments', () => {
   });
 
   it('uses one multi prompt for several dirty documents', async () => {
-    const save = vi.fn(async () => true);
+    const save = vi.fn(async (_doc: UnsavedDocumentRef) => true);
     const promptSingle = vi.fn();
     await expect(
       confirmUnsavedDocuments({
@@ -136,7 +137,7 @@ describe('confirmUnsavedDocuments', () => {
   });
 
   it('save-selected only saves checked ids; unchecked are discarded', async () => {
-    const save = vi.fn(async () => true);
+    const save = vi.fn(async (_doc: UnsavedDocumentRef) => true);
     await expect(
       confirmUnsavedDocuments({
         documents: [
