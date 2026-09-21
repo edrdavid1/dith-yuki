@@ -3,7 +3,7 @@ import EffectSettingsPanel from './EffectSettingsPanel';
 import type { LayerWithFilters } from './EffectSettingsPanel';
 import { useAppDispatch, useAppSelector } from '../../app/hooks';
 import { addLayerWithAlgorithm, addLayerWithEffect } from '../../app/slices/layersSlice';
-import { refreshFilters, selectFiltersList } from '../../app/slices/filtersSlice';
+import { selectFiltersList } from '../../app/slices/filtersSlice';
 import { setSelection } from '../../app/slices/selectionSlice';
 import { useEffectLayer } from '../../hooks/useEffectLayer';
 import { useDocument } from '../../hooks/useDocument';
@@ -190,8 +190,12 @@ export default function EffectsFeature({
     (effectType: EffectType) => {
       void dispatch(addLayerWithEffect({ docId, layers, effectType })).then((result) => {
         if (addLayerWithEffect.fulfilled.match(result) && result.payload != null) {
-          void dispatch(setSelection({ layerId: result.payload, filterId: null }));
-          void dispatch(refreshFilters());
+          void dispatch(
+            setSelection({
+              layerId: result.payload.layerId,
+              filterId: result.payload.filterId,
+            })
+          );
         }
       });
     },
@@ -202,8 +206,12 @@ export default function EffectsFeature({
     (algorithmId: string) => {
       void dispatch(addLayerWithAlgorithm({ docId, layers, algorithmId })).then((result) => {
         if (addLayerWithAlgorithm.fulfilled.match(result) && result.payload != null) {
-          void dispatch(setSelection({ layerId: result.payload, filterId: null }));
-          void dispatch(refreshFilters());
+          void dispatch(
+            setSelection({
+              layerId: result.payload.layerId,
+              filterId: result.payload.filterId,
+            })
+          );
         }
       });
     },

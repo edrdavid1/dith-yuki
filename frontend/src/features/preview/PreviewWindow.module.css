@@ -18,6 +18,7 @@
   flex-direction: column;
   height: 100%;
   width: 100%;
+  overflow: hidden;
 }
 
 .preview-footer {
@@ -81,10 +82,6 @@
   box-sizing: border-box;
 }
 
-.pv-zoom-btn:last-child {
-  border-right: none;
-}
-
 .pv-zoom-btn:hover:not(:disabled) {
   background: var(--bg-hover-accent);
   color: var(--color-hover-inverted);
@@ -98,6 +95,12 @@
 .pv-zoom-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* Tooltip wraps each btn — only the strip's last control drops the right edge. */
+.pv-footer-zoom > :last-child .pv-zoom-btn,
+.pv-footer-zoom > .pv-zoom-btn:last-child {
+  border-right: none;
 }
 
 .pv-zoom-field {
@@ -140,8 +143,6 @@
   width: 28px;
   padding: 0;
   border: none;
-  border-left: var(--border);
-  border-right: var(--border);
   border-radius: 0;
   background: var(--color-gray);
   color: var(--text-color);
@@ -170,7 +171,6 @@
   width: 28px;
   padding: 0;
   border: none;
-  border-left: var(--border);
   border-radius: 0;
   background: var(--color-gray);
   color: var(--text-color);

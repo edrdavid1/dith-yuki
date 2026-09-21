@@ -35,6 +35,7 @@ describe('importImageLayer', () => {
         hasDocument: true,
         hydrated: true,
         loading: false,
+        saving: false,
         notification: null,
         error: null,
         layerId: 1,

@@ -533,6 +533,7 @@ fn main() {
             commands::export_pattern,
             commands::import_pattern,
             recent_files::get_recent_files,
+            recent_files::clear_recent_files,
             commands::undo::undo,
             commands::undo::redo,
             commands::undo::is_document_dirty,

@@ -29,12 +29,24 @@ import { useShell } from '../app/shell/ShellContext';
 import WindowTitlebar from '../shared/ui/WindowTitlebar';
 import { useFlexTitlebarUndock } from '../features/panels/useFlexTitlebarUndock';
 import { useDockZoneReporter } from '../hooks/useDockZoneReporter';
+import {
+  dockBottomCornerFromEdges,
+  markDockBottomCorner,
+} from '../shared/ui/markDockBottomCorner';
+import { isMacOS } from '../lib/platform';
 import 'flexlayout-react/style/dark.css';
 import '../shared/styles/flexlayout-theme.css';
+import '../shared/styles/dockCorners.css';
 
 export interface FlexLayoutContainerProps {
   /** Which sidebar this container manages. */
   side: FlexSide;
+  /**
+   * App-window edges this column surface touches (e.g. bottom+right).
+   * Omit when the FlexLayout stack is not flush with the app edge
+   * (e.g. mixed layout: flex on top, legacy panels below).
+   */
+  appEdges?: string;
   /** Extra CSS class for the wrapper div */
   className?: string;
   /** Inline styles for the wrapper div */
@@ -43,6 +55,7 @@ export interface FlexLayoutContainerProps {
 
 export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
   side,
+  appEdges,
   className,
   style,
 }) => {
@@ -92,6 +105,38 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
     });
     return () => mo.disconnect();
   }, [model]);
+
+  // Round only the bottom-most tabset frame when this column touches the app edge.
+  // macOS only (Windows 10/11 chrome differs; see tokens.css).
+  useEffect(() => {
+    const root = columnRef.current;
+    if (!root) return;
+    if (!isMacOS()) {
+      markDockBottomCorner(root, null);
+      return;
+    }
+
+    const corner = dockBottomCornerFromEdges(appEdges);
+    let raf = 0;
+    const mark = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        markDockBottomCorner(root, corner);
+      });
+    };
+
+    mark();
+    const mo = new MutationObserver(mark);
+    mo.observe(root, { childList: true, subtree: true });
+    const ro = new ResizeObserver(mark);
+    ro.observe(root);
+    return () => {
+      cancelAnimationFrame(raf);
+      mo.disconnect();
+      ro.disconnect();
+      markDockBottomCorner(root, null);
+    };
+  }, [appEdges, model, dockedCount]);
 
   // Hide left/right drop outlines. Only watch outline nodes — observing every
   // `style` change on the layout tree makes splitter resize hitch (reflow).
@@ -357,6 +402,8 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
   if (isLoading || model === null) {
     return (
       <div
+        data-dock-side={side}
+        data-app-edges={appEdges}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -364,6 +411,7 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
           height: '100%',
           color: 'var(--color-text-secondary, #999)',
           fontSize: 13,
+          overflow: 'hidden',
           ...style,
         }}
         className={className}
@@ -377,7 +425,14 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
     <div
       ref={columnRef}
       className={className}
-      style={{ position: 'relative', height: '100%', overflow: 'hidden', ...style }}
+      data-dock-side={side}
+      data-app-edges={appEdges}
+      style={{
+        position: 'relative',
+        height: '100%',
+        overflow: 'hidden',
+        ...style,
+      }}
     >
       <Layout
         model={model as Model}

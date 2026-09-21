@@ -6,6 +6,7 @@
   height: 100%;
   background: var(--bg-slider-track);
   border: var(--border);
+  overflow: hidden;
 }
 
 /* FlexLayout tab strip already draws the window frame — body has no outer border */
@@ -245,17 +246,21 @@
   align-items: stretch;
   justify-content: flex-end;
   height: 20px;
-  padding: 0 20px 0 0;
+  padding: 0;
   background: var(--color-gray);
   border-top: var(--border);
   box-sizing: border-box;
+}
+
+/* Clear the macOS outer corner when Layers is docked on the right. */
+.lp[data-dock-side='right'] .lp-footer {
+  padding-right: var(--dock-footer-inset);
 }
 
 .lp-footer-btn {
   width: 20px;
   height: 100%;
   border: none;
-  border-left: var(--border);
   border-radius: 0;
   background: var(--color-gray);
   color: var(--text-color);
@@ -266,10 +271,6 @@
   padding: 0;
   box-shadow: none;
   box-sizing: border-box;
-}
-
-.lp-footer-btn:last-child {
-  border-right: var(--border);
 }
 
 .lp-footer-btn:hover:not(:disabled) {

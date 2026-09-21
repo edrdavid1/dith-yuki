@@ -28,3 +28,39 @@ body {
   color: #000;
   font-size: 12px;
 }
+
+/* ─── Checkbox (square, dark-gray border; primary fill when checked) ───────── */
+
+input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  border: var(--border-width) solid var(--color-black);
+  border-radius: 0;
+  background-color: var(--color-gray);
+  background-image: linear-gradient(var(--color-primary), var(--color-primary));
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 0 0;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+input[type='checkbox']:checked {
+  /* Inner square inset from the 1.5px border (~2px padding each side). */
+  background-size: 7px 7px;
+}
+
+input[type='checkbox']:focus-visible {
+  outline: var(--border-width) solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+input[type='checkbox']:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

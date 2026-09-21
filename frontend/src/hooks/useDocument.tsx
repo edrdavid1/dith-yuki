@@ -12,6 +12,7 @@ import {
   importPattern,
   importImageLayer,
   setDocumentMeta,
+  setSaving,
 } from '../app/slices/documentSlice';
 import { refreshLayers } from '../app/slices/layersSlice';
 import { refreshFilters } from '../app/slices/filtersSlice';
@@ -226,18 +227,24 @@ export function useDocument() {
         const path = filePath.toLowerCase().endsWith('.dyproj')
           ? filePath
           : `${filePath}.dyproj`;
-        const result = await shareProjectCopyIPC(docId, path, opts);
-        if (result.size_warning) {
-          dispatch(
-            setDocumentMeta({
-              notification:
-                'Share Copy saved. Large uncompressed raster size — recipients may need more memory.',
-            })
-          );
-        } else {
-          dispatch(setDocumentMeta({ notification: `Share Copy saved to ${result.path}` }));
+        dispatch(setSaving(true));
+        try {
+          const result = await shareProjectCopyIPC(docId, path, opts);
+          if (result.size_warning) {
+            dispatch(
+              setDocumentMeta({
+                notification:
+                  'Share Copy saved. Large uncompressed raster size — recipients may need more memory.',
+              })
+            );
+          } else {
+            dispatch(setDocumentMeta({ notification: `Share Copy saved to ${result.path}` }));
+          }
+        } finally {
+          dispatch(setSaving(false));
         }
       } catch (err) {
+        dispatch(setSaving(false));
         dispatch(
           setDocumentMeta({
             error: err instanceof Error ? err.message : String(err),
@@ -344,6 +351,7 @@ export function useDocument() {
     height: state.height,
     layerId: state.layerId,
     loading: state.loading,
+    saving: state.saving,
     error: state.error,
     notification: state.notification,
     hasDocument: state.hasDocument,

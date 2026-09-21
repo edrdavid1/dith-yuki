@@ -1,0 +1,59 @@
+/**
+ * Round the outer WINDOW BORDER of docked tool windows (Layers / Effect /
+ * Color Lab) and preview — not inner controls.
+ *
+ * FlexLayout frame split (see flexlayout-theme.css):
+ *   tabbar_outer = top + left + right
+ *   .flexlayout__tab = left + right + bottom  ← bottom-outer corner lives here
+ *
+ * `data-dock-bottom-corner` is set on that tab chrome by markDockBottomCorner().
+ */
+
+/* ── FlexLayout window frame (black border) ──────────────────────────────── */
+
+.flexlayout__tab[data-dock-bottom-corner='left'] {
+  border-bottom-left-radius: var(--dock-outer-radius) !important;
+}
+
+.flexlayout__tab[data-dock-bottom-corner='right'] {
+  border-bottom-right-radius: var(--dock-outer-radius) !important;
+}
+
+/* Clip tab body to the same curve so content doesn't square past the border */
+.flexlayout__tabset[data-dock-bottom-corner='left'] {
+  border-bottom-left-radius: var(--dock-outer-radius) !important;
+  overflow: hidden !important;
+}
+
+.flexlayout__tabset[data-dock-bottom-corner='right'] {
+  border-bottom-right-radius: var(--dock-outer-radius) !important;
+  overflow: hidden !important;
+}
+
+/* ── Legacy docked panels (own border on panel root) ─────────────────────── */
+
+[data-app-edges~='bottom'][data-app-edges~='left'] > [data-panel-id]:last-of-type .lp,
+[data-app-edges~='bottom'][data-app-edges~='left'] > [data-panel-id]:last-of-type .effect-settings-panel,
+[data-app-edges~='bottom'][data-app-edges~='left'] > [data-panel-id]:last-of-type .color-lab-sidebar {
+  border-bottom-left-radius: var(--dock-outer-radius) !important;
+  overflow: hidden !important;
+}
+
+[data-app-edges~='bottom'][data-app-edges~='right'] > [data-panel-id]:last-of-type .lp,
+[data-app-edges~='bottom'][data-app-edges~='right'] > [data-panel-id]:last-of-type .effect-settings-panel,
+[data-app-edges~='bottom'][data-app-edges~='right'] > [data-panel-id]:last-of-type .color-lab-sidebar {
+  border-bottom-right-radius: var(--dock-outer-radius) !important;
+  overflow: hidden !important;
+}
+
+/* ── Preview canvas frame ────────────────────────────────────────────────── */
+
+[data-panel-id='preview'][data-app-edges~='bottom'][data-app-edges~='left'] {
+  border-bottom-left-radius: var(--dock-outer-radius) !important;
+  overflow: hidden !important;
+}
+
+[data-panel-id='preview'][data-app-edges~='bottom'][data-app-edges~='right'] {
+  border-bottom-right-radius: var(--dock-outer-radius) !important;
+  overflow: hidden !important;
+}

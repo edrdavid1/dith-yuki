@@ -43,6 +43,8 @@ export type ShellState = {
   previewBackground: PreviewBackground;
   /** Background image (or fill) for the welcome / empty preview. */
   welcomeBackground: WelcomeBackground;
+  /** When true, hide the Recent files list on the welcome screen. */
+  hideRecentList: boolean;
   setSidebarWidth: (side: DockSide, width: number | ((prev: number) => number)) => void;
   setSidebarCollapsed: (side: DockSide, collapsed: boolean) => void;
   resetSidebarWidths: () => void;
@@ -54,6 +56,7 @@ export type ShellState = {
   setAutoExtractPalettes: (enabled: boolean) => void;
   setPreviewBackground: (kind: PreviewBackground) => void;
   setWelcomeBackground: (kind: WelcomeBackground) => void;
+  setHideRecentList: (hidden: boolean) => void;
 };
 
 /** v2 persisted shape (additive split ratios). */
@@ -68,6 +71,7 @@ export type PersistedShellPrefsV2 = {
   autoExtractPalettes: boolean;
   previewBackground: PreviewBackground;
   welcomeBackground: WelcomeBackground;
+  hideRecentList: boolean;
 };
 
 /** Legacy v1 keys (exclusive single sidebar). */
@@ -79,9 +83,11 @@ type PersistedShellPrefsV1 = {
   autoExtractPalettes?: boolean;
   previewBackground?: PreviewBackground | string;
   welcomeBackground?: WelcomeBackground | string;
+  hideRecentList?: boolean;
 };
 
 const DEFAULT_AUTO_EXTRACT_PALETTES = true;
+const DEFAULT_HIDE_RECENT_LIST = false;
 const DEFAULT_SIDEBAR_WIDTH = 332;
 const DEFAULT_SPLIT_RATIO = 0.5;
 
@@ -142,6 +148,7 @@ function defaultPrefs(): PersistedShellPrefsV2 {
     autoExtractPalettes: DEFAULT_AUTO_EXTRACT_PALETTES,
     previewBackground: DEFAULT_PREVIEW_BACKGROUND,
     welcomeBackground: DEFAULT_WELCOME_BACKGROUND,
+    hideRecentList: DEFAULT_HIDE_RECENT_LIST,
   };
 }
 
@@ -191,6 +198,10 @@ export function migrateShellPrefs(raw: unknown): PersistedShellPrefsV2 {
           : DEFAULT_AUTO_EXTRACT_PALETTES,
       previewBackground: parsePreviewBackground(obj.previewBackground),
       welcomeBackground: parseWelcomeBackground(obj.welcomeBackground),
+      hideRecentList:
+        typeof obj.hideRecentList === 'boolean'
+          ? obj.hideRecentList
+          : DEFAULT_HIDE_RECENT_LIST,
     };
   }
 
@@ -216,6 +227,9 @@ export function migrateShellPrefs(raw: unknown): PersistedShellPrefsV2 {
   }
   prefs.previewBackground = parsePreviewBackground(v1.previewBackground);
   prefs.welcomeBackground = parseWelcomeBackground(v1.welcomeBackground);
+  if (typeof v1.hideRecentList === 'boolean') {
+    prefs.hideRecentList = v1.hideRecentList;
+  }
   return prefs;
 }
 
@@ -263,6 +277,7 @@ function applyPrefsPatch(
     setAutoExtractPalettes: (enabled: boolean) => void;
     setPreviewBackground: (kind: PreviewBackground) => void;
     setWelcomeBackground: (kind: WelcomeBackground) => void;
+    setHideRecentList: (hidden: boolean) => void;
   }
 ) {
   setters.setLeftSidebar({ ...parsed.leftSidebar });
@@ -272,6 +287,7 @@ function applyPrefsPatch(
   setters.setAutoExtractPalettes(parsed.autoExtractPalettes);
   setters.setPreviewBackground(parsed.previewBackground);
   setters.setWelcomeBackground(parsed.welcomeBackground);
+  setters.setHideRecentList(parsed.hideRecentList);
 }
 
 /**
@@ -291,6 +307,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
   );
   const [previewBackground, setPreviewBackgroundState] = useState(initial.previewBackground);
   const [welcomeBackground, setWelcomeBackgroundState] = useState(initial.welcomeBackground);
+  const [hideRecentList, setHideRecentListState] = useState(initial.hideRecentList);
 
   const prefsRef = useRef<PersistedShellPrefsV2>({
     version: 2,
@@ -302,6 +319,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     autoExtractPalettes,
     previewBackground,
     welcomeBackground,
+    hideRecentList,
   });
   prefsRef.current = {
     version: 2,
@@ -313,6 +331,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     autoExtractPalettes,
     previewBackground,
     welcomeBackground,
+    hideRecentList,
   };
 
   const persistPrefs = useCallback((prefs: PersistedShellPrefsV2) => {
@@ -343,6 +362,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     autoExtractPalettes,
     previewBackground,
     welcomeBackground,
+    hideRecentList,
     persistPrefs,
   ]);
 
@@ -364,6 +384,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
         setAutoExtractPalettes: setAutoExtractPalettesState,
         setPreviewBackground: setPreviewBackgroundState,
         setWelcomeBackground: setWelcomeBackgroundState,
+        setHideRecentList: setHideRecentListState,
       });
     };
 
@@ -454,6 +475,10 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     setWelcomeBackgroundState(parseWelcomeBackground(kind));
   }, []);
 
+  const setHideRecentList = useCallback((hidden: boolean) => {
+    setHideRecentListState(hidden);
+  }, []);
+
   const swapSidebars = useCallback(() => {
     const prefs = prefsRef.current;
     setLeftSidebarState({ ...prefs.rightSidebar });
@@ -472,6 +497,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       autoExtractPalettes,
       previewBackground,
       welcomeBackground,
+      hideRecentList,
       setSidebarWidth,
       setSidebarCollapsed,
       resetSidebarWidths,
@@ -481,6 +507,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       setAutoExtractPalettes,
       setPreviewBackground,
       setWelcomeBackground,
+      setHideRecentList,
     }),
     [
       leftSidebar,
@@ -490,6 +517,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       autoExtractPalettes,
       previewBackground,
       welcomeBackground,
+      hideRecentList,
       setSidebarWidth,
       setSidebarCollapsed,
       resetSidebarWidths,
@@ -499,6 +527,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       setAutoExtractPalettes,
       setPreviewBackground,
       setWelcomeBackground,
+      setHideRecentList,
     ]
   );
 

@@ -56,4 +56,17 @@
 
   --font-family: 'ChicagoFLF', 'Geneva', 'Chicago', monospace;
   --radius: 0px;
+  /* Outer dock clip to match macOS window corner (disabled on Windows — see below). */
+  --dock-outer-radius: 16px;
+  /* Extra inset so Layers delete/plus clear the curved outer corner. */
+  --dock-footer-inset: calc(5px);
+}
+
+/*
+ * Windows 10: square OS chrome. Windows 11: system rounding exists but we do not
+ * version-gate (fragile). Keep dock-corner matching macOS-only.
+ */
+html[data-platform='windows'] {
+  --dock-outer-radius: 0px;
+  --dock-footer-inset: 0px;
 }

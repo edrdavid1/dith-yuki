@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { getRecentFiles, type RecentFileEntry } from '../shared/ipc/recent';
+import { clearRecentFiles, getRecentFiles, type RecentFileEntry } from '../shared/ipc/recent';
 
 export function useRecentFiles() {
   const [entries, setEntries] = useState<RecentFileEntry[]>([]);
@@ -10,8 +10,16 @@ export function useRecentFiles() {
       setEntries([]);
     }
   }, []);
+  const clear = useCallback(async () => {
+    try {
+      await clearRecentFiles();
+      setEntries([]);
+    } catch {
+      await refresh();
+    }
+  }, [refresh]);
   useEffect(() => {
     void refresh();
   }, [refresh]);
-  return { entries, refresh };
+  return { entries, refresh, clear };
 }

@@ -33,6 +33,8 @@ export default function PreferencesPanel() {
     setPreviewBackground,
     welcomeBackground,
     setWelcomeBackground,
+    hideRecentList,
+    setHideRecentList,
   } = useShell();
   const { bindings, capturing, setCapturing, setBinding, resetDefaults } = useShortcuts();
 
@@ -129,6 +131,17 @@ export default function PreferencesPanel() {
               />
             );
           })}
+        </div>
+
+        <div className={cn('param-group', 'preferences-label-spaced')}>
+          <label className={cn('preferences-checkbox-row')}>
+            <input
+              type="checkbox"
+              checked={hideRecentList}
+              onChange={(e) => setHideRecentList(e.target.checked)}
+            />
+            <span>Hide recent files list on welcome screen</span>
+          </label>
         </div>
       </details>
 

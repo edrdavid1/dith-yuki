@@ -43,6 +43,7 @@ function renderHarness(opts: { canUndo?: boolean; canRedo?: boolean; hasDocument
       hasDocument: opts.hasDocument !== false,
       hydrated: opts.hasDocument !== false,
       loading: false,
+      saving: false,
       notification: null,
       error: null,
       layerId: 1,

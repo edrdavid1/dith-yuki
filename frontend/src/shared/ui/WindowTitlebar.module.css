@@ -90,24 +90,39 @@ button.window-titlebar-square {
   height: 14px;
 }
 
-/* Figma ridges: exactly 4 horizontal lines in the 12px stripe band. */
+/* Figma ridges: 4 lines in 14px square, start ~0.1 — gaps tightened so #4 isn’t clipped. */
 .window-titlebar-lines {
   flex: 1 1 0;
   min-width: 4px;
-  height: 12px;
+  height: 14px;
   margin: 0 2px;
   pointer-events: none;
-  /* 4 × 1.5px strokes with equal gaps across 12px → period 3px */
-  background: repeating-linear-gradient(
+  /*
+   * Flush 0.1→13.9 needs P≈4.1 and clips the last stroke (AA / subpixel).
+   * Use a slightly smaller band (→13.5) so gaps shrink and all 4 fit cleanly.
+   * Line starts: 0.1, 0.1+P, 0.1+2P, 0.1+3P; last ends at 13.5.
+   */
+  --lines-inset: 0.1px;
+  --lines-period: calc((13.4px - var(--border-width)) / 3);
+  background: linear-gradient(
     to bottom,
-    var(--color-black) 0,
-    var(--color-black) var(--border-width),
-    transparent var(--border-width),
-    transparent 3px
+    transparent var(--lines-inset),
+    var(--color-black) var(--lines-inset),
+    var(--color-black) calc(var(--lines-inset) + var(--border-width)),
+    transparent calc(var(--lines-inset) + var(--border-width)),
+    transparent calc(var(--lines-inset) + var(--lines-period)),
+    var(--color-black) calc(var(--lines-inset) + var(--lines-period)),
+    var(--color-black) calc(var(--lines-inset) + var(--lines-period) + var(--border-width)),
+    transparent calc(var(--lines-inset) + var(--lines-period) + var(--border-width)),
+    transparent calc(var(--lines-inset) + 2 * var(--lines-period)),
+    var(--color-black) calc(var(--lines-inset) + 2 * var(--lines-period)),
+    var(--color-black) calc(var(--lines-inset) + 2 * var(--lines-period) + var(--border-width)),
+    transparent calc(var(--lines-inset) + 2 * var(--lines-period) + var(--border-width)),
+    transparent calc(var(--lines-inset) + 3 * var(--lines-period)),
+    var(--color-black) calc(var(--lines-inset) + 3 * var(--lines-period)),
+    var(--color-black) calc(var(--lines-inset) + 3 * var(--lines-period) + var(--border-width)),
+    transparent calc(var(--lines-inset) + 3 * var(--lines-period) + var(--border-width))
   );
-  background-position: center top;
-  background-repeat: repeat-y;
-  background-size: 100% 12px;
 }
 
 .window-title {

@@ -340,7 +340,12 @@ export default function LayersPanel({
   }, [selectedFilterId, onRemoveFilter]);
 
   return (
-    <div className={cn("lp")} aria-label="Layers panel">
+    <div
+      className={cn("lp")}
+      aria-label="Layers panel"
+      data-dock-window="layers"
+      data-dock-side={dockSide}
+    >
       {!hideChrome && (
         <WindowTitlebar
           title="Layers"

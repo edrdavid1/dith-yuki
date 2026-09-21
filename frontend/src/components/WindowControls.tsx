@@ -1,12 +1,48 @@
-// src/components/WindowControls.tsx
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getPlatform } from '../lib/platform';
 
+/**
+ * Custom caption buttons for Windows/Linux (frameless main window).
+ * macOS keeps native traffic lights.
+ */
 export function WindowControls() {
-  // On macOS or unknown platform, native traffic lights handle window controls
   const platform = getPlatform();
-  if (platform === 'macos') return null;
+  const [maximized, setMaximized] = useState(false);
+
+  useEffect(() => {
+    if (platform === 'macos') return;
+
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    const sync = async () => {
+      try {
+        const next = await getCurrentWindow().isMaximized();
+        if (!cancelled) setMaximized(next);
+      } catch {
+        /* ignore */
+      }
+    };
+
+    void sync();
+    void getCurrentWindow()
+      .onResized(() => {
+        void sync();
+      })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {
+        /* ignore */
+      });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [platform]);
 
   const handleMinimize = useCallback(async () => {
     try {
@@ -19,11 +55,13 @@ export function WindowControls() {
   const handleMaximize = useCallback(async () => {
     try {
       const win = getCurrentWindow();
-      const maximized = await win.isMaximized();
-      if (maximized) {
+      const isMax = await win.isMaximized();
+      if (isMax) {
         await win.unmaximize();
+        setMaximized(false);
       } else {
         await win.maximize();
+        setMaximized(true);
       }
     } catch (err) {
       console.error('[WindowControls] maximize toggle failed:', err);
@@ -38,6 +76,10 @@ export function WindowControls() {
     }
   }, []);
 
+  if (platform === 'macos') return null;
+
+  const maximizeLabel = maximized ? 'Restore' : 'Maximize';
+
   return (
     <div
       className="window-controls"
@@ -45,28 +87,34 @@ export function WindowControls() {
       style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
     >
       <button
+        type="button"
         className="window-control-btn window-control-minimize"
-        onClick={handleMinimize}
+        onClick={() => void handleMinimize()}
         title="Minimize"
+        aria-label="Minimize"
         data-tauri-drag-region="false"
       >
-        ─
+        <img src="/icons/hide-window-icon.svg" width="14" height="14" alt="" />
       </button>
       <button
+        type="button"
         className="window-control-btn window-control-maximize"
-        onClick={handleMaximize}
-        title="Maximize"
+        onClick={() => void handleMaximize()}
+        title={maximizeLabel}
+        aria-label={maximizeLabel}
         data-tauri-drag-region="false"
       >
-        □
+        <img src="/icons/header-window-square-icon.svg" width="14" height="14" alt="" />
       </button>
       <button
+        type="button"
         className="window-control-btn window-control-close"
-        onClick={handleClose}
+        onClick={() => void handleClose()}
         title="Close"
+        aria-label="Close"
         data-tauri-drag-region="false"
       >
-        ×
+        <img src="/icons/clouse-window-icon.svg" width="14" height="14" alt="" />
       </button>
     </div>
   );

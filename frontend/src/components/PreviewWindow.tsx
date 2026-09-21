@@ -176,7 +176,10 @@ export default function PreviewWindow({
   const handleViewportChange = useCallback(() => {}, []);
 
   return (
-    <div className={cn("preview-window")} style={inlineStyles.wrapper}>
+    <div
+      className={cn("preview-window")}
+      style={inlineStyles.wrapper}
+    >
       {/* Title Bar */}
       {!hideTitleBar && (
         <WindowTitlebar
@@ -218,7 +221,7 @@ export default function PreviewWindow({
               disabled={isMinZoom}
               aria-label="Zoom out"
             >
-              <Icon name="zoom-out" width={12} height={12} />
+              −
             </button>
           </Tooltip>
           <label className={cn('pv-zoom-field')}>
@@ -253,7 +256,7 @@ export default function PreviewWindow({
               disabled={isMaxZoom}
               aria-label="Zoom in"
             >
-              <Icon name="zoom-in" width={12} height={12} />
+              +
             </button>
           </Tooltip>
         </div>

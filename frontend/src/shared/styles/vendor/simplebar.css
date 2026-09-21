@@ -4,10 +4,12 @@
   background: var(--color-gray) !important;
   border-radius: 0 !important;
   opacity: 1 !important;
+  box-sizing: border-box !important;
   left: 0 !important;
   right: 0 !important;
   top: 0 !important;
   bottom: 0 !important;
+  /* Bevel must sit inside the thumb — parent/track use overflow:hidden. */
   border-top: var(--border-width) solid var(--color-white) !important;
   border-left: var(--border-width) solid var(--color-white) !important;
   border-bottom: var(--border-width) solid var(--color-black) !important;

@@ -9,12 +9,30 @@
   border-bottom: var(--border);
 }
 
+/* Tabs scroll horizontally; scrollbar hidden, trackpad/wheel still works. */
+.tab-bar-scroll {
+  display: flex;
+  align-items: stretch;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge */
+}
+
+.tab-bar-scroll::-webkit-scrollbar {
+  display: none; /* Chrome / Safari / WKWebView */
+}
+
 .tab {
   display: flex;
   align-items: center;
   gap: 4px;
-  flex: 1;
+  flex: 0 0 auto;
+  width: max-content;
   max-width: 300px;
+  min-width: 120px;
   padding: 0 6px 0 10px;
   border: none;
   border-right: var(--border);
@@ -23,7 +41,6 @@
   font-size: 11px;
   color: var(--color-white);
   cursor: pointer;
-  min-width: 120px;
 }
 
 .tab:hover {
@@ -37,9 +54,42 @@
 }
 
 .tab-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tab-dirty {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  background: currentColor;
+  -webkit-mask: url(/icons/asterisk.svg) center / contain no-repeat;
+  mask: url(/icons/asterisk.svg) center / contain no-repeat;
+}
+
+/* Half-arc spinner (SVG, butt caps) in place of dirty * while saving. */
+.tab-saving {
+  flex-shrink: 0;
+  display: inline-flex;
+  width: 9px;
+  height: 9px;
+  animation: tab-saving-spin 0.7s linear infinite;
+}
+
+.tab-saving svg {
+  display: block;
+  overflow: visible;
+}
+
+@keyframes tab-saving-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .tab-close {
@@ -61,6 +111,7 @@
 }
 
 .tab-new {
+  flex-shrink: 0;
   width: 24px;
   border: none;
   border-right: var(--border);
@@ -72,10 +123,16 @@
 }
 
 .tab-new:hover {
-  background: color-mix(in srgb, var(--color-white) 12%, transparent);
+  background: var(--color-primary);
+  color: var(--color-black);
 }
 
 .tab-drag-rest {
-  flex: 1;
+  flex: 1 0 24px;
   min-width: 24px;
+  /* Same halftone as preview background "Pattern" */
+  background-color: #808080;
+  background-image: url(/img/preview-halftone.png);
+  background-repeat: repeat;
+  image-rendering: pixelated;
 }

@@ -52,7 +52,7 @@ export default function DiscardRestoreToast({
       <span className={cn('notification-text')}>
         Discarded {info.display_name}
       </span>
-      <button type="button" className={cn('notification-close')} onClick={handleRestore}>
+      <button type="button" className={cn('notification-action')} onClick={handleRestore}>
         Restore
       </button>
       <button

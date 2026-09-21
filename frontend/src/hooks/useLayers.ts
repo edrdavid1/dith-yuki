@@ -61,8 +61,12 @@ export function useLayers({ docId }: UseLayersOptions): UseLayersReturn {
     (effectType: EffectType, _position: number) => {
       void dispatch(addLayerWithEffectThunk({ docId, layers, effectType })).then((result) => {
         if (addLayerWithEffectThunk.fulfilled.match(result) && result.payload != null) {
-          void dispatch(setSelection({ layerId: result.payload, filterId: null }));
-          void dispatch(refreshFilters());
+          void dispatch(
+            setSelection({
+              layerId: result.payload.layerId,
+              filterId: result.payload.filterId,
+            })
+          );
         }
       });
     },

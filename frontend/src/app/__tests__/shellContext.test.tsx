@@ -46,6 +46,7 @@ describe('ShellContext', () => {
     expect(result.current.autoExtractPalettes).toBe(true);
     expect(result.current.previewBackground).toBe('gray');
     expect(result.current.welcomeBackground).toBe('artwork');
+    expect(result.current.hideRecentList).toBe(false);
   });
 
   it('updates split ratios independently per side', () => {
@@ -104,6 +105,7 @@ describe('ShellContext', () => {
       result.current.setAutoExtractPalettes(false);
       result.current.setPreviewBackground('black');
       result.current.setWelcomeBackground('artwork');
+      result.current.setHideRecentList(true);
     });
     act(() => {
       vi.advanceTimersByTime(150);
@@ -117,6 +119,7 @@ describe('ShellContext', () => {
     expect(parsed.autoExtractPalettes).toBe(false);
     expect(parsed.previewBackground).toBe('black');
     expect(parsed.welcomeBackground).toBe('artwork');
+    expect(parsed.hideRecentList).toBe(true);
     expect(parsed.sidebarSide).toBeUndefined();
     vi.useRealTimers();
   });
@@ -186,6 +189,11 @@ describe('ShellContext', () => {
       'artwork'
     );
     expect(migrateShellPrefs({ version: 2 }).welcomeBackground).toBe('artwork');
+  });
+
+  it('parses hideRecentList and defaults to false', () => {
+    expect(migrateShellPrefs({ version: 2, hideRecentList: true }).hideRecentList).toBe(true);
+    expect(migrateShellPrefs({ version: 2 }).hideRecentList).toBe(false);
   });
 
   it('migrates v1 exclusive sidebarSide=right by default', () => {

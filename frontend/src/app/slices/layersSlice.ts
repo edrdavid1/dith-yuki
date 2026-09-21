@@ -16,6 +16,7 @@ import type { SnapshotLayerNode } from '../../shared/ipc/document';
 import type { EffectType } from '../../types/effects';
 import { EFFECT_DEFAULTS, EFFECT_TO_FILTER_KIND, specForAlgorithm, validateDocumentStructure } from '../../types/effects';
 import type { RootState } from '../store';
+import { refreshFilters } from './filtersSlice';
 
 export type LayersStatus = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -159,9 +160,15 @@ export const addLayerWithEffect = createAsyncThunk(
           defaultParams.palette_id = lastCreatedId;
         }
       }
-      await addFilter(args.docId, imageSourceLayer.id, filterKind, defaultParams);
+      const { filter_id } = await addFilter(
+        args.docId,
+        imageSourceLayer.id,
+        filterKind,
+        defaultParams
+      );
       await dispatch(refreshLayers(args.docId));
-      return imageSourceLayer.id;
+      await dispatch(refreshFilters());
+      return { layerId: imageSourceLayer.id, filterId: filter_id };
     } catch (err) {
       logIpcError('layers.addWithEffect', err);
       return rejectWithValue(formatIpcError(err));
@@ -196,11 +203,18 @@ export const addLayerWithAlgorithm = createAsyncThunk(
       if (spec.kind === 'PaletteQuantize' && spec.params.palette_id == null) {
         return rejectWithValue('A palette is required for Palette Quantize');
       }
-      await addFilter(args.docId, imageSourceLayer.id, spec.kind, spec.params, {
-        algorithmId: args.algorithmId,
-      });
+      const { filter_id } = await addFilter(
+        args.docId,
+        imageSourceLayer.id,
+        spec.kind,
+        spec.params,
+        {
+          algorithmId: args.algorithmId,
+        }
+      );
       await dispatch(refreshLayers(args.docId));
-      return imageSourceLayer.id;
+      await dispatch(refreshFilters());
+      return { layerId: imageSourceLayer.id, filterId: filter_id };
     } catch (err) {
       logIpcError('layers.addWithAlgorithm', err);
       return rejectWithValue(formatIpcError(err));

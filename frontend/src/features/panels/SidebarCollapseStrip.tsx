@@ -10,6 +10,8 @@ import styles from '../../app/AppLayout.module.css';
 import resizeStyles from '../../shared/ui/ResizeHandle.module.css';
 import { bind } from '../../shared/ui/cn';
 import Icon from '../../icons/iconRegistry';
+import { appEdgesAttr } from '../../shared/ui/appEdges';
+import { isMacOS } from '../../lib/platform';
 
 const cn = bind({ ...styles, ...resizeStyles });
 
@@ -34,6 +36,9 @@ export default function SidebarCollapseStrip({
 }: SidebarCollapseStripProps) {
   const collapsedAreaClass =
     side === 'left' ? 'sidebar-collapsed-area-left' : 'sidebar-collapsed-area-right';
+  const edges = isMacOS()
+    ? appEdgesAttr('bottom', side === 'left' && 'left', side === 'right' && 'right')
+    : undefined;
 
   const handleCollapsedResize = (delta: number) => {
     const expandDelta = side === 'right' ? delta < -10 : delta > 10;
@@ -50,6 +55,7 @@ export default function SidebarCollapseStrip({
         collapsedAreaClass,
         side === 'left' && 'sidebar-collapsed-left'
       )}
+      data-app-edges={edges}
     >
       <ResizeHandle
         direction="horizontal"

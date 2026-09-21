@@ -97,6 +97,13 @@ pub fn get_recent_files(app_handle: tauri::AppHandle) -> Vec<RecentFileEntry> {
     load_prune_and_maybe_rewrite(&path)
 }
 
+/// Wipe the Recent list on disk (empty JSON array).
+#[tauri::command]
+pub fn clear_recent_files(app_handle: tauri::AppHandle) -> Result<(), String> {
+    let path = recent_files_path(&app_handle);
+    save_recent_files(&path, &[])
+}
+
 /// Drop entries whose `path` no longer exists on disk.
 pub fn prune_missing(entries: Vec<RecentFileEntry>) -> (Vec<RecentFileEntry>, bool) {
     let before = entries.len();
@@ -192,6 +199,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("recent_files.json");
         (dir, path)
+    }
+
+    #[test]
+    fn clear_writes_empty_list() {
+        let (_dir, json) = temp_json();
+        record_recent_file(&json, "/tmp/a.png", RecentFileKind::Image).unwrap();
+        record_recent_file(&json, "/tmp/b.png", RecentFileKind::Project).unwrap();
+        assert_eq!(load_recent_files(&json).len(), 2);
+
+        save_recent_files(&json, &[]).unwrap();
+        assert!(load_recent_files(&json).is_empty());
     }
 
     #[test]

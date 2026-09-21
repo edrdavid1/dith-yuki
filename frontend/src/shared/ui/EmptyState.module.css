@@ -55,8 +55,23 @@
   box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light);
 }
 
-.welcome-recent {
+.empty-state-drop-active {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -8px;
+}
+
+.welcome-recent-slot {
   width: min(420px, 100%);
+  /*
+   * Reserve height of a full Recent block (heading + 6 rows) so Open image /
+   * Open project stay put when the list is empty, cleared, or hidden.
+   * heading 12 + gap 6 + 6×36 rows + 5×2 list gaps = 244
+   */
+  min-height: calc(12px + 6px + 6 * 36px + 5 * 2px);
+}
+
+.welcome-recent {
+  width: 100%;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -64,10 +79,14 @@
 
 .welcome-recent-heading {
   margin: 0;
+  height: 12px;
+  line-height: 12px;
   font-size: 12px;
   font-family: var(--font-family);
   font-weight: normal;
   color: #e8e8e8;
+  cursor: pointer;
+  user-select: none;
 }
 
 .welcome-recent-list {
@@ -84,6 +103,8 @@
   align-items: center;
   gap: 10px;
   width: 100%;
+  box-sizing: border-box;
+  min-height: 36px;
   padding: 6px 8px;
   border: none;
   background: transparent;

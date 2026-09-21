@@ -43,6 +43,23 @@
   grid-area: right;
 }
 
+/*
+ * Column hosts always meet the bottom app corner when present.
+ * Clip the column; frame radius for the bottom panel comes from data-app-edges
+ * on FlexLayoutContainer / DockedSidebar (see dockCorners.css).
+ */
+.sidebar-area-left,
+.sidebar-collapsed-area-left {
+  border-bottom-left-radius: var(--dock-outer-radius);
+  overflow: hidden !important;
+}
+
+.sidebar-area-right,
+.sidebar-collapsed-area-right {
+  border-bottom-right-radius: var(--dock-outer-radius);
+  overflow: hidden !important;
+}
+
 /* ─── Sidebar Split (Effect Settings top / Layers bottom) ───────────────────── */
 
 .sidebar-section-top {

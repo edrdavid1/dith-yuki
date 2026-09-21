@@ -448,7 +448,11 @@ export default function ColorLabFeature({
 
   if (variant === 'sidebar') {
     return (
-      <div className={cn('color-lab-sidebar')}>
+      <div
+        className={cn('color-lab-sidebar')}
+        data-dock-window="colorlab"
+        data-dock-side={dockSide}
+      >
         {showBar && (
           <WindowTitlebar
             title="Color Lab"

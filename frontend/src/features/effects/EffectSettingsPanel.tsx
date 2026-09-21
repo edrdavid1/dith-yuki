@@ -152,7 +152,11 @@ export default function EffectSettingsPanel({
 
   if (!selectedLayer || selectedLayer.filters.length === 0) {
     return (
-      <div className={cn('effect-settings-panel', 'effect-chooser-panel')}>
+      <div
+        className={cn('effect-settings-panel', 'effect-chooser-panel')}
+        data-dock-window="effect"
+        data-dock-side={dockSide}
+      >
         {!hideChrome && (
           <WindowTitlebar
             title="Effect"
@@ -283,7 +287,11 @@ export default function EffectSettingsPanel({
   };
 
   return (
-    <div className={cn("effect-settings-panel")}>
+    <div
+      className={cn("effect-settings-panel")}
+      data-dock-window="effect"
+      data-dock-side={dockSide}
+    >
       {!hideChrome && (
         <WindowTitlebar
           title={

@@ -40,6 +40,27 @@ describe('EmptyState (Welcome)', () => {
     expect(screen.queryByText('Recent')).not.toBeInTheDocument();
   });
 
+  it('hides the Recent section when hideRecentList preference is on', () => {
+    localStorage.setItem(
+      'dither.shellPrefs',
+      JSON.stringify({
+        version: 2,
+        hideRecentList: true,
+        leftSidebar: { width: 332, collapsed: false },
+        rightSidebar: { width: 332, collapsed: false },
+        leftSplitRatio: 0.5,
+        rightSplitRatio: 0.5,
+        effectPanelRatio: 0.5,
+        autoExtractPalettes: true,
+        previewBackground: 'gray',
+        welcomeBackground: 'artwork',
+      })
+    );
+    render(<EmptyState recentEntries={[imageEntry]} />, { wrapper });
+    expect(screen.queryByTestId('welcome-recent')).not.toBeInTheDocument();
+    expect(screen.queryByText('Recent')).not.toBeInTheDocument();
+  });
+
   it('maps an image recent row to openImageAt', () => {
     const openImageAt = vi.fn();
     const openProjectAt = vi.fn();
@@ -85,5 +106,15 @@ describe('EmptyState (Welcome)', () => {
     expect(screen.getByText('file-0.png')).toBeInTheDocument();
     expect(screen.getByText('file-5.png')).toBeInTheDocument();
     expect(screen.queryByText('file-6.png')).not.toBeInTheDocument();
+  });
+
+  it('clears recent on double-click of the Recent heading', () => {
+    const onClearRecent = vi.fn();
+    render(
+      <EmptyState recentEntries={[imageEntry]} onClearRecent={onClearRecent} />,
+      { wrapper }
+    );
+    fireEvent.doubleClick(screen.getByText('Recent'));
+    expect(onClearRecent).toHaveBeenCalledTimes(1);
   });
 });

@@ -156,6 +156,8 @@ export default function PreviewFeature({
           onOpenImage={welcome?.onOpenImage}
           onOpenProject={welcome?.onOpenProject}
           onOpenRecent={welcome?.onOpenRecent}
+          onClearRecent={welcome?.onClearRecent}
+          onOpenDroppedPaths={welcome?.onOpenDroppedPaths}
         />
       ) : (
         showPreview && effectiveDocId !== null && (

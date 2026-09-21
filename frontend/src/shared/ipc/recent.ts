@@ -13,6 +13,10 @@ export async function getRecentFiles(): Promise<RecentFileEntry[]> {
   return invoke<RecentFileEntry[]>('get_recent_files');
 }
 
+export async function clearRecentFiles(): Promise<void> {
+  await invoke('clear_recent_files');
+}
+
 export function openRecentByKind(
   entry: RecentFileEntry,
   helpers: {

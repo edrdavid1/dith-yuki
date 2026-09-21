@@ -33,6 +33,11 @@ export type DockedSidebarProps = {
    * and overlap the sibling FlexLayout.
    */
   embedded?: boolean;
+  /**
+   * App-window edges this sidebar surface touches.
+   * Set when this stack sits on the bottom of the app (legacy-only or mixed bottom slot).
+   */
+  appEdges?: string;
 };
 
 /** Compute effective column width for grid template. */
@@ -62,6 +67,7 @@ export default function DockedSidebar({
   onWidthChange,
   onSplitRatioChange,
   embedded = false,
+  appEdges,
 }: DockedSidebarProps) {
   const sidebarRef = useRef<HTMLDivElement>(null);
   const collapsedRef = useRef<HTMLDivElement>(null);
@@ -257,6 +263,8 @@ export default function DockedSidebar({
     return (
       <div
         className={cn('app-sidebar')}
+        data-dock-side={side}
+        data-app-edges={appEdges}
         ref={sidebarRef}
         style={{
           flex: 1,
@@ -307,6 +315,7 @@ export default function DockedSidebar({
             collapsedAreaClass,
             side === 'left' && 'sidebar-collapsed-left'
           )}
+          data-app-edges={appEdges}
         >
           <ResizeHandle
             direction="horizontal"
@@ -343,6 +352,8 @@ export default function DockedSidebar({
 
       <div
         className={cn('app-sidebar', areaClass)}
+        data-dock-side={side}
+        data-app-edges={appEdges}
         ref={sidebarRef}
         style={{
           display: !hasVisible || collapsed ? 'none' : undefined,

@@ -24,6 +24,8 @@ export interface DocumentState {
   /** False until the first `refreshDocument` (or open/create) settles. */
   hydrated: boolean;
   loading: boolean;
+  /** True while a save / share-copy write is in flight (UI busy indicator). */
+  saving: boolean;
   notification: string | null;
   error: string | null;
   layerId: number | null;
@@ -44,6 +46,7 @@ const initialState: DocumentState = {
   hasDocument: false,
   hydrated: false,
   loading: false,
+  saving: false,
   notification: null,
   error: null,
   layerId: null,
@@ -254,6 +257,9 @@ const documentSlice = createSlice({
     clearError(state) {
       state.error = null;
     },
+    setSaving(state, action: PayloadAction<boolean>) {
+      state.saving = action.payload;
+    },
     setDocumentMeta(
       state,
       action: PayloadAction<
@@ -269,6 +275,7 @@ const documentSlice = createSlice({
             | 'error'
             | 'notification'
             | 'loading'
+            | 'saving'
             | 'projectPath'
             | 'sourcePath'
             | 'dirty'
@@ -364,11 +371,17 @@ const documentSlice = createSlice({
         state.loading = false;
         state.error = (action.payload as string) ?? 'Failed to import image layer';
       })
+      .addCase(saveImage.pending, (state) => {
+        state.saving = true;
+        state.error = null;
+      })
       .addCase(saveImage.fulfilled, (state, action) => {
+        state.saving = false;
         state.notification = action.payload;
         state.error = null;
       })
       .addCase(saveImage.rejected, (state, action) => {
+        state.saving = false;
         state.error = (action.payload as string) ?? 'Failed to save image';
         state.notification = null;
       })
@@ -395,23 +408,35 @@ const documentSlice = createSlice({
         state.loading = false;
         state.error = (action.payload as string) ?? 'Failed to open project';
       })
+      .addCase(saveProject.pending, (state) => {
+        state.saving = true;
+        state.error = null;
+      })
       .addCase(saveProject.fulfilled, (state, action) => {
+        state.saving = false;
         state.notification = action.payload.notification;
         state.projectPath = action.payload.projectPath;
         state.dirty = false;
         state.error = null;
       })
       .addCase(saveProject.rejected, (state, action) => {
+        state.saving = false;
         state.error = (action.payload as string) ?? 'Failed to save project';
         state.notification = null;
       })
+      .addCase(saveProjectAs.pending, (state) => {
+        state.saving = true;
+        state.error = null;
+      })
       .addCase(saveProjectAs.fulfilled, (state, action) => {
+        state.saving = false;
         state.notification = action.payload.notification;
         state.projectPath = action.payload.projectPath;
         state.dirty = false;
         state.error = null;
       })
       .addCase(saveProjectAs.rejected, (state, action) => {
+        state.saving = false;
         state.error = (action.payload as string) ?? 'Failed to save project';
         state.notification = null;
       })
@@ -434,5 +459,6 @@ const documentSlice = createSlice({
   },
 });
 
-export const { clearNotification, clearError, setDocumentMeta, setDirty, bumpDocumentEpoch } = documentSlice.actions;
+export const { clearNotification, clearError, setDocumentMeta, setDirty, bumpDocumentEpoch, setSaving } =
+  documentSlice.actions;
 export default documentSlice.reducer;

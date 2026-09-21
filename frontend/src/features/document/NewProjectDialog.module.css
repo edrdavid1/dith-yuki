@@ -44,12 +44,14 @@
   border: none;
   font-family: var(--font-family);
   font-size: 12px;
+  line-height: 1.35;
   color: var(--text-color);
 }
 
 .new-project-field legend {
   padding: 0;
   margin-bottom: 4px;
+  font-size: 12px;
 }
 
 .new-project-input {
@@ -73,7 +75,17 @@
   align-items: center;
   gap: 6px;
   font-size: 12px;
+  line-height: 1.35;
+  font-family: var(--font-family);
   cursor: pointer;
+}
+
+.new-project-path {
+  font-size: 12px;
+  line-height: 1.35;
+  font-family: var(--font-family);
+  opacity: 0.6;
+  margin-left: 6px;
 }
 
 .new-project-error {

@@ -44,6 +44,8 @@ import {
   useLayoutContext,
 } from '../contexts/LayoutContext';
 import type { DockSide, PanelId } from '../types/panels';
+import { appEdgesAttr } from '../shared/ui/appEdges';
+import { isMacOS } from '../lib/platform';
 import styles from './AppLayout.module.css';
 import menuStyles from '../features/document/MenuBar.module.css';
 import previewStyles from '../features/preview/Preview.module.css';
@@ -273,6 +275,13 @@ export default function AppLayout() {
     : rightHasDockedFlex
       ? (rightSidebar.collapsed ? 40 : rightSidebar.width)
       : sidebarEffectiveWidth(rightPanels.length, rightSidebar.collapsed, rightSidebar.width);
+
+  // macOS only — Windows OS chrome differs by version; we don't version-gate.
+  const leftAppEdges = isMacOS() ? appEdgesAttr('bottom', 'left') : undefined;
+  const rightAppEdges = isMacOS() ? appEdgesAttr('bottom', 'right') : undefined;
+  const previewAppEdges = isMacOS()
+    ? appEdgesAttr('bottom', leftW === 0 && 'left', rightW === 0 && 'right')
+    : undefined;
 
   useEffect(() => {
     void dispatch(refreshLayers(doc.docId));
@@ -681,6 +690,10 @@ export default function AppLayout() {
                     ? cn('app-sidebar', 'sidebar-area-left')
                     : undefined
                 }
+                data-dock-side="left"
+                data-app-edges={
+                  leftFlexOnly && !leftSidebar.collapsed ? leftAppEdges : undefined
+                }
                 style={
                   leftFlexOnly && !leftSidebar.collapsed
                     ? { minWidth: 0, minHeight: 0, height: '100%' }
@@ -695,7 +708,11 @@ export default function AppLayout() {
                 }
                 aria-hidden={!(leftFlexOnly && !leftSidebar.collapsed)}
               >
-                <FlexLayoutContainer side="left" style={{ height: '100%', minWidth: 0 }} />
+                <FlexLayoutContainer
+                  side="left"
+                  appEdges={leftFlexOnly && !leftSidebar.collapsed ? leftAppEdges : undefined}
+                  style={{ height: '100%', minWidth: 0 }}
+                />
               </div>
             </>
           )}
@@ -712,6 +729,7 @@ export default function AppLayout() {
           {leftMixed && !leftSidebar.collapsed && (
             <div
               className={cn('sidebar-area-left')}
+              data-dock-side="left"
               style={{
                 display: 'flex',
                 flexDirection: 'column',
@@ -728,6 +746,7 @@ export default function AppLayout() {
                 style={{ position: 'absolute', right: 0, top: 0, bottom: 0 }}
               />
               <div style={{ flex: leftSplitRatio, minHeight: 0, overflow: 'hidden' }}>
+                {/* Flex is above legacy — does not touch the app bottom edge. */}
                 <FlexLayoutContainer side="left" style={{ height: '100%', minWidth: 0 }} />
               </div>
               <ResizeHandle
@@ -748,6 +767,7 @@ export default function AppLayout() {
                   onWidthChange={(w) => setSidebarWidth('left', w)}
                   onSplitRatioChange={(r) => setSplitRatio('left', r)}
                   embedded
+                  appEdges={leftAppEdges}
                 />
               </div>
             </div>
@@ -766,6 +786,7 @@ export default function AppLayout() {
               onCollapsedChange={(c) => setSidebarCollapsed('left', c)}
               onWidthChange={(w) => setSidebarWidth('left', w)}
               onSplitRatioChange={(r) => setSplitRatio('left', r)}
+              appEdges={leftAppEdges}
             />
           )}
           {/* Floated flex + legacy: keep Layout alive off-screen. */}
@@ -790,6 +811,7 @@ export default function AppLayout() {
       <div
         className={cn('app-canvas')}
         data-panel-id="preview"
+        data-app-edges={previewAppEdges}
         style={previewBackgroundStyle(previewBackground)}
       >
         <PreviewSlot onTitleBarMouseDown={handlePreviewTitleMouseDown} welcome={welcome} />
@@ -835,6 +857,10 @@ export default function AppLayout() {
                     ? cn('app-sidebar', 'sidebar-area-right')
                     : undefined
                 }
+                data-dock-side="right"
+                data-app-edges={
+                  rightFlexOnly && !rightSidebar.collapsed ? rightAppEdges : undefined
+                }
                 style={
                   rightFlexOnly && !rightSidebar.collapsed
                     ? { minWidth: 0, minHeight: 0, height: '100%' }
@@ -849,7 +875,11 @@ export default function AppLayout() {
                 }
                 aria-hidden={!(rightFlexOnly && !rightSidebar.collapsed)}
               >
-                <FlexLayoutContainer side="right" style={{ height: '100%', minWidth: 0 }} />
+                <FlexLayoutContainer
+                  side="right"
+                  appEdges={rightFlexOnly && !rightSidebar.collapsed ? rightAppEdges : undefined}
+                  style={{ height: '100%', minWidth: 0 }}
+                />
               </div>
             </>
           )}
@@ -866,6 +896,7 @@ export default function AppLayout() {
           {rightMixed && !rightSidebar.collapsed && (
             <div
               className={cn('sidebar-area-right')}
+              data-dock-side="right"
               style={{
                 display: 'flex',
                 flexDirection: 'column',
@@ -882,6 +913,7 @@ export default function AppLayout() {
                 style={{ position: 'absolute', left: 0, top: 0, bottom: 0 }}
               />
               <div style={{ flex: rightSplitRatio, minHeight: 0, overflow: 'hidden' }}>
+                {/* Flex is above legacy — does not touch the app bottom edge. */}
                 <FlexLayoutContainer side="right" style={{ height: '100%', minWidth: 0 }} />
               </div>
               <ResizeHandle
@@ -902,6 +934,7 @@ export default function AppLayout() {
                   onWidthChange={(w) => setSidebarWidth('right', w)}
                   onSplitRatioChange={(r) => setSplitRatio('right', r)}
                   embedded
+                  appEdges={rightAppEdges}
                 />
               </div>
             </div>
@@ -920,6 +953,7 @@ export default function AppLayout() {
               onCollapsedChange={(c) => setSidebarCollapsed('right', c)}
               onWidthChange={(w) => setSidebarWidth('right', w)}
               onSplitRatioChange={(r) => setSplitRatio('right', r)}
+              appEdges={rightAppEdges}
             />
           )}
           {!rightHasDockedFlex && rightHasFlex && rightPanels.length > 0 && (

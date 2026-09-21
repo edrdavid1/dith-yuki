@@ -68,7 +68,7 @@ export default function RecoveryDialog({
                   <li key={j.recovery_id} className={cn('new-project-radio')}>
                     {j.display_name}
                     {j.project_path ? (
-                      <span style={{ opacity: 0.6, marginLeft: 6 }}>({j.project_path})</span>
+                      <span className={cn('new-project-path')}>({j.project_path})</span>
                     ) : null}
                   </li>
                 ))}
@@ -91,7 +91,7 @@ export default function RecoveryDialog({
                   <li key={e.recovery_id} className={cn('new-project-radio')}>
                     {e.display_name}
                     {e.project_path ? (
-                      <span style={{ opacity: 0.6, marginLeft: 6 }}>({e.project_path})</span>
+                      <span className={cn('new-project-path')}>({e.project_path})</span>
                     ) : null}
                   </li>
                 ))}
@@ -133,7 +133,7 @@ export default function RecoveryDialog({
                 onClick={onReopenRoster}
                 disabled={busy}
               >
-                Reopen
+                {busy ? 'Reopening…' : 'Reopen'}
               </button>
             ) : null}
             {hasJournals ? (
@@ -143,7 +143,7 @@ export default function RecoveryDialog({
                 onClick={onRecoverAll}
                 disabled={busy}
               >
-                Recover all
+                {busy ? 'Recovering…' : 'Recover all'}
               </button>
             ) : null}
           </div>

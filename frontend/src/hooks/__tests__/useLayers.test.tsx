@@ -173,7 +173,12 @@ describe('useLayers', () => {
       });
       mockAddFilter.mockResolvedValue({ filter_id: 'new-filter-1' });
 
-      const { result } = renderHook(() => useLayers({ docId: 1 }), { wrapper });
+      const store = createTestStore();
+      const localWrapper = ({ children }: { children: React.ReactNode }) => (
+        <StoreProvider store={store}>{children}</StoreProvider>
+      );
+
+      const { result } = renderHook(() => useLayers({ docId: 1 }), { wrapper: localWrapper });
 
       await waitFor(() => {
         expect(result.current.layers).toHaveLength(2);
@@ -184,17 +189,23 @@ describe('useLayers', () => {
       });
 
       expect(mockAddLayer).not.toHaveBeenCalled();
-      expect(mockAddFilter).toHaveBeenCalledWith(1, 'DitherV2', {
-        mode: 'floyd_steinberg',
-        levels: 4,
-        threshold_scale: 1.0,
-        pixel_size: 1,
-        color_mode: 'rgb',
-        palette_id: null,
-      });
+      expect(mockAddFilter).toHaveBeenCalledWith(
+        1,
+        1,
+        'DitherV2',
+        expect.objectContaining({
+          mode: 'floyd_steinberg',
+          levels: 4,
+          threshold_scale: 1.0,
+          pixel_size: 1,
+          color_mode: 'rgb',
+          palette_id: null,
+        })
+      );
 
       await waitFor(() => {
         expect(result.current.selectedLayerId).toBe(1);
+        expect(store.getState().selection.filterId).toBe('new-filter-1');
       });
     });
 
@@ -251,7 +262,7 @@ describe('useLayers', () => {
       });
 
       expect(mockAddLayer).not.toHaveBeenCalled();
-      expect(mockAddFilter).toHaveBeenCalledWith(1, 'Glitch', {
+      expect(mockAddFilter).toHaveBeenCalledWith(1, 1, 'Glitch', {
         glitch_type: 'RGBShift',
         intensity: 0.5,
         seed: 0,

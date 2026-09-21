@@ -110,7 +110,12 @@ export function useAppShortcuts() {
           steal();
           void dispatch(addLayerWithEffect({ docId, layers, effectType })).then((result) => {
             if (addLayerWithEffect.fulfilled.match(result) && result.payload != null) {
-              void dispatch(setSelection({ layerId: result.payload, filterId: null }));
+              void dispatch(
+                setSelection({
+                  layerId: result.payload.layerId,
+                  filterId: result.payload.filterId,
+                })
+              );
             }
           });
           return;
