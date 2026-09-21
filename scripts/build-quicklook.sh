@@ -108,14 +108,16 @@ cp -R "$PRODUCTS/DitherQuickLookThumbnail.appex" "$OUT/"
 
 sign_one() {
   local path="$1"
-  local extra=()
   if [[ "$TIER" == "public" ]]; then
-    extra+=(--options runtime)
+    codesign --force --sign "$IDENTITY" \
+      --entitlements "$QL_DIR/Shared/DitherQuickLook.entitlements" \
+      --options runtime \
+      "$path"
+  else
+    codesign --force --sign "$IDENTITY" \
+      --entitlements "$QL_DIR/Shared/DitherQuickLook.entitlements" \
+      "$path"
   fi
-  codesign --force --sign "$IDENTITY" \
-    --entitlements "$QL_DIR/Shared/DitherQuickLook.entitlements" \
-    "${extra[@]}" \
-    "$path"
 }
 
 sign_one "$OUT/DitherQuickLookPreview.appex"
