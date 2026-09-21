@@ -475,6 +475,7 @@ impl DocumentService {
         use engine_project::serialize::ProjectError;
         use engine_project::serialize::{read_png_file, save_project_to_path};
 
+        let path = sandbox::ensure_extension(&path, "dyproj");
         let resolved = sandbox::resolve_export_path(&path, &["dyproj"])
             .map_err(|e| format!("Path error: {e}"))?;
 
@@ -536,6 +537,7 @@ impl DocumentService {
         use engine_io::sandbox;
         use engine_project::serialize::{read_png_file, share_project_to_bytes, ShareCopyOptions};
 
+        let path = sandbox::ensure_extension(&path, "dyproj");
         let resolved = sandbox::resolve_export_path(&path, &["dyproj"])
             .map_err(|e| format!("Path error: {e}"))?;
 
@@ -672,7 +674,8 @@ impl DocumentService {
         use engine_project::types::FilterInstanceId;
         use uuid::Uuid;
 
-        let resolved = sandbox::resolve_export_path(&req.path, &["dyuki"])
+        let path = sandbox::ensure_extension(&req.path, "dyuki");
+        let resolved = sandbox::resolve_export_path(&path, &["dyuki"])
             .map_err(|e| format!("Path error: {e}"))?;
 
         let ids: Option<Vec<FilterInstanceId>> = match &req.filter_instance_ids {

@@ -103,7 +103,20 @@ export function useDocument() {
             ? ('SVG' as const)
             : ('PNG' as const);
 
-      const filename = filePath.split(/[/\\]/).pop() ?? filePath;
+      // Windows save dialog often omits the extension even when a filter is selected.
+      const withExt =
+        lower.endsWith('.png') ||
+        lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.svg')
+          ? filePath
+          : format === 'JPEG'
+            ? `${filePath}.jpg`
+            : format === 'SVG'
+              ? `${filePath}.svg`
+              : `${filePath}.png`;
+
+      const filename = withExt.split(/[/\\]/).pop() ?? withExt;
       let svg_algorithm: SvgExportAlgorithm | undefined;
       if (format === 'SVG') {
         const picked = await new Promise<SvgExportAlgorithm | null>((resolve) => {
@@ -118,7 +131,7 @@ export function useDocument() {
       await dispatch(
         saveImage({
           doc_id: state.docId,
-          path: filePath,
+          path: withExt,
           format,
           quality: format === 'JPEG' ? 90 : undefined,
           filename,

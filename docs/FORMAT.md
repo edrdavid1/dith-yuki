@@ -27,7 +27,7 @@ Kind can also be detected from the first zip entry `mimetype` (Stored ASCII).
 mimetype                 # first entry, Stored, no newline
 manifest.json            # second among named payload (writers sort: manifest, then lex)
 document.json
-composite.png            # required on write (Raw-layer flat insurance)
+composite.png            # required on write (filter-aware flat for previews; Raw-flat fallback)
 thumbnail.png            # required on write, long side ≤ 1024, ≤ 3 MiB, critical chunks only
 layers/{id}.png
 assets/threshold_maps/{blake3-32hex}.png

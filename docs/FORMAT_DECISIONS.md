@@ -235,10 +235,11 @@ security-adjacent (§9.8). Share Copy needs UI + a parse-result defaults test.
 - Writers emit `mimetype` first (Stored), then `manifest.json`, then
   lexicographic payload; fixed DOS mtime `1980-01-01`, unix `0o100644`,
   PNG Stored / JSON Deflated, `large_file(true)` for ZIP64 readiness.
-- `.dyproj` save always writes `composite.png` + `thumbnail.png` (≤512 long
-  side). Composite is a **Raw-layer flat** (Porter-Duff over + opacity); filter
-  stacks and non-Normal blend modes are not applied — insurance preview, not
-  export parity.
+- `.dyproj` save always writes `composite.png` + `thumbnail.png` (≤1024 long
+  side for thumbnail). **2026-09-22:** both use a **filter-aware** render
+  (enabled stacks applied per layer, then Porter-Duff over + opacity) so Space /
+  Explorer previews match the viewport. Falls back to Raw-flat if filter apply
+  fails. Non-Normal blend modes still deferred.
 - `.dyuki` thumbnail deferred (no raster in pack); mimetype + `files` hashes
   still written.
 - `manifest.files` holds sha256+size for every payload entry except

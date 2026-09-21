@@ -116,8 +116,8 @@ pub fn assemble_layer_rgba8(
 ///
 /// Walks leaves in tree order (bottom → top). Visible rasters are alpha-composited
 /// with Porter-Duff **over** using each layer's opacity. Filter stacks and non-Normal
-/// blend modes are intentionally skipped — composite is a compatibility flat, not a
-/// full export render (see `docs/FORMAT_DECISIONS.md` Stage 4).
+/// blend modes are intentionally skipped — see [`build_processed_composite_rgba8`]
+/// for the system-preview / Space Quick Look path.
 pub fn build_composite_rgba8(
     cache: &TileCache,
     nodes: &[LayerNode],
@@ -127,6 +127,148 @@ pub fn build_composite_rgba8(
 ) -> Result<Vec<u8>, ProjectError> {
     let mut canvas = vec![0u8; (doc_width as usize) * (doc_height as usize) * 4];
     paint_composite_nodes(nodes, cache, doc_width, doc_height, doc_id, &mut canvas)?;
+    Ok(canvas)
+}
+
+/// Like [`build_composite_rgba8`], but applies each layer's enabled filter stack
+/// before compositing (CPU path). Used for `composite.png` + `thumbnail.png` so
+/// Finder Space / Explorer thumbs match the edited look.
+pub fn build_processed_composite_rgba8(
+    cache: &TileCache,
+    doc: &crate::document::Document,
+) -> Result<Vec<u8>, ProjectError> {
+    use engine_color::palette_cache::PaletteKdCache;
+    use engine_color::palette_lut::PaletteLutCache;
+    use engine_color::threshold_map::ThresholdMapCache;
+
+    let palette_cache = PaletteKdCache::new();
+    let lut_cache = PaletteLutCache::new();
+    let threshold_cache = ThresholdMapCache::new();
+    let mut canvas = vec![0u8; (doc.width as usize) * (doc.height as usize) * 4];
+    paint_processed_nodes(
+        &doc.root,
+        cache,
+        doc,
+        &palette_cache,
+        &lut_cache,
+        &threshold_cache,
+        &mut canvas,
+    )?;
+    Ok(canvas)
+}
+
+fn paint_processed_nodes(
+    nodes: &[LayerNode],
+    cache: &TileCache,
+    doc: &crate::document::Document,
+    palette_cache: &engine_color::palette_cache::PaletteKdCache,
+    lut_cache: &engine_color::palette_lut::PaletteLutCache,
+    threshold_cache: &engine_color::threshold_map::ThresholdMapCache,
+    canvas: &mut [u8],
+) -> Result<(), ProjectError> {
+    for node in nodes {
+        match node {
+            LayerNode::Leaf(layer) => {
+                if !layer.visible || layer.kind != LayerKind::Raster {
+                    continue;
+                }
+                let src = if layer.filters.iter().any(|f| f.enabled) {
+                    assemble_layer_processed_rgba8(
+                        cache,
+                        layer,
+                        doc,
+                        palette_cache,
+                        lut_cache,
+                        threshold_cache,
+                    )?
+                } else {
+                    assemble_layer_rgba8(cache, layer, doc.width, doc.height, doc.id.0)?
+                };
+                blend_over_rgba(canvas, &src, layer.opacity);
+            }
+            LayerNode::Group(g) => {
+                if !g.visible {
+                    continue;
+                }
+                paint_processed_nodes(
+                    &g.children,
+                    cache,
+                    doc,
+                    palette_cache,
+                    lut_cache,
+                    threshold_cache,
+                    canvas,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn assemble_layer_processed_rgba8(
+    cache: &TileCache,
+    layer: &Layer,
+    doc: &crate::document::Document,
+    palette_cache: &engine_color::palette_cache::PaletteKdCache,
+    lut_cache: &engine_color::palette_lut::PaletteLutCache,
+    threshold_cache: &engine_color::threshold_map::ThresholdMapCache,
+) -> Result<Vec<u8>, ProjectError> {
+    use crate::filters::apply::apply_filter_to_tile;
+
+    let doc_width = doc.width;
+    let doc_height = doc.height;
+    let doc_id = doc.id.0;
+    let mut canvas = vec![0u8; (doc_width as usize) * (doc_height as usize) * 4];
+    let bounds = layer.bounds_l0;
+    let (off_x, off_y) = layer.offset;
+
+    for ty in bounds.min_y..=bounds.max_y {
+        for tx in bounds.min_x..=bounds.max_x {
+            let coord = TileCoord {
+                level: 0,
+                x: tx,
+                y: ty,
+            };
+            let key = TileKey {
+                doc: doc_id,
+                layer: layer.id.0,
+                coord,
+                stage: CacheStage::Raw,
+            };
+            let tile = cache.get_entry(key).ok_or(ProjectError::IncompleteRaw {
+                doc_id,
+                layer_id: layer.id.0,
+            })?;
+            let processed = apply_filter_to_tile(
+                tile.as_ref(),
+                layer,
+                coord,
+                palette_cache,
+                lut_cache,
+                threshold_cache,
+                doc,
+            )
+            .map_err(|e| ProjectError::Codec(format!("preview filter apply: {e}")))?;
+
+            for ly in 0..TILE_SIZE {
+                for lx in 0..TILE_SIZE {
+                    let gx = off_x + (tx * TILE_SIZE + lx) as i32;
+                    let gy = off_y + (ty * TILE_SIZE + ly) as i32;
+                    if gx < 0 || gy < 0 || gx >= doc_width as i32 || gy >= doc_height as i32 {
+                        continue;
+                    }
+                    let dst = ((gy as usize) * (doc_width as usize) + (gx as usize)) * 4;
+                    let sx = HALO + lx;
+                    let sy = HALO + ly;
+                    canvas[dst] = f32_to_u8(processed.at(sx, sy, 0));
+                    canvas[dst + 1] = f32_to_u8(processed.at(sx, sy, 1));
+                    canvas[dst + 2] = f32_to_u8(processed.at(sx, sy, 2));
+                    canvas[dst + 3] = f32_to_u8(processed.at(sx, sy, 3));
+                }
+            }
+        }
+    }
+
     Ok(canvas)
 }
 

@@ -59,7 +59,8 @@ pub use pattern::{
     PatternFilterFile, PatternManifest, UnpackedPattern,
 };
 pub use pixels::{
-    assemble_layer_png, build_composite_png, build_composite_rgba8, decode_png_to_f32,
+    assemble_layer_png, build_composite_png, build_composite_rgba8,
+    build_processed_composite_rgba8, decode_png_to_f32,
     decode_png_to_f32_with_limits, reencode_png_clean, soft_size_warning,
     threshold_map_png_limits, PngDecodeLimits,
 };

@@ -16,6 +16,13 @@
 !define DITHER_CLSID_THUMB "{BC7D0A00-220F-46DD-AAA8-C754864EE648}"
 !define DITHER_SHELL_THUMB "{E357FCCD-A995-4576-B01F-234630154E96}"
 
+; Close a running copy before overwriting dither.exe (in-app update / reinstall).
+!macro NSIS_HOOK_PREINSTALL
+  nsExec::ExecToLog 'taskkill /F /IM "dither.exe" /T'
+  Pop $0
+  Sleep 800
+!macroend
+
 !macro NSIS_HOOK_POSTINSTALL
   WriteRegStr SHCTX "Software\Classes\Dither Project\DefaultIcon" "" "$INSTDIR\proj-icon.ico"
   WriteRegStr SHCTX "Software\Classes\Dither Pattern\DefaultIcon" "" "$INSTDIR\pattern-icon.ico"

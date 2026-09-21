@@ -26,41 +26,59 @@ pub enum SandboxError {
     NoHome,
 }
 
+/// Trim + strip Windows `\\?\` / `\\.\` prefixes and trailing dots/spaces that
+/// break `Path::extension()` on some dialog results.
+pub fn normalize_path_input(raw: &str) -> String {
+    let mut s = raw.trim().to_string();
+    for prefix in ["\\\\?\\", "//?/", "\\\\.\\"] {
+        if let Some(rest) = s.strip_prefix(prefix) {
+            s = rest.to_string();
+            break;
+        }
+    }
+    while s.ends_with([' ', '.']) {
+        s.pop();
+    }
+    s
+}
+
+/// If `raw` has no extension matching `default_ext`, append `.$default_ext`.
+pub fn ensure_extension(raw: &str, default_ext: &str) -> String {
+    let normalized = normalize_path_input(raw);
+    let path = Path::new(&normalized);
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if ext.eq_ignore_ascii_case(default_ext) {
+        return normalized;
+    }
+    if ext.is_empty() {
+        let trimmed = normalized.trim_end_matches('.');
+        return format!("{trimmed}.{default_ext}");
+    }
+    normalized
+}
+
+fn extension_allowed(path: &Path, allowed_ext: &[&str]) -> bool {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    allowed_ext
+        .iter()
+        .any(|allowed| allowed.eq_ignore_ascii_case(ext))
+}
+
 /// Validates and resolves a user-supplied path, ensuring it:
 /// - Has an extension present in `allowed_ext` (case-insensitive)
 /// - Resolves to a location within the user's home directory
 /// - Actually exists on disk
-///
-/// # Arguments
-/// * `raw` - The raw user-supplied path string
-/// * `allowed_ext` - Slice of allowed file extensions (without leading dot, e.g. `["png", "ase"]`)
-///
-/// # Returns
-/// The canonicalized `PathBuf` on success, or a `SandboxError` on failure.
 pub fn resolve_user_path(raw: &str, allowed_ext: &[&str]) -> Result<PathBuf, SandboxError> {
-    let path = Path::new(raw);
+    let normalized = normalize_path_input(raw);
+    let path = Path::new(&normalized);
 
-    // Step 1: Check file extension (case-insensitive ASCII comparison)
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .ok_or(SandboxError::BadExtension)?;
-
-    let ext_matches = allowed_ext
-        .iter()
-        .any(|allowed| allowed.eq_ignore_ascii_case(ext));
-
-    if !ext_matches {
+    if !extension_allowed(path, allowed_ext) {
         return Err(SandboxError::BadExtension);
     }
 
-    // Step 2: Canonicalize path (resolves symlinks and `..` components).
-    // This will fail if the file does not exist or permissions are denied.
     let canonical = path.canonicalize().map_err(|_| SandboxError::NotFound)?;
 
-    // Step 3: Verify canonicalized path starts with user's home directory
     let home = dirs::home_dir().ok_or(SandboxError::NoHome)?;
-
     if !canonical.starts_with(&home) {
         return Err(SandboxError::OutsideHome);
     }
@@ -69,28 +87,22 @@ pub fn resolve_user_path(raw: &str, allowed_ext: &[&str]) -> Result<PathBuf, San
 }
 
 /// Validates a path for **writing** a new file:
-/// - Extension must be in `allowed_ext`
+/// - Extension must be in `allowed_ext` (callers should [`ensure_extension`] first)
 /// - Parent directory must exist and resolve under the user's home directory
 /// - The file itself need not exist yet
 pub fn resolve_export_path(raw: &str, allowed_ext: &[&str]) -> Result<PathBuf, SandboxError> {
-    let path = Path::new(raw);
+    let normalized = normalize_path_input(raw);
+    let path = Path::new(&normalized);
 
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .ok_or(SandboxError::BadExtension)?;
-
-    let ext_matches = allowed_ext
-        .iter()
-        .any(|allowed| allowed.eq_ignore_ascii_case(ext));
-    if !ext_matches {
+    if !extension_allowed(path, allowed_ext) {
         return Err(SandboxError::BadExtension);
     }
 
-    let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
-    let canonical_parent = parent
-        .canonicalize()
-        .map_err(|_| SandboxError::NotFound)?;
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let canonical_parent = parent.canonicalize().map_err(|_| SandboxError::NotFound)?;
 
     let home = dirs::home_dir().ok_or(SandboxError::NoHome)?;
     if !canonical_parent.starts_with(&home) {
@@ -107,8 +119,6 @@ mod tests {
     use std::fs;
     use std::io::Write;
 
-    /// Helper to create a temporary file inside the user's home directory.
-    /// Uses a unique subdirectory per test to avoid parallel test interference.
     fn create_temp_file(subdir: &str, name: &str) -> PathBuf {
         let home = dirs::home_dir().expect("need home dir for tests");
         let dir = home.join(".dither_yuki_test_sandbox").join(subdir);
@@ -119,7 +129,6 @@ mod tests {
         file_path
     }
 
-    /// Helper to clean up a specific test subdirectory.
     fn cleanup_subdir(subdir: &str) {
         let home = dirs::home_dir().expect("need home dir for tests");
         let dir = home.join(".dither_yuki_test_sandbox").join(subdir);
@@ -159,6 +168,28 @@ mod tests {
     }
 
     #[test]
+    fn ensure_extension_appends_when_missing() {
+        assert_eq!(
+            ensure_extension(r"C:\Users\a\proj", "dyproj"),
+            r"C:\Users\a\proj.dyproj"
+        );
+        assert_eq!(
+            ensure_extension(r"C:\Users\a\proj.dyproj", "dyproj"),
+            r"C:\Users\a\proj.dyproj"
+        );
+        assert_eq!(
+            ensure_extension(r"C:\Users\a\proj.DYPROJ ", "dyproj"),
+            r"C:\Users\a\proj.DYPROJ"
+        );
+    }
+
+    #[test]
+    fn normalize_strips_verbatim_prefix() {
+        let n = normalize_path_input(r"\\?\C:\Users\a\x.dyproj");
+        assert_eq!(n, r"C:\Users\a\x.dyproj");
+    }
+
+    #[test]
     fn non_existent_file_returns_not_found() {
         let home = dirs::home_dir().expect("need home dir for tests");
         let fake_path = home.join("nonexistent_file_xyz_12345.png");
@@ -168,14 +199,9 @@ mod tests {
 
     #[test]
     fn dot_dot_escape_returns_outside_home_or_not_found() {
-        // Construct a path that attempts to escape home via `..` components.
-        // On most systems, paths far outside home won't exist, so we get NotFound.
-        // If somehow they do exist and resolve outside home, we get OutsideHome.
         let result = resolve_user_path("/tmp/../../../etc/passwd.png", &["png"]);
-        // The path must either not exist (NotFound) or resolve outside home (OutsideHome).
         assert!(
-            result == Err(SandboxError::OutsideHome)
-                || result == Err(SandboxError::NotFound),
+            result == Err(SandboxError::OutsideHome) || result == Err(SandboxError::NotFound),
             "Expected OutsideHome or NotFound, got {:?}",
             result
         );
@@ -183,8 +209,6 @@ mod tests {
 
     #[test]
     fn path_outside_home_returns_outside_home() {
-        // /tmp is typically outside the user's home directory.
-        // Create a real file in /tmp to test containment check.
         let tmp_file = PathBuf::from("/tmp/.dither_yuki_sandbox_test.png");
         let _ = fs::File::create(&tmp_file).and_then(|mut f| f.write_all(b"test"));
 
@@ -193,7 +217,6 @@ mod tests {
             assert_eq!(result, Err(SandboxError::OutsideHome));
             let _ = fs::remove_file(&tmp_file);
         }
-        // If we can't create the file, skip this assertion (CI environments)
     }
 
     #[test]
@@ -202,5 +225,21 @@ mod tests {
         let fake_path = home.join("test.png");
         let result = resolve_user_path(fake_path.to_str().unwrap(), &[]);
         assert_eq!(result, Err(SandboxError::BadExtension));
+    }
+
+    #[test]
+    fn resolve_export_path_with_ensured_extension() {
+        let home = dirs::home_dir().expect("need home dir for tests");
+        let dir = home.join(".dither_yuki_test_sandbox").join("export_ensure");
+        fs::create_dir_all(&dir).unwrap();
+        let raw = dir.join("newproj");
+        let ensured = ensure_extension(raw.to_str().unwrap(), "dyproj");
+        let resolved = resolve_export_path(&ensured, &["dyproj"]).unwrap();
+        assert!(resolved
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .eq_ignore_ascii_case("newproj.dyproj"));
+        cleanup_subdir("export_ensure");
     }
 }

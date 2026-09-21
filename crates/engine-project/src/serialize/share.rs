@@ -8,8 +8,9 @@ use crate::serialize::features::{required_version_for_features, FormatVersion};
 use crate::serialize::manifest::{build_dyproj_manifest_json, build_manifest_files};
 use crate::serialize::migrate::ProjectError;
 use crate::serialize::pixels::{
-    assemble_layer_png, build_composite_rgba8, collect_raster_layers, count_raster_layers,
-    encode_rgba8_png, reencode_png_clean, soft_size_warning,
+    assemble_layer_png, build_composite_rgba8, build_processed_composite_rgba8,
+    collect_raster_layers, count_raster_layers, encode_rgba8_png, reencode_png_clean,
+    soft_size_warning,
 };
 use crate::serialize::thumbnail::{build_thumbnail_png_cached, neutral_thumbnail_png};
 use crate::serialize::project::{
@@ -200,8 +201,15 @@ pub fn write_project_to_bytes(
         }
     });
 
-    let composite_rgba =
-        build_composite_rgba8(cache, &doc.root, doc.width, doc.height, doc.id.0)?;
+    // Prefer filter-aware composite so system previews match the edited look.
+    // Fall back to Raw-flat insurance composite if filter apply fails.
+    let composite_rgba = match build_processed_composite_rgba8(cache, doc) {
+        Ok(rgba) => rgba,
+        Err(e) => {
+            log::warn!("processed composite failed ({e}); falling back to Raw flat");
+            build_composite_rgba8(cache, &doc.root, doc.width, doc.height, doc.id.0)?
+        }
+    };
     let mut composite_png = encode_rgba8_png(&composite_rgba, doc.width, doc.height)?;
     let thumbnail_png = if opts.include_preview {
         build_thumbnail_png_cached(&composite_rgba, doc.width, doc.height)
