@@ -35,6 +35,8 @@ jobs:
           node-version: 20
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Install JS dependencies
         run: |
@@ -52,6 +54,12 @@ jobs:
             echo "channel=stable" >> "$GITHUB_OUTPUT"
             echo "title_suffix=" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Install XcodeGen (Quick Look)
+        run: brew install xcodegen
+
+      - name: Select full Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
       - name: Set up code signing (Apple Developer or self-signed)
         env:
@@ -93,6 +101,11 @@ jobs:
             KEYCHAIN_PASSWORD="$KEYCHAIN_PASSWORD" bash scripts/macos-self-sign-cert.sh
           fi
 
+      - name: Build macOS Quick Look plugins
+        run: |
+          chmod +x scripts/ci-prepare-macos-previews.sh scripts/build-quicklook.sh
+          bash scripts/ci-prepare-macos-previews.sh
+
       - name: Build and publish (macOS, self-signed)
         id: tauri_self
         if: ${{ env.SIGNING_MODE == 'self' }}
@@ -125,6 +138,12 @@ jobs:
             ### Alpha scope
             Dither / palette studio — not paint, not print/ICC, not video/batch.
             GPU is warm-viewport only; cold compute is opt-in (`DITHER_GPU_PREVIEW=1`).
+
+            ### System previews
+            Finder Space / thumbnails (Quick Look) and Windows Explorer thumbnails
+            for `.dyproj` / `.dyuki` when `thumbnail.png` is present.
+            See [ALPHA_PREVIEWS_MACOS.md](https://github.com/edrdavid1/dith-yuki/blob/main/docs/ALPHA_PREVIEWS_MACOS.md)
+            / [ALPHA_PREVIEWS_WINDOWS.md](https://github.com/edrdavid1/dith-yuki/blob/main/docs/ALPHA_PREVIEWS_WINDOWS.md).
 
             ### Feedback
             File a bug with the [bug report template](https://github.com/edrdavid1/dith-yuki/issues/new?template=bug_report.yml).
@@ -167,6 +186,12 @@ jobs:
             Dither / palette studio — not paint, not print/ICC, not video/batch.
             GPU is warm-viewport only; cold compute is opt-in (`DITHER_GPU_PREVIEW=1`).
 
+            ### System previews
+            Finder Space / thumbnails (Quick Look) and Windows Explorer thumbnails
+            for `.dyproj` / `.dyuki` when `thumbnail.png` is present.
+            See [ALPHA_PREVIEWS_MACOS.md](https://github.com/edrdavid1/dith-yuki/blob/main/docs/ALPHA_PREVIEWS_MACOS.md)
+            / [ALPHA_PREVIEWS_WINDOWS.md](https://github.com/edrdavid1/dith-yuki/blob/main/docs/ALPHA_PREVIEWS_WINDOWS.md).
+
             ### Feedback
             File a bug with the [bug report template](https://github.com/edrdavid1/dith-yuki/issues/new?template=bug_report.yml).
 
@@ -198,12 +223,20 @@ jobs:
           node-version: 20
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
 
       - name: Install JS dependencies
         shell: bash
         run: |
           npm install
           npm install --prefix frontend
+
+      - name: Build Windows shell thumbnail DLL
+        shell: bash
+        run: |
+          chmod +x scripts/ci-prepare-windows-previews.sh scripts/build-dither-shell.sh
+          bash scripts/ci-prepare-windows-previews.sh
 
       - name: Build and publish (Windows)
         uses: tauri-apps/tauri-action@v0

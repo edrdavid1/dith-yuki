@@ -43,3 +43,6 @@ Thumbs.db
 /platform/macos/DitherQuickLook/dist/
 /platform/macos/DitherQuickLook/*.xcodeproj/
 /target/quicklook/
+
+# Windows shell thumbnail DLL staged for Tauri resources
+/src-tauri/previews/

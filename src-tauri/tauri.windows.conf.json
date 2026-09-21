@@ -1,8 +1,15 @@
 {
+  "build": {
+    "beforeBundleCommand": {
+      "cwd": "..",
+      "script": "bash scripts/ci-prepare-windows-previews.sh"
+    }
+  },
   "bundle": {
     "resources": {
       "icons/proj-icon.ico": "proj-icon.ico",
-      "icons/pattern-icon.ico": "pattern-icon.ico"
+      "icons/pattern-icon.ico": "pattern-icon.ico",
+      "previews/dither_shell.dll": "dither_shell.dll"
     },
     "windows": {
       "nsis": {

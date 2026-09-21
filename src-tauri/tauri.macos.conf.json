@@ -1,8 +1,20 @@
 {
+  "build": {
+    "beforeBundleCommand": {
+      "cwd": "..",
+      "script": "bash scripts/ci-prepare-macos-previews.sh"
+    }
+  },
   "bundle": {
     "resources": {
       "icons/proj-icon.icns": "proj-icon.icns",
       "icons/pattern-icon.icns": "pattern-icon.icns"
+    },
+    "macOS": {
+      "files": {
+        "PlugIns/DitherQuickLookPreview.appex": "../platform/macos/DitherQuickLook/dist/DitherQuickLookPreview.appex",
+        "PlugIns/DitherQuickLookThumbnail.appex": "../platform/macos/DitherQuickLook/dist/DitherQuickLookThumbnail.appex"
+      }
     }
   }
 }

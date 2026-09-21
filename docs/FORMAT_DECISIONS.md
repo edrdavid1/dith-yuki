@@ -62,7 +62,8 @@ is safe for current readers. Result: **proceed with Stage A**.
 
 - Swift `DitherThumb` + bridging header; Preview/Thumbnail call Rust.
 - `scripts/build-quicklook.sh` builds universal `libdither_thumb_ffi.a`.
-- Still needs full Xcode.app to compile `.appex` on this machine.
+- Release embeds both `.appex` via `tauri.macos.conf.json` `macOS.files` /
+  `scripts/ci-prepare-macos-previews.sh` (requires full Xcode on the builder).
 
 ### Stage E — Windows thumbnail provider
 
@@ -70,6 +71,8 @@ is safe for current readers. Result: **proceed with Stage A**.
   `IThumbnailProvider`), CLSID `{BC7D0A00-220F-46DD-AAA8-C754864EE648}`.
 - Cross-checked with `cargo check --target x86_64-pc-windows-gnu`.
 - NSIS hooks register ShellEx + versioned DLL folder.
+- Release stages `dither_shell.dll` via `tauri.windows.conf.json` resources /
+  `scripts/ci-prepare-windows-previews.sh`.
 - Autotest via `IShellItemImageFactory` on `windows-latest`: still TODO.
 
 ---

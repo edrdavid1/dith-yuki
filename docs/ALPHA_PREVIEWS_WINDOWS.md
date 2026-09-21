@@ -24,7 +24,10 @@ Unsigned T0 builds may be blocked. For testing without a cert:
 
 ## Verify (once DLL is installed)
 
-1. Install the app; open a folder of `.dyproj` / `.dyuki` in Large icons view.
+Release NSIS builds ship `dither_shell.dll` and register ShellEx in the
+installer hook. After install:
+
+1. Open a folder of `.dyproj` / `.dyuki` in Large icons view.
 2. If icons only: clear thumbnail cache (Disk Cleanup → Thumbnails) and restart
    Explorer; check that «Always show icons, never thumbnails» is off.
 3. Confirm ProgID / ShellEx keys under `HKCU` or `HKLM\Software\Classes` match

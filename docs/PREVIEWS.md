@@ -14,6 +14,12 @@ Implements `.local-doc/SPEC_dither_previews_full.md`. Decisions:
 | `platform/include/dither_thumb.h` | Committed header (ABI v1) |
 | `platform/macos/DitherQuickLook/` | Quick Look Preview + Thumbnail appex (XcodeGen) |
 | `platform/windows/dither-shell/` | COM `IThumbnailProvider` (`dither_shell.dll`) |
+| `scripts/ci-prepare-*-previews.sh` | CI / `beforeBundleCommand` staging into the Tauri bundle |
+
+Release embedding:
+
+- macOS: `tauri.macos.conf.json` → `bundle.macOS.files` → `Contents/PlugIns/*.appex`
+- Windows: `tauri.windows.conf.json` → `resources` → `dither_shell.dll` + NSIS ShellEx hooks
 
 ## ABI
 

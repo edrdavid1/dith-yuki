@@ -7,6 +7,12 @@ alpha (signing tier T1). Architecture: [`PREVIEWS.md`](./PREVIEWS.md).
 
 See [`SIGNING_ALPHA.md`](./SIGNING_ALPHA.md). Short version:
 
+Release builds (GitHub Actions) already embed and sign both `.appex` into
+`Dither Yuki.app/Contents/PlugIns/`. After installing from the DMG you only need
+Gatekeeper **Open Anyway** and, if needed, enabling the Quick Look extensions.
+
+Local rebuild into an existing app:
+
 ```bash
 bash scripts/macos-self-sign-cert.sh
 export APPLE_SIGNING_IDENTITY="L'eco non di Bergamo"

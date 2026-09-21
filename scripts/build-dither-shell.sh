@@ -6,9 +6,11 @@
 #   scripts/build-dither-shell.sh [--target x86_64-pc-windows-msvc|aarch64-pc-windows-msvc]
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TARGET="${1:-x86_64-pc-windows-msvc}"
-if [[ "$1" == "--target" ]]; then
+TARGET="x86_64-pc-windows-msvc"
+if [[ "${1:-}" == "--target" ]]; then
   TARGET="${2:?}"
+elif [[ -n "${1:-}" ]]; then
+  TARGET="$1"
 fi
 
 cd "$ROOT"

@@ -51,12 +51,20 @@ jobs:
           node-version: 20
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
 
       - name: Install JS dependencies
         shell: bash
         run: |
           npm install
           npm install --prefix frontend
+
+      - name: Build Windows shell thumbnail DLL
+        shell: bash
+        run: |
+          chmod +x scripts/ci-prepare-windows-previews.sh scripts/build-dither-shell.sh
+          bash scripts/ci-prepare-windows-previews.sh
 
       - name: Build and publish (Windows)
         uses: tauri-apps/tauri-action@v0

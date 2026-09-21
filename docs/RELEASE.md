@@ -74,9 +74,13 @@ git tag -a v0.3.0-alpha.1 -m "Dither Yuki 0.3.0-alpha.1"
 git push origin v0.3.0-alpha.1
 ```
 
-4. Watch Actions → **Release**. macOS job creates the GitHub Release; Windows attaches NSIS.
+4. Watch Actions → **Release**. macOS job builds Quick Look `.appex`, creates the
+   GitHub Release; Windows builds `dither_shell.dll` and attaches NSIS.
 5. Smoke: install DMG → Help → Check for Updates (should report up to date).
-6. Optional: `npm run release:verify` after assets are public.
+6. Preview smoke: save a `.dyproj`, check Finder Space / Explorer large icons
+   ([ALPHA_PREVIEWS_MACOS.md](./ALPHA_PREVIEWS_MACOS.md) /
+   [ALPHA_PREVIEWS_WINDOWS.md](./ALPHA_PREVIEWS_WINDOWS.md)).
+7. Optional: `npm run release:verify` after assets are public.
 
 ## Gatekeeper (self-signed macOS alpha)
 
