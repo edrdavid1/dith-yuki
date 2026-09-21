@@ -13,10 +13,10 @@ final class PreviewProvider: QLPreviewProvider, QLPreviewingController {
     }
     let pixel = CGSize(width: CGFloat(image.width), height: CGFloat(image.height))
     let size = fit(pixel, into: CGSize(width: 1024, height: 1024))
-    return QLPreviewReply(contextSize: size, isBitmap: true) { context, _ in
+    // Xcode 16+/SDK 26: drawUsing closure returns Void (not Bool / DrawingResult).
+    return QLPreviewReply(contextSize: size, isBitmap: true, drawUsing: { context, _ in
       context.interpolationQuality = .high
       context.draw(image, in: CGRect(origin: .zero, size: size))
-      return .init()
-    }
+    })
   }
 }
