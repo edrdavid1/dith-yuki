@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Build dither-thumb staticlib + Quick Look appex, optionally embed into an .app.
+# Build dither-thumb staticlib + Quick Look Preview appex, optionally embed into an .app.
+#
+# Product choice (macOS): ship Preview only (Space / gallery). Finder icons stay
+# the document-type .icns — do not embed Thumbnail unless --with-thumbnail.
 #
 # Usage:
-#   scripts/build-quicklook.sh [--tier dev|alpha|public] [--app /path/to/Dither.app] [--spike]
+#   scripts/build-quicklook.sh [--tier dev|alpha|public] [--app /path/to/Dither.app] [--spike] [--with-thumbnail]
 #
 # --spike keeps the fixed-image S0 path (no Rust link). Default links dt_extract.
 set -euo pipefail
@@ -12,12 +15,14 @@ QL_DIR="$ROOT/platform/macos/DitherQuickLook"
 TIER="dev"
 APP_PATH=""
 SPIKE=0
+WITH_THUMBNAIL=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --tier) TIER="$2"; shift 2 ;;
     --app) APP_PATH="$2"; shift 2 ;;
     --spike) SPIKE=1; shift ;;
+    --with-thumbnail) WITH_THUMBNAIL=1; shift ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -90,7 +95,11 @@ fi
 
 DERIVED="$QL_DIR/build"
 rm -rf "$DERIVED"
-for SCHEME in DitherQuickLookPreview DitherQuickLookThumbnail; do
+SCHEMES=(DitherQuickLookPreview)
+if [[ "$WITH_THUMBNAIL" -eq 1 ]]; then
+  SCHEMES+=(DitherQuickLookThumbnail)
+fi
+for SCHEME in "${SCHEMES[@]}"; do
   xcodebuild \
     -project DitherQuickLook.xcodeproj \
     -scheme "$SCHEME" \
@@ -103,8 +112,11 @@ done
 PRODUCTS="$DERIVED/Build/Products/Release"
 OUT="$QL_DIR/dist"
 mkdir -p "$OUT"
+rm -rf "$OUT/DitherQuickLookPreview.appex" "$OUT/DitherQuickLookThumbnail.appex"
 cp -R "$PRODUCTS/DitherQuickLookPreview.appex" "$OUT/"
-cp -R "$PRODUCTS/DitherQuickLookThumbnail.appex" "$OUT/"
+if [[ "$WITH_THUMBNAIL" -eq 1 ]]; then
+  cp -R "$PRODUCTS/DitherQuickLookThumbnail.appex" "$OUT/"
+fi
 
 sign_one() {
   local path="$1"
@@ -121,7 +133,9 @@ sign_one() {
 }
 
 sign_one "$OUT/DitherQuickLookPreview.appex"
-sign_one "$OUT/DitherQuickLookThumbnail.appex"
+if [[ "$WITH_THUMBNAIL" -eq 1 ]]; then
+  sign_one "$OUT/DitherQuickLookThumbnail.appex"
+fi
 
 echo "Built:"
 ls -la "$OUT"
@@ -131,9 +145,11 @@ if [[ -n "$APP_PATH" ]]; then
   mkdir -p "$PLUGINS"
   rm -rf "$PLUGINS/DitherQuickLookPreview.appex" "$PLUGINS/DitherQuickLookThumbnail.appex"
   cp -R "$OUT/DitherQuickLookPreview.appex" "$PLUGINS/"
-  cp -R "$OUT/DitherQuickLookThumbnail.appex" "$PLUGINS/"
   sign_one "$PLUGINS/DitherQuickLookPreview.appex"
-  sign_one "$PLUGINS/DitherQuickLookThumbnail.appex"
+  if [[ "$WITH_THUMBNAIL" -eq 1 ]]; then
+    cp -R "$OUT/DitherQuickLookThumbnail.appex" "$PLUGINS/"
+    sign_one "$PLUGINS/DitherQuickLookThumbnail.appex"
+  fi
   codesign --force --sign "$IDENTITY" "$APP_PATH"
   codesign --verify --deep --strict --verbose=2 "$APP_PATH" || true
   echo "Embedded into $APP_PATH"

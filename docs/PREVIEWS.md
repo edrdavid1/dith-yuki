@@ -12,14 +12,15 @@ Implements `.local-doc/SPEC_dither_previews_full.md`. Decisions:
 | `crates/dither-thumb` | `extract()`: EOCD → CD → `mimetype` + `thumbnail.png` → PNG → RGBA |
 | `crates/dither-thumb-ffi` | C ABI (`dt_extract` / `dt_free_bitmap`), panic → `DT_INTERNAL` |
 | `platform/include/dither_thumb.h` | Committed header (ABI v1) |
-| `platform/macos/DitherQuickLook/` | Quick Look Preview + Thumbnail appex (XcodeGen) |
+| `platform/macos/DitherQuickLook/` | Quick Look Preview (+ optional Thumbnail source) |
 | `platform/windows/dither-shell/` | COM `IThumbnailProvider` (`dither_shell.dll`) |
 | `scripts/ci-prepare-*-previews.sh` | CI / `beforeBundleCommand` staging into the Tauri bundle |
 
 Release embedding:
 
-- macOS: `tauri.macos.conf.json` → `bundle.macOS.files` → `Contents/PlugIns/*.appex`
-- Windows: `tauri.windows.conf.json` → `resources` → `dither_shell.dll` + NSIS ShellEx hooks
+- macOS: Preview `.appex` only → Finder shows **type icons**; Space shows content.
+  Thumbnail `.appex` stays in-tree (`--with-thumbnail`) but is not shipped.
+- Windows: `dither_shell.dll` + NSIS ShellEx → Explorer content thumbnails.
 
 ## ABI
 

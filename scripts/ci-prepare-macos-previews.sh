@@ -44,6 +44,7 @@ echo "Preparing macOS Quick Look plugins (tier=$TIER)…"
 bash "$ROOT/scripts/build-quicklook.sh" --tier "$TIER"
 
 test -d "$OUT/DitherQuickLookPreview.appex"
-test -d "$OUT/DitherQuickLookThumbnail.appex"
-echo "Quick Look ready:"
+# Thumbnail appex is intentionally not shipped: Finder keeps type icons;
+# Space uses Preview only.
+echo "Quick Look Preview ready:"
 ls -la "$OUT"

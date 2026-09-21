@@ -1,15 +1,17 @@
 # Alpha: macOS system previews (Quick Look)
 
-How to verify `.dyproj` / `.dyuki` space-preview and Finder thumbnails during
-alpha (signing tier T1). Architecture: [`PREVIEWS.md`](./PREVIEWS.md).
+How to verify `.dyproj` / `.dyuki` **Space** preview during alpha (signing tier T1).
+Finder icons stay the document-type `.icns` (no content thumbnails on icons).
+Architecture: [`PREVIEWS.md`](./PREVIEWS.md).
 
 ## Sign (self-signed T1)
 
 See [`SIGNING_ALPHA.md`](./SIGNING_ALPHA.md). Short version:
 
-Release builds (GitHub Actions) already embed and sign both `.appex` into
-`Dither Yuki.app/Contents/PlugIns/`. After installing from the DMG you only need
-Gatekeeper **Open Anyway** and, if needed, enabling the Quick Look extensions.
+Release builds embed and sign **Preview** only
+(`DitherQuickLookPreview.appex` in `Contents/PlugIns/`). After installing from
+the DMG: Gatekeeper **Open Anyway**, then enable the Quick Look Preview
+extension if macOS asks.
 
 Local rebuild into an existing app:
 
@@ -25,16 +27,15 @@ Then: move to `/Applications`, **Open Anyway**, enable Quick Look extensions.
 
 ```bash
 pluginkit -mAvvv -p com.apple.quicklook.preview
-pluginkit -mAvvv -p com.apple.quicklook.thumbnail
 # Force-enable if needed:
 # pluginkit -e use -i com.dither.app.QuickLookPreview
-# pluginkit -e use -i com.dither.app.QuickLookThumbnail
 
 qlmanage -p /path/to/sample.dyproj
-qlmanage -t -s 512 -o /tmp/out /path/to/sample.dyproj
 ```
 
-In Finder: select a `.dyproj` / `.dyuki`, press Space; check icon view thumbnails.
+In Finder: icons should be **proj/pattern type icons**; select a file and press
+**Space** for the content preview. If an old Thumbnail extension is still
+registered from alpha.10, remove that app / disable it and clear QL cache.
 
 ## Reset caches
 

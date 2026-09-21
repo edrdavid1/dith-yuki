@@ -62,8 +62,9 @@ is safe for current readers. Result: **proceed with Stage A**.
 
 - Swift `DitherThumb` + bridging header; Preview/Thumbnail call Rust.
 - `scripts/build-quicklook.sh` builds universal `libdither_thumb_ffi.a`.
-- Release embeds both `.appex` via `tauri.macos.conf.json` `macOS.files` /
-  `scripts/ci-prepare-macos-previews.sh` (requires full Xcode on the builder).
+- **Product (2026-09-21):** ship **Preview only**. Finder keeps document-type
+  `.icns`; Space / `qlmanage -p` show `thumbnail.png`. Thumbnail appex is not
+  embedded (opt-in via `--with-thumbnail` for experiments).
 
 ### Stage E — Windows thumbnail provider
 
