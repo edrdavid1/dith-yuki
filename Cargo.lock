@@ -1086,7 +1086,7 @@ dependencies = [
 
 [[package]]
 name = "dither"
-version = "0.3.0-alpha.12"
+version = "0.3.0-alpha.13"
 dependencies = [
  "base64 0.22.1",
  "block",
