@@ -21,6 +21,7 @@ wide = "0.7"
 rayon = "1.7"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 blake3 = "1"
+log = "0.4"
 image = { version = "0.25", default-features = false, features = ["png"] }
 dirs = "5"
 png = "0.17"

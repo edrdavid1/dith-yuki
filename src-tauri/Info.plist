@@ -79,7 +79,10 @@
 					<string>dyproj</string>
 				</array>
 				<key>public.mime-type</key>
-				<string>application/vnd.dither.project+zip</string>
+				<array>
+					<string>application/vnd.dither.project+zip</string>
+					<string>application/x-dither-project</string>
+				</array>
 			</dict>
 		</dict>
 		<dict>
@@ -101,7 +104,10 @@
 					<string>dyuki</string>
 				</array>
 				<key>public.mime-type</key>
-				<string>application/vnd.dither.pattern+zip</string>
+				<array>
+					<string>application/vnd.dither.pattern+zip</string>
+					<string>application/x-dither-pattern</string>
+				</array>
 			</dict>
 		</dict>
 	</array>

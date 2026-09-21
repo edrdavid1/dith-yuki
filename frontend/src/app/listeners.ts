@@ -100,6 +100,8 @@ export function startEngineEventBridge(store: AppStore): EngineBridgeCleanup {
       kind === 'document_activated'
     ) {
       dispatch(bumpDocumentEpoch());
+      // Color Lab caches palettes by version — refresh after open/switch.
+      dispatch(bumpVersion());
     }
 
     // Document open / structural changes — refresh meta

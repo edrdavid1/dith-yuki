@@ -34,6 +34,8 @@ export interface ShareProjectCopyOptions {
   includeOriginalImages?: boolean;
   includeAuthor?: boolean;
   compact?: boolean;
+  /** When false, write a neutral thumbnail placeholder. Default true. */
+  includePreview?: boolean;
 }
 
 /** Explicit privacy export (SPEC §11). Does not change the open project path. */
@@ -51,6 +53,7 @@ export async function shareProjectCopy(
           include_original_images: opts.includeOriginalImages,
           include_author: opts.includeAuthor,
           compact: opts.compact,
+          include_preview: opts.includePreview,
         }
       : null,
   });

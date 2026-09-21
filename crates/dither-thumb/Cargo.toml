@@ -1,0 +1,18 @@
+[package]
+name = "dither-thumb"
+version = "0.1.0"
+edition = "2021"
+description = "Extract thumbnail.png from .dyproj / .dyuki for OS preview providers"
+license = "FCL-1.0"
+
+[dependencies]
+dither-zip-safe = { path = "../dither-zip-safe" }
+thiserror = "1.0"
+png = "0.17"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
+[dev-dependencies]
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[lints.rust]
+unsafe_code = "forbid"

@@ -9,6 +9,7 @@ describe('ShareCopyDialog', () => {
     expect(d.includeOriginalImages).toBe(false);
     expect(d.includeAuthor).toBe(false);
     expect(d.compact).toBe(false);
+    expect(d.includePreview).toBe(true);
   });
 
   it('renders checkboxes with SPEC defaults checked/unchecked', () => {

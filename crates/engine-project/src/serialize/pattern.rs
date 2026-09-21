@@ -619,6 +619,10 @@ pub fn pack_pattern_to_bytes(
         payload.push((threshold_map_zip_entry(basename), bytes.clone()));
     }
 
+    // Preview SPEC §3.2 / §4.2: .dyuki MUST carry thumbnail.png (pattern on sample).
+    let thumbnail_png = crate::serialize::thumbnail::build_pattern_thumbnail_png(filters, palettes);
+    payload.push(("thumbnail.png".into(), thumbnail_png));
+
     let files = build_manifest_files(&payload);
     let manifest_json = build_dyuki_manifest_json(
         format,

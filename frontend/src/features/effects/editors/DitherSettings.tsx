@@ -130,7 +130,6 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
   ].includes(simpleMode);
   const serpentine = Boolean(params.serpentine);
   const ditherAlpha = params.dither_alpha !== false;
-  const paletteBound = boundPaletteId != null;
   const paletteDitherMode = params.palette_dither_mode;
   const paletteMode = paletteModeKey(paletteDitherMode);
   const channelLevels = clampParam(guidedChannelLevels(paletteDitherMode) ?? 3, 2, 16);
@@ -193,52 +192,51 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
         }}
       />
 
-      {paletteBound && (
-        <>
-          <DropdownMenu
-            label="Palette dither"
-            value={paletteMode}
-            options={[
-              { value: 'strict', label: 'Strict — exact palette colors' },
-              { value: 'simple', label: 'Simple — sRGB Euclidean (classic)' },
-              { value: 'guided', label: 'Guided — palette-derived range (richer)' },
-              { value: 'mixed', label: 'Mixed — Guided then palette dither' },
-            ]}
-            onSelect={(v) => {
-              if (v === 'guided') {
-                emit({
-                  palette_dither_mode: { guided: { channel_levels: channelLevels } },
-                });
-              } else if (v === 'mixed') {
-                emit({
-                  palette_dither_mode: { mixed: { channel_levels: channelLevels } },
-                });
-              } else if (v === 'simple') {
-                emit({ palette_dither_mode: 'simple' });
-              } else {
-                emit({ palette_dither_mode: 'strict' });
-              }
-            }}
-          />
-          {usesChannelLevels(paletteDitherMode) && (
-            <Slider
-              label="Levels per channel"
-              value={channelLevels}
-              min={2}
-              max={16}
-              step={1}
-              decimals={0}
-              onChange={(v) =>
-                emit({
-                  palette_dither_mode:
-                    paletteMode === 'mixed'
-                      ? { mixed: { channel_levels: clampParam(Math.round(v), 2, 16) } }
-                      : { guided: { channel_levels: clampParam(Math.round(v), 2, 16) } },
-                })
-              }
-            />
-          )}
-        </>
+      {/* Always visible — was gated on paletteBound, so the menu vanished whenever
+          Color Lab binding / lastCreatedId was empty after open. Mode still
+          applies once a palette is bound. */}
+      <DropdownMenu
+        label="Palette dither"
+        value={paletteMode}
+        options={[
+          { value: 'strict', label: 'Strict — exact palette colors' },
+          { value: 'simple', label: 'Simple — sRGB Euclidean (classic)' },
+          { value: 'guided', label: 'Guided — palette-derived range (richer)' },
+          { value: 'mixed', label: 'Mixed — Guided then palette dither' },
+        ]}
+        onSelect={(v) => {
+          if (v === 'guided') {
+            emit({
+              palette_dither_mode: { guided: { channel_levels: channelLevels } },
+            });
+          } else if (v === 'mixed') {
+            emit({
+              palette_dither_mode: { mixed: { channel_levels: channelLevels } },
+            });
+          } else if (v === 'simple') {
+            emit({ palette_dither_mode: 'simple' });
+          } else {
+            emit({ palette_dither_mode: 'strict' });
+          }
+        }}
+      />
+      {usesChannelLevels(paletteDitherMode) && (
+        <Slider
+          label="Levels per channel"
+          value={channelLevels}
+          min={2}
+          max={16}
+          step={1}
+          decimals={0}
+          onChange={(v) =>
+            emit({
+              palette_dither_mode:
+                paletteMode === 'mixed'
+                  ? { mixed: { channel_levels: clampParam(Math.round(v), 2, 16) } }
+                  : { guided: { channel_levels: clampParam(Math.round(v), 2, 16) } },
+            })
+          }
+        />
       )}
 
       <Slider

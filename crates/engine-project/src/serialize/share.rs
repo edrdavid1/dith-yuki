@@ -8,9 +8,10 @@ use crate::serialize::features::{required_version_for_features, FormatVersion};
 use crate::serialize::manifest::{build_dyproj_manifest_json, build_manifest_files};
 use crate::serialize::migrate::ProjectError;
 use crate::serialize::pixels::{
-    assemble_layer_png, build_composite_rgba8, build_thumbnail_png, collect_raster_layers,
-    count_raster_layers, encode_rgba8_png, reencode_png_clean, soft_size_warning,
+    assemble_layer_png, build_composite_rgba8, collect_raster_layers, count_raster_layers,
+    encode_rgba8_png, reencode_png_clean, soft_size_warning,
 };
+use crate::serialize::thumbnail::{build_thumbnail_png_cached, neutral_thumbnail_png};
 use crate::serialize::project::{
     chrono_like_now, collect_custom_png_embeds, rewrite_custom_png_paths, SaveProjectResult,
 };
@@ -29,6 +30,9 @@ pub struct ShareCopyOptions {
     pub include_author: bool,
     /// Minify JSON payloads (default: false).
     pub compact: bool,
+    /// Include real `thumbnail.png` (default: true). When false, write a neutral
+    /// placeholder instead (preview SPEC §12 / Share Copy privacy).
+    pub include_preview: bool,
 }
 
 impl Default for ShareCopyOptions {
@@ -38,6 +42,7 @@ impl Default for ShareCopyOptions {
             include_original_images: false,
             include_author: false,
             compact: false,
+            include_preview: true,
         }
     }
 }
@@ -59,6 +64,8 @@ pub struct ProjectWriteOptions {
     pub target_format: FormatVersion,
     /// When set, used for `created_at` / `modified_at` (byte-stable archives).
     pub timestamp: Option<String>,
+    /// When false, write a neutral `thumbnail.png` placeholder.
+    pub include_preview: bool,
 }
 
 impl ProjectWriteOptions {
@@ -69,6 +76,7 @@ impl ProjectWriteOptions {
             include_author: true,
             target_format: FormatVersion::V1_0,
             timestamp: None,
+            include_preview: true,
         }
     }
 
@@ -80,6 +88,7 @@ impl ProjectWriteOptions {
             target_format: FormatVersion::V1_0,
             // Stable stamp so Share Copy of the same doc is byte-identical.
             timestamp: Some("0".into()),
+            include_preview: opts.include_preview,
         }
     }
 }
@@ -194,10 +203,13 @@ pub fn write_project_to_bytes(
     let composite_rgba =
         build_composite_rgba8(cache, &doc.root, doc.width, doc.height, doc.id.0)?;
     let mut composite_png = encode_rgba8_png(&composite_rgba, doc.width, doc.height)?;
-    let mut thumbnail_png = build_thumbnail_png(&composite_rgba, doc.width, doc.height, 512)?;
+    let thumbnail_png = if opts.include_preview {
+        build_thumbnail_png_cached(&composite_rgba, doc.width, doc.height)
+    } else {
+        neutral_thumbnail_png()
+    };
     if opts.strip_png_metadata {
         composite_png = reencode_png_clean(&composite_png)?;
-        thumbnail_png = reencode_png_clean(&thumbnail_png)?;
     }
 
     let document_json = encode_json(&file, opts.compact_json)?;
@@ -405,6 +417,26 @@ mod tests {
         let mut reader = ZipArchiveReader::open(&saved.zip_bytes).unwrap();
         let doc_json = reader.read_entry("document.json").unwrap();
         assert!(!doc_json.contains(&b'\n'), "compact JSON should be one line");
+    }
+
+    #[test]
+    fn share_copy_can_omit_preview() {
+        let (doc, cache) = tiny_doc();
+        let opts = ShareCopyOptions {
+            include_preview: false,
+            ..ShareCopyOptions::default()
+        };
+        let saved = share_project_to_bytes(
+            &doc,
+            &cache,
+            "0.3.0",
+            |_| Err(ProjectError::Io("none".into())),
+            &opts,
+        )
+        .unwrap();
+        let mut reader = ZipArchiveReader::open(&saved.zip_bytes).unwrap();
+        let thumb = reader.read_entry("thumbnail.png").unwrap();
+        assert_eq!(thumb, crate::serialize::thumbnail::neutral_thumbnail_png());
     }
 
     #[test]

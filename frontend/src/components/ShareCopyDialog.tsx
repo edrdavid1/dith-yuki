@@ -13,12 +13,13 @@ export interface ShareCopyDialogProps {
   onCancel: () => void;
 }
 
-/** SPEC §11 defaults: strip on, originals off, author off, compact off. */
+/** SPEC §11 defaults: strip on, originals off, author off, compact off, preview on. */
 const DEFAULTS: Required<ShareProjectCopyOptions> = {
   stripMetadata: true,
   includeOriginalImages: false,
   includeAuthor: false,
   compact: false,
+  includePreview: true,
 };
 
 export default function ShareCopyDialog({ isOpen, onExport, onCancel }: ShareCopyDialogProps) {
@@ -28,6 +29,7 @@ export default function ShareCopyDialog({ isOpen, onExport, onCancel }: ShareCop
   );
   const [includeAuthor, setIncludeAuthor] = useState(DEFAULTS.includeAuthor);
   const [compact, setCompact] = useState(DEFAULTS.compact);
+  const [includePreview, setIncludePreview] = useState(DEFAULTS.includePreview);
 
   const handleOverlayClick = useCallback(
     (e: React.MouseEvent) => {
@@ -52,8 +54,9 @@ export default function ShareCopyDialog({ isOpen, onExport, onCancel }: ShareCop
       includeOriginalImages,
       includeAuthor,
       compact,
+      includePreview,
     });
-  }, [compact, includeAuthor, includeOriginalImages, onExport, stripMetadata]);
+  }, [compact, includeAuthor, includeOriginalImages, includePreview, onExport, stripMetadata]);
 
   if (!isOpen) return null;
 
@@ -102,6 +105,15 @@ export default function ShareCopyDialog({ isOpen, onExport, onCancel }: ShareCop
               data-testid="share-copy-include-author"
             />
             Include author
+          </label>
+          <label className={cn('new-project-field')} style={{ display: 'flex', gap: 8 }}>
+            <input
+              type="checkbox"
+              checked={includePreview}
+              onChange={(e) => setIncludePreview(e.target.checked)}
+              data-testid="share-copy-include-preview"
+            />
+            Include preview thumbnail
           </label>
           <label className={cn('new-project-field')} style={{ display: 'flex', gap: 8 }}>
             <input

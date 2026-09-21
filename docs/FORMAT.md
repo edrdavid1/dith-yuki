@@ -28,7 +28,7 @@ mimetype                 # first entry, Stored, no newline
 manifest.json            # second among named payload (writers sort: manifest, then lex)
 document.json
 composite.png            # required on write (Raw-layer flat insurance)
-thumbnail.png            # required on write, long side ≤ 512
+thumbnail.png            # required on write, long side ≤ 1024, ≤ 3 MiB, critical chunks only
 layers/{id}.png
 assets/threshold_maps/{blake3-32hex}.png
 ext/...                  # opaque forward-compat blobs
@@ -42,7 +42,7 @@ manifest.json
 filters.json
 palettes.json
 assets/threshold_maps/{blake3-32hex}.png
-thumbnail.png            # optional (SHOULD); not written yet
+thumbnail.png            # required on write (pattern applied to embedded sample)
 ```
 
 ### Deterministic write (Stage 4+)
@@ -108,7 +108,8 @@ Ordinary Save never writes absolute paths (CustomPng → content-hash basename),
 machine names, or undo history.
 
 Explicit **Share Copy** (`share_project_to_bytes`): strip PNG metadata (default
-on), omit author (default), no originals (none stored), optional compact JSON.
+on), omit author (default), no originals (none stored), optional compact JSON,
+`include_preview` (default on; off → neutral `thumbnail.png` placeholder).
 
 Explicit **Export for older version** (`downgrade_project_to_bytes`): never
 runs on normal Save; today only format `1.x` with empty loss reports.

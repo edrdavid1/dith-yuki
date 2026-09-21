@@ -262,9 +262,10 @@ describe('EffectSettingsPanel', () => {
       expect(onUpdateParams).toHaveBeenCalledWith(1, 'filter-1', expect.objectContaining({ pixel_size: 16 }));
     });
 
-    it('hides palette dither controls without a palette', () => {
+    it('always shows palette dither controls (even without a bound palette)', () => {
       renderPanel(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
-      expect(screen.queryByText('Palette dither')).not.toBeInTheDocument();
+      expect(screen.getByText('Palette dither')).toBeInTheDocument();
+      expect(screen.getByText('Strict — exact palette colors')).toBeInTheDocument();
       expect(screen.queryByText('Levels per channel')).not.toBeInTheDocument();
     });
 

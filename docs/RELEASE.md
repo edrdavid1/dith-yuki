@@ -61,6 +61,8 @@ npm run tauri signer generate -w ~/.tauri/dither.key
 
 When `APPLE_CERTIFICATE` is unset, CI creates a **self-signed** identity `L'eco non di Bergamo` (`scripts/macos-self-sign-cert.sh`) so Gatekeeper can offer **Open Anyway**. This is not Apple Developer ID / notarization.
 
+Full alpha signing guide (macOS + Windows self-sign): [`SIGNING_ALPHA.md`](./SIGNING_ALPHA.md).
+
 ## Cut a release
 
 1. Bump version in lockstep: root `package.json`, `frontend/package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`.

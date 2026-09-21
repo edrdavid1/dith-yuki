@@ -1,0 +1,59 @@
+# XcodeGen project for Quick Look Preview + Thumbnail (Rust staticlib linked in).
+# Generate: xcodegen generate --spec project.yml
+name: DitherQuickLook
+options:
+  bundleIdPrefix: com.dither.app
+  deploymentTarget:
+    macOS: "12.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "12.0"
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    DEVELOPMENT_TEAM: ""
+    ENABLE_HARDENED_RUNTIME: NO
+    SWIFT_OBJC_BRIDGING_HEADER: Shared/DitherThumb-Bridging-Header.h
+    HEADER_SEARCH_PATHS: "$(SRCROOT)/../../include"
+    LIBRARY_SEARCH_PATHS: "$(SRCROOT)/../../../target/quicklook"
+    OTHER_LDFLAGS: "-ldither_thumb_ffi -dead_strip"
+targets:
+  DitherQuickLookPreview:
+    type: app-extension
+    platform: macOS
+    deploymentTarget: "12.0"
+    sources:
+      - path: DitherQuickLookPreview
+      - path: Shared/DitherThumb.swift
+      - path: Shared/spike-preview.png
+        buildPhase: resources
+        optional: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.dither.app.QuickLookPreview
+        INFOPLIST_FILE: DitherQuickLookPreview/Info.plist
+        PRODUCT_NAME: DitherQuickLookPreview
+        CODE_SIGN_ENTITLEMENTS: Shared/DitherQuickLook.entitlements
+        SKIP_INSTALL: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks"
+    scheme: {}
+  DitherQuickLookThumbnail:
+    type: app-extension
+    platform: macOS
+    deploymentTarget: "12.0"
+    sources:
+      - path: DitherQuickLookThumbnail
+      - path: Shared/DitherThumb.swift
+      - path: Shared/spike-preview.png
+        buildPhase: resources
+        optional: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.dither.app.QuickLookThumbnail
+        INFOPLIST_FILE: DitherQuickLookThumbnail/Info.plist
+        PRODUCT_NAME: DitherQuickLookThumbnail
+        CODE_SIGN_ENTITLEMENTS: Shared/DitherQuickLook.entitlements
+        SKIP_INSTALL: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks"
+    scheme: {}

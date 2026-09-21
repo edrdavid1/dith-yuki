@@ -22,6 +22,7 @@ pub mod sanitize;
 pub mod secure_json;
 pub mod secure_zip;
 pub mod share;
+pub mod thumbnail;
 
 pub use archive::{
     detect_archive_kind_from_bytes, peek_mimetype, ArchiveError, ZipArchiveReader, ZipArchiveWriter,
@@ -58,8 +59,8 @@ pub use pattern::{
     PatternFilterFile, PatternManifest, UnpackedPattern,
 };
 pub use pixels::{
-    assemble_layer_png, build_composite_png, build_composite_rgba8, build_thumbnail_png,
-    decode_png_to_f32, decode_png_to_f32_with_limits, reencode_png_clean, soft_size_warning,
+    assemble_layer_png, build_composite_png, build_composite_rgba8, decode_png_to_f32,
+    decode_png_to_f32_with_limits, reencode_png_clean, soft_size_warning,
     threshold_map_png_limits, PngDecodeLimits,
 };
 pub use project::{
@@ -69,4 +70,9 @@ pub use project::{
 pub use share::{
     downgrade_project_to_bytes, plan_downgrade, scan_archive_for_privacy_leaks, share_project_to_bytes,
     write_project_to_bytes, LossReport, ProjectWriteOptions, ShareCopyOptions,
+};
+pub use thumbnail::{
+    build_pattern_thumbnail_png, build_thumbnail_png, build_thumbnail_png_cached,
+    encode_thumbnail_png_deterministic, neutral_thumbnail_png, pattern_preview_sample_rgba8,
+    render_pattern_preview_rgba, THUMBNAIL_MAX_BYTES, THUMBNAIL_MAX_SIDE,
 };

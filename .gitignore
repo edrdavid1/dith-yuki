@@ -37,3 +37,9 @@ Thumbs.db
 /fuzz/coverage/
 /fuzz/corpus/
 /fuzz/Cargo.lock
+
+# Quick Look / XcodeGen build products
+/platform/macos/DitherQuickLook/build/
+/platform/macos/DitherQuickLook/dist/
+/platform/macos/DitherQuickLook/*.xcodeproj/
+/target/quicklook/

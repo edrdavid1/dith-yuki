@@ -4,6 +4,7 @@ import ColorPicker from '../../components/ColorPicker';
 import WindowTitlebar from '../../shared/ui/WindowTitlebar';
 import { useAppDispatch, useAppSelector } from '../../app/hooks';
 import { bumpVersion, clearLastCreatedId, publishPaletteBinding } from '../../app/slices/palettesSlice';
+import { selectFiltersList } from '../../app/slices/filtersSlice';
 import {
   addColor,
   deleteColor,
@@ -93,21 +94,48 @@ export default function ColorLabFeature({
   const lastLivePushRef = useRef('');
 
   const lastCreatedId = useAppSelector((s) => s.palettes.lastCreatedId);
+  const filters = useAppSelector(selectFiltersList);
 
   useEffect(() => {
     let cancelled = false;
+    // No document yet — list_palettes returns [] without meaning "stale binding".
+    if (docId == null) {
+      setPalettes([]);
+      return;
+    }
     listPalettes()
       .then((list) => {
         if (cancelled) return;
         setPalettes(list);
-        // Persisted lastCreatedId from another project must not bind into this doc.
-        if (
-          lastCreatedId != null &&
-          !list.some((p) => p.id === lastCreatedId)
-        ) {
-          dispatch(clearLastCreatedId());
-          publishPaletteBinding(null);
+
+        const filterPaletteId = (() => {
+          for (const f of filters) {
+            const pid = (f.params as { palette_id?: unknown } | undefined)?.palette_id;
+            if (typeof pid === 'number') return pid;
+          }
+          return null;
+        })();
+
+        if (list.length === 0) {
+          // Empty doc: clear a dangling binding so Effects won't write a ghost id.
+          if (lastCreatedId != null) {
+            dispatch(clearLastCreatedId());
+            publishPaletteBinding(null);
+          }
+          return;
         }
+
+        const boundOk =
+          lastCreatedId != null && list.some((p) => p.id === lastCreatedId);
+        if (boundOk) return;
+
+        // Prefer the filter's remapped palette_id after open; else first swatch.
+        const adopt =
+          filterPaletteId != null && list.some((p) => p.id === filterPaletteId)
+            ? filterPaletteId
+            : list[0]!.id;
+        dispatch(bumpVersion({ lastCreatedId: adopt }));
+        publishPaletteBinding(adopt);
       })
       .catch((err) => {
         if (!cancelled) logIpcError('ColorLabFeature.listPalettes', err);
@@ -115,7 +143,7 @@ export default function ColorLabFeature({
     return () => {
       cancelled = true;
     };
-  }, [palettesVersion, lastCreatedId, dispatch]);
+  }, [palettesVersion, lastCreatedId, dispatch, docId, filters]);
 
   useEffect(() => {
     let cancelled = false;

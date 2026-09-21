@@ -1,0 +1,19 @@
+[package]
+name = "dither-thumb-ffi"
+version = "0.1.0"
+edition = "2021"
+description = "C ABI for dither-thumb (Quick Look / Windows shell)"
+license = "FCL-1.0"
+
+[lib]
+crate-type = ["staticlib", "cdylib", "rlib"]
+name = "dither_thumb_ffi"
+doctest = false
+
+[dependencies]
+dither-thumb = { path = "../dither-thumb" }
+dither-zip-safe = { path = "../dither-zip-safe" }
+
+[dev-dependencies]
+zip = { version = "2", default-features = false, features = ["deflate"] }
+png = "0.17"

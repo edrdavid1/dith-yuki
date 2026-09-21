@@ -199,49 +199,8 @@ pub fn build_composite_png(
     encode_rgba8_png(&rgba, doc_width, doc_height)
 }
 
-/// Resize RGBA8 so the long side is ≤ `max_side` (SPEC: thumbnail ≤ 512).
-pub fn build_thumbnail_png(
-    rgba: &[u8],
-    width: u32,
-    height: u32,
-    max_side: u32,
-) -> Result<Vec<u8>, ProjectError> {
-    if width == 0 || height == 0 {
-        return Err(ProjectError::Codec("thumbnail requires non-zero size".into()));
-    }
-    let expected = (width as usize) * (height as usize) * 4;
-    if rgba.len() != expected {
-        return Err(ProjectError::Codec(format!(
-            "thumbnail RGBA size {} != {}×{}×4",
-            rgba.len(),
-            width,
-            height
-        )));
-    }
-    let img = RgbaImage::from_raw(width, height, rgba.to_vec())
-        .ok_or_else(|| ProjectError::Codec("failed to wrap RGBA for thumbnail".into()))?;
-
-    let long = width.max(height);
-    let (tw, th) = if long <= max_side {
-        (width, height)
-    } else {
-        let scale = max_side as f32 / long as f32;
-        let tw = ((width as f32) * scale).round().max(1.0) as u32;
-        let th = ((height as f32) * scale).round().max(1.0) as u32;
-        (tw, th)
-    };
-
-    let resized = if tw == width && th == height {
-        img
-    } else {
-        image::imageops::resize(&img, tw, th, image::imageops::FilterType::Triangle)
-    };
-    let mut buf = Cursor::new(Vec::new());
-    resized
-        .write_to(&mut buf, image::ImageFormat::Png)
-        .map_err(|e| ProjectError::Codec(e.to_string()))?;
-    Ok(buf.into_inner())
-}
+// Thumbnail writer lives in `serialize::thumbnail` (preview SPEC §3).
+pub use crate::serialize::thumbnail::build_thumbnail_png;
 
 /// Quantize linear-ish [0,1] float to u8 (see module lossless caveat).
 fn f32_to_u8(v: f32) -> u8 {

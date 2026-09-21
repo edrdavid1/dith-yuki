@@ -47,6 +47,8 @@ pub struct ShareProjectCopyOptions {
     pub include_original_images: Option<bool>,
     pub include_author: Option<bool>,
     pub compact: Option<bool>,
+    /// When false, write a neutral thumbnail placeholder (preview SPEC §12).
+    pub include_preview: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -549,6 +551,7 @@ impl DocumentService {
             include_original_images: opts.include_original_images.unwrap_or(false),
             include_author: opts.include_author.unwrap_or(false),
             compact: opts.compact.unwrap_or(false),
+            include_preview: opts.include_preview.unwrap_or(true),
         };
 
         let result = tauri::async_runtime::spawn_blocking(move || {

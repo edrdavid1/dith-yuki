@@ -17,6 +17,23 @@ Threat model and engineering rules for `.dyproj` / `.dyuki`. Companion to
 | T15–T16 | XSS / path injection in UI | text-only display; CSP; `sanitize_*`; no `innerHTML` |
 | T17 | Panic → crash | `catch_loader_panic` + `spawn_blocking` JoinError |
 | T18 | Privacy leak on share | Share Copy defaults; path scrub; privacy scan test |
+| T19–T25 | OS preview / shell providers | See «Preview components» below |
+
+## Preview components
+
+Quick Look / Explorer thumbnail providers parse archives the user has not
+opened. They MUST:
+
+- Read only `mimetype` + `thumbnail.png` via `dither-thumb` (limits in
+  `dither-zip-safe::ThumbLimits`)
+- Never call platform PNG/ZIP decoders on raw archive bytes
+- Never log file paths; map all failures to «no preview»
+- Catch panics at the FFI boundary (`dt_extract` → `DT_INTERNAL`)
+- Stay reentrant: no global mutable state, no worker threads
+
+Threats T19–T25 (PNG bomb, Zip Slip in thumb path, DoS, DLL hijack,
+misleading preview, leaks): full table in
+`.local-doc/SPEC_dither_previews_full.md` §9. Architecture: [`PREVIEWS.md`](./PREVIEWS.md).
 
 ## Hard rules for developers
 

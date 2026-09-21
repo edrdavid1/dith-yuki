@@ -5,6 +5,84 @@ Journal of findings and choices while implementing
 
 ---
 
+## 2026-09-21 — Previews SPEC: Stage A + early ПРОВЕРИТЬ
+
+Source: `.local-doc/SPEC_dither_previews_full.md`.
+
+### §3.4 — Will old loaders reject `thumbnail.png`?
+
+**Checked in current tree (this repo, Stage 4+ loader):**
+- `thumbnail.png` is already on the semantic allowlist
+  (`secure_zip::is_allowlisted_entry`).
+- Unknown *safe* names are ignored with a warning, not a hard error
+  (`EntryClass::Unknown` → warning).
+- Missing `thumbnail.png` does not block open; hash mismatch on `files`
+  is a warning path for integrity, not a refuse-to-open for thumb alone.
+
+**Public / shipped binaries:** no separate released “strict allowlist that
+rejects unknown entries” build was found in-repo. Product Q §18.8 remains
+open if any older external builds exist; until then writing `thumbnail.png`
+is safe for current readers. Result: **proceed with Stage A**.
+
+### Thumbnail encode contract (§3.1)
+
+| Decision | Choice |
+|---|---|
+| Max long side | 1024 (was 512) |
+| Resize filter | `image::Lanczos3` |
+| Color / gamma | Resize in the `image` crate working space (approx. gamma); **not** a linear light pipeline. Same path on all platforms via Rust. |
+| PNG encoder | `png` crate: `Compression::Fast`, `FilterType::Sub`, `AdaptiveFilterType::NonAdaptive`, RGBA8 only, no ancillary chunks |
+| Size budget | ≤ 3 MiB; step-down sides 1024→768→512→384 |
+| Failure | Never blocks save; log warning (no paths); write 1×1 transparent placeholder |
+| Cache | Process LRU (8) keyed by blake3 of source RGBA |
+| `.dyuki` | MUST write `thumbnail.png` = pattern applied to temporary sample 1024×768 (`TODO(design)`) |
+| Share Copy | New `include_preview` (default true); false → neutral placeholder |
+
+### Product defaults for open Qs (§18) until owner answers
+
+| Q | Interim |
+|---|---|
+| Min macOS | `10.15` from `tauri.conf.json`. Space preview API needs 12+ → use data-based `QLPreviewProvider` with deployment target 12.0 for Preview appex; Thumbnail appex can stay 10.15. |
+| Min Windows | Windows 10 (align with Tauri when verified). |
+| Alpha signing | Existing `scripts/macos-self-sign-cert.sh` (T1 self-signed). |
+| Installer mode | TBD — prefer per-machine HKLM; fall back HKCU if Tauri per-user. |
+| Phase 2 Peek | After phase 1 + security review. |
+
+### Stage C — icons / UTI (2026-09-21)
+
+- Per-type icons already shipped (`proj-icon` / `pattern-icon` icns+ico) via
+  `tauri.*.conf.json` resources + `Info.plist` / NSIS hooks.
+- Legacy MIME aliases (`application/x-dither-project|pattern`) added to
+  `UTExportedTypeDeclarations` as a string array (Tauri `fileAssociations`
+  only carries one `mimeType`; merge plist is the source of truth for tags).
+- Tauri ProgIDs remain spaced (`Dither Project` / `Dither Pattern`) — ShellEx
+  binds to those names, not `Dither.Project` from the SPEC appendix.
+
+### Stage D — macOS Quick Look wired to `dt_extract`
+
+- Swift `DitherThumb` + bridging header; Preview/Thumbnail call Rust.
+- `scripts/build-quicklook.sh` builds universal `libdither_thumb_ffi.a`.
+- Still needs full Xcode.app to compile `.appex` on this machine.
+
+### Stage E — Windows thumbnail provider
+
+- `platform/windows/dither-shell` COM DLL (`IInitializeWithStream` +
+  `IThumbnailProvider`), CLSID `{BC7D0A00-220F-46DD-AAA8-C754864EE648}`.
+- Cross-checked with `cargo check --target x86_64-pc-windows-gnu`.
+- NSIS hooks register ShellEx + versioned DLL folder.
+- Autotest via `IShellItemImageFactory` on `windows-latest`: still TODO.
+
+---
+
+Scaffolding under `platform/macos/DitherQuickLook/` (fixed-image spike).
+**Project generation:** XcodeGen (`project.yml`), not a committed `.xcodeproj`.
+Full T1 quarantine PASS/FAIL on a clean Mac is **manual** — not claimed here.
+`xcodegen` generates the project; full **Xcode.app** is required for
+`xcodebuild` (Command Line Tools alone are not enough). Agent machine had
+CLT only — appex compile is owner-side.
+
+---
+
 ## 2026-09-21 — Fix: open panic on dangling dither `palette_id`
 
 User file `te.dyproj` (format 1.0) saved with `palette_id: 1` and

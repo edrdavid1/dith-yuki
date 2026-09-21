@@ -140,6 +140,7 @@ export default function EffectsFeature({
           threshold_scale,
           pixel_size,
           color_mode,
+          palette_dither_mode,
           halftone_cell_size,
           wave_wavelength,
           wave_amplitude,
@@ -157,6 +158,8 @@ export default function EffectsFeature({
           pixel_size,
           color_mode: color_mode ?? 'rgb',
           palette_id: lastCreatedId,
+          // Keep mode (strict/simple/guided/mixed) — omitting it resets to strict.
+          palette_dither_mode: palette_dither_mode ?? 'strict',
           halftone_cell_size: halftone_cell_size ?? 8,
           wave_wavelength: wave_wavelength ?? 8,
           wave_amplitude: wave_amplitude ?? 1,

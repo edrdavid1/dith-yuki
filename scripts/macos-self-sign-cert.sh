@@ -123,4 +123,7 @@ if [[ -n "${GITHUB_ENV:-}" ]]; then
 fi
 
 echo "Created self-signed identity: ${IDENTITY}"
+# Machine-local hint for sibling scripts (not a secret).
+mkdir -p "${HOME}/.cache/dither-yuki"
+printf '%s\n' "$IDENTITY" > "${HOME}/.cache/dither-yuki/apple-signing-identity"
 rm -f "$WORK/key.pem" "$WORK/cert.pem" "$WORK/cert.p12" "$SMOKE"
