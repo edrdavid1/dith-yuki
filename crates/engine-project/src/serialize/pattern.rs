@@ -147,6 +147,7 @@ fn min_version_for_dither_mode(mode: &DitherModeV2) -> Option<&'static str> {
         | DitherModeV2::JarvisJudiceNinke
         | DitherModeV2::Stucki
         | DitherModeV2::Burkes
+        | DitherModeV2::Fan93
         | DitherModeV2::Sierra
         | DitherModeV2::SierraLite
         | DitherModeV2::SierraTwoRow
