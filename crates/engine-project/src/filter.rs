@@ -79,12 +79,15 @@ pub enum DiffusionKernel {
     SierraTwoRow,
     /// Sierra Lite / Sierra-2-4A (divisor 4).
     SierraLite,
+    /// Stevenson–Arce hexagonal filter (divisor 200). Cell reach 3.
+    StevensonArce,
 }
 
 impl DiffusionKernel {
-    /// Standard published (dx, dy, weight) tables. Cell reach is at most 2
-    /// (JJN / Atkinson / Sierra). Cross-tile residual margin is
-    /// `pixel_size × max_offset()` because hops are `dx × pixel_size`.
+    /// Standard published (dx, dy, weight) tables. Most kernels reach at most
+    /// 2 (JJN / Atkinson / Sierra); Stevenson–Arce reaches 3. Cross-tile
+    /// residual margin is `pixel_size × max_offset()` because hops are
+    /// `dx × pixel_size`.
     pub fn offsets(self) -> &'static [(i32, i32, f32)] {
         match self {
             Self::FloydSteinberg => &[
@@ -168,6 +171,23 @@ impl DiffusionKernel {
                 (-1, 1, 1.0 / 4.0),
                 (0, 1, 1.0 / 4.0),
             ],
+            // Stevenson–Arce (hexagonal): * . 32 / 12 . 26 . 30 . 16 / …
+            // ÷200. Sum = 1.0. Offset column = 3 in a 7-wide matrix.
+            // Sources: bisqwit error_diffusion.txt; ImageSharp StevensonArce.
+            Self::StevensonArce => &[
+                (2, 0, 32.0 / 200.0),
+                (-3, 1, 12.0 / 200.0),
+                (-1, 1, 26.0 / 200.0),
+                (1, 1, 30.0 / 200.0),
+                (3, 1, 16.0 / 200.0),
+                (-2, 2, 12.0 / 200.0),
+                (0, 2, 26.0 / 200.0),
+                (2, 2, 12.0 / 200.0),
+                (-3, 3, 5.0 / 200.0),
+                (-1, 3, 12.0 / 200.0),
+                (1, 3, 12.0 / 200.0),
+                (3, 3, 5.0 / 200.0),
+            ],
         }
     }
 
@@ -182,11 +202,13 @@ impl DiffusionKernel {
             "Sierra" => Some(Self::Sierra),
             "SierraTwoRow" => Some(Self::SierraTwoRow),
             "SierraLite" => Some(Self::SierraLite),
+            "StevensonArce" => Some(Self::StevensonArce),
             _ => None,
         }
     }
 
-    /// Max |dx| / |dy| in kernel cells (FS = 1, Atkinson / JJN / … = 2).
+    /// Max |dx| / |dy| in kernel cells (FS = 1, Atkinson / JJN / … = 2,
+    /// Stevenson–Arce = 3).
     pub fn max_offset(self) -> usize {
         self.offsets()
             .iter()
@@ -237,6 +259,8 @@ pub enum DitherModeV2 {
     SierraTwoRow,
     #[serde(rename = "sierra_lite")]
     SierraLite,
+    #[serde(rename = "stevenson_arce")]
+    StevensonArce,
     /// CMYK angled-screen halftone (ordered path, no ED).
     CmykHalftone,
     /// CMYK screens with user-rotatable base angle (`pattern_angle` offset).
@@ -259,6 +283,7 @@ impl DitherModeV2 {
                 | Self::Sierra
                 | Self::SierraTwoRow
                 | Self::SierraLite
+                | Self::StevensonArce
         )
     }
 
@@ -273,6 +298,7 @@ impl DitherModeV2 {
             Self::Sierra => Some(DiffusionKernel::Sierra),
             Self::SierraTwoRow => Some(DiffusionKernel::SierraTwoRow),
             Self::SierraLite => Some(DiffusionKernel::SierraLite),
+            Self::StevensonArce => Some(DiffusionKernel::StevensonArce),
             _ => None,
         }
     }
@@ -295,6 +321,7 @@ impl DitherModeV2 {
             Self::Sierra => Some("sierra"),
             Self::SierraLite => Some("sierra_lite"),
             Self::SierraTwoRow => Some("sierra_two_row"),
+            Self::StevensonArce => Some("stevenson_arce"),
             Self::CmykHalftone => Some("cmyk_halftone"),
             Self::HalftoneScreenAngled => Some("halftone_screen_angled"),
             Self::Wave => Some("wave"),
@@ -488,6 +515,7 @@ impl From<(DitherMode, u8)> for DitherParamsV2 {
                 DiffusionKernel::Sierra => DitherModeV2::Sierra,
                 DiffusionKernel::SierraTwoRow => DitherModeV2::SierraTwoRow,
                 DiffusionKernel::SierraLite => DitherModeV2::SierraLite,
+                DiffusionKernel::StevensonArce => DitherModeV2::StevensonArce,
             },
         };
         DitherParamsV2 {
@@ -1046,6 +1074,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         | "sierra"
         | "sierra_lite"
         | "sierra_two_row"
+        | "stevenson_arce"
         | "cmyk_halftone"
         | "halftone_screen_angled"
         | "wave" => Some(FilterKind::Dither),
@@ -1477,6 +1506,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&DitherModeV2::SierraLite).unwrap(),
             serde_json::json!("sierra_lite")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::StevensonArce).unwrap(),
+            serde_json::json!("stevenson_arce")
         );
         assert_eq!(
             serde_json::to_value(&DitherModeV2::SierraTwoRow).unwrap(),
@@ -2042,5 +2075,34 @@ mod tests {
             sum += got.2;
         }
         assert!((sum - 1.0).abs() < 1e-6, "Sierra Lite weights must sum to 1.0, got {sum}");
+    }
+
+    #[test]
+    fn stevenson_arce_kernel_matches_published_coefficients() {
+        let offs = DiffusionKernel::StevensonArce.offsets();
+        let expected: &[(i32, i32, f32)] = &[
+            (2, 0, 32.0 / 200.0),
+            (-3, 1, 12.0 / 200.0),
+            (-1, 1, 26.0 / 200.0),
+            (1, 1, 30.0 / 200.0),
+            (3, 1, 16.0 / 200.0),
+            (-2, 2, 12.0 / 200.0),
+            (0, 2, 26.0 / 200.0),
+            (2, 2, 12.0 / 200.0),
+            (-3, 3, 5.0 / 200.0),
+            (-1, 3, 12.0 / 200.0),
+            (1, 3, 12.0 / 200.0),
+            (3, 3, 5.0 / 200.0),
+        ];
+        assert_eq!(offs.len(), expected.len());
+        let mut sum = 0.0f32;
+        for (got, exp) in offs.iter().zip(expected.iter()) {
+            assert_eq!(got.0, exp.0);
+            assert_eq!(got.1, exp.1);
+            assert!((got.2 - exp.2).abs() < 1e-6, "{} vs {}", got.2, exp.2);
+            sum += got.2;
+        }
+        assert_eq!(DiffusionKernel::StevensonArce.max_offset(), 3);
+        assert!((sum - 1.0).abs() < 1e-6, "Stevenson–Arce weights must sum to 1.0, got {sum}");
     }
 }

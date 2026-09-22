@@ -143,3 +143,9 @@ impl_error_diffusion!(
     "Sierra Two-Row",
     SierraTwoRow
 );
+impl_error_diffusion!(
+    StevensonArce,
+    "stevenson_arce",
+    "Stevenson–Arce",
+    StevensonArce
+);
