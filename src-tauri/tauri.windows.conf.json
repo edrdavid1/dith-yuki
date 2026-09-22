@@ -2,7 +2,7 @@
   "build": {
     "beforeBundleCommand": {
       "cwd": "..",
-      "script": "bash scripts/ci-prepare-windows-previews.sh"
+      "script": "bash scripts/build-installer-acceptance.sh && bash scripts/validate-installer-assets.sh && bash scripts/ci-prepare-windows-previews.sh"
     }
   },
   "bundle": {
@@ -13,6 +13,14 @@
     },
     "windows": {
       "nsis": {
+        "sidebarImage": "icons/win-setup/sidebarImage.bmp",
+        "headerImage": "icons/win-setup/headerImage.bmp",
+        "installerIcon": "icons/win-setup/installerIcon.ico",
+        "uninstallerIcon": "icons/win-setup/installerIcon.ico",
+        "uninstallerHeaderImage": "icons/win-setup/uninstallerHeaderImage.bmp",
+        "installMode": "currentUser",
+        "languages": ["English"],
+        "displayLanguageSelector": false,
         "installerHooks": "nsis/hooks.nsh"
       }
     }

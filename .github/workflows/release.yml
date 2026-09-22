@@ -1,6 +1,6 @@
 name: Release
 
-# Tag push: v0.3.0 (stable) or v0.3.0-alpha.1 / v0.3.0-beta.1 / v0.3.0-rc.1 (prerelease).
+# Tag push: v0.4.0 (stable) or v0.4.1-alpha / v0.4.2-alpha / v0.4.0-beta.1 (prerelease).
 on:
   push:
     tags:
@@ -231,6 +231,18 @@ jobs:
         run: |
           npm install
           npm install --prefix frontend
+
+      - name: Build installer acceptance text
+        shell: bash
+        run: |
+          chmod +x scripts/build-installer-acceptance.sh
+          bash scripts/build-installer-acceptance.sh
+
+      - name: Validate NSIS installer assets
+        shell: bash
+        run: |
+          chmod +x scripts/validate-installer-assets.sh
+          bash scripts/validate-installer-assets.sh
 
       - name: Build Windows shell thumbnail DLL
         shell: bash

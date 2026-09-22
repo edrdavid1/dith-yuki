@@ -1,6 +1,6 @@
 {
   "productName": "Dither Yuki",
-  "version": "0.3.0-alpha.13",
+  "version": "0.4.1-alpha",
   "identifier": "com.dither.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -39,9 +39,10 @@
       "dmg"
     ],
     "publisher": "L'eco non di Bergamo",
-    "copyright": "Copyright \u00a9 2026 L'eco non di Bergamo",
+    "copyright": "Copyright \u00a9 2026 David Murashka, operating as L'eco non di Bergamo",
     "homepage": "https://github.com/edrdavid1/dith-yuki",
-    "license": "FCL-1.0",
+    "license": "LicenseRef-LNDBL-Software-1.0",
+    "licenseFile": "../docs/legal/INSTALLER_ACCEPTANCE.txt",
     "category": "GraphicsAndDesign",
     "shortDescription": "Tile-based dithering studio for pixel art, palettes, and layered images.",
     "longDescription": "Dither Yuki is a desktop image editor for artists and designers. It applies ordered and error-diffusion dithering, palette quantization, and layer compositing with a tile-based preview so large documents stay responsive. Projects use the .dyproj archive; shareable patterns use .dyuki.",

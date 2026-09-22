@@ -60,7 +60,7 @@ Use the [bug report template](https://github.com/edrdavid1/dith-yuki/issues/new?
 
 ## For developers
 
-Built with **Rust** (Tauri 2) and **React**. Source is under the Fair Core License 1.0 (MIT future license) — see [LICENSE](./LICENSE).
+Built with **Rust** (Tauri 2) and **React**. Source is under the L'eco non di Bergamo Software License — see [LICENSE](./LICENSE). The desktop app is governed by [docs/legal/USER_AGREEMENT.txt](./docs/legal/USER_AGREEMENT.txt).
 
 ### Run from source
 

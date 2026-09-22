@@ -1,0 +1,53 @@
+DITHER YUKI — END USER LICENSE AGREEMENT
+
+Last updated: September 22, 2026
+
+This End User License Agreement ("Agreement") is between you and David Murashka, an independent developer operating under the name "L'eco non di Bergamo" ("we", "us"), and governs your use of the Dither Yuki application ("the Software"), including alpha and beta versions.
+
+1. ACCEPTANCE
+
+By downloading, installing, or using the Software, you agree to this Agreement. If you do not agree, do not install or use the Software.
+
+2. LICENSE GRANT AND USAGE RESTRICTIONS
+
+Subject to this Agreement, we grant you a personal, non-exclusive, non-transferable, revocable license to install and use the Software on devices you own or control, for both personal and commercial use.
+
+The source code of the Software, where made available, is licensed separately under the L'eco non di Bergamo Software License (see LICENSE file). This Agreement governs your use of the compiled application.
+
+You are fully authorized to use the Software to create commercial products. However, you are strictly prohibited from selling, renting, repackaging, or monetizing the Software itself or its underlying source code.
+
+3. ALPHA / PRE-RELEASE SOFTWARE
+
+The Software is provided as an early, pre-release version for testing purposes. It may contain bugs, incomplete features, and may crash, lose data, or behave unpredictably. You should not rely on the Software for critical or production work, and you are strongly encouraged to save your work frequently and keep independent backups of any files you create or edit with the Software. Features, file formats, and this Agreement may change significantly between the alpha/beta version and any future release, without obligation to maintain compatibility.
+
+4. NO WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. WE DO NOT WARRANT THAT THE SOFTWARE WILL BE UNINTERRUPTED, ERROR-FREE, OR THAT ANY DATA LOSS WILL NOT OCCUR.
+
+5. LIMITATION OF LIABILITY
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL WE BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR ANY LOSS OF DATA, PROFITS, OR REVENUE, ARISING OUT OF OR RELATED TO YOUR USE OF THE SOFTWARE, EVEN IF WE HAVE BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+Mandatory Consumer Protections: Nothing in this Agreement limits or excludes our liability for death or personal injury caused by our negligence, for fraud, or for any other liability that cannot be excluded or limited by applicable law (including mandatory consumer protection laws in your jurisdiction).
+
+6. YOUR CONTENT AND DATA PRIVACY
+
+You retain all rights, copyright, and ownership to images, projects, media, and files you create or process using the Software (including .dyproj and .dyuki files). You may freely sell and monetize these files.
+
+We respect your privacy. The Software operates locally. We do not access, collect, transmit, or store your files, project data, or personal usage analytics (telemetry) unless you explicitly opt-in to use a specific feature that requires it (e.g., submitting a voluntary crash report or feedback).
+
+7. FEEDBACK
+
+If you provide feedback, bug reports, or suggestions about the Software, you grant us a perpetual, irrevocable, royalty-free license to use that feedback for any purpose, including improving the Software, without any obligation to compensate you.
+
+8. TERMINATION
+
+This Agreement is effective until terminated. We may terminate your license if you violate this Agreement. Upon termination, you must stop using the Software. As this includes alpha/beta builds, we may also discontinue access to these pre-release versions at any time, with or without notice, as they are provided for testing purposes only.
+
+9. CHANGES TO THIS AGREEMENT
+
+We may update this Agreement from time to time. Continued use of the Software after changes take effect constitutes acceptance of the updated Agreement.
+
+10. GOVERNING LAW
+
+This Agreement is governed by the laws of the Republic of Lithuania, without regard to its conflict of law principles, unless overriding mandatory consumer protection laws in your country of residence dictate otherwise.

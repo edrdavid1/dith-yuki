@@ -6,9 +6,10 @@ How we cut macOS/Windows builds, sign updater artifacts, and ship a public alpha
 
 | Tag example | Release title | Updater (`/releases/latest`) |
 |---|---|---|
-| `v0.3.0-alpha.1` | `Dither Yuki v0.3.0-alpha.1 (alpha)` | Becomes latest (see note) |
-| `v0.3.0-beta.1` / `v0.3.0-rc.1` | `… (alpha)` suffix | Same |
-| `v0.3.0` | `Dither Yuki v0.3.0` | Stable latest |
+| `v0.4.1-alpha` | `Dither Yuki v0.4.1-alpha (alpha)` | Becomes latest (see note) |
+| `v0.4.2-alpha` | next alpha in the 0.4 line (patch digit) | Same |
+| `v0.4.0-beta.1` / `v0.4.0-rc.1` | `… (alpha)` suffix when applicable | Same |
+| `v0.4.0` | `Dither Yuki v0.4.0` | Stable latest |
 
 Workflow: [`.github/workflows/release.yml`](../.github/workflows/release.yml) on `push` of `v*`.
 
@@ -69,9 +70,12 @@ Full alpha signing guide (macOS + Windows self-sign): [`SIGNING_ALPHA.md`](./SIG
 2. Update release notes intent (alpha scope: no paint / ICC / video).
 3. Commit, then:
 
+Alpha builds use `0.4.N-alpha` (no `alpha.K` suffix): **N** is the alpha
+iteration within the minor line (`0.4.1-alpha`, then `0.4.2-alpha`, …).
+
 ```bash
-git tag -a v0.3.0-alpha.1 -m "Dither Yuki 0.3.0-alpha.1"
-git push origin v0.3.0-alpha.1
+git tag -a v0.4.1-alpha -m "Dither Yuki 0.4.1-alpha"
+git push origin v0.4.1-alpha
 ```
 
 4. Watch Actions → **Release**. macOS job builds Quick Look `.appex`, creates the
@@ -99,4 +103,4 @@ Enable Pages once: repo **Settings → Pages → Source: GitHub Actions**, then 
 
 ## License note for download pages
 
-Source is **Fair Core License 1.0** (MIT future license) — say “source available”, not “MIT open source today”.
+Source is under the **L'eco non di Bergamo Software License** — see [LICENSE](../LICENSE) and [USER_AGREEMENT.txt](./legal/USER_AGREEMENT.txt) for the desktop app.

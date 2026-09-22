@@ -5,6 +5,109 @@ Journal of findings and choices while implementing
 
 ---
 
+## 2026-09-22 — Windows NSIS installer branding
+
+Source: `.local-doc/SPEC_dither_installer_branding.md`.
+
+### Assets pipeline
+
+- Source PNGs / ICO live in `src-tauri/icons/win-setup/` (design export).
+- Converted to BMP3 24-bit BI_RGB via Pillow (ImageMagick not required on
+  agent machine): `sidebarImage.bmp` 164×314, `headerImage.bmp` 150×57,
+  `uninstallerHeaderImage.bmp` 150×57. Exact sizes matched source PNG;
+  no forced resize/distort.
+- `installerIcon.ico` already contains 16 / 32 / 48 / 256 (plus 64 / 128).
+- Wired in `tauri.windows.conf.json` → `bundle.windows.nsis.*`.
+- Validator: `scripts/validate-installer-assets.sh` (Python BMP/ICO header
+  parse). Runs in `beforeBundleCommand` (Windows) and as an explicit step
+  in `.github/workflows/release.yml` / `windows-release.yml` before NSIS
+  build. Fail-loud; no auto-reconvert.
+
+### Installer copy (product text, 2026-09-22)
+
+Final English copy wired in `src-tauri/nsis/hooks.nsh` via `!define MUI_*`
+(Welcome / License / Directory / Finish / Uninstall confirm). **No custom
+`nsis.template`** — SPEC §0 forbids it; overrides work because hooks are
+`!include`'d before `MUI_PAGE_*`.
+
+End-user agreement: `docs/legal/USER_AGREEMENT.txt` (edit this). Software
+license remains `LICENSE`. Installer license page shows the generated
+`docs/legal/INSTALLER_ACCEPTANCE.txt` (agreement + LICENSE), rebuilt by
+`scripts/build-installer-acceptance.sh` before Windows bundle / in CI.
+`bundle.licenseFile` points at that generated file.
+
+Corrections vs a draft that suggested a full `.nsi` fork:
+- `nsis.license` is not a Tauri field — license page uses
+  `bundle.licenseFile` (`../LICENSE`, FCL-1.0 text).
+- Header bitmap is **150×57**, sidebar **164×314** (not 164×314 for header).
+- `LangString` after `MUI_LANGUAGE` cannot drive Welcome/Finish in Tauri’s
+  template (pages are inserted *before* language files). Direct `MUI_*`
+  defines in hooks are the right mechanism.
+- Do not hardcode `MUI_FINISHPAGE_RUN` to an `.exe` path — Cargo binary is
+  `dither.exe`; Tauri already uses `RunMainBinary`.
+- Welcome text uses `$${VERSION}` so version expands after Tauri’s
+  `!define VERSION`, not as empty at hooks-include time.
+- InstFiles subtitle from the copy sheet was **not** applied (global
+  `MUI_PAGE_HEADER_*` would leak onto other pages).
+
+Uninstall confirm explicitly states `.dyproj` / exports are kept.
+
+### ПРОВЕРИТЬ — `installMode` (schema, `@tauri-apps/cli` 2.11.4)
+
+Checked `node_modules/@tauri-apps/cli/config.schema.json` →
+`definitions.NSISInstallerMode`:
+
+| Value | Effect (from schema) |
+|---|---|
+| `currentUser` (default) | No admin; metadata under HKCU |
+| `perMachine` | Admin; Program Files; HKLM |
+| `both` | User chooses at install; **still requires admin** even for per-user |
+
+**Interim choice:** `currentUser` (schema default + SPEC example). Earlier
+previews note preferred per-machine for HKLM ShellEx; hooks already use
+`SHCTX`, so HKCU registration works under currentUser. Final mode still
+open (§6.4).
+
+### ПРОВЕРИТЬ — Finish sidebar vs Welcome
+
+Schema `NsisConfig.sidebarImage`: *“bitmap for the Welcome page and the
+Finish page”* — single shared image. No separate Finish sidebar parameter
+in CLI 2.11.4. Confirmed in upstream `installer.nsi`: one
+`MUI_WELCOMEFINISHPAGE_BITMAP`.
+
+### ПРОВЕРИТЬ — `installerHooks` vs MUI copy overrides
+
+Upstream template (`tauri` `installer.nsi`): `!include "{{installer_hooks}}"`
+runs **before** `!define PRODUCTNAME` / `VERSION` and before
+`!insertmacro MUI_PAGE_*`. Static `!define MUI_WELCOMEPAGE_*` /
+`MUI_FINISHPAGE_*` in `hooks.nsh` apply. Product copy is now set there
+(see above). `NSIS_HOOK_*` macros remain for install/uninstall side effects
+only.
+
+### ПРОВЕРИТЬ — macOS `cargo-xwin` vs `windows-latest` identity
+
+Not verified this session (no release build / binary compare). Release
+artifacts MUST continue to come from `windows-latest` jobs; macOS
+cross-compile remains optional for local iteration only.
+
+### §6 status
+
+1. Welcome / Finish / License / Directory / Uninstall copy — **set**.
+2. Publisher/copyright — already `L'eco non di Bergamo` in `tauri.conf.json`.
+3. License page — **on** via `bundle.licenseFile` →
+   `docs/legal/INSTALLER_ACCEPTANCE.txt` (USER_AGREEMENT + LICENSE).
+4. `installMode` — interim `currentUser` (still confirm).
+5. Languages — interim `["English"]`, selector off.
+6. Assets — `win-setup` BMPs/ICO.
+7. Finish sidebar — shared with Welcome.
+
+### §5.3 checklist
+
+Not run this session (no Wine / Windows VM pass). DoD incomplete until
+VM checklist is documented.
+
+---
+
 ## 2026-09-21 — Previews SPEC: Stage A + early ПРОВЕРИТЬ
 
 Source: `.local-doc/SPEC_dither_previews_full.md`.

@@ -1,9 +1,9 @@
 {
   "name": "dither",
-  "version": "0.3.0-alpha.13",
+  "version": "0.4.1-alpha",
   "description": "Dither Yuki \u2014 tile-based dithering studio for pixel art, palettes, and layered images",
   "author": "L'eco non di Bergamo",
-  "license": "LicenseRef-FCL-1.0",
+  "license": "LicenseRef-LNDBL-Software-1.0",
   "homepage": "https://github.com/edrdavid1/dith-yuki",
   "repository": {
     "type": "git",
@@ -25,6 +25,7 @@
     "fresh": "npm run clean && tauri dev",
     "reset": "npm run clean:all && npm run setup",
     "lint:no-magic-doc1": "bash scripts/check-no-magic-doc1.sh",
+    "lint:installer-assets": "bash scripts/validate-installer-assets.sh",
     "release:verify": "bash scripts/verify-release-chain.sh"
   },
   "dependencies": {
