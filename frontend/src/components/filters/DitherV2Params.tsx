@@ -28,6 +28,7 @@ type SimpleDitherMode =
   | 'stucki'
   | 'burkes'
   | 'fan93'
+  | 'ostromoukhov'
   | 'sierra'
   | 'sierra_lite'
   | 'sierra_two_row'
@@ -62,6 +63,7 @@ function modeToSimple(mode: DitherModeV2): SimpleDitherMode {
       'stucki',
       'burkes',
       'fan93',
+      'ostromoukhov',
       'sierra',
       'sierra_lite',
       'sierra_two_row',
@@ -150,6 +152,7 @@ function DitherV2Params({ mode, levels, thresholdScale, pixelSize, colorMode, pa
           { value: 'stucki', label: 'Stucki' },
           { value: 'burkes', label: 'Burkes' },
           { value: 'fan93', label: 'Fan 93' },
+          { value: 'ostromoukhov', label: 'Ostromoukhov' },
           { value: 'sierra', label: 'Sierra' },
           { value: 'sierra_lite', label: 'Sierra Lite' },
           { value: 'sierra_two_row', label: 'Sierra Two-Row' },

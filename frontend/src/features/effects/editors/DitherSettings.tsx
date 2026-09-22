@@ -25,6 +25,7 @@ type SimpleDitherMode =
   | 'stucki'
   | 'burkes'
   | 'fan93'
+  | 'ostromoukhov'
   | 'sierra'
   | 'sierra_lite'
   | 'sierra_two_row'
@@ -48,6 +49,7 @@ const SIMPLE_MODES: SimpleDitherMode[] = [
   'stucki',
   'burkes',
   'fan93',
+  'ostromoukhov',
   'sierra',
   'sierra_lite',
   'sierra_two_row',
@@ -154,6 +156,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
     'stucki',
     'burkes',
     'fan93',
+    'ostromoukhov',
     'sierra',
     'sierra_lite',
     'sierra_two_row',
@@ -211,6 +214,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
           { value: 'stucki', label: 'Stucki' },
           { value: 'burkes', label: 'Burkes' },
           { value: 'fan93', label: 'Fan 93' },
+          { value: 'ostromoukhov', label: 'Ostromoukhov' },
           { value: 'sierra', label: 'Sierra' },
           { value: 'sierra_lite', label: 'Sierra Lite' },
           { value: 'sierra_two_row', label: 'Sierra Two-Row' },

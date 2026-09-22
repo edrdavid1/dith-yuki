@@ -85,6 +85,8 @@ pub enum DiffusionKernel {
     ShiauFan,
     /// Stevenson–Arce hexagonal filter (divisor 200). Cell reach 3.
     StevensonArce,
+    /// Ostromoukhov (SIGGRAPH 2001) variable-coefficient 3-tap. Cell reach 1.
+    Ostromoukhov,
 }
 
 impl DiffusionKernel {
@@ -210,6 +212,12 @@ impl DiffusionKernel {
                 (1, 3, 12.0 / 200.0),
                 (3, 3, 5.0 / 200.0),
             ],
+            // Positions for margin; live weights from [`crate::filters::ostromoukhov_table`].
+            Self::Ostromoukhov => &[
+                (1, 0, 13.0 / 18.0),
+                (-1, 1, 0.0),
+                (0, 1, 5.0 / 18.0),
+            ],
         }
     }
 
@@ -227,12 +235,13 @@ impl DiffusionKernel {
             "SierraLite" => Some(Self::SierraLite),
             "ShiauFan" => Some(Self::ShiauFan),
             "StevensonArce" => Some(Self::StevensonArce),
+            "Ostromoukhov" => Some(Self::Ostromoukhov),
             _ => None,
         }
     }
 
-    /// Max |dx| / |dy| in kernel cells (FS = 1, Atkinson / JJN / … = 2,
-    /// Shiau–Fan / Stevenson–Arce = 3).
+    /// Max |dx| / |dy| in kernel cells (FS / Ostromoukhov = 1, Atkinson / JJN /
+    /// … = 2, Shiau–Fan / Stevenson–Arce = 3).
     pub fn max_offset(self) -> usize {
         self.offsets()
             .iter()
@@ -289,6 +298,8 @@ pub enum DitherModeV2 {
     ShiauFan,
     #[serde(rename = "stevenson_arce")]
     StevensonArce,
+    #[serde(rename = "ostromoukhov")]
+    Ostromoukhov,
     /// CMYK angled-screen halftone (ordered path, no ED).
     CmykHalftone,
     /// CMYK screens with user-rotatable base angle (`pattern_angle` offset).
@@ -314,6 +325,7 @@ impl DitherModeV2 {
                 | Self::SierraLite
                 | Self::ShiauFan
                 | Self::StevensonArce
+                | Self::Ostromoukhov
         )
     }
 
@@ -331,6 +343,7 @@ impl DitherModeV2 {
             Self::SierraLite => Some(DiffusionKernel::SierraLite),
             Self::ShiauFan => Some(DiffusionKernel::ShiauFan),
             Self::StevensonArce => Some(DiffusionKernel::StevensonArce),
+            Self::Ostromoukhov => Some(DiffusionKernel::Ostromoukhov),
             _ => None,
         }
     }
@@ -356,6 +369,7 @@ impl DitherModeV2 {
             Self::SierraTwoRow => Some("sierra_two_row"),
             Self::ShiauFan => Some("shiau_fan"),
             Self::StevensonArce => Some("stevenson_arce"),
+            Self::Ostromoukhov => Some("ostromoukhov"),
             Self::CmykHalftone => Some("cmyk_halftone"),
             Self::HalftoneScreenAngled => Some("halftone_screen_angled"),
             Self::Wave => Some("wave"),
@@ -552,6 +566,7 @@ impl From<(DitherMode, u8)> for DitherParamsV2 {
                 DiffusionKernel::SierraLite => DitherModeV2::SierraLite,
                 DiffusionKernel::ShiauFan => DitherModeV2::ShiauFan,
                 DiffusionKernel::StevensonArce => DitherModeV2::StevensonArce,
+                DiffusionKernel::Ostromoukhov => DitherModeV2::Ostromoukhov,
             },
         };
         DitherParamsV2 {
@@ -1113,6 +1128,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         | "sierra_two_row"
         | "shiau_fan"
         | "stevenson_arce"
+        | "ostromoukhov"
         | "cmyk_halftone"
         | "halftone_screen_angled"
         | "wave" => Some(FilterKind::Dither),
@@ -1556,6 +1572,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&DitherModeV2::StevensonArce).unwrap(),
             serde_json::json!("stevenson_arce")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::Ostromoukhov).unwrap(),
+            serde_json::json!("ostromoukhov")
         );
         assert_eq!(
             serde_json::to_value(&DitherModeV2::SierraTwoRow).unwrap(),

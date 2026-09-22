@@ -57,6 +57,11 @@ fn apply_ed(
     ctx: &dyn FilterCtx,
 ) -> Result<(), FilterError> {
     params.mode = mode;
+    // Ostromoukhov SIGGRAPH 2001 is specified with serpentine scan; force it so
+    // registry parity matches the published algorithm regardless of UI default.
+    if matches!(params.mode, DitherModeV2::Ostromoukhov) {
+        params.serpentine = true;
+    }
     let ctx = FilterContext::from_ctx(ctx);
     let src = scratch_src(tile);
     apply_error_diffusion_with_cache_into(
@@ -151,3 +156,4 @@ impl_error_diffusion!(
     "Stevenson–Arce",
     StevensonArce
 );
+impl_error_diffusion!(Ostromoukhov, "ostromoukhov", "Ostromoukhov", Ostromoukhov);

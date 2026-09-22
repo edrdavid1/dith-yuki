@@ -100,6 +100,7 @@ export const DITHERING_ALGORITHM_IDS: readonly string[] = [
   'stucki',
   'burkes',
   'fan93',
+  'ostromoukhov',
   'sierra',
   'sierra_lite',
   'sierra_two_row',
