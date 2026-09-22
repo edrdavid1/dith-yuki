@@ -1,0 +1,8 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "kind": "Dither",
+  "params": {"DitherV2": {"mode": "stevenson_arce", "levels": 4}},
+  "enabled": true,
+  "algorithm_id": "stevenson_arce",
+  "schema_version": 1
+}
