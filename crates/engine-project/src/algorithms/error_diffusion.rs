@@ -143,6 +143,7 @@ impl_error_diffusion!(
     "Sierra Two-Row",
     SierraTwoRow
 );
+impl_error_diffusion!(ShiauFan, "shiau_fan", "Shiau–Fan", ShiauFan);
 impl_error_diffusion!(
     StevensonArce,
     "stevenson_arce",

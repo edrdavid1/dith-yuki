@@ -34,6 +34,7 @@ const REGISTRY_IDS = [
   'sierra',
   'sierra_lite',
   'sierra_two_row',
+  'shiau_fan',
   'stevenson_arce',
   'stucki',
   'wave',

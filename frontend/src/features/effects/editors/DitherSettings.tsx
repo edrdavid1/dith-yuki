@@ -27,6 +27,7 @@ type SimpleDitherMode =
   | 'sierra'
   | 'sierra_lite'
   | 'sierra_two_row'
+  | 'shiau_fan'
   | 'stevenson_arce'
   | 'cmyk_halftone'
   | 'wave';
@@ -48,6 +49,7 @@ const SIMPLE_MODES: SimpleDitherMode[] = [
   'sierra',
   'sierra_lite',
   'sierra_two_row',
+  'shiau_fan',
   'stevenson_arce',
   'cmyk_halftone',
   'wave',
@@ -152,6 +154,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
     'sierra',
     'sierra_lite',
     'sierra_two_row',
+    'shiau_fan',
     'stevenson_arce',
   ].includes(simpleMode);
   const serpentine = Boolean(params.serpentine);
@@ -207,6 +210,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
           { value: 'sierra', label: 'Sierra' },
           { value: 'sierra_lite', label: 'Sierra Lite' },
           { value: 'sierra_two_row', label: 'Sierra Two-Row' },
+          { value: 'shiau_fan', label: 'Shiau–Fan' },
           { value: 'stevenson_arce', label: 'Stevenson–Arce' },
           { value: 'bayer_2x2', label: 'Bayer 2×2' },
           { value: 'bayer_4x4', label: 'Bayer 4×4' },

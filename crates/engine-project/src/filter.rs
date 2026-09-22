@@ -79,6 +79,8 @@ pub enum DiffusionKernel {
     SierraTwoRow,
     /// Sierra Lite / Sierra-2-4A (divisor 4).
     SierraLite,
+    /// Shiau–Fan (SPIE 1996 / US5353127 preferred, divisor 16). Cell reach 3.
+    ShiauFan,
     /// Stevenson–Arce hexagonal filter (divisor 200). Cell reach 3.
     StevensonArce,
 }
@@ -171,6 +173,16 @@ impl DiffusionKernel {
                 (-1, 1, 1.0 / 4.0),
                 (0, 1, 1.0 / 4.0),
             ],
+            // Shiau–Fan (preferred / ShiauFan2): * 8 / 1 1 2 4  (÷16). Sum = 1.0.
+            // Sources: US5353127; DitherPunk SHIAU_FAN_2; libpipi shiaufan2;
+            // ionathanch Error-Diffusion-Dither-Kernels wiki.
+            Self::ShiauFan => &[
+                (1, 0, 8.0 / 16.0),
+                (-3, 1, 1.0 / 16.0),
+                (-2, 1, 1.0 / 16.0),
+                (-1, 1, 2.0 / 16.0),
+                (0, 1, 4.0 / 16.0),
+            ],
             // Stevenson–Arce (hexagonal): * . 32 / 12 . 26 . 30 . 16 / …
             // ÷200. Sum = 1.0. Offset column = 3 in a 7-wide matrix.
             // Sources: bisqwit error_diffusion.txt; ImageSharp StevensonArce.
@@ -202,13 +214,14 @@ impl DiffusionKernel {
             "Sierra" => Some(Self::Sierra),
             "SierraTwoRow" => Some(Self::SierraTwoRow),
             "SierraLite" => Some(Self::SierraLite),
+            "ShiauFan" => Some(Self::ShiauFan),
             "StevensonArce" => Some(Self::StevensonArce),
             _ => None,
         }
     }
 
     /// Max |dx| / |dy| in kernel cells (FS = 1, Atkinson / JJN / … = 2,
-    /// Stevenson–Arce = 3).
+    /// Shiau–Fan / Stevenson–Arce = 3).
     pub fn max_offset(self) -> usize {
         self.offsets()
             .iter()
@@ -259,6 +272,8 @@ pub enum DitherModeV2 {
     SierraTwoRow,
     #[serde(rename = "sierra_lite")]
     SierraLite,
+    #[serde(rename = "shiau_fan")]
+    ShiauFan,
     #[serde(rename = "stevenson_arce")]
     StevensonArce,
     /// CMYK angled-screen halftone (ordered path, no ED).
@@ -283,6 +298,7 @@ impl DitherModeV2 {
                 | Self::Sierra
                 | Self::SierraTwoRow
                 | Self::SierraLite
+                | Self::ShiauFan
                 | Self::StevensonArce
         )
     }
@@ -298,6 +314,7 @@ impl DitherModeV2 {
             Self::Sierra => Some(DiffusionKernel::Sierra),
             Self::SierraTwoRow => Some(DiffusionKernel::SierraTwoRow),
             Self::SierraLite => Some(DiffusionKernel::SierraLite),
+            Self::ShiauFan => Some(DiffusionKernel::ShiauFan),
             Self::StevensonArce => Some(DiffusionKernel::StevensonArce),
             _ => None,
         }
@@ -321,6 +338,7 @@ impl DitherModeV2 {
             Self::Sierra => Some("sierra"),
             Self::SierraLite => Some("sierra_lite"),
             Self::SierraTwoRow => Some("sierra_two_row"),
+            Self::ShiauFan => Some("shiau_fan"),
             Self::StevensonArce => Some("stevenson_arce"),
             Self::CmykHalftone => Some("cmyk_halftone"),
             Self::HalftoneScreenAngled => Some("halftone_screen_angled"),
@@ -515,6 +533,7 @@ impl From<(DitherMode, u8)> for DitherParamsV2 {
                 DiffusionKernel::Sierra => DitherModeV2::Sierra,
                 DiffusionKernel::SierraTwoRow => DitherModeV2::SierraTwoRow,
                 DiffusionKernel::SierraLite => DitherModeV2::SierraLite,
+                DiffusionKernel::ShiauFan => DitherModeV2::ShiauFan,
                 DiffusionKernel::StevensonArce => DitherModeV2::StevensonArce,
             },
         };
@@ -1074,6 +1093,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         | "sierra"
         | "sierra_lite"
         | "sierra_two_row"
+        | "shiau_fan"
         | "stevenson_arce"
         | "cmyk_halftone"
         | "halftone_screen_angled"
@@ -1506,6 +1526,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&DitherModeV2::SierraLite).unwrap(),
             serde_json::json!("sierra_lite")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::ShiauFan).unwrap(),
+            serde_json::json!("shiau_fan")
         );
         assert_eq!(
             serde_json::to_value(&DitherModeV2::StevensonArce).unwrap(),
@@ -2075,6 +2099,28 @@ mod tests {
             sum += got.2;
         }
         assert!((sum - 1.0).abs() < 1e-6, "Sierra Lite weights must sum to 1.0, got {sum}");
+    }
+
+    #[test]
+    fn shiau_fan_kernel_matches_published_coefficients() {
+        let offs = DiffusionKernel::ShiauFan.offsets();
+        let expected: &[(i32, i32, f32)] = &[
+            (1, 0, 8.0 / 16.0),
+            (-3, 1, 1.0 / 16.0),
+            (-2, 1, 1.0 / 16.0),
+            (-1, 1, 2.0 / 16.0),
+            (0, 1, 4.0 / 16.0),
+        ];
+        assert_eq!(offs.len(), expected.len());
+        let mut sum = 0.0f32;
+        for (got, exp) in offs.iter().zip(expected.iter()) {
+            assert_eq!(got.0, exp.0);
+            assert_eq!(got.1, exp.1);
+            assert!((got.2 - exp.2).abs() < 1e-6, "{} vs {}", got.2, exp.2);
+            sum += got.2;
+        }
+        assert_eq!(DiffusionKernel::ShiauFan.max_offset(), 3);
+        assert!((sum - 1.0).abs() < 1e-6, "Shiau–Fan weights must sum to 1.0, got {sum}");
     }
 
     #[test]

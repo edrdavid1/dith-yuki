@@ -102,6 +102,7 @@ export const DITHERING_ALGORITHM_IDS: readonly string[] = [
   'sierra',
   'sierra_lite',
   'sierra_two_row',
+  'shiau_fan',
   'stevenson_arce',
   'cmyk_halftone',
   'wave',
