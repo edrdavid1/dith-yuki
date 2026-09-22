@@ -92,6 +92,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "crt",
         "curves",
         "dispersed_dot_ordered",
+        "fan93",
         "floyd_steinberg",
         "glitch",
         "glow",
@@ -200,6 +201,10 @@ fn register_all_ids_unique() {
         "Batch B must register shiau_fan"
     );
     assert!(
+        registry.get_by_str("fan93").is_some(),
+        "Batch B must register fan93"
+    );
+    assert!(
         registry.get_by_str("stevenson_arce").is_some(),
         "Batch B must register stevenson_arce"
     );
@@ -209,8 +214,8 @@ fn register_all_ids_unique() {
     );
     assert_eq!(
         all_ids.len(),
-        25,
-        "must register all 25 built-in algorithms"
+        26,
+        "must register all 26 built-in algorithms"
     );
 }
 
@@ -257,7 +262,7 @@ fn migration_corpus() {
         );
     }
     assert_eq!(
-        count, 25,
+        count, 26,
         "expected one migration fixture per built-in algorithm"
     );
 }

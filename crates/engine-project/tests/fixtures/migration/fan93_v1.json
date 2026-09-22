@@ -1,0 +1,8 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "kind": "Dither",
+  "params": {"DitherV2": {"mode": "fan93", "levels": 4}},
+  "enabled": true,
+  "algorithm_id": "fan93",
+  "schema_version": 1
+}

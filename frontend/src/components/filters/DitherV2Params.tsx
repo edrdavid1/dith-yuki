@@ -27,6 +27,7 @@ type SimpleDitherMode =
   | 'jarvis_judice_ninke'
   | 'stucki'
   | 'burkes'
+  | 'fan93'
   | 'sierra'
   | 'sierra_lite'
   | 'sierra_two_row'
@@ -60,6 +61,7 @@ function modeToSimple(mode: DitherModeV2): SimpleDitherMode {
       'jarvis_judice_ninke',
       'stucki',
       'burkes',
+      'fan93',
       'sierra',
       'sierra_lite',
       'sierra_two_row',
@@ -147,6 +149,7 @@ function DitherV2Params({ mode, levels, thresholdScale, pixelSize, colorMode, pa
           { value: 'jarvis_judice_ninke', label: 'Jarvis-Judice-Ninke' },
           { value: 'stucki', label: 'Stucki' },
           { value: 'burkes', label: 'Burkes' },
+          { value: 'fan93', label: 'Fan 93' },
           { value: 'sierra', label: 'Sierra' },
           { value: 'sierra_lite', label: 'Sierra Lite' },
           { value: 'sierra_two_row', label: 'Sierra Two-Row' },

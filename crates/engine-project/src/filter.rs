@@ -74,6 +74,8 @@ pub enum DiffusionKernel {
     JarvisJudiceNinke,
     Stucki,
     Burkes,
+    /// Zhigang Fan (1993) FS derivative (divisor 16).
+    Fan93,
     Sierra,
     /// Frankie Sierra two-row filter (divisor 16).
     SierraTwoRow,
@@ -143,6 +145,14 @@ impl DiffusionKernel {
                 (1, 1, 4.0 / 32.0),
                 (2, 1, 2.0 / 32.0),
             ],
+            // Fan (1993): * 7 / 1 3 5  (÷16). Sum = 1.0. FS with left-shifted bottom.
+            // Sources: ionathanch Error-Diffusion-Dither-Kernels; caca study part3.
+            Self::Fan93 => &[
+                (1, 0, 7.0 / 16.0),
+                (-1, 1, 1.0 / 16.0),
+                (0, 1, 3.0 / 16.0),
+                (1, 1, 5.0 / 16.0),
+            ],
             Self::Sierra => &[
                 (1, 0, 5.0 / 32.0),
                 (2, 0, 3.0 / 32.0),
@@ -211,6 +221,7 @@ impl DiffusionKernel {
             "JarvisJudiceNinke" => Some(Self::JarvisJudiceNinke),
             "Stucki" => Some(Self::Stucki),
             "Burkes" => Some(Self::Burkes),
+            "Fan93" => Some(Self::Fan93),
             "Sierra" => Some(Self::Sierra),
             "SierraTwoRow" => Some(Self::SierraTwoRow),
             "SierraLite" => Some(Self::SierraLite),
@@ -267,6 +278,8 @@ pub enum DitherModeV2 {
     JarvisJudiceNinke,
     Stucki,
     Burkes,
+    #[serde(rename = "fan93")]
+    Fan93,
     Sierra,
     #[serde(rename = "sierra_two_row")]
     SierraTwoRow,
@@ -295,6 +308,7 @@ impl DitherModeV2 {
                 | Self::JarvisJudiceNinke
                 | Self::Stucki
                 | Self::Burkes
+                | Self::Fan93
                 | Self::Sierra
                 | Self::SierraTwoRow
                 | Self::SierraLite
@@ -311,6 +325,7 @@ impl DitherModeV2 {
             Self::JarvisJudiceNinke => Some(DiffusionKernel::JarvisJudiceNinke),
             Self::Stucki => Some(DiffusionKernel::Stucki),
             Self::Burkes => Some(DiffusionKernel::Burkes),
+            Self::Fan93 => Some(DiffusionKernel::Fan93),
             Self::Sierra => Some(DiffusionKernel::Sierra),
             Self::SierraTwoRow => Some(DiffusionKernel::SierraTwoRow),
             Self::SierraLite => Some(DiffusionKernel::SierraLite),
@@ -335,6 +350,7 @@ impl DitherModeV2 {
             Self::JarvisJudiceNinke => Some("jarvis_judice_ninke"),
             Self::Stucki => Some("stucki"),
             Self::Burkes => Some("burkes"),
+            Self::Fan93 => Some("fan93"),
             Self::Sierra => Some("sierra"),
             Self::SierraLite => Some("sierra_lite"),
             Self::SierraTwoRow => Some("sierra_two_row"),
@@ -530,6 +546,7 @@ impl From<(DitherMode, u8)> for DitherParamsV2 {
                 DiffusionKernel::JarvisJudiceNinke => DitherModeV2::JarvisJudiceNinke,
                 DiffusionKernel::Stucki => DitherModeV2::Stucki,
                 DiffusionKernel::Burkes => DitherModeV2::Burkes,
+                DiffusionKernel::Fan93 => DitherModeV2::Fan93,
                 DiffusionKernel::Sierra => DitherModeV2::Sierra,
                 DiffusionKernel::SierraTwoRow => DitherModeV2::SierraTwoRow,
                 DiffusionKernel::SierraLite => DitherModeV2::SierraLite,
@@ -1090,6 +1107,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         | "jarvis_judice_ninke"
         | "stucki"
         | "burkes"
+        | "fan93"
         | "sierra"
         | "sierra_lite"
         | "sierra_two_row"
@@ -1518,6 +1536,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&DitherModeV2::Burkes).unwrap(),
             serde_json::json!("burkes")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::Fan93).unwrap(),
+            serde_json::json!("fan93")
         );
         assert_eq!(
             serde_json::to_value(&DitherModeV2::Sierra).unwrap(),
@@ -2099,6 +2121,27 @@ mod tests {
             sum += got.2;
         }
         assert!((sum - 1.0).abs() < 1e-6, "Sierra Lite weights must sum to 1.0, got {sum}");
+    }
+
+    #[test]
+    fn fan93_kernel_matches_published_coefficients() {
+        let offs = DiffusionKernel::Fan93.offsets();
+        let expected: &[(i32, i32, f32)] = &[
+            (1, 0, 7.0 / 16.0),
+            (-1, 1, 1.0 / 16.0),
+            (0, 1, 3.0 / 16.0),
+            (1, 1, 5.0 / 16.0),
+        ];
+        assert_eq!(offs.len(), expected.len());
+        let mut sum = 0.0f32;
+        for (got, exp) in offs.iter().zip(expected.iter()) {
+            assert_eq!(got.0, exp.0);
+            assert_eq!(got.1, exp.1);
+            assert!((got.2 - exp.2).abs() < 1e-6, "{} vs {}", got.2, exp.2);
+            sum += got.2;
+        }
+        assert_eq!(DiffusionKernel::Fan93.max_offset(), 1);
+        assert!((sum - 1.0).abs() < 1e-6, "Fan93 weights must sum to 1.0, got {sum}");
     }
 
     #[test]

@@ -68,6 +68,7 @@ export type DitherModeV2 =
   | 'jarvis_judice_ninke'
   | 'stucki'
   | 'burkes'
+  | 'fan93'
   | 'sierra'
   | 'sierra_lite'
   | 'sierra_two_row'
