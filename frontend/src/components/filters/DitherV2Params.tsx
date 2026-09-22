@@ -28,6 +28,7 @@ type SimpleDitherMode =
   | 'stucki'
   | 'burkes'
   | 'sierra'
+  | 'sierra_lite'
   | 'sierra_two_row';
 
 interface DitherV2ParamsProps {
@@ -58,6 +59,7 @@ function modeToSimple(mode: DitherModeV2): SimpleDitherMode {
       'stucki',
       'burkes',
       'sierra',
+      'sierra_lite',
       'sierra_two_row',
     ];
     if (allowed.includes(mode as SimpleDitherMode)) return mode as SimpleDitherMode;
@@ -142,6 +144,7 @@ function DitherV2Params({ mode, levels, thresholdScale, pixelSize, colorMode, pa
           { value: 'stucki', label: 'Stucki' },
           { value: 'burkes', label: 'Burkes' },
           { value: 'sierra', label: 'Sierra' },
+          { value: 'sierra_lite', label: 'Sierra Lite' },
           { value: 'sierra_two_row', label: 'Sierra Two-Row' },
         ]}
         onSelect={(v) => handleModeChange(v as SimpleDitherMode)}

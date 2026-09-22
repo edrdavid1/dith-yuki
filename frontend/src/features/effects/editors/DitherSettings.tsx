@@ -25,6 +25,7 @@ type SimpleDitherMode =
   | 'stucki'
   | 'burkes'
   | 'sierra'
+  | 'sierra_lite'
   | 'sierra_two_row'
   | 'cmyk_halftone'
   | 'wave';
@@ -44,6 +45,7 @@ const SIMPLE_MODES: SimpleDitherMode[] = [
   'stucki',
   'burkes',
   'sierra',
+  'sierra_lite',
   'sierra_two_row',
   'cmyk_halftone',
   'wave',
@@ -146,6 +148,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
     'stucki',
     'burkes',
     'sierra',
+    'sierra_lite',
     'sierra_two_row',
   ].includes(simpleMode);
   const serpentine = Boolean(params.serpentine);
@@ -199,6 +202,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
           { value: 'stucki', label: 'Stucki' },
           { value: 'burkes', label: 'Burkes' },
           { value: 'sierra', label: 'Sierra' },
+          { value: 'sierra_lite', label: 'Sierra Lite' },
           { value: 'sierra_two_row', label: 'Sierra Two-Row' },
           { value: 'bayer_2x2', label: 'Bayer 2×2' },
           { value: 'bayer_4x4', label: 'Bayer 4×4' },

@@ -32,6 +32,7 @@ const REGISTRY_IDS = [
   'jarvis_judice_ninke',
   'palette_quantize',
   'sierra',
+  'sierra_lite',
   'sierra_two_row',
   'stucki',
   'wave',

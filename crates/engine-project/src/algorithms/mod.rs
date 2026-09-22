@@ -55,6 +55,7 @@ pub fn register_all(registry: &mut AlgorithmRegistry) {
     registry.register(Box::new(error_diffusion::Stucki));
     registry.register(Box::new(error_diffusion::Burkes));
     registry.register(Box::new(error_diffusion::Sierra));
+    registry.register(Box::new(error_diffusion::SierraLite));
     registry.register(Box::new(error_diffusion::SierraTwoRow));
     registry.register(Box::new(wave::Wave));
     registry.register(Box::new(crt::Crt));
