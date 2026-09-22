@@ -221,6 +221,12 @@ fn dither_v2_spec(
                 pattern_angle: params.pattern_angle,
             })
         }
+        // Bayer16x16: CPU-only until a dedicated GPU path is approved (catalog Batch A).
+        DitherModeV2::Bayer16x16
+        | DitherModeV2::CustomPng { .. }
+        | DitherModeV2::Wave => {
+            GraphLayerFilter::CpuCheckpoint(CpuCheckpointKind::IneligibleDither)
+        }
         DitherModeV2::CmykHalftone => {
             if params.threshold_bias != 0.0 {
                 return GraphLayerFilter::CpuCheckpoint(CpuCheckpointKind::IneligibleDither);
@@ -232,9 +238,6 @@ fn dither_v2_spec(
                 dither_alpha: params.dither_alpha,
                 grayscale,
             })
-        }
-        DitherModeV2::CustomPng { .. } | DitherModeV2::Wave => {
-            GraphLayerFilter::CpuCheckpoint(CpuCheckpointKind::IneligibleDither)
         }
         _ => GraphLayerFilter::CpuCheckpoint(CpuCheckpointKind::IneligibleDither),
     }

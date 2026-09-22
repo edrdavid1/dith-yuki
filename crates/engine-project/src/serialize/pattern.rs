@@ -138,6 +138,7 @@ fn min_version_for_dither_mode(mode: &DitherModeV2) -> Option<&'static str> {
         DitherModeV2::Bayer2x2
         | DitherModeV2::Bayer4x4
         | DitherModeV2::Bayer8x8
+        | DitherModeV2::Bayer16x16
         | DitherModeV2::CustomPng { .. }
         | DitherModeV2::FloydSteinberg
         | DitherModeV2::Atkinson

@@ -40,6 +40,7 @@ pub fn register_all(registry: &mut AlgorithmRegistry) {
     registry.register(Box::new(bayer::Bayer2x2));
     registry.register(Box::new(bayer::Bayer4x4));
     registry.register(Box::new(bayer::Bayer8x8));
+    registry.register(Box::new(bayer::Bayer16x16));
     registry.register(Box::new(palette_quantize::PaletteQuantizeAlgo));
     registry.register(Box::new(cmyk_halftone::CmykHalftone));
     registry.register(Box::new(error_diffusion::FloydSteinberg));

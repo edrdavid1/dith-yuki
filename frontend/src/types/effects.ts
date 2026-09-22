@@ -90,6 +90,7 @@ export const DITHERING_ALGORITHM_IDS: readonly string[] = [
   'bayer_2x2',
   'bayer_4x4',
   'bayer_8x8',
+  'bayer_16x16',
   'floyd_steinberg',
   'atkinson',
   'jarvis_judice_ninke',

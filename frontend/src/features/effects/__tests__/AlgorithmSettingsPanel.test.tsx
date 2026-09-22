@@ -15,6 +15,7 @@ const mockGetSchema = vi.mocked(getAlgorithmSchema);
 const REGISTRY_IDS = [
   'adjust',
   'atkinson',
+  'bayer_16x16',
   'bayer_2x2',
   'bayer_4x4',
   'bayer_8x8',

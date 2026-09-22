@@ -508,7 +508,8 @@ fn dispatch_dither_v2_inner_into(
     _gpu: Option<&GpuContext>,
 ) -> Result<(), EngineError> {
     match &params.mode {
-        DitherModeV2::Bayer2x2 | DitherModeV2::Bayer4x4 | DitherModeV2::Bayer8x8 => {
+        DitherModeV2::Bayer2x2 | DitherModeV2::Bayer4x4 | DitherModeV2::Bayer8x8
+        | DitherModeV2::Bayer16x16 => {
             apply_ordered_with_cache_into(
                 tile,
                 coord,
