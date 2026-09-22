@@ -20,6 +20,7 @@ const REGISTRY_IDS = [
   'bayer_4x4',
   'bayer_8x8',
   'burkes',
+  'clustered_dot_ordered',
   'cmyk_halftone',
   'crt',
   'curves',

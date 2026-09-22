@@ -87,6 +87,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "bayer_4x4",
         "bayer_8x8",
         "burkes",
+        "clustered_dot_ordered",
         "cmyk_halftone",
         "crt",
         "curves",
@@ -181,8 +182,8 @@ fn register_all_ids_unique() {
         "Phase 2.1 must register bayer_8x8"
     );
     assert!(
-        registry.get_by_str("bayer_16x16").is_some(),
-        "Batch A must register bayer_16x16"
+        registry.get_by_str("clustered_dot_ordered").is_some(),
+        "Batch A must register clustered_dot_ordered"
     );
     assert!(
         registry.get_by_str("palette_quantize").is_some(),
@@ -190,8 +191,8 @@ fn register_all_ids_unique() {
     );
     assert_eq!(
         all_ids.len(),
-        18,
-        "must register all 18 built-in algorithms"
+        19,
+        "must register all 19 built-in algorithms"
     );
 }
 
@@ -238,7 +239,7 @@ fn migration_corpus() {
         );
     }
     assert_eq!(
-        count, 18,
+        count, 19,
         "expected one migration fixture per built-in algorithm"
     );
 }

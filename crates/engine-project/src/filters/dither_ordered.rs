@@ -85,6 +85,28 @@ fn bayer_16x16_threshold(mx: usize, my: usize) -> f32 {
     BAYER_16_RANK[my][mx] as f32 / 256.0
 }
 
+/// Classical clustered-dot 8×8 diagonal ordered dither (newspaper-style 45° screen).
+///
+/// Integer ranks 0..63; threshold = rank / 64. Published identically in:
+/// - http://caca.zoy.org/study/part2.html ("mimics the halftoning techniques used by newspapers")
+/// - makew0rld/dither `ClusteredDotDiagonal8x8` (same table)
+#[rustfmt::skip]
+const CLUSTERED_DOT_8X8_RANK: [[u16; 8]; 8] = [
+    [24, 10, 12, 26, 35, 47, 49, 37],
+    [ 8,  0,  2, 14, 45, 59, 61, 51],
+    [22,  6,  4, 16, 43, 57, 63, 53],
+    [30, 20, 18, 28, 33, 41, 55, 39],
+    [34, 46, 48, 36, 25, 11, 13, 27],
+    [44, 58, 60, 50,  9,  1,  3, 15],
+    [42, 56, 62, 52, 23,  7,  5, 17],
+    [32, 40, 54, 38, 31, 21, 19, 29],
+];
+
+#[inline]
+fn clustered_dot_8x8_threshold(mx: usize, my: usize) -> f32 {
+    CLUSTERED_DOT_8X8_RANK[my][mx] as f32 / 64.0
+}
+
 // ─── Threshold Lookup ────────────────────────────────────────────────────────
 
 /// Classic CMYK screen angles in degrees (C, M, Y, K).
@@ -183,6 +205,7 @@ fn samples_rotated_pattern(mode: &DitherModeV2) -> bool {
             | DitherModeV2::Bayer4x4
             | DitherModeV2::Bayer8x8
             | DitherModeV2::Bayer16x16
+            | DitherModeV2::ClusteredDotOrdered
             | DitherModeV2::CustomPng { .. }
     )
 }
@@ -276,6 +299,11 @@ fn get_threshold_i32(
             let mx = (gx as i64).rem_euclid(16) as usize;
             let my = (gy as i64).rem_euclid(16) as usize;
             Ok(bayer_16x16_threshold(mx, my))
+        }
+        DitherModeV2::ClusteredDotOrdered => {
+            let mx = (gx as i64).rem_euclid(8) as usize;
+            let my = (gy as i64).rem_euclid(8) as usize;
+            Ok(clustered_dot_8x8_threshold(mx, my))
         }
         DitherModeV2::Wave => Ok(wave_threshold(
             gx,
@@ -1050,6 +1078,37 @@ mod tests {
             }
         }
         assert_eq!(seen.len(), 256);
+    }
+
+    #[test]
+    fn clustered_dot_8x8_matches_published_newspaper_matrix() {
+        // Second independent copy of the same published table (caca.zoy / makew0rld).
+        #[rustfmt::skip]
+        let published: [[u16; 8]; 8] = [
+            [24, 10, 12, 26, 35, 47, 49, 37],
+            [ 8,  0,  2, 14, 45, 59, 61, 51],
+            [22,  6,  4, 16, 43, 57, 63, 53],
+            [30, 20, 18, 28, 33, 41, 55, 39],
+            [34, 46, 48, 36, 25, 11, 13, 27],
+            [44, 58, 60, 50,  9,  1,  3, 15],
+            [42, 56, 62, 52, 23,  7,  5, 17],
+            [32, 40, 54, 38, 31, 21, 19, 29],
+        ];
+        let mut seen = std::collections::HashSet::new();
+        for y in 0..8 {
+            for x in 0..8 {
+                assert_eq!(
+                    CLUSTERED_DOT_8X8_RANK[y][x], published[y][x],
+                    "clustered rank [{y}][{x}]"
+                );
+                assert_eq!(
+                    clustered_dot_8x8_threshold(x, y),
+                    published[y][x] as f32 / 64.0
+                );
+                assert!(seen.insert(published[y][x]));
+            }
+        }
+        assert_eq!(seen.len(), 64);
     }
 
     fn make_uniform_tile(r: f32, g: f32, b: f32, a: f32) -> PixelTile {
