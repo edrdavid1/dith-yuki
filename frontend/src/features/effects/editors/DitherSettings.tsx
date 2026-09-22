@@ -16,6 +16,7 @@ type SimpleDitherMode =
   | 'bayer_8x8'
   | 'bayer_16x16'
   | 'clustered_dot_ordered'
+  | 'halftone_screen_angled'
   | 'custom_png'
   | 'floyd_steinberg'
   | 'atkinson'
@@ -32,6 +33,7 @@ const SIMPLE_MODES: SimpleDitherMode[] = [
   'bayer_8x8',
   'bayer_16x16',
   'clustered_dot_ordered',
+  'halftone_screen_angled',
   'custom_png',
   'floyd_steinberg',
   'atkinson',
@@ -116,6 +118,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
     'bayer_8x8',
     'bayer_16x16',
     'clustered_dot_ordered',
+    'halftone_screen_angled',
     'custom_png',
     'wave',
     'cmyk_halftone',
@@ -126,8 +129,10 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
     'bayer_8x8',
     'bayer_16x16',
     'clustered_dot_ordered',
+    'halftone_screen_angled',
     'custom_png',
   ].includes(simpleMode);
+  const isHalftoneMode = ['cmyk_halftone', 'halftone_screen_angled'].includes(simpleMode);
   const isEdMode = [
     'floyd_steinberg',
     'atkinson',
@@ -193,6 +198,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
           { value: 'bayer_16x16', label: 'Bayer 16×16' },
           { value: 'clustered_dot_ordered', label: 'Clustered Dot' },
           { value: 'cmyk_halftone', label: 'CMYK Halftone' },
+          { value: 'halftone_screen_angled', label: 'Halftone Screen (Angled)' },
           { value: 'wave', label: 'Wave' },
           { value: 'custom_png', label: 'Custom PNG' },
         ]}
@@ -323,7 +329,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
         />
       )}
 
-      {simpleMode === 'cmyk_halftone' && (
+      {isHalftoneMode && (
         <Slider
           label="Halftone Cell Size"
           value={cellSize}

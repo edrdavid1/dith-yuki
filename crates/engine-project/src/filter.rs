@@ -208,6 +208,9 @@ pub enum DitherModeV2 {
     Sierra,
     /// CMYK angled-screen halftone (ordered path, no ED).
     CmykHalftone,
+    /// CMYK screens with user-rotatable base angle (`pattern_angle` offset).
+    #[serde(rename = "halftone_screen_angled")]
+    HalftoneScreenAngled,
     /// Sinusoidal / line-modulated threshold (ordered path).
     Wave,
 }
@@ -255,6 +258,7 @@ impl DitherModeV2 {
             Self::Burkes => Some("burkes"),
             Self::Sierra => Some("sierra"),
             Self::CmykHalftone => Some("cmyk_halftone"),
+            Self::HalftoneScreenAngled => Some("halftone_screen_angled"),
             Self::Wave => Some("wave"),
             Self::CustomPng { .. } => None,
         }
@@ -499,8 +503,10 @@ impl DitherParamsV2 {
                 ));
             }
         }
-        if matches!(self.mode, DitherModeV2::CmykHalftone)
-            && !(2..=64).contains(&self.halftone_cell_size)
+        if matches!(
+            self.mode,
+            DitherModeV2::CmykHalftone | DitherModeV2::HalftoneScreenAngled
+        ) && !(2..=64).contains(&self.halftone_cell_size)
         {
             return Err(EngineError::invalid_filter_params(
                 "halftone_cell_size must be in range [2, 64]",
@@ -998,6 +1004,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         | "burkes"
         | "sierra"
         | "cmyk_halftone"
+        | "halftone_screen_angled"
         | "wave" => Some(FilterKind::Dither),
         "palette_quantize" => Some(FilterKind::PaletteQuantize),
         "crt" => Some(FilterKind::Crt),
@@ -1423,6 +1430,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&DitherModeV2::CmykHalftone).unwrap(),
             serde_json::json!("cmyk_halftone")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::HalftoneScreenAngled).unwrap(),
+            serde_json::json!("halftone_screen_angled")
         );
         assert_eq!(
             serde_json::to_value(&DitherModeV2::Wave).unwrap(),

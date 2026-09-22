@@ -16,6 +16,7 @@ mod curves;
 mod error_diffusion;
 mod glitch;
 mod glow;
+mod halftone_screen_angled;
 mod palette_quantize;
 mod scratch;
 mod wave;
@@ -45,6 +46,7 @@ pub fn register_all(registry: &mut AlgorithmRegistry) {
     registry.register(Box::new(clustered_dot_ordered::ClusteredDotOrdered));
     registry.register(Box::new(palette_quantize::PaletteQuantizeAlgo));
     registry.register(Box::new(cmyk_halftone::CmykHalftone));
+    registry.register(Box::new(halftone_screen_angled::HalftoneScreenAngled));
     registry.register(Box::new(error_diffusion::FloydSteinberg));
     registry.register(Box::new(error_diffusion::Atkinson));
     registry.register(Box::new(error_diffusion::JarvisJudiceNinke));

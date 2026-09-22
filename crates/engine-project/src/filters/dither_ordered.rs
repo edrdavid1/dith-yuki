@@ -324,8 +324,8 @@ fn get_threshold_i32(
             let uy = (gy as i64).rem_euclid(map.height as i64) as u32;
             Ok(map.sample(ux, uy))
         }
-        DitherModeV2::CmykHalftone => {
-            unreachable!("CMYK halftone uses dedicated apply path, not get_threshold")
+        DitherModeV2::CmykHalftone | DitherModeV2::HalftoneScreenAngled => {
+            unreachable!("CMYK / angled halftone uses dedicated apply path, not get_threshold")
         }
         mode if mode.is_error_diffusion() => {
             unreachable!("ordered dithering engine called with diffusion mode")
@@ -584,7 +584,10 @@ pub fn apply_ordered_with_cache_into(
     layer_id: LayerId,
     dst: &mut PixelTile,
 ) -> Result<(), EngineError> {
-    if matches!(params.mode, DitherModeV2::CmykHalftone) {
+    if matches!(
+        params.mode,
+        DitherModeV2::CmykHalftone | DitherModeV2::HalftoneScreenAngled
+    ) {
         return apply_cmyk_halftone_into(
             tile,
             coord,
@@ -905,7 +908,14 @@ fn apply_cmyk_halftone_into(
 ) -> Result<(), EngineError> {
     let ps = params.pixel_size as u32;
     let s = params.halftone_cell_size as f32;
-    let angles: [f32; 4] = HALFTONE_ANGLES_DEG.map(|d| d.to_radians());
+    // Classic CMYK plate angles; `halftone_screen_angled` adds `pattern_angle` as a
+    // global rotation of the whole screen set (0° ⇒ bit-identical to `cmyk_halftone`).
+    let angle_offset = match params.mode {
+        DitherModeV2::HalftoneScreenAngled => params.pattern_angle.rem_euclid(360.0),
+        _ => 0.0,
+    };
+    let angles: [f32; 4] =
+        HALFTONE_ANGLES_DEG.map(|d| (d + angle_offset).rem_euclid(360.0).to_radians());
 
     let palette_lut = if let Some(palette_id) = params.palette_id {
         let palette = document
