@@ -75,6 +75,8 @@ pub enum DiffusionKernel {
     Stucki,
     Burkes,
     Sierra,
+    /// Frankie Sierra two-row filter (divisor 16).
+    SierraTwoRow,
 }
 
 impl DiffusionKernel {
@@ -146,6 +148,17 @@ impl DiffusionKernel {
                 (0, 2, 3.0 / 32.0),
                 (1, 2, 2.0 / 32.0),
             ],
+            // Sierra2 / two-row: * 4 3 / 1 2 3 2 1  (÷16). Sum = 1.0.
+            // Sources: bisqwit error_diffusion.txt; ImageSharp Sierra2; coolbutuseless/dithr.
+            Self::SierraTwoRow => &[
+                (1, 0, 4.0 / 16.0),
+                (2, 0, 3.0 / 16.0),
+                (-2, 1, 1.0 / 16.0),
+                (-1, 1, 2.0 / 16.0),
+                (0, 1, 3.0 / 16.0),
+                (1, 1, 2.0 / 16.0),
+                (2, 1, 1.0 / 16.0),
+            ],
         }
     }
 
@@ -158,6 +171,7 @@ impl DiffusionKernel {
             "Stucki" => Some(Self::Stucki),
             "Burkes" => Some(Self::Burkes),
             "Sierra" => Some(Self::Sierra),
+            "SierraTwoRow" => Some(Self::SierraTwoRow),
             _ => None,
         }
     }
@@ -209,6 +223,8 @@ pub enum DitherModeV2 {
     Stucki,
     Burkes,
     Sierra,
+    #[serde(rename = "sierra_two_row")]
+    SierraTwoRow,
     /// CMYK angled-screen halftone (ordered path, no ED).
     CmykHalftone,
     /// CMYK screens with user-rotatable base angle (`pattern_angle` offset).
@@ -229,6 +245,7 @@ impl DitherModeV2 {
                 | Self::Stucki
                 | Self::Burkes
                 | Self::Sierra
+                | Self::SierraTwoRow
         )
     }
 
@@ -241,6 +258,7 @@ impl DitherModeV2 {
             Self::Stucki => Some(DiffusionKernel::Stucki),
             Self::Burkes => Some(DiffusionKernel::Burkes),
             Self::Sierra => Some(DiffusionKernel::Sierra),
+            Self::SierraTwoRow => Some(DiffusionKernel::SierraTwoRow),
             _ => None,
         }
     }
@@ -261,6 +279,7 @@ impl DitherModeV2 {
             Self::Stucki => Some("stucki"),
             Self::Burkes => Some("burkes"),
             Self::Sierra => Some("sierra"),
+            Self::SierraTwoRow => Some("sierra_two_row"),
             Self::CmykHalftone => Some("cmyk_halftone"),
             Self::HalftoneScreenAngled => Some("halftone_screen_angled"),
             Self::Wave => Some("wave"),
@@ -452,6 +471,7 @@ impl From<(DitherMode, u8)> for DitherParamsV2 {
                 DiffusionKernel::Stucki => DitherModeV2::Stucki,
                 DiffusionKernel::Burkes => DitherModeV2::Burkes,
                 DiffusionKernel::Sierra => DitherModeV2::Sierra,
+                DiffusionKernel::SierraTwoRow => DitherModeV2::SierraTwoRow,
             },
         };
         DitherParamsV2 {
@@ -1008,6 +1028,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         | "stucki"
         | "burkes"
         | "sierra"
+        | "sierra_two_row"
         | "cmyk_halftone"
         | "halftone_screen_angled"
         | "wave" => Some(FilterKind::Dither),
@@ -1435,6 +1456,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&DitherModeV2::Sierra).unwrap(),
             serde_json::json!("sierra")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::SierraTwoRow).unwrap(),
+            serde_json::json!("sierra_two_row")
         );
         assert_eq!(
             serde_json::to_value(&DitherModeV2::CmykHalftone).unwrap(),
@@ -1954,5 +1979,28 @@ mod tests {
         assert!(params.validate().is_err());
         params.pattern_angle = f32::NAN;
         assert!(params.validate().is_err());
+    }
+
+    #[test]
+    fn sierra_two_row_kernel_matches_published_coefficients() {
+        let offs = DiffusionKernel::SierraTwoRow.offsets();
+        let expected: &[(i32, i32, f32)] = &[
+            (1, 0, 4.0 / 16.0),
+            (2, 0, 3.0 / 16.0),
+            (-2, 1, 1.0 / 16.0),
+            (-1, 1, 2.0 / 16.0),
+            (0, 1, 3.0 / 16.0),
+            (1, 1, 2.0 / 16.0),
+            (2, 1, 1.0 / 16.0),
+        ];
+        assert_eq!(offs.len(), expected.len());
+        let mut sum = 0.0f32;
+        for (got, exp) in offs.iter().zip(expected.iter()) {
+            assert_eq!(got.0, exp.0);
+            assert_eq!(got.1, exp.1);
+            assert!((got.2 - exp.2).abs() < 1e-6, "{} vs {}", got.2, exp.2);
+            sum += got.2;
+        }
+        assert!((sum - 1.0).abs() < 1e-6, "Sierra Two-Row weights must sum to 1.0, got {sum}");
     }
 }

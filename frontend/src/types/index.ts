@@ -69,6 +69,7 @@ export type DitherModeV2 =
   | 'stucki'
   | 'burkes'
   | 'sierra'
+  | 'sierra_two_row'
   | 'cmyk_halftone'
   | 'wave';
 
