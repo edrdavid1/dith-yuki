@@ -224,6 +224,7 @@ fn dither_v2_spec(
         // New Batch A: CPU-only until a dedicated GPU path is approved.
         DitherModeV2::Bayer16x16
         | DitherModeV2::ClusteredDotOrdered
+        | DitherModeV2::DispersedDotOrdered
         | DitherModeV2::HalftoneScreenAngled
         | DitherModeV2::CustomPng { .. }
         | DitherModeV2::Wave => {

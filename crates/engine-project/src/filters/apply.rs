@@ -510,7 +510,8 @@ fn dispatch_dither_v2_inner_into(
     match &params.mode {
         DitherModeV2::Bayer2x2 | DitherModeV2::Bayer4x4 | DitherModeV2::Bayer8x8
         | DitherModeV2::Bayer16x16
-        | DitherModeV2::ClusteredDotOrdered => {
+        | DitherModeV2::ClusteredDotOrdered
+        | DitherModeV2::DispersedDotOrdered => {
             apply_ordered_with_cache_into(
                 tile,
                 coord,

@@ -91,6 +91,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "cmyk_halftone",
         "crt",
         "curves",
+        "dispersed_dot_ordered",
         "floyd_steinberg",
         "glitch",
         "glow",
@@ -183,8 +184,8 @@ fn register_all_ids_unique() {
         "Phase 2.1 must register bayer_8x8"
     );
     assert!(
-        registry.get_by_str("halftone_screen_angled").is_some(),
-        "Batch A must register halftone_screen_angled"
+        registry.get_by_str("dispersed_dot_ordered").is_some(),
+        "Batch A must register dispersed_dot_ordered"
     );
     assert!(
         registry.get_by_str("palette_quantize").is_some(),
@@ -192,8 +193,8 @@ fn register_all_ids_unique() {
     );
     assert_eq!(
         all_ids.len(),
-        20,
-        "must register all 20 built-in algorithms"
+        21,
+        "must register all 21 built-in algorithms"
     );
 }
 
@@ -240,7 +241,7 @@ fn migration_corpus() {
         );
     }
     assert_eq!(
-        count, 20,
+        count, 21,
         "expected one migration fixture per built-in algorithm"
     );
 }

@@ -107,6 +107,38 @@ fn clustered_dot_8x8_threshold(mx: usize, my: usize) -> f32 {
     CLUSTERED_DOT_8X8_RANK[my][mx] as f32 / 64.0
 }
 
+/// Ulichney order-8 dispersed ordered dither (16×16), ranks 0..255.
+///
+/// From *Digital Halftoning* (Ulichney); published identically in:
+/// - netpbm `lib/dithers.h` `dither8`
+/// - stolfi/jsdithers (same Ulichney tables)
+///
+/// Distinct from Bayer-16 recursive construction already registered as `bayer_16x16`.
+#[rustfmt::skip]
+const DISPERSED_DOT_16X16_RANK: [[u16; 16]; 16] = [
+    [  1,235, 59,219, 15,231, 55,215,  2,232, 56,216, 12,228, 52,212],
+    [129, 65,187,123,143, 79,183,119,130, 66,184,120,140, 76,180,116],
+    [ 33,193, 17,251, 47,207, 31,247, 34,194, 18,248, 44,204, 28,244],
+    [161, 97,145, 81,175,111,159, 95,162, 98,146, 82,172,108,156, 92],
+    [  9,225, 49,209,  5,239, 63,223, 10,226, 50,210,  6,236, 60,220],
+    [137, 73,177,113,133, 69,191,127,138, 74,178,114,134, 70,188,124],
+    [ 41,201, 25,241, 37,197, 21,255, 42,202, 26,242, 38,198, 22,252],
+    [169,105,153, 89,165,101,149, 85,170,106,154, 90,166,102,150, 86],
+    [  3,233, 57,217, 13,229, 53,213,  0,234, 58,218, 14,230, 54,214],
+    [131, 67,185,121,141, 77,181,117,128, 64,186,122,142, 78,182,118],
+    [ 35,195, 19,249, 45,205, 29,245, 32,192, 16,250, 46,206, 30,246],
+    [163, 99,147, 83,173,109,157, 93,160, 96,144, 80,174,110,158, 94],
+    [ 11,227, 51,211,  7,237, 61,221,  8,224, 48,208,  4,238, 62,222],
+    [139, 75,179,115,135, 71,189,125,136, 72,176,112,132, 68,190,126],
+    [ 43,203, 27,243, 39,199, 23,253, 40,200, 24,240, 36,196, 20,254],
+    [171,107,155, 91,167,103,151, 87,168,104,152, 88,164,100,148, 84],
+];
+
+#[inline]
+fn dispersed_dot_16x16_threshold(mx: usize, my: usize) -> f32 {
+    DISPERSED_DOT_16X16_RANK[my][mx] as f32 / 256.0
+}
+
 // ─── Threshold Lookup ────────────────────────────────────────────────────────
 
 /// Classic CMYK screen angles in degrees (C, M, Y, K).
@@ -206,6 +238,7 @@ fn samples_rotated_pattern(mode: &DitherModeV2) -> bool {
             | DitherModeV2::Bayer8x8
             | DitherModeV2::Bayer16x16
             | DitherModeV2::ClusteredDotOrdered
+            | DitherModeV2::DispersedDotOrdered
             | DitherModeV2::CustomPng { .. }
     )
 }
@@ -304,6 +337,11 @@ fn get_threshold_i32(
             let mx = (gx as i64).rem_euclid(8) as usize;
             let my = (gy as i64).rem_euclid(8) as usize;
             Ok(clustered_dot_8x8_threshold(mx, my))
+        }
+        DitherModeV2::DispersedDotOrdered => {
+            let mx = (gx as i64).rem_euclid(16) as usize;
+            let my = (gy as i64).rem_euclid(16) as usize;
+            Ok(dispersed_dot_16x16_threshold(mx, my))
         }
         DitherModeV2::Wave => Ok(wave_threshold(
             gx,
@@ -1119,6 +1157,46 @@ mod tests {
             }
         }
         assert_eq!(seen.len(), 64);
+    }
+
+    #[test]
+    fn dispersed_dot_16x16_matches_ulichney_netpbm_matrix() {
+        #[rustfmt::skip]
+        let published: [[u16; 16]; 16] = [
+            [  1,235, 59,219, 15,231, 55,215,  2,232, 56,216, 12,228, 52,212],
+            [129, 65,187,123,143, 79,183,119,130, 66,184,120,140, 76,180,116],
+            [ 33,193, 17,251, 47,207, 31,247, 34,194, 18,248, 44,204, 28,244],
+            [161, 97,145, 81,175,111,159, 95,162, 98,146, 82,172,108,156, 92],
+            [  9,225, 49,209,  5,239, 63,223, 10,226, 50,210,  6,236, 60,220],
+            [137, 73,177,113,133, 69,191,127,138, 74,178,114,134, 70,188,124],
+            [ 41,201, 25,241, 37,197, 21,255, 42,202, 26,242, 38,198, 22,252],
+            [169,105,153, 89,165,101,149, 85,170,106,154, 90,166,102,150, 86],
+            [  3,233, 57,217, 13,229, 53,213,  0,234, 58,218, 14,230, 54,214],
+            [131, 67,185,121,141, 77,181,117,128, 64,186,122,142, 78,182,118],
+            [ 35,195, 19,249, 45,205, 29,245, 32,192, 16,250, 46,206, 30,246],
+            [163, 99,147, 83,173,109,157, 93,160, 96,144, 80,174,110,158, 94],
+            [ 11,227, 51,211,  7,237, 61,221,  8,224, 48,208,  4,238, 62,222],
+            [139, 75,179,115,135, 71,189,125,136, 72,176,112,132, 68,190,126],
+            [ 43,203, 27,243, 39,199, 23,253, 40,200, 24,240, 36,196, 20,254],
+            [171,107,155, 91,167,103,151, 87,168,104,152, 88,164,100,148, 84],
+        ];
+        let mut seen = std::collections::HashSet::new();
+        for y in 0..16 {
+            for x in 0..16 {
+                assert_eq!(
+                    DISPERSED_DOT_16X16_RANK[y][x], published[y][x],
+                    "dispersed rank [{y}][{x}]"
+                );
+                assert_eq!(
+                    dispersed_dot_16x16_threshold(x, y),
+                    published[y][x] as f32 / 256.0
+                );
+                assert!(seen.insert(published[y][x]));
+            }
+        }
+        assert_eq!(seen.len(), 256);
+        // Not the recursive Bayer-16 table.
+        assert_ne!(DISPERSED_DOT_16X16_RANK[0][0], BAYER_16_RANK[0][0]);
     }
 
     fn make_uniform_tile(r: f32, g: f32, b: f32, a: f32) -> PixelTile {

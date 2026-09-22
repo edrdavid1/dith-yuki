@@ -24,6 +24,7 @@ const REGISTRY_IDS = [
   'cmyk_halftone',
   'crt',
   'curves',
+  'dispersed_dot_ordered',
   'floyd_steinberg',
   'glitch',
   'glow',

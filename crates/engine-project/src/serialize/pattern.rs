@@ -140,6 +140,7 @@ fn min_version_for_dither_mode(mode: &DitherModeV2) -> Option<&'static str> {
         | DitherModeV2::Bayer8x8
         | DitherModeV2::Bayer16x16
         | DitherModeV2::ClusteredDotOrdered
+        | DitherModeV2::DispersedDotOrdered
         | DitherModeV2::CustomPng { .. }
         | DitherModeV2::FloydSteinberg
         | DitherModeV2::Atkinson
