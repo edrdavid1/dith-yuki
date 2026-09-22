@@ -9,6 +9,7 @@ use engine_registry::AlgorithmRegistry;
 
 mod adjust;
 mod bayer;
+mod clustered_dot_ordered;
 mod cmyk_halftone;
 mod crt;
 mod curves;
@@ -41,6 +42,7 @@ pub fn register_all(registry: &mut AlgorithmRegistry) {
     registry.register(Box::new(bayer::Bayer4x4));
     registry.register(Box::new(bayer::Bayer8x8));
     registry.register(Box::new(bayer::Bayer16x16));
+    registry.register(Box::new(clustered_dot_ordered::ClusteredDotOrdered));
     registry.register(Box::new(palette_quantize::PaletteQuantizeAlgo));
     registry.register(Box::new(cmyk_halftone::CmykHalftone));
     registry.register(Box::new(error_diffusion::FloydSteinberg));

@@ -221,8 +221,9 @@ fn dither_v2_spec(
                 pattern_angle: params.pattern_angle,
             })
         }
-        // Bayer16x16: CPU-only until a dedicated GPU path is approved (catalog Batch A).
+        // New Batch A ordered matrices: CPU-only until a dedicated GPU path is approved.
         DitherModeV2::Bayer16x16
+        | DitherModeV2::ClusteredDotOrdered
         | DitherModeV2::CustomPng { .. }
         | DitherModeV2::Wave => {
             GraphLayerFilter::CpuCheckpoint(CpuCheckpointKind::IneligibleDither)
