@@ -98,6 +98,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "halftone_screen_angled",
         "jarvis_judice_ninke",
         "palette_quantize",
+        "shiau_fan",
         "sierra",
         "sierra_lite",
         "sierra_two_row",
@@ -195,6 +196,10 @@ fn register_all_ids_unique() {
         "Batch B must register sierra_two_row"
     );
     assert!(
+        registry.get_by_str("shiau_fan").is_some(),
+        "Batch B must register shiau_fan"
+    );
+    assert!(
         registry.get_by_str("stevenson_arce").is_some(),
         "Batch B must register stevenson_arce"
     );
@@ -204,8 +209,8 @@ fn register_all_ids_unique() {
     );
     assert_eq!(
         all_ids.len(),
-        24,
-        "must register all 24 built-in algorithms"
+        25,
+        "must register all 25 built-in algorithms"
     );
 }
 
@@ -252,7 +257,7 @@ fn migration_corpus() {
         );
     }
     assert_eq!(
-        count, 24,
+        count, 25,
         "expected one migration fixture per built-in algorithm"
     );
 }

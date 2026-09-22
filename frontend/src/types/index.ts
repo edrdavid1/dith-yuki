@@ -71,6 +71,7 @@ export type DitherModeV2 =
   | 'sierra'
   | 'sierra_lite'
   | 'sierra_two_row'
+  | 'shiau_fan'
   | 'stevenson_arce'
   | 'cmyk_halftone'
   | 'wave';
