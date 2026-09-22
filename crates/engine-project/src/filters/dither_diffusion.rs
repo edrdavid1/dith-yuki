@@ -9,9 +9,10 @@
 
 use crate::document::Document;
 use crate::error::EngineError;
-use crate::filter::{DitherColorMode, DitherParamsV2, PaletteDitherMode};
+use crate::filter::{DitherColorMode, DitherParamsV2, DiffusionKernel, PaletteDitherMode};
 use crate::filters::dither_ordered::{OrderedPalettePicker, SimpleRgbPicker};
 use crate::filters::dither_residuals::{ErrorResiduals, ErrorResidualsStore};
+use crate::filters::ostromoukhov_table;
 use crate::types::LayerId;
 use engine_color::oklab::{linear_to_oklab, LinRgb};
 use engine_color::palette::{linear_to_srgb, Palette};
@@ -367,6 +368,8 @@ pub fn apply_error_diffusion_with_cache_into(
     let kernel = params.mode.diffusion_kernel().ok_or_else(|| {
         EngineError::invalid_filter_params("error diffusion engine called with ordered mode")
     })?;
+    // Ostromoukhov is specified with serpentine scan (SIGGRAPH 2001).
+    let serpentine = matches!(kernel, DiffusionKernel::Ostromoukhov) || params.serpentine;
     let margin = kernel.edge_margin(ps);
 
     // Validate and fetch palette path if palette_id is set
@@ -431,7 +434,7 @@ pub fn apply_error_diffusion_with_cache_into(
         let tile_y = y as u32 + HALO;
         let gy = GlobalCoordSigned::from_local_with_halo(coord, HALO, tile_y, HALO).y;
         let scan_parity = if ps > 1 { gy.div_euclid(ps as i32) } else { gy };
-        let row_dir = row_direction(params.serpentine, scan_parity);
+        let row_dir = row_direction(serpentine, scan_parity);
         for i in 0..SIZE {
             let x = if row_dir > 0 { i } else { SIZE - 1 - i };
             // Tile-local coordinates for the core area start at HALO offset
@@ -593,6 +596,9 @@ pub fn apply_error_diffusion_with_cache_into(
 
             // Apply color mode processing and quantize
             let (quant_r, quant_g, quant_b, q_err);
+            // Tone for variable-coefficient kernels (Ostromoukhov): luminance of
+            // the error-adjusted sample, matching SIGGRAPH 2001 / libpipi.
+            let diffusion_tone;
 
             match params.color_mode {
                 DitherColorMode::Rgb => {
@@ -611,10 +617,18 @@ pub fn apply_error_diffusion_with_cache_into(
                         quant_g = rgb.1;
                         quant_b = rgb.2;
                         q_err = err;
+                        let adj_r = (src_r + acc_err_r).clamp(0.0, 1.0);
+                        let adj_g = (src_g + acc_err_g).clamp(0.0, 1.0);
+                        let adj_b = (src_b + acc_err_b).clamp(0.0, 1.0);
+                        diffusion_tone = ostromoukhov_table::tone_from_unit(to_luminance(
+                            adj_r, adj_g, adj_b,
+                        ));
                     } else {
                         let adj_r = (src_r + acc_err_r).clamp(0.0, 1.0);
                         let adj_g = (src_g + acc_err_g).clamp(0.0, 1.0);
                         let adj_b = (src_b + acc_err_b).clamp(0.0, 1.0);
+                        diffusion_tone =
+                            ostromoukhov_table::tone_from_unit(to_luminance(adj_r, adj_g, adj_b));
                         let (qr, qg, qb) =
                             quantize_ed_rgb(adj_r, adj_g, adj_b, levels, &palette_quant);
                         q_err = [adj_r - qr, adj_g - qg, adj_b - qb];
@@ -640,9 +654,12 @@ pub fn apply_error_diffusion_with_cache_into(
                         quant_g = rgb.1;
                         quant_b = rgb.2;
                         q_err = err;
+                        diffusion_tone =
+                            ostromoukhov_table::tone_from_unit((lum + acc_err_r).clamp(0.0, 1.0));
                     } else {
                         let lum = to_luminance(src_r, src_g, src_b);
                         let adj_lum = (lum + acc_err_r).clamp(0.0, 1.0);
+                        diffusion_tone = ostromoukhov_table::tone_from_unit(adj_lum);
                         let (qr, qg, qb) = match &palette_quant {
                             PaletteQuant::Uniform => {
                                 let q = quantize_uniform(adj_lum, levels);
@@ -684,12 +701,17 @@ pub fn apply_error_diffusion_with_cache_into(
 
             // Error from the representative is not diffused inside the same
             // block; kernel neighbors are the next block representatives (`ps`).
+            let tone_offsets = ostromoukhov_table::normalized_offsets(diffusion_tone);
+            let offsets: &[(i32, i32, f32)] = match kernel {
+                DiffusionKernel::Ostromoukhov => &tone_offsets,
+                other => other.offsets(),
+            };
             distribute_kernel(
                 &mut error_buf,
                 x,
                 y,
                 q_err,
-                kernel.offsets(),
+                offsets,
                 &mut right_overflow,
                 &mut bottom_overflow,
                 &mut corner_overflow,

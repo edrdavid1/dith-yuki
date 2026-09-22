@@ -52,6 +52,7 @@ pub fn register_all(registry: &mut AlgorithmRegistry) {
     registry.register(Box::new(error_diffusion::FloydSteinberg));
     registry.register(Box::new(error_diffusion::Atkinson));
     registry.register(Box::new(error_diffusion::JarvisJudiceNinke));
+    registry.register(Box::new(error_diffusion::Ostromoukhov));
     registry.register(Box::new(error_diffusion::Stucki));
     registry.register(Box::new(error_diffusion::Burkes));
     registry.register(Box::new(error_diffusion::Fan93));
