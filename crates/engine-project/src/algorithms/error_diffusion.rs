@@ -136,6 +136,7 @@ impl_error_diffusion!(
 impl_error_diffusion!(Stucki, "stucki", "Stucki", Stucki);
 impl_error_diffusion!(Burkes, "burkes", "Burkes", Burkes);
 impl_error_diffusion!(Sierra, "sierra", "Sierra", Sierra);
+impl_error_diffusion!(SierraLite, "sierra_lite", "Sierra Lite", SierraLite);
 impl_error_diffusion!(
     SierraTwoRow,
     "sierra_two_row",

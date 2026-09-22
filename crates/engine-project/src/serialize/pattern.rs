@@ -148,6 +148,7 @@ fn min_version_for_dither_mode(mode: &DitherModeV2) -> Option<&'static str> {
         | DitherModeV2::Stucki
         | DitherModeV2::Burkes
         | DitherModeV2::Sierra
+        | DitherModeV2::SierraLite
         | DitherModeV2::SierraTwoRow
         | DitherModeV2::CmykHalftone
         | DitherModeV2::HalftoneScreenAngled
