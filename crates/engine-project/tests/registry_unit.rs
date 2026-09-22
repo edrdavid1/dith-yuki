@@ -99,6 +99,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "jarvis_judice_ninke",
         "palette_quantize",
         "sierra",
+        "sierra_two_row",
         "stucki",
         "wave",
     ];
@@ -184,8 +185,8 @@ fn register_all_ids_unique() {
         "Phase 2.1 must register bayer_8x8"
     );
     assert!(
-        registry.get_by_str("dispersed_dot_ordered").is_some(),
-        "Batch A must register dispersed_dot_ordered"
+        registry.get_by_str("sierra_two_row").is_some(),
+        "Batch B must register sierra_two_row"
     );
     assert!(
         registry.get_by_str("palette_quantize").is_some(),
@@ -193,8 +194,8 @@ fn register_all_ids_unique() {
     );
     assert_eq!(
         all_ids.len(),
-        21,
-        "must register all 21 built-in algorithms"
+        22,
+        "must register all 22 built-in algorithms"
     );
 }
 
@@ -241,7 +242,7 @@ fn migration_corpus() {
         );
     }
     assert_eq!(
-        count, 21,
+        count, 22,
         "expected one migration fixture per built-in algorithm"
     );
 }

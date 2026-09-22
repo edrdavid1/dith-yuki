@@ -17,5 +17,6 @@ halftone_screen_angled
 jarvis_judice_ninke
 palette_quantize
 sierra
+sierra_two_row
 stucki
 wave
