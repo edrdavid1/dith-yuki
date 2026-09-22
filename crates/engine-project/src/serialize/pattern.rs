@@ -154,6 +154,7 @@ fn min_version_for_dither_mode(mode: &DitherModeV2) -> Option<&'static str> {
         | DitherModeV2::ShiauFan
         | DitherModeV2::StevensonArce
         | DitherModeV2::Ostromoukhov
+        | DitherModeV2::ZhouFang
         | DitherModeV2::CmykHalftone
         | DitherModeV2::HalftoneScreenAngled
         | DitherModeV2::Wave => Some("0.1.0"),

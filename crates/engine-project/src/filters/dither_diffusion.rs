@@ -13,6 +13,7 @@ use crate::filter::{DitherColorMode, DitherParamsV2, DiffusionKernel, PaletteDit
 use crate::filters::dither_ordered::{OrderedPalettePicker, SimpleRgbPicker};
 use crate::filters::dither_residuals::{ErrorResiduals, ErrorResidualsStore};
 use crate::filters::ostromoukhov_table;
+use crate::filters::zhou_fang_table;
 use crate::types::LayerId;
 use engine_color::oklab::{linear_to_oklab, LinRgb};
 use engine_color::palette::{linear_to_srgb, Palette};
@@ -368,8 +369,11 @@ pub fn apply_error_diffusion_with_cache_into(
     let kernel = params.mode.diffusion_kernel().ok_or_else(|| {
         EngineError::invalid_filter_params("error diffusion engine called with ordered mode")
     })?;
-    // Ostromoukhov is specified with serpentine scan (SIGGRAPH 2001).
-    let serpentine = matches!(kernel, DiffusionKernel::Ostromoukhov) || params.serpentine;
+    // Ostromoukhov / Zhou–Fang are specified with serpentine scan.
+    let serpentine = matches!(
+        kernel,
+        DiffusionKernel::Ostromoukhov | DiffusionKernel::ZhouFang
+    ) || params.serpentine;
     let margin = kernel.edge_margin(ps);
 
     // Validate and fetch palette path if palette_id is set
@@ -603,34 +607,54 @@ pub fn apply_error_diffusion_with_cache_into(
             match params.color_mode {
                 DitherColorMode::Rgb => {
                     if let PaletteQuant::Simple(picker) = &palette_quant {
-                        let (rgb, err) = simple_ed_step(
-                            picker,
-                            src_r,
-                            src_g,
-                            src_b,
-                            acc_err_r,
-                            acc_err_g,
-                            acc_err_b,
-                            params.threshold_scale,
-                        );
-                        quant_r = rgb.0;
-                        quant_g = rgb.1;
-                        quant_b = rgb.2;
-                        q_err = err;
                         let adj_r = (src_r + acc_err_r).clamp(0.0, 1.0);
                         let adj_g = (src_g + acc_err_g).clamp(0.0, 1.0);
                         let adj_b = (src_b + acc_err_b).clamp(0.0, 1.0);
                         diffusion_tone = ostromoukhov_table::tone_from_unit(to_luminance(
                             adj_r, adj_g, adj_b,
                         ));
+                        let (qr_r, qr_g, qr_b) = if matches!(kernel, DiffusionKernel::ZhouFang) {
+                            (
+                                zhou_fang_table::modulate_unit(adj_r, diffusion_tone, gx, gy),
+                                zhou_fang_table::modulate_unit(adj_g, diffusion_tone, gx, gy),
+                                zhou_fang_table::modulate_unit(adj_b, diffusion_tone, gx, gy),
+                            )
+                        } else {
+                            (adj_r, adj_g, adj_b)
+                        };
+                        // simple_ed_step expects src+err; feed modulated as "src" with 0 err.
+                        let (rgb, _) = simple_ed_step(
+                            picker,
+                            qr_r,
+                            qr_g,
+                            qr_b,
+                            0.0,
+                            0.0,
+                            0.0,
+                            params.threshold_scale,
+                        );
+                        quant_r = rgb.0;
+                        quant_g = rgb.1;
+                        quant_b = rgb.2;
+                        // Residual from unmodulated adjusted sample (Zhou–Fang / dithr).
+                        q_err = [adj_r - quant_r, adj_g - quant_g, adj_b - quant_b];
                     } else {
                         let adj_r = (src_r + acc_err_r).clamp(0.0, 1.0);
                         let adj_g = (src_g + acc_err_g).clamp(0.0, 1.0);
                         let adj_b = (src_b + acc_err_b).clamp(0.0, 1.0);
                         diffusion_tone =
                             ostromoukhov_table::tone_from_unit(to_luminance(adj_r, adj_g, adj_b));
+                        let (qr_r, qr_g, qr_b) = if matches!(kernel, DiffusionKernel::ZhouFang) {
+                            (
+                                zhou_fang_table::modulate_unit(adj_r, diffusion_tone, gx, gy),
+                                zhou_fang_table::modulate_unit(adj_g, diffusion_tone, gx, gy),
+                                zhou_fang_table::modulate_unit(adj_b, diffusion_tone, gx, gy),
+                            )
+                        } else {
+                            (adj_r, adj_g, adj_b)
+                        };
                         let (qr, qg, qb) =
-                            quantize_ed_rgb(adj_r, adj_g, adj_b, levels, &palette_quant);
+                            quantize_ed_rgb(qr_r, qr_g, qr_b, levels, &palette_quant);
                         q_err = [adj_r - qr, adj_g - qg, adj_b - qb];
                         quant_r = qr;
                         quant_g = qg;
@@ -640,32 +664,44 @@ pub fn apply_error_diffusion_with_cache_into(
                 DitherColorMode::Grayscale => {
                     if let PaletteQuant::Simple(picker) = &palette_quant {
                         let lum = to_luminance(src_r, src_g, src_b);
-                        let (rgb, err) = simple_ed_step(
+                        let adj_lum = (lum + acc_err_r).clamp(0.0, 1.0);
+                        diffusion_tone = ostromoukhov_table::tone_from_unit(adj_lum);
+                        let qr_lum = if matches!(kernel, DiffusionKernel::ZhouFang) {
+                            zhou_fang_table::modulate_unit(adj_lum, diffusion_tone, gx, gy)
+                        } else {
+                            adj_lum
+                        };
+                        let (rgb, _) = simple_ed_step(
                             picker,
-                            lum,
-                            lum,
-                            lum,
-                            acc_err_r,
-                            acc_err_g,
-                            acc_err_b,
+                            qr_lum,
+                            qr_lum,
+                            qr_lum,
+                            0.0,
+                            0.0,
+                            0.0,
                             params.threshold_scale,
                         );
                         quant_r = rgb.0;
                         quant_g = rgb.1;
                         quant_b = rgb.2;
-                        q_err = err;
-                        diffusion_tone =
-                            ostromoukhov_table::tone_from_unit((lum + acc_err_r).clamp(0.0, 1.0));
+                        let quant_lum = to_luminance(quant_r, quant_g, quant_b);
+                        let lum_err = adj_lum - quant_lum;
+                        q_err = [lum_err, lum_err, lum_err];
                     } else {
                         let lum = to_luminance(src_r, src_g, src_b);
                         let adj_lum = (lum + acc_err_r).clamp(0.0, 1.0);
                         diffusion_tone = ostromoukhov_table::tone_from_unit(adj_lum);
+                        let qr_lum = if matches!(kernel, DiffusionKernel::ZhouFang) {
+                            zhou_fang_table::modulate_unit(adj_lum, diffusion_tone, gx, gy)
+                        } else {
+                            adj_lum
+                        };
                         let (qr, qg, qb) = match &palette_quant {
                             PaletteQuant::Uniform => {
-                                let q = quantize_uniform(adj_lum, levels);
+                                let q = quantize_uniform(qr_lum, levels);
                                 (q, q, q)
                             }
-                            _ => quantize_ed_rgb(adj_lum, adj_lum, adj_lum, levels, &palette_quant),
+                            _ => quantize_ed_rgb(qr_lum, qr_lum, qr_lum, levels, &palette_quant),
                         };
                         let quant_lum = to_luminance(qr, qg, qb);
                         let lum_err = adj_lum - quant_lum;
@@ -703,7 +739,7 @@ pub fn apply_error_diffusion_with_cache_into(
             // block; kernel neighbors are the next block representatives (`ps`).
             let tone_offsets = ostromoukhov_table::normalized_offsets(diffusion_tone);
             let offsets: &[(i32, i32, f32)] = match kernel {
-                DiffusionKernel::Ostromoukhov => &tone_offsets,
+                DiffusionKernel::Ostromoukhov | DiffusionKernel::ZhouFang => &tone_offsets,
                 other => other.offsets(),
             };
             distribute_kernel(

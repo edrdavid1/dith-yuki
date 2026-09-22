@@ -107,6 +107,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "stevenson_arce",
         "stucki",
         "wave",
+        "zhou_fang",
     ];
     assert_eq!(
         ids, expected,
@@ -210,6 +211,10 @@ fn register_all_ids_unique() {
         "Batch C must register ostromoukhov"
     );
     assert!(
+        registry.get_by_str("zhou_fang").is_some(),
+        "Batch C must register zhou_fang"
+    );
+    assert!(
         registry.get_by_str("stevenson_arce").is_some(),
         "Batch B must register stevenson_arce"
     );
@@ -219,8 +224,8 @@ fn register_all_ids_unique() {
     );
     assert_eq!(
         all_ids.len(),
-        27,
-        "must register all 27 built-in algorithms"
+        28,
+        "must register all 28 built-in algorithms"
     );
 }
 
@@ -267,7 +272,7 @@ fn migration_corpus() {
         );
     }
     assert_eq!(
-        count, 27,
+        count, 28,
         "expected one migration fixture per built-in algorithm"
     );
 }

@@ -67,4 +67,5 @@ pub fn register_all(registry: &mut AlgorithmRegistry) {
     registry.register(Box::new(adjust::Adjust));
     registry.register(Box::new(curves::Curves));
     registry.register(Box::new(glitch::Glitch));
+    registry.register(Box::new(error_diffusion::ZhouFang));
 }

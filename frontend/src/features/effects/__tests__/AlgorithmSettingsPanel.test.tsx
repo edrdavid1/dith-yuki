@@ -40,6 +40,7 @@ const REGISTRY_IDS = [
   'stevenson_arce',
   'stucki',
   'wave',
+  'zhou_fang',
 ];
 
 const SAMPLE_SCHEMA: ParamField[] = [

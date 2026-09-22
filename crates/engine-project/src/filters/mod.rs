@@ -17,6 +17,7 @@ pub mod dither_diffusion;
 pub mod dither_ordered;
 pub mod dither_residuals;
 pub mod ostromoukhov_table;
+pub mod zhou_fang_table;
 pub mod glitch;
 pub mod glow;
 pub mod gpu_bridge;

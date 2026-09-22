@@ -59,7 +59,10 @@ fn apply_ed(
     params.mode = mode;
     // Ostromoukhov SIGGRAPH 2001 is specified with serpentine scan; force it so
     // registry parity matches the published algorithm regardless of UI default.
-    if matches!(params.mode, DitherModeV2::Ostromoukhov) {
+    if matches!(
+        params.mode,
+        DitherModeV2::Ostromoukhov | DitherModeV2::ZhouFang
+    ) {
         params.serpentine = true;
     }
     let ctx = FilterContext::from_ctx(ctx);
@@ -157,3 +160,4 @@ impl_error_diffusion!(
     StevensonArce
 );
 impl_error_diffusion!(Ostromoukhov, "ostromoukhov", "Ostromoukhov", Ostromoukhov);
+impl_error_diffusion!(ZhouFang, "zhou_fang", "Zhou–Fang", ZhouFang);
