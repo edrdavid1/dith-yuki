@@ -1,0 +1,8 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "kind": "Dither",
+  "params": {"DitherV2": {"mode": "halftone_screen_angled", "halftone_cell_size": 8, "pattern_angle": 15.0}},
+  "enabled": true,
+  "algorithm_id": "halftone_screen_angled",
+  "schema_version": 1
+}

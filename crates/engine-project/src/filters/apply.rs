@@ -524,18 +524,20 @@ fn dispatch_dither_v2_inner_into(
                 dst,
             )
         }
-        DitherModeV2::CmykHalftone => apply_ordered_with_cache_into(
-            tile,
-            coord,
-            params,
-            threshold_cache,
-            palette_cache,
-            lut_cache,
-            document,
-            block_cache,
-            layer_id,
-            dst,
-        ),
+        DitherModeV2::CmykHalftone | DitherModeV2::HalftoneScreenAngled => {
+            apply_ordered_with_cache_into(
+                tile,
+                coord,
+                params,
+                threshold_cache,
+                palette_cache,
+                lut_cache,
+                document,
+                block_cache,
+                layer_id,
+                dst,
+            )
+        }
         DitherModeV2::CustomPng { .. } | DitherModeV2::Wave => apply_ordered_with_cache_into(
             tile,
             coord,

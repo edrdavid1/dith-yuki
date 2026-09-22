@@ -27,6 +27,7 @@ const REGISTRY_IDS = [
   'floyd_steinberg',
   'glitch',
   'glow',
+  'halftone_screen_angled',
   'jarvis_judice_ninke',
   'palette_quantize',
   'sierra',
