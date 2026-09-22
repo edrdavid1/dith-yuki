@@ -13,6 +13,7 @@ mod clustered_dot_ordered;
 mod cmyk_halftone;
 mod crt;
 mod curves;
+mod dispersed_dot_ordered;
 mod error_diffusion;
 mod glitch;
 mod glow;
@@ -44,6 +45,7 @@ pub fn register_all(registry: &mut AlgorithmRegistry) {
     registry.register(Box::new(bayer::Bayer8x8));
     registry.register(Box::new(bayer::Bayer16x16));
     registry.register(Box::new(clustered_dot_ordered::ClusteredDotOrdered));
+    registry.register(Box::new(dispersed_dot_ordered::DispersedDotOrdered));
     registry.register(Box::new(palette_quantize::PaletteQuantizeAlgo));
     registry.register(Box::new(cmyk_halftone::CmykHalftone));
     registry.register(Box::new(halftone_screen_angled::HalftoneScreenAngled));

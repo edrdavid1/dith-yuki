@@ -9,6 +9,7 @@ clustered_dot_ordered
 cmyk_halftone
 crt
 curves
+dispersed_dot_ordered
 floyd_steinberg
 glitch
 glow

@@ -197,6 +197,9 @@ pub enum DitherModeV2 {
     /// Classical clustered-dot (newspaper-style) ordered dither, 8×8 diagonal.
     #[serde(rename = "clustered_dot_ordered")]
     ClusteredDotOrdered,
+    /// Ulichney dispersed-dot ordered dither (16×16, non-Bayer).
+    #[serde(rename = "dispersed_dot_ordered")]
+    DispersedDotOrdered,
     CustomPng {
         path: String,
     },
@@ -251,6 +254,7 @@ impl DitherModeV2 {
             Self::Bayer8x8 => Some("bayer_8x8"),
             Self::Bayer16x16 => Some("bayer_16x16"),
             Self::ClusteredDotOrdered => Some("clustered_dot_ordered"),
+            Self::DispersedDotOrdered => Some("dispersed_dot_ordered"),
             Self::FloydSteinberg => Some("floyd_steinberg"),
             Self::Atkinson => Some("atkinson"),
             Self::JarvisJudiceNinke => Some("jarvis_judice_ninke"),
@@ -997,6 +1001,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         | "bayer_8x8"
         | "bayer_16x16"
         | "clustered_dot_ordered"
+        | "dispersed_dot_ordered"
         | "floyd_steinberg"
         | "atkinson"
         | "jarvis_judice_ninke"
@@ -1402,6 +1407,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&DitherModeV2::ClusteredDotOrdered).unwrap(),
             serde_json::json!("clustered_dot_ordered")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::DispersedDotOrdered).unwrap(),
+            serde_json::json!("dispersed_dot_ordered")
         );
         assert_eq!(
             serde_json::to_value(&DitherModeV2::FloydSteinberg).unwrap(),
