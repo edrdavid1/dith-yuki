@@ -58,6 +58,7 @@ export type DitherModeV2 =
   | 'bayer_2x2'
   | 'bayer_4x4'
   | 'bayer_8x8'
+  | 'bayer_16x16'
   | { custom_png: { path: string } }
   | 'floyd_steinberg'
   | 'atkinson'

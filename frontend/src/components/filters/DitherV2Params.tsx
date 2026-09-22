@@ -17,6 +17,7 @@ type SimpleDitherMode =
   | 'bayer_2x2'
   | 'bayer_4x4'
   | 'bayer_8x8'
+  | 'bayer_16x16'
   | 'custom_png'
   | 'floyd_steinberg'
   | 'atkinson'
@@ -42,6 +43,7 @@ function modeToSimple(mode: DitherModeV2): SimpleDitherMode {
       'bayer_2x2',
       'bayer_4x4',
       'bayer_8x8',
+      'bayer_16x16',
       'custom_png',
       'floyd_steinberg',
       'atkinson',
@@ -121,6 +123,7 @@ function DitherV2Params({ mode, levels, thresholdScale, pixelSize, colorMode, pa
           { value: 'bayer_2x2', label: 'Bayer 2×2' },
           { value: 'bayer_4x4', label: 'Bayer 4×4' },
           { value: 'bayer_8x8', label: 'Bayer 8×8' },
+          { value: 'bayer_16x16', label: 'Bayer 16×16' },
           { value: 'custom_png', label: 'Custom Threshold Map' },
           { value: 'floyd_steinberg', label: 'Floyd-Steinberg' },
           { value: 'atkinson', label: 'Atkinson' },

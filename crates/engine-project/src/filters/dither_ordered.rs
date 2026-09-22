@@ -1,6 +1,6 @@
 //! Ordered dithering engine (V2 redesign).
 //!
-//! Implements Bayer matrix (2×2, 4×4, 8×8) and custom PNG threshold map
+//! Implements Bayer matrix (2×2, 4×4, 8×8, 16×16) and custom PNG threshold map
 //! ordered dithering. Uses global pixel coordinates for seamless tiling
 //! across tile boundaries.
 //!
@@ -51,6 +51,39 @@ const BAYER_8X8: [[f32; 8]; 8] = [
     [15.0/64.0, 47.0/64.0,  7.0/64.0, 39.0/64.0, 13.0/64.0, 45.0/64.0,  5.0/64.0, 37.0/64.0],
     [63.0/64.0, 31.0/64.0, 55.0/64.0, 23.0/64.0, 61.0/64.0, 29.0/64.0, 53.0/64.0, 21.0/64.0],
 ];
+
+/// Classic Bayer recursive expansion of integer ranks:
+/// `bayer_2n = [[4*Bn, 4*Bn+2], [4*Bn+3, 4*Bn+1]]` from `bayer_2 = [[0,2],[3,1]]`.
+const fn bayer_expand_ranks<const N: usize, const M: usize>(
+    base: &[[u16; N]; N],
+) -> [[u16; M]; M] {
+    let mut out = [[0u16; M]; M];
+    let mut y = 0;
+    while y < N {
+        let mut x = 0;
+        while x < N {
+            let v = base[y][x];
+            out[y][x] = 4 * v;
+            out[y][x + N] = 4 * v + 2;
+            out[y + N][x] = 4 * v + 3;
+            out[y + N][x + N] = 4 * v + 1;
+            x += 1;
+        }
+        y += 1;
+    }
+    out
+}
+
+const BAYER_2_RANK: [[u16; 2]; 2] = [[0, 2], [3, 1]];
+const BAYER_4_RANK: [[u16; 4]; 4] = bayer_expand_ranks(&BAYER_2_RANK);
+const BAYER_8_RANK: [[u16; 8]; 8] = bayer_expand_ranks(&BAYER_4_RANK);
+/// 16×16 Bayer integer ranks (0..255), generated from the recursive formula.
+const BAYER_16_RANK: [[u16; 16]; 16] = bayer_expand_ranks(&BAYER_8_RANK);
+
+#[inline]
+fn bayer_16x16_threshold(mx: usize, my: usize) -> f32 {
+    BAYER_16_RANK[my][mx] as f32 / 256.0
+}
 
 // ─── Threshold Lookup ────────────────────────────────────────────────────────
 
@@ -149,6 +182,7 @@ fn samples_rotated_pattern(mode: &DitherModeV2) -> bool {
         DitherModeV2::Bayer2x2
             | DitherModeV2::Bayer4x4
             | DitherModeV2::Bayer8x8
+            | DitherModeV2::Bayer16x16
             | DitherModeV2::CustomPng { .. }
     )
 }
@@ -237,6 +271,11 @@ fn get_threshold_i32(
             let mx = (gx as i64).rem_euclid(8) as usize;
             let my = (gy as i64).rem_euclid(8) as usize;
             Ok(BAYER_8X8[my][mx])
+        }
+        DitherModeV2::Bayer16x16 => {
+            let mx = (gx as i64).rem_euclid(16) as usize;
+            let my = (gy as i64).rem_euclid(16) as usize;
+            Ok(bayer_16x16_threshold(mx, my))
         }
         DitherModeV2::Wave => Ok(wave_threshold(
             gx,
@@ -957,6 +996,61 @@ fn apply_cmyk_halftone_into(
 mod tests {
     use super::*;
     use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2, PaletteDitherMode};
+
+    /// Independent recursive Bayer construction for §1.2 oracle checks.
+    fn expand_bayer_ranks(base: &[Vec<u16>]) -> Vec<Vec<u16>> {
+        let n = base.len();
+        let mut out = vec![vec![0u16; n * 2]; n * 2];
+        for y in 0..n {
+            for x in 0..n {
+                let v = base[y][x];
+                out[y][x] = 4 * v;
+                out[y][x + n] = 4 * v + 2;
+                out[y + n][x] = 4 * v + 3;
+                out[y + n][x + n] = 4 * v + 1;
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn bayer_hardcoded_matrices_match_recursive_formula() {
+        let mut ranks = vec![vec![0u16, 2], vec![3, 1]];
+        for (y, row) in BAYER_2X2.iter().enumerate() {
+            for (x, &t) in row.iter().enumerate() {
+                assert_eq!(t, ranks[y][x] as f32 / 4.0);
+            }
+        }
+        ranks = expand_bayer_ranks(&ranks);
+        for (y, row) in BAYER_4X4.iter().enumerate() {
+            for (x, &t) in row.iter().enumerate() {
+                assert_eq!(t, ranks[y][x] as f32 / 16.0);
+            }
+        }
+        ranks = expand_bayer_ranks(&ranks);
+        for (y, row) in BAYER_8X8.iter().enumerate() {
+            for (x, &t) in row.iter().enumerate() {
+                assert_eq!(t, ranks[y][x] as f32 / 64.0);
+            }
+        }
+        ranks = expand_bayer_ranks(&ranks);
+        assert_eq!(ranks.len(), 16);
+        let mut seen = std::collections::HashSet::new();
+        for y in 0..16 {
+            for x in 0..16 {
+                assert_eq!(
+                    BAYER_16_RANK[y][x], ranks[y][x],
+                    "BAYER_16_RANK[{y}][{x}] diverges from recursive formula"
+                );
+                assert_eq!(
+                    bayer_16x16_threshold(x, y),
+                    ranks[y][x] as f32 / 256.0
+                );
+                assert!(seen.insert(ranks[y][x]));
+            }
+        }
+        assert_eq!(seen.len(), 256);
+    }
 
     fn make_uniform_tile(r: f32, g: f32, b: f32, a: f32) -> PixelTile {
         let mut tile = PixelTile::new();
@@ -3065,6 +3159,17 @@ mod tests {
             DitherModeV2::Bayer2x2 => 4,
             DitherModeV2::Bayer4x4 => 16,
             DitherModeV2::Bayer8x8 => 64,
+            DitherModeV2::Bayer16x16 => 256,
+            _ => unreachable!("bayer only"),
+        }
+    }
+
+    fn bayer_matrix_side(mode: &DitherModeV2) -> u32 {
+        match mode {
+            DitherModeV2::Bayer2x2 => 2,
+            DitherModeV2::Bayer4x4 => 4,
+            DitherModeV2::Bayer8x8 => 8,
+            DitherModeV2::Bayer16x16 => 16,
             _ => unreachable!("bayer only"),
         }
     }
@@ -3075,9 +3180,13 @@ mod tests {
             DitherModeV2::Bayer2x2,
             DitherModeV2::Bayer4x4,
             DitherModeV2::Bayer8x8,
+            DitherModeV2::Bayer16x16,
         ] {
             let cells = bayer_matrix_cells(&mode);
-            for ps in 1u8..=32 {
+            // One tile must span ≥ matrix-side blocks so rem_euclid hits every cell.
+            let max_ps = (TILE_FULL_SIZE / bayer_matrix_side(&mode))
+                .clamp(1, 32) as u8;
+            for ps in 1u8..=max_ps {
                 let unique = unique_thresholds_on_tile(mode.clone(), ps);
                 assert!(
                     unique >= cells,

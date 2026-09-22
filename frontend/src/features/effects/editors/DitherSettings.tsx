@@ -14,6 +14,7 @@ type SimpleDitherMode =
   | 'bayer_2x2'
   | 'bayer_4x4'
   | 'bayer_8x8'
+  | 'bayer_16x16'
   | 'custom_png'
   | 'floyd_steinberg'
   | 'atkinson'
@@ -28,6 +29,7 @@ const SIMPLE_MODES: SimpleDitherMode[] = [
   'bayer_2x2',
   'bayer_4x4',
   'bayer_8x8',
+  'bayer_16x16',
   'custom_png',
   'floyd_steinberg',
   'atkinson',
@@ -110,6 +112,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
     'bayer_2x2',
     'bayer_4x4',
     'bayer_8x8',
+    'bayer_16x16',
     'custom_png',
     'wave',
     'cmyk_halftone',
@@ -118,6 +121,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
     'bayer_2x2',
     'bayer_4x4',
     'bayer_8x8',
+    'bayer_16x16',
     'custom_png',
   ].includes(simpleMode);
   const isEdMode = [
@@ -182,6 +186,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
           { value: 'bayer_2x2', label: 'Bayer 2×2' },
           { value: 'bayer_4x4', label: 'Bayer 4×4' },
           { value: 'bayer_8x8', label: 'Bayer 8×8' },
+          { value: 'bayer_16x16', label: 'Bayer 16×16' },
           { value: 'cmyk_halftone', label: 'CMYK Halftone' },
           { value: 'wave', label: 'Wave' },
           { value: 'custom_png', label: 'Custom PNG' },

@@ -1,4 +1,4 @@
-//! Bayer ordered-dither algorithms (`bayer_2x2`, `bayer_4x4`, `bayer_8x8`).
+//! Bayer ordered-dither algorithms (`bayer_2x2`, `bayer_4x4`, `bayer_8x8`, `bayer_16x16`).
 
 use engine_registry::{
     AlgorithmId, CpuCheckpointKind, EffectCategory, FilterAlgorithm, FilterCtx, FilterError,
@@ -69,6 +69,9 @@ pub struct Bayer4x4;
 
 /// 8×8 Bayer ordered dither (`bayer_8x8`).
 pub struct Bayer8x8;
+
+/// 16×16 Bayer ordered dither (`bayer_16x16`).
+pub struct Bayer16x16;
 
 fn parse_dither_params(params: &serde_json::Value) -> Result<DitherParamsV2, serde_json::Error> {
     serde_json::from_value(params.clone())
@@ -225,6 +228,47 @@ impl FilterAlgorithm for Bayer8x8 {
 
     fn gpu_eligibility(&self, params: &serde_json::Value) -> GpuEligibility {
         gpu_eligibility_for(DitherModeV2::Bayer8x8, params)
+    }
+
+    fn param_schema(&self) -> &'static [ParamField] {
+        BAYER_SCHEMA
+    }
+
+    fn schema_version(&self) -> u32 {
+        1
+    }
+
+    fn category(&self) -> EffectCategory {
+        EffectCategory::Dithering
+    }
+
+    fn requires_full_row(&self) -> bool {
+        false
+    }
+}
+
+impl FilterAlgorithm for Bayer16x16 {
+    fn id(&self) -> AlgorithmId {
+        AlgorithmId::new("bayer_16x16")
+    }
+
+    fn display_name(&self) -> &'static str {
+        "Bayer 16×16"
+    }
+
+    fn apply(
+        &self,
+        tile: &mut PixelTile,
+        params: &serde_json::Value,
+        ctx: &dyn FilterCtx,
+    ) -> Result<(), FilterError> {
+        let params = parse_dither_params(params)?;
+        apply_bayer(tile, params, DitherModeV2::Bayer16x16, ctx)
+    }
+
+    /// New catalog algorithm — CPU-only until a dedicated GPU gate (spec non-goal).
+    fn gpu_eligibility(&self, _params: &serde_json::Value) -> GpuEligibility {
+        GpuEligibility::Cpu(CpuCheckpointKind::UnsupportedFilter)
     }
 
     fn param_schema(&self) -> &'static [ParamField] {

@@ -74,7 +74,7 @@ fn algorithm_id_registry_txt_is_sorted_and_unique() {
     }
 }
 
-/// Snapshot test: the file currently contains exactly the 17 IDs defined in
+/// Snapshot test: the file currently contains exactly the IDs defined in
 /// the design doc.  Update this list when new algorithms are added.
 #[test]
 fn algorithm_id_registry_txt_contains_expected_ids() {
@@ -82,6 +82,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
     let expected = [
         "adjust",
         "atkinson",
+        "bayer_16x16",
         "bayer_2x2",
         "bayer_4x4",
         "bayer_8x8",
@@ -180,13 +181,17 @@ fn register_all_ids_unique() {
         "Phase 2.1 must register bayer_8x8"
     );
     assert!(
+        registry.get_by_str("bayer_16x16").is_some(),
+        "Batch A must register bayer_16x16"
+    );
+    assert!(
         registry.get_by_str("palette_quantize").is_some(),
         "Phase 2.2 must register palette_quantize"
     );
     assert_eq!(
         all_ids.len(),
-        17,
-        "Phase 2 must register all 17 built-in algorithms"
+        18,
+        "must register all 18 built-in algorithms"
     );
 }
 
@@ -233,7 +238,7 @@ fn migration_corpus() {
         );
     }
     assert_eq!(
-        count, 17,
+        count, 18,
         "expected one migration fixture per built-in algorithm"
     );
 }

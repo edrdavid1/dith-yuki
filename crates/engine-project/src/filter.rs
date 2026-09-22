@@ -58,7 +58,7 @@ impl FilterKind {
 /// Dither modes for the Dither filter.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DitherMode {
-    /// Bayer ordered dithering with specified matrix size (2, 4, or 8).
+    /// Bayer ordered dithering with specified matrix size (2, 4, 8, or 16).
     Bayer { matrix_size: u8 },
     /// Custom PNG threshold map loaded from a file path.
     ThresholdMap { path: String },
@@ -192,6 +192,8 @@ pub enum DitherModeV2 {
     Bayer4x4,
     #[serde(rename = "bayer_8x8")]
     Bayer8x8,
+    #[serde(rename = "bayer_16x16")]
+    Bayer16x16,
     CustomPng {
         path: String,
     },
@@ -241,6 +243,7 @@ impl DitherModeV2 {
             Self::Bayer2x2 => Some("bayer_2x2"),
             Self::Bayer4x4 => Some("bayer_4x4"),
             Self::Bayer8x8 => Some("bayer_8x8"),
+            Self::Bayer16x16 => Some("bayer_16x16"),
             Self::FloydSteinberg => Some("floyd_steinberg"),
             Self::Atkinson => Some("atkinson"),
             Self::JarvisJudiceNinke => Some("jarvis_judice_ninke"),
@@ -427,6 +430,7 @@ impl From<(DitherMode, u8)> for DitherParamsV2 {
             DitherMode::Bayer { matrix_size: 2 } => DitherModeV2::Bayer2x2,
             DitherMode::Bayer { matrix_size: 4 } => DitherModeV2::Bayer4x4,
             DitherMode::Bayer { matrix_size: 8 } => DitherModeV2::Bayer8x8,
+            DitherMode::Bayer { matrix_size: 16 } => DitherModeV2::Bayer16x16,
             DitherMode::Bayer { .. } => DitherModeV2::Bayer4x4, // fallback
             DitherMode::ThresholdMap { path } => DitherModeV2::CustomPng { path },
             DitherMode::ErrorDiffusion { kernel } => match kernel {
@@ -834,9 +838,9 @@ impl FilterInstance {
                 }
                 match mode {
                     DitherMode::Bayer { matrix_size } => {
-                        if !matches!(matrix_size, 2 | 4 | 8) {
+                        if !matches!(matrix_size, 2 | 4 | 8 | 16) {
                             return Err(EngineError::invalid_filter_params(
-                                "Bayer matrix_size must be 2, 4, or 8",
+                                "Bayer matrix_size must be 2, 4, 8, or 16",
                             ));
                         }
                     }
@@ -1379,6 +1383,10 @@ mod tests {
             serde_json::json!("bayer_8x8")
         );
         assert_eq!(
+            serde_json::to_value(&DitherModeV2::Bayer16x16).unwrap(),
+            serde_json::json!("bayer_16x16")
+        );
+        assert_eq!(
             serde_json::to_value(&DitherModeV2::FloydSteinberg).unwrap(),
             serde_json::json!("floyd_steinberg")
         );
@@ -1664,9 +1672,16 @@ mod tests {
     }
 
     #[test]
+    fn from_trait_bayer_16() {
+        let params = DitherParamsV2::from((DitherMode::Bayer { matrix_size: 16 }, 4u8));
+        assert!(matches!(params.mode, DitherModeV2::Bayer16x16));
+        assert_eq!(params.levels, 16); // 2^4
+    }
+
+    #[test]
     fn from_trait_bayer_fallback() {
         // Unknown matrix size falls back to Bayer4x4
-        let params = DitherParamsV2::from((DitherMode::Bayer { matrix_size: 16 }, 4u8));
+        let params = DitherParamsV2::from((DitherMode::Bayer { matrix_size: 3 }, 4u8));
         assert!(matches!(params.mode, DitherModeV2::Bayer4x4));
         assert_eq!(params.levels, 16); // 2^4
     }
