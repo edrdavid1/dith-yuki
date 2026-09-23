@@ -107,6 +107,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "sierra_two_row",
         "stevenson_arce",
         "stucki",
+        "void_and_cluster",
         "wave",
         "zhou_fang",
     ];
@@ -220,6 +221,10 @@ fn register_all_ids_unique() {
         "Batch C must register riemersma"
     );
     assert!(
+        registry.get_by_str("void_and_cluster").is_some(),
+        "Batch D must register void_and_cluster"
+    );
+    assert!(
         registry.get_by_str("stevenson_arce").is_some(),
         "Batch B must register stevenson_arce"
     );
@@ -229,8 +234,8 @@ fn register_all_ids_unique() {
     );
     assert_eq!(
         all_ids.len(),
-        29,
-        "must register all 29 built-in algorithms"
+        30,
+        "must register all 30 built-in algorithms"
     );
 }
 
@@ -277,7 +282,7 @@ fn migration_corpus() {
         );
     }
     assert_eq!(
-        count, 29,
+        count, 30,
         "expected one migration fixture per built-in algorithm"
     );
 }

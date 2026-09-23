@@ -77,6 +77,7 @@ export type DitherModeV2 =
   | 'stevenson_arce'
   | 'zhou_fang'
   | 'riemersma'
+  | 'void_and_cluster'
   | 'cmyk_halftone'
   | 'wave';
 

@@ -314,6 +314,9 @@ pub enum DitherModeV2 {
     /// row-major ED; see `ExecutionScope::FullDocument`.
     #[serde(rename = "riemersma")]
     Riemersma,
+    /// Ulichney void-and-cluster blue-noise ordered dither (64×64 rank matrix).
+    #[serde(rename = "void_and_cluster")]
+    VoidAndCluster,
     /// CMYK angled-screen halftone (ordered path, no ED).
     CmykHalftone,
     /// CMYK screens with user-rotatable base angle (`pattern_angle` offset).
@@ -388,6 +391,7 @@ impl DitherModeV2 {
             Self::Ostromoukhov => Some("ostromoukhov"),
             Self::ZhouFang => Some("zhou_fang"),
             Self::Riemersma => Some("riemersma"),
+            Self::VoidAndCluster => Some("void_and_cluster"),
             Self::CmykHalftone => Some("cmyk_halftone"),
             Self::HalftoneScreenAngled => Some("halftone_screen_angled"),
             Self::Wave => Some("wave"),
@@ -1150,6 +1154,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         | "ostromoukhov"
         | "zhou_fang"
         | "riemersma"
+        | "void_and_cluster"
         | "cmyk_halftone"
         | "halftone_screen_angled"
         | "wave" => Some(FilterKind::Dither),
@@ -1605,6 +1610,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&DitherModeV2::Riemersma).unwrap(),
             serde_json::json!("riemersma")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::VoidAndCluster).unwrap(),
+            serde_json::json!("void_and_cluster")
         );
         assert_eq!(
             serde_json::to_value(&DitherModeV2::SierraTwoRow).unwrap(),

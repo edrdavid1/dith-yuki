@@ -33,6 +33,7 @@ type SimpleDitherMode =
   | 'stevenson_arce'
   | 'zhou_fang'
   | 'riemersma'
+  | 'void_and_cluster'
   | 'cmyk_halftone'
   | 'wave';
 
@@ -59,6 +60,7 @@ const SIMPLE_MODES: SimpleDitherMode[] = [
   'stevenson_arce',
   'zhou_fang',
   'riemersma',
+  'void_and_cluster',
   'cmyk_halftone',
   'wave',
 ];
@@ -227,6 +229,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
           { value: 'stevenson_arce', label: 'Stevenson–Arce' },
           { value: 'zhou_fang', label: 'Zhou–Fang' },
           { value: 'riemersma', label: 'Riemersma' },
+          { value: 'void_and_cluster', label: 'Void and Cluster' },
           { value: 'bayer_2x2', label: 'Bayer 2×2' },
           { value: 'bayer_4x4', label: 'Bayer 4×4' },
           { value: 'bayer_8x8', label: 'Bayer 8×8' },
