@@ -78,6 +78,7 @@ export type DitherModeV2 =
   | 'zhou_fang'
   | 'riemersma'
   | 'void_and_cluster'
+  | 'crosshatch_dither'
   | 'cmyk_halftone'
   | 'wave';
 

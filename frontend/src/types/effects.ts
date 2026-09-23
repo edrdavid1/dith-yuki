@@ -109,6 +109,7 @@ export const DITHERING_ALGORITHM_IDS: readonly string[] = [
   'zhou_fang',
   'riemersma',
   'void_and_cluster',
+  'crosshatch_dither',
   'cmyk_halftone',
   'wave',
 ];
