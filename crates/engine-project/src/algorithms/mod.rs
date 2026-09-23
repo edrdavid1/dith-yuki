@@ -21,6 +21,7 @@ mod halftone_screen_angled;
 mod palette_quantize;
 mod riemersma;
 mod scratch;
+mod void_and_cluster;
 mod wave;
 
 /// Process-wide built-in registry (Req 1.5).
@@ -47,6 +48,7 @@ pub fn register_all(registry: &mut AlgorithmRegistry) {
     registry.register(Box::new(bayer::Bayer16x16));
     registry.register(Box::new(clustered_dot_ordered::ClusteredDotOrdered));
     registry.register(Box::new(dispersed_dot_ordered::DispersedDotOrdered));
+    registry.register(Box::new(void_and_cluster::VoidAndCluster));
     registry.register(Box::new(palette_quantize::PaletteQuantizeAlgo));
     registry.register(Box::new(cmyk_halftone::CmykHalftone));
     registry.register(Box::new(halftone_screen_angled::HalftoneScreenAngled));

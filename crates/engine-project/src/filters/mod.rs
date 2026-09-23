@@ -20,6 +20,7 @@ pub mod full_document;
 pub mod hilbert;
 pub mod ostromoukhov_table;
 pub mod riemersma;
+pub mod void_and_cluster;
 pub mod zhou_fang_table;
 pub mod glitch;
 pub mod glow;

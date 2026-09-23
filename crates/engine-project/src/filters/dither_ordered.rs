@@ -239,6 +239,7 @@ fn samples_rotated_pattern(mode: &DitherModeV2) -> bool {
             | DitherModeV2::Bayer16x16
             | DitherModeV2::ClusteredDotOrdered
             | DitherModeV2::DispersedDotOrdered
+            | DitherModeV2::VoidAndCluster
             | DitherModeV2::CustomPng { .. }
     )
 }
@@ -342,6 +343,12 @@ fn get_threshold_i32(
             let mx = (gx as i64).rem_euclid(16) as usize;
             let my = (gy as i64).rem_euclid(16) as usize;
             Ok(dispersed_dot_16x16_threshold(mx, my))
+        }
+        DitherModeV2::VoidAndCluster => {
+            let side = crate::filters::void_and_cluster::SIZE as i64;
+            let mx = (gx as i64).rem_euclid(side) as usize;
+            let my = (gy as i64).rem_euclid(side) as usize;
+            Ok(crate::filters::void_and_cluster::threshold(mx, my))
         }
         DitherModeV2::Wave => Ok(wave_threshold(
             gx,
