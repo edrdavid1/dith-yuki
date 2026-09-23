@@ -36,6 +36,7 @@ type SimpleDitherMode =
   | 'void_and_cluster'
   | 'crosshatch_dither'
   | 'line_screen'
+  | 'voronoi_stipple'
   | 'cmyk_halftone'
   | 'wave';
 
@@ -65,6 +66,7 @@ const SIMPLE_MODES: SimpleDitherMode[] = [
   'void_and_cluster',
   'crosshatch_dither',
   'line_screen',
+  'voronoi_stipple',
   'cmyk_halftone',
   'wave',
 ];
@@ -236,6 +238,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
           { value: 'void_and_cluster', label: 'Void and Cluster' },
           { value: 'crosshatch_dither', label: 'Crosshatch' },
           { value: 'line_screen', label: 'Line Screen' },
+          { value: 'voronoi_stipple', label: 'Voronoi Stipple' },
           { value: 'bayer_2x2', label: 'Bayer 2×2' },
           { value: 'bayer_4x4', label: 'Bayer 4×4' },
           { value: 'bayer_8x8', label: 'Bayer 8×8' },

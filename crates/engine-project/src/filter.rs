@@ -323,6 +323,9 @@ pub enum DitherModeV2 {
     /// Parallel line-screen halftone (stripe width tracks tone).
     #[serde(rename = "line_screen")]
     LineScreen,
+    /// Jittered-lattice Voronoi stipple (density ∝ tone).
+    #[serde(rename = "voronoi_stipple")]
+    VoronoiStipple,
     /// CMYK angled-screen halftone (ordered path, no ED).
     CmykHalftone,
     /// CMYK screens with user-rotatable base angle (`pattern_angle` offset).
@@ -400,6 +403,7 @@ impl DitherModeV2 {
             Self::VoidAndCluster => Some("void_and_cluster"),
             Self::CrosshatchDither => Some("crosshatch_dither"),
             Self::LineScreen => Some("line_screen"),
+            Self::VoronoiStipple => Some("voronoi_stipple"),
             Self::CmykHalftone => Some("cmyk_halftone"),
             Self::HalftoneScreenAngled => Some("halftone_screen_angled"),
             Self::Wave => Some("wave"),
@@ -1165,6 +1169,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         | "void_and_cluster"
         | "crosshatch_dither"
         | "line_screen"
+        | "voronoi_stipple"
         | "cmyk_halftone"
         | "halftone_screen_angled"
         | "wave" => Some(FilterKind::Dither),
@@ -1632,6 +1637,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&DitherModeV2::LineScreen).unwrap(),
             serde_json::json!("line_screen")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::VoronoiStipple).unwrap(),
+            serde_json::json!("voronoi_stipple")
         );
         assert_eq!(
             serde_json::to_value(&DitherModeV2::SierraTwoRow).unwrap(),

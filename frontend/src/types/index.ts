@@ -80,6 +80,7 @@ export type DitherModeV2 =
   | 'void_and_cluster'
   | 'crosshatch_dither'
   | 'line_screen'
+  | 'voronoi_stipple'
   | 'cmyk_halftone'
   | 'wave';
 
