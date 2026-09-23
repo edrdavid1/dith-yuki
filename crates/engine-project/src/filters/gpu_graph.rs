@@ -230,6 +230,7 @@ fn dither_v2_spec(
         | DitherModeV2::DispersedDotOrdered
         | DitherModeV2::VoidAndCluster
         | DitherModeV2::CrosshatchDither
+        | DitherModeV2::LineScreen
         | DitherModeV2::HalftoneScreenAngled
         | DitherModeV2::CustomPng { .. }
         | DitherModeV2::Wave => {

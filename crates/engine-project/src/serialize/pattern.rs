@@ -158,6 +158,7 @@ fn min_version_for_dither_mode(mode: &DitherModeV2) -> Option<&'static str> {
         | DitherModeV2::Riemersma
         | DitherModeV2::VoidAndCluster
         | DitherModeV2::CrosshatchDither
+        | DitherModeV2::LineScreen
         | DitherModeV2::CmykHalftone
         | DitherModeV2::HalftoneScreenAngled
         | DitherModeV2::Wave => Some("0.1.0"),

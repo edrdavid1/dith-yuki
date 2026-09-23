@@ -79,6 +79,7 @@ export type DitherModeV2 =
   | 'riemersma'
   | 'void_and_cluster'
   | 'crosshatch_dither'
+  | 'line_screen'
   | 'cmyk_halftone'
   | 'wave';
 

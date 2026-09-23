@@ -99,6 +99,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "glow",
         "halftone_screen_angled",
         "jarvis_judice_ninke",
+        "line_screen",
         "ostromoukhov",
         "palette_quantize",
         "riemersma",
@@ -230,6 +231,10 @@ fn register_all_ids_unique() {
         "Batch E must register crosshatch_dither"
     );
     assert!(
+        registry.get_by_str("line_screen").is_some(),
+        "Batch E must register line_screen"
+    );
+    assert!(
         registry.get_by_str("stevenson_arce").is_some(),
         "Batch B must register stevenson_arce"
     );
@@ -239,8 +244,8 @@ fn register_all_ids_unique() {
     );
     assert_eq!(
         all_ids.len(),
-        31,
-        "must register all 31 built-in algorithms"
+        32,
+        "must register all 32 built-in algorithms"
     );
 }
 
@@ -287,7 +292,7 @@ fn migration_corpus() {
         );
     }
     assert_eq!(
-        count, 31,
+        count, 32,
         "expected one migration fixture per built-in algorithm"
     );
 }

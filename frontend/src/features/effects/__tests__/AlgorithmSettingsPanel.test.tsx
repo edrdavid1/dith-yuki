@@ -32,6 +32,7 @@ const REGISTRY_IDS = [
   'glow',
   'halftone_screen_angled',
   'jarvis_judice_ninke',
+  'line_screen',
   'ostromoukhov',
   'palette_quantize',
   'riemersma',
