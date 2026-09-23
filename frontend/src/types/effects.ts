@@ -110,6 +110,7 @@ export const DITHERING_ALGORITHM_IDS: readonly string[] = [
   'riemersma',
   'void_and_cluster',
   'crosshatch_dither',
+  'line_screen',
   'cmyk_halftone',
   'wave',
 ];

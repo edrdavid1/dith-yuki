@@ -320,6 +320,9 @@ pub enum DitherModeV2 {
     /// Engraving-style multi-layer hatch dither.
     #[serde(rename = "crosshatch_dither")]
     CrosshatchDither,
+    /// Parallel line-screen halftone (stripe width tracks tone).
+    #[serde(rename = "line_screen")]
+    LineScreen,
     /// CMYK angled-screen halftone (ordered path, no ED).
     CmykHalftone,
     /// CMYK screens with user-rotatable base angle (`pattern_angle` offset).
@@ -396,6 +399,7 @@ impl DitherModeV2 {
             Self::Riemersma => Some("riemersma"),
             Self::VoidAndCluster => Some("void_and_cluster"),
             Self::CrosshatchDither => Some("crosshatch_dither"),
+            Self::LineScreen => Some("line_screen"),
             Self::CmykHalftone => Some("cmyk_halftone"),
             Self::HalftoneScreenAngled => Some("halftone_screen_angled"),
             Self::Wave => Some("wave"),
@@ -1160,6 +1164,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         | "riemersma"
         | "void_and_cluster"
         | "crosshatch_dither"
+        | "line_screen"
         | "cmyk_halftone"
         | "halftone_screen_angled"
         | "wave" => Some(FilterKind::Dither),
@@ -1623,6 +1628,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&DitherModeV2::CrosshatchDither).unwrap(),
             serde_json::json!("crosshatch_dither")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::LineScreen).unwrap(),
+            serde_json::json!("line_screen")
         );
         assert_eq!(
             serde_json::to_value(&DitherModeV2::SierraTwoRow).unwrap(),
