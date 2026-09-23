@@ -22,6 +22,7 @@ const REGISTRY_IDS = [
   'burkes',
   'clustered_dot_ordered',
   'cmyk_halftone',
+  'crosshatch_dither',
   'crt',
   'curves',
   'dispersed_dot_ordered',

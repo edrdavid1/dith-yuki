@@ -89,6 +89,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "burkes",
         "clustered_dot_ordered",
         "cmyk_halftone",
+        "crosshatch_dither",
         "crt",
         "curves",
         "dispersed_dot_ordered",
@@ -225,6 +226,10 @@ fn register_all_ids_unique() {
         "Batch D must register void_and_cluster"
     );
     assert!(
+        registry.get_by_str("crosshatch_dither").is_some(),
+        "Batch E must register crosshatch_dither"
+    );
+    assert!(
         registry.get_by_str("stevenson_arce").is_some(),
         "Batch B must register stevenson_arce"
     );
@@ -234,8 +239,8 @@ fn register_all_ids_unique() {
     );
     assert_eq!(
         all_ids.len(),
-        30,
-        "must register all 30 built-in algorithms"
+        31,
+        "must register all 31 built-in algorithms"
     );
 }
 
@@ -282,7 +287,7 @@ fn migration_corpus() {
         );
     }
     assert_eq!(
-        count, 30,
+        count, 31,
         "expected one migration fixture per built-in algorithm"
     );
 }

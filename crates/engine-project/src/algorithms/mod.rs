@@ -11,6 +11,7 @@ mod adjust;
 mod bayer;
 mod clustered_dot_ordered;
 mod cmyk_halftone;
+mod crosshatch_dither;
 mod crt;
 mod curves;
 mod dispersed_dot_ordered;
@@ -47,6 +48,7 @@ pub fn register_all(registry: &mut AlgorithmRegistry) {
     registry.register(Box::new(bayer::Bayer8x8));
     registry.register(Box::new(bayer::Bayer16x16));
     registry.register(Box::new(clustered_dot_ordered::ClusteredDotOrdered));
+    registry.register(Box::new(crosshatch_dither::CrosshatchDither));
     registry.register(Box::new(dispersed_dot_ordered::DispersedDotOrdered));
     registry.register(Box::new(void_and_cluster::VoidAndCluster));
     registry.register(Box::new(palette_quantize::PaletteQuantizeAlgo));

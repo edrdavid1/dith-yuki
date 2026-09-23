@@ -36,7 +36,8 @@ type SimpleDitherMode =
   | 'stevenson_arce'
   | 'zhou_fang'
   | 'riemersma'
-  | 'void_and_cluster';
+  | 'void_and_cluster'
+  | 'crosshatch_dither';
 
 interface DitherV2ParamsProps {
   mode: DitherModeV2;
@@ -75,6 +76,7 @@ function modeToSimple(mode: DitherModeV2): SimpleDitherMode {
       'zhou_fang',
       'riemersma',
       'void_and_cluster',
+      'crosshatch_dither',
     ];
     if (allowed.includes(mode as SimpleDitherMode)) return mode as SimpleDitherMode;
   }
@@ -167,6 +169,7 @@ function DitherV2Params({ mode, levels, thresholdScale, pixelSize, colorMode, pa
           { value: 'zhou_fang', label: 'Zhou–Fang' },
           { value: 'riemersma', label: 'Riemersma' },
           { value: 'void_and_cluster', label: 'Void and Cluster' },
+          { value: 'crosshatch_dither', label: 'Crosshatch' },
         ]}
         onSelect={(v) => handleModeChange(v as SimpleDitherMode)}
       />

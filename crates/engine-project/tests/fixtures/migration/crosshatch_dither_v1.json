@@ -1,0 +1,8 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "kind": "Dither",
+  "params": {"DitherV2": {"mode": "crosshatch_dither", "levels": 2, "wave_wavelength": 8.0, "pattern_angle": 45.0}},
+  "enabled": true,
+  "algorithm_id": "crosshatch_dither",
+  "schema_version": 1
+}

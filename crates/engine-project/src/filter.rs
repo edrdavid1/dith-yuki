@@ -317,6 +317,9 @@ pub enum DitherModeV2 {
     /// Ulichney void-and-cluster blue-noise ordered dither (64×64 rank matrix).
     #[serde(rename = "void_and_cluster")]
     VoidAndCluster,
+    /// Engraving-style multi-layer hatch dither.
+    #[serde(rename = "crosshatch_dither")]
+    CrosshatchDither,
     /// CMYK angled-screen halftone (ordered path, no ED).
     CmykHalftone,
     /// CMYK screens with user-rotatable base angle (`pattern_angle` offset).
@@ -392,6 +395,7 @@ impl DitherModeV2 {
             Self::ZhouFang => Some("zhou_fang"),
             Self::Riemersma => Some("riemersma"),
             Self::VoidAndCluster => Some("void_and_cluster"),
+            Self::CrosshatchDither => Some("crosshatch_dither"),
             Self::CmykHalftone => Some("cmyk_halftone"),
             Self::HalftoneScreenAngled => Some("halftone_screen_angled"),
             Self::Wave => Some("wave"),
@@ -1155,6 +1159,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         | "zhou_fang"
         | "riemersma"
         | "void_and_cluster"
+        | "crosshatch_dither"
         | "cmyk_halftone"
         | "halftone_screen_angled"
         | "wave" => Some(FilterKind::Dither),
@@ -1614,6 +1619,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&DitherModeV2::VoidAndCluster).unwrap(),
             serde_json::json!("void_and_cluster")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::CrosshatchDither).unwrap(),
+            serde_json::json!("crosshatch_dither")
         );
         assert_eq!(
             serde_json::to_value(&DitherModeV2::SierraTwoRow).unwrap(),
