@@ -684,6 +684,19 @@ pub fn apply_ordered_with_cache_into(
             dst,
         );
     }
+    if matches!(params.mode, DitherModeV2::RandomDotStipple) {
+        return crate::filters::random_dot_stipple::apply_random_dot_stipple_into(
+            tile,
+            coord,
+            params,
+            palette_cache,
+            lut_cache,
+            document,
+            block_cache,
+            layer_id,
+            dst,
+        );
+    }
 
     let levels = params.levels as f32;
     let ps = params.pixel_size as u32;

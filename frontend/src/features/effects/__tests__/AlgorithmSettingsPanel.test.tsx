@@ -35,6 +35,7 @@ const REGISTRY_IDS = [
   'line_screen',
   'ostromoukhov',
   'palette_quantize',
+  'random_dot_stipple',
   'riemersma',
   'shiau_fan',
   'sierra',

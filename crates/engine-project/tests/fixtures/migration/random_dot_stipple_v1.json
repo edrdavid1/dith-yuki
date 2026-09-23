@@ -1,0 +1,8 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "kind": "Dither",
+  "params": {"DitherV2": {"mode": "random_dot_stipple", "pixel_size": 1, "threshold_scale": 1.0}},
+  "enabled": true,
+  "algorithm_id": "random_dot_stipple",
+  "schema_version": 1
+}

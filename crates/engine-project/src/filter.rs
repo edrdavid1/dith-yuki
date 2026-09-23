@@ -326,6 +326,9 @@ pub enum DitherModeV2 {
     /// Jittered-lattice Voronoi stipple (density ∝ tone).
     #[serde(rename = "voronoi_stipple")]
     VoronoiStipple,
+    /// Random / Bernoulli dot stipple (density ∝ tone).
+    #[serde(rename = "random_dot_stipple")]
+    RandomDotStipple,
     /// CMYK angled-screen halftone (ordered path, no ED).
     CmykHalftone,
     /// CMYK screens with user-rotatable base angle (`pattern_angle` offset).
@@ -404,6 +407,7 @@ impl DitherModeV2 {
             Self::CrosshatchDither => Some("crosshatch_dither"),
             Self::LineScreen => Some("line_screen"),
             Self::VoronoiStipple => Some("voronoi_stipple"),
+            Self::RandomDotStipple => Some("random_dot_stipple"),
             Self::CmykHalftone => Some("cmyk_halftone"),
             Self::HalftoneScreenAngled => Some("halftone_screen_angled"),
             Self::Wave => Some("wave"),
@@ -1170,6 +1174,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         | "crosshatch_dither"
         | "line_screen"
         | "voronoi_stipple"
+        | "random_dot_stipple"
         | "cmyk_halftone"
         | "halftone_screen_angled"
         | "wave" => Some(FilterKind::Dither),
@@ -1641,6 +1646,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&DitherModeV2::VoronoiStipple).unwrap(),
             serde_json::json!("voronoi_stipple")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::RandomDotStipple).unwrap(),
+            serde_json::json!("random_dot_stipple")
         );
         assert_eq!(
             serde_json::to_value(&DitherModeV2::SierraTwoRow).unwrap(),

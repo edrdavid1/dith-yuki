@@ -102,6 +102,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "line_screen",
         "ostromoukhov",
         "palette_quantize",
+        "random_dot_stipple",
         "riemersma",
         "shiau_fan",
         "sierra",
@@ -240,6 +241,10 @@ fn register_all_ids_unique() {
         "Batch E must register voronoi_stipple"
     );
     assert!(
+        registry.get_by_str("random_dot_stipple").is_some(),
+        "Batch E must register random_dot_stipple"
+    );
+    assert!(
         registry.get_by_str("stevenson_arce").is_some(),
         "Batch B must register stevenson_arce"
     );
@@ -249,8 +254,8 @@ fn register_all_ids_unique() {
     );
     assert_eq!(
         all_ids.len(),
-        33,
-        "must register all 33 built-in algorithms"
+        34,
+        "must register all 34 built-in algorithms"
     );
 }
 
@@ -297,7 +302,7 @@ fn migration_corpus() {
         );
     }
     assert_eq!(
-        count, 33,
+        count, 34,
         "expected one migration fixture per built-in algorithm"
     );
 }
