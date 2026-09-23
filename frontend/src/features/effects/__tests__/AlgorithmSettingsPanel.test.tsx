@@ -43,6 +43,7 @@ const REGISTRY_IDS = [
   'stevenson_arce',
   'stucki',
   'void_and_cluster',
+  'voronoi_stipple',
   'wave',
   'zhou_fang',
 ];
