@@ -214,10 +214,32 @@ fn assemble_layer_processed_rgba8(
     threshold_cache: &engine_color::threshold_map::ThresholdMapCache,
 ) -> Result<Vec<u8>, ProjectError> {
     use crate::filters::apply::apply_filter_to_tile;
+    use crate::filters::full_document::{
+        compute_full_document_rgba, layer_has_full_document_filter,
+    };
+    use std::sync::atomic::AtomicBool;
 
     let doc_width = doc.width;
     let doc_height = doc.height;
     let doc_id = doc.id.0;
+
+    // Full-document algorithms must not be applied per-tile (Hilbert error
+    // spans the whole layer). Same path as live preview.
+    if layer_has_full_document_filter(layer) {
+        let cancel = AtomicBool::new(false);
+        let result = compute_full_document_rgba(cache, layer, doc, &cancel)
+            .map_err(|e| ProjectError::Codec(format!("full-document filter apply: {e}")))?;
+        let mut canvas = vec![0u8; (doc_width as usize) * (doc_height as usize) * 4];
+        for (i, chunk) in result.rgba_f32.chunks_exact(4).enumerate() {
+            let dst = i * 4;
+            canvas[dst] = f32_to_u8(chunk[0]);
+            canvas[dst + 1] = f32_to_u8(chunk[1]);
+            canvas[dst + 2] = f32_to_u8(chunk[2]);
+            canvas[dst + 3] = f32_to_u8(chunk[3]);
+        }
+        return Ok(canvas);
+    }
+
     let mut canvas = vec![0u8; (doc_width as usize) * (doc_height as usize) * 4];
     let bounds = layer.bounds_l0;
     let (off_x, off_y) = layer.offset;

@@ -342,6 +342,7 @@ impl AppState {
         self.tiles.ed_frontier.evict_document(doc);
         self.tiles.palette_cache.evict_document(doc);
         self.tiles.palette_lut_cache.evict_document(doc);
+        self.tiles.full_document.clear(); // per-doc eviction not needed yet (few entries)
 
         let mut active = self.active_id.lock().map_err(|e| e.to_string())?;
         if *active == Some(doc) {

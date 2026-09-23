@@ -1,7 +1,7 @@
 use engine_color::palette_cache::PaletteKdCache;
 use engine_color::palette_lut::PaletteLutCache;
 use engine_color::threshold_map::ThresholdMapCache;
-use engine_project::filters::ErrorResidualsStore;
+use engine_project::filters::{ErrorResidualsStore, FullDocumentCache};
 use engine_tiles::{BlockRepresentativeCache, EdFrontier, Scheduler, TileCache};
 
 pub struct TileState {
@@ -13,6 +13,7 @@ pub struct TileState {
     pub error_residuals: ErrorResidualsStore,
     pub block_representatives: BlockRepresentativeCache,
     pub ed_frontier: EdFrontier,
+    pub full_document: FullDocumentCache,
 }
 
 impl TileState {
@@ -26,6 +27,7 @@ impl TileState {
             error_residuals: ErrorResidualsStore::new(),
             block_representatives: BlockRepresentativeCache::new(),
             ed_frontier: EdFrontier::new(),
+            full_document: FullDocumentCache::new(),
         }
     }
 }

@@ -123,6 +123,7 @@ pub(crate) fn reset_tiles_for_new_document(state: &AppState) {
     state.tiles.ed_frontier.clear();
     state.tiles.block_representatives.invalidate_all();
     state.tiles.error_residuals.clear();
+    state.tiles.full_document.clear();
     if let Ok(mut pending) = state.pending_preview_refresh.lock() {
         *pending = None;
     }
@@ -253,6 +254,7 @@ fn run_preview_refresh(state: &AppState, layer_id: u32, clear_residuals: bool) {
             .error_residuals
             .evict_layer(doc, engine_project::types::LayerId::new(layer_id));
         state.tiles.block_representatives.evict_layer(doc, layer_id);
+        state.tiles.full_document.invalidate_layer(doc, layer_id);
     }
     engine_tiles::invalidation::invalidate(
         &state.tiles.tile_cache,

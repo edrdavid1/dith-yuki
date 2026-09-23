@@ -34,7 +34,8 @@ type SimpleDitherMode =
   | 'sierra_two_row'
   | 'shiau_fan'
   | 'stevenson_arce'
-  | 'zhou_fang';
+  | 'zhou_fang'
+  | 'riemersma';
 
 interface DitherV2ParamsProps {
   mode: DitherModeV2;
@@ -71,6 +72,7 @@ function modeToSimple(mode: DitherModeV2): SimpleDitherMode {
       'shiau_fan',
       'stevenson_arce',
       'zhou_fang',
+      'riemersma',
     ];
     if (allowed.includes(mode as SimpleDitherMode)) return mode as SimpleDitherMode;
   }
@@ -161,6 +163,7 @@ function DitherV2Params({ mode, levels, thresholdScale, pixelSize, colorMode, pa
           { value: 'shiau_fan', label: 'Shiau–Fan' },
           { value: 'stevenson_arce', label: 'Stevenson–Arce' },
           { value: 'zhou_fang', label: 'Zhou–Fang' },
+          { value: 'riemersma', label: 'Riemersma' },
         ]}
         onSelect={(v) => handleModeChange(v as SimpleDitherMode)}
       />

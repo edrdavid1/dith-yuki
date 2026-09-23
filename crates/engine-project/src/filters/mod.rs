@@ -16,7 +16,10 @@ pub mod dither;
 pub mod dither_diffusion;
 pub mod dither_ordered;
 pub mod dither_residuals;
+pub mod full_document;
+pub mod hilbert;
 pub mod ostromoukhov_table;
+pub mod riemersma;
 pub mod zhou_fang_table;
 pub mod glitch;
 pub mod glow;
@@ -34,6 +37,10 @@ pub use apply::apply_filter_to_tile_with_park;
 pub use apply::apply_filter_to_tile_with_residuals;
 pub use curves::{CurveChannel, CurvesFilter};
 pub use dither::{DitherAlgorithm, DitherFilter};
+pub use full_document::{
+    ensure_full_document, layer_has_full_document_filter, publish_processed_tiles,
+    slice_processed_tile, FullDocumentCache, FullDocumentResult,
+};
 pub use glitch::{GlitchFilter, GlitchType};
 pub use levels::LevelsFilter;
 pub use palette_quantize::PaletteQuantizeFilter;

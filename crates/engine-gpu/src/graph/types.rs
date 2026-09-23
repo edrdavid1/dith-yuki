@@ -129,6 +129,7 @@ pub enum CpuCheckpointKind {
     AdjustBlur,
     UnsupportedFilter,
     FullStackFallback,
+    SequentialGlobalDependency,
 }
 
 #[derive(Clone, Debug, PartialEq)]

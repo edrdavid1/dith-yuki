@@ -32,6 +32,7 @@ type SimpleDitherMode =
   | 'shiau_fan'
   | 'stevenson_arce'
   | 'zhou_fang'
+  | 'riemersma'
   | 'cmyk_halftone'
   | 'wave';
 
@@ -57,6 +58,7 @@ const SIMPLE_MODES: SimpleDitherMode[] = [
   'shiau_fan',
   'stevenson_arce',
   'zhou_fang',
+  'riemersma',
   'cmyk_halftone',
   'wave',
 ];
@@ -224,6 +226,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
           { value: 'shiau_fan', label: 'Shiau–Fan' },
           { value: 'stevenson_arce', label: 'Stevenson–Arce' },
           { value: 'zhou_fang', label: 'Zhou–Fang' },
+          { value: 'riemersma', label: 'Riemersma' },
           { value: 'bayer_2x2', label: 'Bayer 2×2' },
           { value: 'bayer_4x4', label: 'Bayer 4×4' },
           { value: 'bayer_8x8', label: 'Bayer 8×8' },
@@ -240,6 +243,13 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
           emit({ mode: simpleToMode(newMode) });
         }}
       />
+
+      {simpleMode === 'riemersma' && (
+        <p className={cn('effect-palette-hint')}>
+          Riemersma runs as a full-document pass — preview updates after the
+          whole layer finishes, not tile-by-tile.
+        </p>
+      )}
 
       {/* Always visible — was gated on paletteBound, so the menu vanished whenever
           Color Lab binding / lastCreatedId was empty after open. Mode still

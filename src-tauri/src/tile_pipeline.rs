@@ -89,6 +89,46 @@ pub fn compute_processed_tile(
         return Err(EngineError::EdDependenciesPending);
     }
 
+    // Full-document algorithms (Riemersma): monolithic pass, then slice tiles.
+    if engine_project::filters::layer_has_full_document_filter(layer) {
+        let compute_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
+        let result = engine_project::filters::ensure_full_document(
+            &state.tiles.full_document,
+            &state.tiles.tile_cache,
+            layer,
+            &snapshot,
+            compute_gen,
+        )?;
+        let now_gen = snapshot_for_key(state, key)?
+            .generations
+            .document_gen
+            .load(Ordering::Acquire);
+        if now_gen != compute_gen {
+            return Err(EngineError::invalid_state(
+                "full-document result stale after compute",
+            ));
+        }
+        engine_project::filters::publish_processed_tiles(
+            &state.tiles.tile_cache,
+            &result,
+            key.doc,
+            key.layer,
+            compute_gen,
+        );
+        let tile = engine_project::filters::slice_processed_tile(&result, key.coord);
+        let arc = Arc::new(tile);
+        let inserted =
+            state
+                .tiles
+                .tile_cache
+                .insert_fresh_gen(processed_key, Arc::clone(&arc), compute_gen);
+        if inserted {
+            state.evict_for_pressure_if_needed();
+        }
+        reschedule_if_insert_rejected(state, processed_key, inserted);
+        return Ok(arc);
+    }
+
     // 3. Apply the layer's filter stack to the raw tile.
     //    If the layer has no filters, the result is a copy of the raw tile.
     let processed = if layer.filters.is_empty() {
