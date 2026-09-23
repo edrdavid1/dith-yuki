@@ -137,6 +137,18 @@ pub enum CpuCheckpointKind {
     UnsupportedFilter,
     /// Full-stack CPU fallback (GPU context unavailable or disabled).
     FullStackFallback,
+    /// Strictly sequential over the whole document (Hilbert / space-filling ED).
+    SequentialGlobalDependency,
+}
+
+/// How an algorithm must be scheduled relative to the tile pipeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionScope {
+    /// Default: per-tile apply (optionally with `requires_full_row` wavefront).
+    Tiled,
+    /// Monolithic pass over the entire document / layer; not viewport-progressive.
+    FullDocument,
 }
 
 // ---------------------------------------------------------------------------
@@ -251,6 +263,8 @@ pub struct AlgorithmInfo {
     pub category: EffectCategory,
     /// If `true`, the UI should show a deprecation warning.
     pub deprecated: bool,
+    /// How the algorithm is scheduled (tiled vs full-document monolith).
+    pub execution_scope: ExecutionScope,
 }
 
 // ---------------------------------------------------------------------------
@@ -331,6 +345,7 @@ impl AlgorithmRegistry {
                 display_name: a.display_name(),
                 category: a.category(),
                 deprecated: false,
+                execution_scope: a.execution_scope(),
             })
             .collect()
     }
@@ -469,6 +484,14 @@ pub trait FilterAlgorithm: Send + Sync {
     /// Default implementation returns `false`.
     fn requires_full_row(&self) -> bool {
         false
+    }
+
+    /// Whether this algorithm runs as a tiled pass or a full-document monolith.
+    ///
+    /// Default: [`ExecutionScope::Tiled`]. Riemersma (and future Hilbert-style
+    /// algorithms) return [`ExecutionScope::FullDocument`].
+    fn execution_scope(&self) -> ExecutionScope {
+        ExecutionScope::Tiled
     }
 
     // ── Categorisation ────────────────────────────────────────────────────

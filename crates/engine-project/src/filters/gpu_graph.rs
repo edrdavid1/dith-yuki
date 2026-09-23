@@ -61,6 +61,9 @@ fn map_cpu_kind(kind: engine_registry::CpuCheckpointKind) -> CpuCheckpointKind {
         engine_registry::CpuCheckpointKind::FullStackFallback => {
             CpuCheckpointKind::FullStackFallback
         }
+        engine_registry::CpuCheckpointKind::SequentialGlobalDependency => {
+            CpuCheckpointKind::SequentialGlobalDependency
+        }
     }
 }
 

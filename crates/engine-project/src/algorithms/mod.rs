@@ -19,6 +19,7 @@ mod glitch;
 mod glow;
 mod halftone_screen_angled;
 mod palette_quantize;
+mod riemersma;
 mod scratch;
 mod wave;
 
@@ -53,6 +54,7 @@ pub fn register_all(registry: &mut AlgorithmRegistry) {
     registry.register(Box::new(error_diffusion::Atkinson));
     registry.register(Box::new(error_diffusion::JarvisJudiceNinke));
     registry.register(Box::new(error_diffusion::Ostromoukhov));
+    registry.register(Box::new(riemersma::Riemersma));
     registry.register(Box::new(error_diffusion::Stucki));
     registry.register(Box::new(error_diffusion::Burkes));
     registry.register(Box::new(error_diffusion::Fan93));

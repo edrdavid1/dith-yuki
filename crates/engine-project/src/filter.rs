@@ -310,6 +310,10 @@ pub enum DitherModeV2 {
     Ostromoukhov,
     #[serde(rename = "zhou_fang")]
     ZhouFang,
+    /// Hilbert-curve error diffusion (Riemersma). Full-document scope — not
+    /// row-major ED; see `ExecutionScope::FullDocument`.
+    #[serde(rename = "riemersma")]
+    Riemersma,
     /// CMYK angled-screen halftone (ordered path, no ED).
     CmykHalftone,
     /// CMYK screens with user-rotatable base angle (`pattern_angle` offset).
@@ -383,6 +387,7 @@ impl DitherModeV2 {
             Self::StevensonArce => Some("stevenson_arce"),
             Self::Ostromoukhov => Some("ostromoukhov"),
             Self::ZhouFang => Some("zhou_fang"),
+            Self::Riemersma => Some("riemersma"),
             Self::CmykHalftone => Some("cmyk_halftone"),
             Self::HalftoneScreenAngled => Some("halftone_screen_angled"),
             Self::Wave => Some("wave"),
@@ -1144,6 +1149,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         | "stevenson_arce"
         | "ostromoukhov"
         | "zhou_fang"
+        | "riemersma"
         | "cmyk_halftone"
         | "halftone_screen_angled"
         | "wave" => Some(FilterKind::Dither),
@@ -1595,6 +1601,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&DitherModeV2::ZhouFang).unwrap(),
             serde_json::json!("zhou_fang")
+        );
+        assert_eq!(
+            serde_json::to_value(&DitherModeV2::Riemersma).unwrap(),
+            serde_json::json!("riemersma")
         );
         assert_eq!(
             serde_json::to_value(&DitherModeV2::SierraTwoRow).unwrap(),

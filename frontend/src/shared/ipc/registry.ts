@@ -39,6 +39,8 @@ export interface AlgorithmInfo {
   display_name: string;
   category: EffectCategory;
   deprecated: boolean;
+  /** `tiled` (default progressive) or `full_document` (monolithic pass). */
+  execution_scope: 'tiled' | 'full_document';
 }
 
 export async function getAlgorithmSchema(id: string): Promise<ParamField[]> {

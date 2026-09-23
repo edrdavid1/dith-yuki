@@ -18,6 +18,7 @@ halftone_screen_angled
 jarvis_judice_ninke
 ostromoukhov
 palette_quantize
+riemersma
 shiau_fan
 sierra
 sierra_lite

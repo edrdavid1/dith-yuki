@@ -107,6 +107,7 @@ export const DITHERING_ALGORITHM_IDS: readonly string[] = [
   'shiau_fan',
   'stevenson_arce',
   'zhou_fang',
+  'riemersma',
   'cmyk_halftone',
   'wave',
 ];

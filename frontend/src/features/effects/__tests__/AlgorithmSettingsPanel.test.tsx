@@ -33,6 +33,7 @@ const REGISTRY_IDS = [
   'jarvis_judice_ninke',
   'ostromoukhov',
   'palette_quantize',
+  'riemersma',
   'shiau_fan',
   'sierra',
   'sierra_lite',
