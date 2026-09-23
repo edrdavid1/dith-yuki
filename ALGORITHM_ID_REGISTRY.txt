@@ -20,6 +20,7 @@ jarvis_judice_ninke
 line_screen
 ostromoukhov
 palette_quantize
+random_dot_stipple
 riemersma
 shiau_fan
 sierra

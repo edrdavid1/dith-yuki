@@ -81,6 +81,7 @@ export type DitherModeV2 =
   | 'crosshatch_dither'
   | 'line_screen'
   | 'voronoi_stipple'
+  | 'random_dot_stipple'
   | 'cmyk_halftone'
   | 'wave';
 

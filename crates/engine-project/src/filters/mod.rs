@@ -21,6 +21,7 @@ pub mod full_document;
 pub mod hilbert;
 pub mod line_screen;
 pub mod voronoi_stipple;
+pub mod random_dot_stipple;
 pub mod ostromoukhov_table;
 pub mod riemersma;
 pub mod void_and_cluster;

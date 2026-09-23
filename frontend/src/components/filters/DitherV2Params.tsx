@@ -39,7 +39,8 @@ type SimpleDitherMode =
   | 'void_and_cluster'
   | 'crosshatch_dither'
   | 'line_screen'
-  | 'voronoi_stipple';
+  | 'voronoi_stipple'
+  | 'random_dot_stipple';
 
 interface DitherV2ParamsProps {
   mode: DitherModeV2;
@@ -81,6 +82,7 @@ function modeToSimple(mode: DitherModeV2): SimpleDitherMode {
       'crosshatch_dither',
       'line_screen',
       'voronoi_stipple',
+      'random_dot_stipple',
     ];
     if (allowed.includes(mode as SimpleDitherMode)) return mode as SimpleDitherMode;
   }
@@ -176,6 +178,7 @@ function DitherV2Params({ mode, levels, thresholdScale, pixelSize, colorMode, pa
           { value: 'crosshatch_dither', label: 'Crosshatch' },
           { value: 'line_screen', label: 'Line Screen' },
           { value: 'voronoi_stipple', label: 'Voronoi Stipple' },
+          { value: 'random_dot_stipple', label: 'Random Dot Stipple' },
         ]}
         onSelect={(v) => handleModeChange(v as SimpleDitherMode)}
       />
