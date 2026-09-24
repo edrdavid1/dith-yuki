@@ -68,13 +68,6 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
         Some("CmdOrCtrl+N"),
     )?;
     let open_image = MenuItem::with_id(app, "open-image", "Open Image", true, Some("CmdOrCtrl+O"))?;
-    let import_layer = MenuItem::with_id(
-        app,
-        "import-image-layer",
-        "Import Image as Layer…",
-        true,
-        None::<&str>,
-    )?;
     let open_project = MenuItem::with_id(
         app,
         "open-project",
@@ -114,7 +107,6 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
         &[
             &new_project,
             &open_image,
-            &import_layer,
             &open_project,
             &PredefinedMenuItem::separator(app)?,
             &save_project,

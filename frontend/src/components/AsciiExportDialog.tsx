@@ -14,7 +14,7 @@ export interface AsciiExportDialogProps {
 }
 
 const FORMATS: { value: AsciiExportFormat; label: string }[] = [
-  { value: 'txt', label: 'Plain text (.txt)' },
+          { value: 'txt', label: 'Plain text (.txt, ≤96 columns)' },
   { value: 'ansi', label: 'ANSI (.ans)' },
   { value: 'html', label: 'HTML (.html)' },
   { value: 'svg', label: 'SVG (.svg)' },

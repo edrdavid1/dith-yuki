@@ -11,7 +11,7 @@ use engine_ascii::{
     convert, render_rgba, to_ansi, to_html, to_json, to_png, to_svg, to_txt, AnsiDepth,
     AnsiOptions, Ansi16Palette, AtlasOptions, BundledFont, CellColor, CellDither, ColorTarget,
     ConvertOptions, EdgeOverlay, FontFace, FontSize, GlyphAtlas, GridColorMode, HtmlOptions,
-    MatchMode, SvgOptions, SymbolSet, AsciiGrid,
+    MatchMode, SvgOptions, SymbolSet, AsciiGrid, TXT_EXPORT_MAX_COLS,
 };
 
 use crate::error::EngineError;
@@ -186,7 +186,7 @@ pub fn export_ascii_bytes(
     let atlas = result.atlas.as_ref();
     let grid = &result.grid;
     match format {
-        AsciiExportFormat::Txt => Ok(to_txt(atlas, grid, true).into_bytes()),
+        AsciiExportFormat::Txt => Ok(to_txt(atlas, grid, false).into_bytes()),
         AsciiExportFormat::Ansi => {
             let depth = match result.color_target {
                 ColorTarget::Ansi16(p) => AnsiDepth::Ansi16(p),
@@ -238,6 +238,25 @@ pub fn export_ascii_bytes(
         AsciiExportFormat::Json => to_json(atlas, grid)
             .map(|s| s.into_bytes())
             .map_err(|e| EngineError::invalid_state(format!("ascii json: {e}"))),
+    }
+}
+
+/// Plain-text editors soft-wrap long lines, which stacks vertical strips of the
+/// art. For TXT export we force a column-limited layout and an ASCII symbol set
+/// so one image row stays one text line in typical viewers.
+pub fn prepare_layer_for_txt_export(layer: &mut crate::layer::Layer) {
+    use crate::filter::FilterParams;
+    for filter in &mut layer.filters {
+        let FilterParams::Ascii(ref mut p) = filter.params else {
+            continue;
+        };
+        p.size_mode = "columns".into();
+        p.columns = TXT_EXPORT_MAX_COLS;
+        // Wide Unicode (blocks/braille/…) double-width in many editors → same strip bug.
+        match p.symbol_set.as_str() {
+            "bourke_10" | "bourke_70" | "printable_ascii" => {}
+            _ => p.symbol_set = "bourke_70".into(),
+        }
     }
 }
 

@@ -2,6 +2,7 @@ import React, { useEffect, type ReactNode } from 'react';
 import { Provider } from 'react-redux';
 import { store } from './store';
 import { startEngineEventBridge } from './listeners';
+import { suppressBrowserChrome } from './suppressBrowserChrome';
 import { ShellProvider } from './shell/ShellContext';
 import { ShortcutsProvider } from '../features/shortcuts/ShortcutsContext';
 import { useAppShortcuts } from '../features/shortcuts/useAppShortcuts';
@@ -19,6 +20,10 @@ function ShortcutEngine() {
 export function Providers({ children }: { children: ReactNode }) {
   useEffect(() => {
     return startEngineEventBridge(store);
+  }, []);
+
+  useEffect(() => {
+    return suppressBrowserChrome();
   }, []);
 
   return (

@@ -9,8 +9,8 @@ homepage = "https://github.com/edrdavid1/dith-yuki"
 repository = "https://github.com/edrdavid1/dith-yuki"
 
 [dependencies]
-# `devtools` keeps the WebView inspector available in release builds so Windows
-# reports can be diagnosed via right-click → Inspect (no local dev server needed).
+# `devtools` is compiled in so `DITHER_DEVTOOLS=1` can open the inspector.
+# Windows leave DevTools off by default (see `webview_debug.rs`).
 tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-os = "2"
@@ -29,7 +29,7 @@ engine-project = { path = "../crates/engine-project" }
 engine-color = { path = "../crates/engine-color" }
 engine-io = { path = "../crates/engine-io" }
 engine-gpu = { path = "../crates/engine-gpu" }
-image = { version = "0.25", features = ["png", "jpeg", "webp"] }
+image = { version = "0.25", features = ["png", "jpeg", "webp", "bmp", "tiff"] }
 base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
 rayon = "1.7"

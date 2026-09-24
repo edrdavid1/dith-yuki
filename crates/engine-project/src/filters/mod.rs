@@ -42,7 +42,8 @@ pub use apply::apply_filter_to_tile_with_caches;
 pub use apply::apply_filter_to_tile_with_park;
 pub use apply::apply_filter_to_tile_with_residuals;
 pub use ascii_job::{
-    apply_ascii_rgba, export_ascii_bytes, run_ascii_job, AsciiExportFormat, AsciiJobResult,
+    apply_ascii_rgba, export_ascii_bytes, prepare_layer_for_txt_export, run_ascii_job,
+    AsciiExportFormat, AsciiJobResult,
 };
 pub use curves::{CurveChannel, CurvesFilter};
 pub use dither::{DitherAlgorithm, DitherFilter};

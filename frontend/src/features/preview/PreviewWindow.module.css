@@ -38,7 +38,7 @@
 }
 
 .pv-footer-resolution {
-  align-self: center;
+  align-self: stretch;
   justify-self: start;
   font-family: var(--font-family);
   font-size: 10px;
@@ -46,33 +46,49 @@
   line-height: 1;
   white-space: nowrap;
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 8px;
   min-width: 0;
+}
+
+.pv-footer-size {
+  align-self: center;
 }
 
 .pv-ascii-mode {
   display: inline-flex;
   align-items: stretch;
-  height: 16px;
-  border: var(--border);
+  height: 100%;
+  border: none;
+  border-left: var(--border);
+  border-right: var(--border);
   box-sizing: border-box;
+  background: var(--color-gray);
 }
 
 .pv-ascii-mode-btn {
   border: none;
   border-radius: 0;
+  border-right: var(--border);
   background: var(--color-gray);
   color: var(--text-color);
   font-family: var(--font-family);
   font-size: 9px;
   line-height: 1;
-  padding: 0 5px;
+  padding: 0 6px;
   cursor: pointer;
+  height: 100%;
+  box-sizing: border-box;
 }
 
-.pv-ascii-mode-btn + .pv-ascii-mode-btn {
-  border-left: var(--border);
+.pv-ascii-mode > :last-child .pv-ascii-mode-btn,
+.pv-ascii-mode > .pv-ascii-mode-btn:last-child {
+  border-right: none;
+}
+
+.pv-ascii-mode-btn:hover {
+  background: var(--bg-hover-accent);
+  color: var(--color-hover-inverted);
 }
 
 .pv-ascii-mode-btn-active {

@@ -208,6 +208,10 @@ pub async fn ascii_clipboard_text(
 }
 
 /// Preview Image|ASCII switch. `true` = show ASCII raster; `false` = Image (skip Ascii filters).
+///
+/// Does **not** drop full-document cache entries: Image and ASCII results coexist so
+/// toggling republishes from cache instead of recomputing ASCII. Processed/Composite
+/// tiles are marked dirty so the viewport swaps to the other mode.
 #[tauri::command]
 pub fn set_ascii_preview(
     enabled: bool,
@@ -220,7 +224,6 @@ pub fn set_ascii_preview(
         return Ok(enabled);
     }
 
-    state.tiles.full_document.clear();
     let mut keys = Vec::new();
     for entry in state.tiles.tile_cache.entries.iter() {
         let key = *entry.key();

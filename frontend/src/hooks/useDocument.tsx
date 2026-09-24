@@ -26,7 +26,10 @@ import {
   OPEN_DOC_MEMORY_WARNING,
   shouldWarnOpenDocMemory,
 } from '../shared/memoryWarning';
-import SvgExportDialog, { type SvgExportAlgorithm } from '../components/SvgExportDialog';
+import ExportImageDialog, {
+  extensionForFormat,
+  type ImageExportOptions,
+} from '../components/ExportImageDialog';
 import AsciiExportDialog from '../components/AsciiExportDialog';
 import ShareCopyDialog from '../components/ShareCopyDialog';
 import type { ShareProjectCopyOptions } from '../shared/ipc/project';
@@ -44,8 +47,8 @@ export function useDocument() {
   const state = useAppSelector((s) => s.document);
   const selectedLayerId = useAppSelector((s) => s.selection.layerId);
   const { autoExtractPalettes } = useShell();
-  const [svgOpen, setSvgOpen] = useState(false);
-  const svgResolver = useRef<((algo: SvgExportAlgorithm | null) => void) | null>(null);
+  const [imageExportOpen, setImageExportOpen] = useState(false);
+  const imageExportResolver = useRef<((opts: ImageExportOptions | null) => void) | null>(null);
   const [shareCopyOpen, setShareCopyOpen] = useState(false);
   const [asciiExportOpen, setAsciiExportOpen] = useState(false);
   const asciiResolver = useRef<((format: AsciiExportFormat | null) => void) | null>(null);
@@ -94,57 +97,43 @@ export function useDocument() {
     if (!state.docId) return;
 
     try {
+      const options = await new Promise<ImageExportOptions | null>((resolve) => {
+        imageExportResolver.current = resolve;
+        setImageExportOpen(true);
+      });
+      setImageExportOpen(false);
+      imageExportResolver.current = null;
+      if (!options) return;
+
+      const ext = extensionForFormat(options.format);
       const filePath = await saveDialog({
-        filters: [
-          { name: 'PNG', extensions: ['png'] },
-          { name: 'JPEG', extensions: ['jpg', 'jpeg'] },
-          { name: 'SVG', extensions: ['svg'] },
-        ],
+        filters: [{ name: options.format, extensions: [ext] }],
       });
 
       if (!filePath) return;
 
       const lower = filePath.toLowerCase();
-      const format =
-        lower.endsWith('.jpg') || lower.endsWith('.jpeg')
-          ? ('JPEG' as const)
-          : lower.endsWith('.svg')
-            ? ('SVG' as const)
-            : ('PNG' as const);
-
-      // Windows save dialog often omits the extension even when a filter is selected.
-      const withExt =
+      const hasExt =
         lower.endsWith('.png') ||
         lower.endsWith('.jpg') ||
         lower.endsWith('.jpeg') ||
-        lower.endsWith('.svg')
-          ? filePath
-          : format === 'JPEG'
-            ? `${filePath}.jpg`
-            : format === 'SVG'
-              ? `${filePath}.svg`
-              : `${filePath}.png`;
+        lower.endsWith('.webp') ||
+        lower.endsWith('.bmp') ||
+        lower.endsWith('.tif') ||
+        lower.endsWith('.tiff') ||
+        lower.endsWith('.svg');
+      // Windows save dialog often omits the extension even when a filter is selected.
+      const withExt = hasExt ? filePath : `${filePath}.${ext}`;
 
       const filename = withExt.split(/[/\\]/).pop() ?? withExt;
-      let svg_algorithm: SvgExportAlgorithm | undefined;
-      if (format === 'SVG') {
-        const picked = await new Promise<SvgExportAlgorithm | null>((resolve) => {
-          svgResolver.current = resolve;
-          setSvgOpen(true);
-        });
-        setSvgOpen(false);
-        svgResolver.current = null;
-        if (!picked) return;
-        svg_algorithm = picked;
-      }
       await dispatch(
         saveImage({
           doc_id: state.docId,
           path: withExt,
-          format,
-          quality: format === 'JPEG' ? 90 : undefined,
+          format: options.format,
+          quality: options.quality,
           filename,
-          svg_algorithm,
+          svg_algorithm: options.svg_algorithm,
         })
       );
     } catch {
@@ -438,10 +427,10 @@ export function useDocument() {
     clearNotification: clearNotificationFn,
     svgDialog: (
       <>
-        <SvgExportDialog
-          isOpen={svgOpen}
-          onExport={(algo) => svgResolver.current?.(algo)}
-          onClose={() => svgResolver.current?.(null)}
+        <ExportImageDialog
+          isOpen={imageExportOpen}
+          onExport={(opts) => imageExportResolver.current?.(opts)}
+          onClose={() => imageExportResolver.current?.(null)}
         />
         <AsciiExportDialog
           isOpen={asciiExportOpen}

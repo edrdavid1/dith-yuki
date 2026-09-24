@@ -2,6 +2,7 @@
 
 use crate::atlas::GlyphAtlas;
 use crate::color::{resolve_rgb, ColorTarget};
+use crate::export::cell_paint::{cell_char, cell_paints_paper};
 use crate::grid::{AsciiGrid, CellColor, GridColorMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,48 +18,69 @@ impl Default for HtmlOptions {
     fn default() -> Self {
         Self {
             target: ColorTarget::TrueColor,
-            mono_fg: CellColor::WHITE,
-            mono_bg: CellColor::BLACK,
+            mono_fg: CellColor::BLACK,
+            mono_bg: CellColor::WHITE,
             standalone: true,
         }
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
+enum RunStyle {
+    /// Clear cell — character only, no background.
+    Clear,
+    /// Opaque paper + ink colours.
+    Paper { fg: String, bg: String },
+}
+
 /// HTML with style-merged `<span>` runs inside `<pre>`.
+///
+/// Transparent cells omit background (no invented paper). Soft-edge cells with
+/// ink get opaque paper under the glyph, matching preview/PNG.
 pub fn to_html(atlas: &GlyphAtlas, grid: &AsciiGrid, opts: HtmlOptions) -> String {
-    let mut body = String::from("<pre style=\"margin:0;line-height:1;letter-spacing:0\">");
+    let mut body = String::from(
+        "<pre style=\"margin:0;line-height:1;letter-spacing:0;background:transparent\">",
+    );
     for row in 0..grid.rows {
         let mut run = String::new();
-        let mut run_style: Option<(String, String)> = None;
-        let flush = |body: &mut String, run: &mut String, style: &mut Option<(String, String)>| {
+        let mut run_style: Option<RunStyle> = None;
+        let flush = |body: &mut String, run: &mut String, style: &mut Option<RunStyle>| {
             if run.is_empty() {
                 return;
             }
-            if let Some((fg, bg)) = style.take() {
-                body.push_str(&format!(
-                    "<span style=\"color:{fg};background:{bg}\">{}</span>",
-                    escape(run)
-                ));
-            } else {
-                body.push_str(&escape(run));
+            match style.take() {
+                Some(RunStyle::Paper { fg, bg }) => {
+                    body.push_str(&format!(
+                        "<span style=\"color:{fg};background:{bg}\">{}</span>",
+                        escape(run)
+                    ));
+                }
+                Some(RunStyle::Clear) | None => {
+                    body.push_str(&escape(run));
+                }
             }
             run.clear();
         };
         for col in 0..grid.cols {
             let cell = &grid.cells[(row * grid.cols + col) as usize];
-            let (fg_c, bg_c) = match grid.color {
-                GridColorMode::Mono => (opts.mono_fg, opts.mono_bg),
-                GridColorMode::Fg => (cell.fg, opts.mono_bg),
-                GridColorMode::FgBg => (cell.fg, cell.bg),
+            let style = if cell_paints_paper(atlas, cell) {
+                let (fg_c, bg_c) = match grid.color {
+                    GridColorMode::Mono => (opts.mono_fg, opts.mono_bg),
+                    GridColorMode::Fg => (cell.fg, opts.mono_bg),
+                    GridColorMode::FgBg => (cell.fg, cell.bg),
+                };
+                RunStyle::Paper {
+                    fg: css_color(resolve_rgb(fg_c, opts.target)),
+                    bg: css_color(resolve_rgb(bg_c, opts.target)),
+                }
+            } else {
+                RunStyle::Clear
             };
-            let fg = css_color(resolve_rgb(fg_c, opts.target));
-            let bg = css_color(resolve_rgb(bg_c, opts.target));
-            let style = (fg, bg);
             if run_style.as_ref() != Some(&style) {
                 flush(&mut body, &mut run, &mut run_style);
                 run_style = Some(style);
             }
-            run.push(atlas.glyphs[cell.glyph as usize].ch);
+            run.push(cell_char(atlas, cell));
         }
         flush(&mut body, &mut run, &mut run_style);
         body.push('\n');
@@ -68,7 +90,7 @@ pub fn to_html(atlas: &GlyphAtlas, grid: &AsciiGrid, opts: HtmlOptions) -> Strin
     if opts.standalone {
         format!(
             "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>ASCII</title></head>\n\
-             <body style=\"background:#000;color:#fff;margin:0\">{}</body></html>\n",
+             <body style=\"margin:0;background:transparent\">{}</body></html>\n",
             body
         )
     } else {
@@ -100,6 +122,7 @@ mod tests {
     use crate::atlas::{AtlasOptions, FontSize, GlyphAtlas};
     use crate::convert::{MatchMode, convert_mono};
     use crate::font::{BundledFont, FontFace};
+    use crate::grid::{Cell, CellColor, GridColorMode};
     use crate::symbols::SymbolSet;
 
     #[test]
@@ -121,5 +144,36 @@ mod tests {
         assert!(html.contains("<pre"));
         assert!(html.contains("</pre>"));
         assert!(html.contains("<!DOCTYPE html>"));
+        assert!(html.contains("background:transparent"));
+    }
+
+    #[test]
+    fn html_skips_background_on_transparent_cells() {
+        let atlas = GlyphAtlas::build(
+            &FontFace::bundled(BundledFont::DepartureMono),
+            &SymbolSet::Bourke10,
+            &AtlasOptions {
+                size: FontSize::Px(11.0),
+                antialias: false,
+                hinting: false,
+            },
+        )
+        .unwrap();
+        let (cw, ch) = (atlas.cell_w(), atlas.cell_h());
+        let grid = AsciiGrid {
+            cols: 1,
+            rows: 1,
+            cell_px: (cw, ch),
+            atlas_key: atlas.key,
+            color: GridColorMode::Mono,
+            cells: vec![Cell {
+                glyph: 0,
+                fg: CellColor::BLACK,
+                bg: CellColor::WHITE,
+                alpha: 0,
+            }],
+        };
+        let html = to_html(&atlas, &grid, HtmlOptions::default());
+        assert!(!html.contains("background:#"));
     }
 }
