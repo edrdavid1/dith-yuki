@@ -14,6 +14,7 @@ import CrtSettings from './editors/CrtSettings';
 import AdjustSettings from './editors/AdjustSettings';
 import AlgorithmSettingsPanel from './AlgorithmSettingsPanel';
 import { useAlgorithmCatalog } from './hooks/useAlgorithmCatalog';
+import { EFFECT_PRESETS } from './effectPresets';
 import { unwrapFilterParams } from '../../shared/unwrapFilterParams';
 import type { AlgorithmInfo, EffectCategory } from '../../shared/ipc/registry';
 import styles from './EffectSettingsPanel.module.css';
@@ -31,6 +32,7 @@ export interface EffectSettingsPanelProps {
   onUpdateParams: (layerId: number, filterId: string, params: Record<string, unknown>) => void;
   onSelectEffect?: (effectType: EffectType) => void;
   onSelectAlgorithm?: (algorithmId: string) => void;
+  onSelectPreset?: (presetId: string) => void;
   onTitleBarMouseDown?: (e: React.MouseEvent) => void;
   dockSide?: DockSide;
   onMoveToSide?: (side: DockSide) => void;
@@ -111,6 +113,7 @@ export default function EffectSettingsPanel({
   onUpdateParams,
   onSelectEffect,
   onSelectAlgorithm,
+  onSelectPreset,
   onTitleBarMouseDown,
   dockSide,
   onMoveToSide,
@@ -231,6 +234,24 @@ export default function EffectSettingsPanel({
                   </div>
                   <div className={cn("effect-chooser-row-label")}>
                     <span>{option.label}</span>
+                  </div>
+                </button>
+              ))}
+              {EFFECT_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  className={cn('effect-chooser-row')}
+                  role="option"
+                  aria-selected={false}
+                  onClick={() => onSelectPreset?.(preset.id)}
+                  type="button"
+                  title={preset.hint}
+                >
+                  <div className={cn('effect-chooser-row-icon')}>
+                    <EffectIcon type="Dithering" />
+                  </div>
+                  <div className={cn('effect-chooser-row-label')}>
+                    <span>{preset.label}</span>
                   </div>
                 </button>
               ))}

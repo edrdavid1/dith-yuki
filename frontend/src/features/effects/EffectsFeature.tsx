@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import EffectSettingsPanel from './EffectSettingsPanel';
 import type { LayerWithFilters } from './EffectSettingsPanel';
 import { useAppDispatch, useAppSelector } from '../../app/hooks';
-import { addLayerWithAlgorithm, addLayerWithEffect } from '../../app/slices/layersSlice';
+import { addLayerWithAlgorithm, addLayerWithEffect, addLayerWithPreset } from '../../app/slices/layersSlice';
 import { selectFiltersList } from '../../app/slices/filtersSlice';
 import { setSelection } from '../../app/slices/selectionSlice';
 import { useEffectLayer } from '../../hooks/useEffectLayer';
@@ -218,12 +218,29 @@ export default function EffectsFeature({
     [dispatch, docId, layers]
   );
 
+  const handleSelectPreset = useCallback(
+    (presetId: string) => {
+      void dispatch(addLayerWithPreset({ docId, layers, presetId })).then((result) => {
+        if (addLayerWithPreset.fulfilled.match(result) && result.payload != null) {
+          void dispatch(
+            setSelection({
+              layerId: result.payload.layerId,
+              filterId: result.payload.filterId,
+            })
+          );
+        }
+      });
+    },
+    [dispatch, docId, layers]
+  );
+
   return (
     <EffectSettingsPanel
       selectedLayer={selectedLayerWithFilters}
       onUpdateParams={handleUpdateParams}
       onSelectEffect={handleSelectEffect}
       onSelectAlgorithm={handleSelectAlgorithm}
+      onSelectPreset={handleSelectPreset}
       onTitleBarMouseDown={onTitleBarMouseDown}
       dockSide={dockSide}
       onMoveToSide={onMoveToSide}

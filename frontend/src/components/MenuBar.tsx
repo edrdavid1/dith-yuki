@@ -22,6 +22,7 @@ interface MenuBarProps {
   onShareProjectCopy?: () => void;
   onExportPattern: () => void;
   onImportPattern: () => void;
+  onApplyCrossStitch?: () => void;
   onOpenPreferences: () => void;
   onOpenHelp: () => void;
   onUndo?: () => void;
@@ -62,6 +63,7 @@ function MenuBar({
   onShareProjectCopy,
   onExportPattern,
   onImportPattern,
+  onApplyCrossStitch,
   onOpenPreferences,
   onOpenHelp,
   onUndo,
@@ -252,6 +254,14 @@ function MenuBar({
       case 'presets':
         return (
           <div className={cn("menubar-dropdown")} role="menu">
+            <button
+              className={cn('menubar-dropdown-item')}
+              role="menuitem"
+              onClick={() => onApplyCrossStitch && handleAction(onApplyCrossStitch)}
+              disabled={!hasDocument || !onApplyCrossStitch}
+            >
+              Cross Stitch
+            </button>
             <button
               className={cn("menubar-dropdown-item")}
               role="menuitem"
