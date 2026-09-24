@@ -7,7 +7,6 @@ function renderMenuBar(overrides?: Partial<React.ComponentProps<typeof MenuBar>>
     hasDocument: true,
     onNewProject: vi.fn(),
     onOpenImage: vi.fn(),
-    onImportImageLayer: vi.fn(),
     onSaveImage: vi.fn(),
     onOpenProject: vi.fn(),
     onOpenRecent: vi.fn(),
@@ -41,7 +40,6 @@ describe('MenuBar', () => {
     fireEvent.click(screen.getByText('File'));
     expect(screen.getByText('New Project…')).toBeInTheDocument();
     expect(screen.getByText('Open Image')).toBeInTheDocument();
-    expect(screen.getByText('Import Image as Layer…')).toBeInTheDocument();
     expect(screen.getByText('Open Project…')).toBeInTheDocument();
     expect(screen.getByText('Save Project')).toBeInTheDocument();
     expect(screen.getByText('Save Project As…')).toBeInTheDocument();
@@ -135,13 +133,6 @@ describe('MenuBar', () => {
     expect(props.onOpenImage).toHaveBeenCalledTimes(1);
   });
 
-  it('calls onImportImageLayer when File > Import Image as Layer is clicked', () => {
-    const { props } = renderMenuBar();
-    fireEvent.click(screen.getByText('File'));
-    fireEvent.click(screen.getByText('Import Image as Layer…'));
-    expect(props.onImportImageLayer).toHaveBeenCalledTimes(1);
-  });
-
   it('calls onExportPattern when Presets > Export Pattern is clicked', () => {
     const { props } = renderMenuBar();
     fireEvent.click(screen.getByText('Presets'));
@@ -162,7 +153,6 @@ describe('MenuBar', () => {
     expect(screen.getByRole('menuitem', { name: /Save\/Export/ })).toBeDisabled();
     expect(screen.getByRole('menuitem', { name: /^Save Project\b/ })).toBeDisabled();
     expect(screen.getByRole('menuitem', { name: /Save Project As/ })).toBeDisabled();
-    expect(screen.getByRole('menuitem', { name: /Import Image as Layer/ })).toBeDisabled();
   });
 
   it('disables pattern actions in Presets when hasDocument is false', () => {

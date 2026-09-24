@@ -438,9 +438,6 @@ export default function AppLayout() {
         case 'open-image':
           welcome.onOpenImage();
           break;
-        case 'import-image-layer':
-          if (doc.hasDocument) void doc.importImageLayer();
-          break;
         case 'open-project':
           welcome.onOpenProject();
           break;
@@ -614,7 +611,6 @@ export default function AppLayout() {
               recentEntries={welcome.recentEntries}
               onNewProject={welcome.onNewProject}
               onOpenImage={welcome.onOpenImage}
-              onImportImageLayer={() => void doc.importImageLayer()}
               onSaveImage={onSaveImage}
               onExportAscii={() => void doc.exportAscii()}
               onCopyAsciiText={() => void doc.copyAsciiText('txt')}

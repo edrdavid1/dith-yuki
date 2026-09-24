@@ -217,7 +217,7 @@ export type GlitchType = 'RGBShift' | 'BlockDisplace';
 export interface ExportImageRequest {
   doc_id: number;
   path: string;
-  format: 'PNG' | 'JPEG' | 'SVG';
+  format: 'PNG' | 'JPEG' | 'WEBP' | 'BMP' | 'TIFF' | 'SVG';
   quality?: number;
   svg_algorithm?: 'greedy_meshing' | 'contour_tracing';
 }

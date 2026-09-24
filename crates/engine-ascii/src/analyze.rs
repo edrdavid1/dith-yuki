@@ -43,7 +43,13 @@ pub fn sample_cell_ink(
     }
 }
 
+/// Alpha crumbs below this (after mean) are treated as fully clear so tiny
+/// PNG anti-alias fringes do not allocate a cell.
+const ALPHA_CLEAR_EPS: u8 = 8;
+
 /// Mean source alpha of one cell (`0..=255`). Out-of-bounds samples count as 0.
+/// Near-zero means snap to `0`; near-full means snap to `255` so soft-edge
+/// crumbs do not force ink-only mode on otherwise solid regions.
 pub fn mean_cell_alpha(
     rgba: &[f32],
     width: u32,
@@ -69,7 +75,14 @@ pub fn mean_cell_alpha(
             }
         }
     }
-    ((sum / n) * 255.0).round().clamp(0.0, 255.0) as u8
+    let mean = ((sum / n) * 255.0).round().clamp(0.0, 255.0) as u8;
+    if mean < ALPHA_CLEAR_EPS {
+        0
+    } else if mean > 255 - ALPHA_CLEAR_EPS {
+        255
+    } else {
+        mean
+    }
 }
 
 /// Analyse one cell into tone + shape descriptors.

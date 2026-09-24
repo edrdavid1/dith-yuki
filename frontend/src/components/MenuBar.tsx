@@ -13,7 +13,6 @@ interface MenuBarProps {
   recentEntries?: RecentFileEntry[];
   onNewProject?: () => void;
   onOpenImage: () => void;
-  onImportImageLayer?: () => void;
   onSaveImage: () => void;
   onExportAscii?: () => void;
   onCopyAsciiText?: () => void;
@@ -57,7 +56,6 @@ function MenuBar({
   recentEntries = [],
   onNewProject,
   onOpenImage,
-  onImportImageLayer,
   onSaveImage,
   onExportAscii,
   onCopyAsciiText,
@@ -155,14 +153,6 @@ function MenuBar({
             >
               <span>Open Image</span>
               <span className={cn('menubar-shortcut')}>{formatChords(shortcuts.openImage)}</span>
-            </button>
-            <button
-              className={cn("menubar-dropdown-item")}
-              role="menuitem"
-              onClick={() => handleAction(onImportImageLayer ?? (() => {}))}
-              disabled={!hasDocument}
-            >
-              Import Image as Layer…
             </button>
             <button
               className={cn("menubar-dropdown-item")}

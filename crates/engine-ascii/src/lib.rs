@@ -32,7 +32,7 @@ pub use descriptor::{ShapeContrastDesc, ShapeDesc, ToneDesc, mean_coverage};
 pub use dither::CellDither;
 pub use export::{
     parse_ansi_indices, to_ansi, to_html, to_json, to_png, to_png_scaled, to_svg, to_txt,
-    AnsiDepth, AnsiOptions, HtmlOptions, SvgOptions,
+    AnsiDepth, AnsiOptions, HtmlOptions, SvgOptions, TXT_EXPORT_MAX_COLS,
 };
 pub use font::{BundledFont, CellMetrics, FontError, FontFace, FontId};
 pub use grid::{AsciiGrid, Cell, CellColor, GridColorMode};

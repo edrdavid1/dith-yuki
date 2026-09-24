@@ -259,7 +259,9 @@ export default function PreviewWindow({
       {/* Footer: resolution | zoom | fit */}
       <div className={cn('preview-footer')}>
         <span className={cn('pv-footer-resolution')} aria-label="Canvas size">
-          {docWidth} × {docHeight}
+          <span className={cn('pv-footer-size')}>
+            {docWidth} × {docHeight}
+          </span>
           {hasAscii && (
             <span className={cn('pv-ascii-mode')} role="group" aria-label="Preview mode">
               <Tooltip label="Show image without ASCII">

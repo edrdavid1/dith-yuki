@@ -886,10 +886,14 @@ impl DocumentService {
         use std::io::Cursor;
         use std::path::Path;
 
-        if req.format != "PNG" && req.format != "JPEG" && req.format != "SVG" {
-            return Err(AppError::Generic(
-                "Invalid parameters: format must be PNG, JPEG, or SVG".to_string(),
-            ));
+        match req.format.as_str() {
+            "PNG" | "JPEG" | "WEBP" | "BMP" | "TIFF" | "SVG" => {}
+            _ => {
+                return Err(AppError::Generic(
+                    "Invalid parameters: format must be PNG, JPEG, WEBP, BMP, TIFF, or SVG"
+                        .to_string(),
+                ));
+            }
         }
 
         let session = self.state.session(req.doc_id).map_err(|_| {
@@ -942,7 +946,7 @@ impl DocumentService {
                         rgb_buffer.push(pixel[2]);
                     }
 
-                    let quality = req_quality.unwrap_or(90);
+                    let quality = req_quality.unwrap_or(90).clamp(1, 100);
                     let mut jpeg_data: Vec<u8> = Vec::new();
                     let cursor = Cursor::new(&mut jpeg_data);
                     let encoder = JpegEncoder::new_with_quality(cursor, quality);
@@ -956,6 +960,63 @@ impl DocumentService {
                         .map_err(|e| format!("JPEG encoding error: {}", e))?;
 
                     engine_io::atomic_write(Path::new(&req_path), &jpeg_data)
+                        .map_err(|e| format!("IO error: {}", e))?;
+                }
+                "WEBP" => {
+                    use image::codecs::webp::WebPEncoder;
+                    use image::ImageEncoder;
+
+                    let mut webp_data: Vec<u8> = Vec::new();
+                    let encoder = WebPEncoder::new_lossless(&mut webp_data);
+                    encoder
+                        .write_image(
+                            &rgba_buffer,
+                            img_width,
+                            img_height,
+                            image::ExtendedColorType::Rgba8,
+                        )
+                        .map_err(|e| format!("WebP encoding error: {}", e))?;
+
+                    engine_io::atomic_write(Path::new(&req_path), &webp_data)
+                        .map_err(|e| format!("IO error: {}", e))?;
+                }
+                "BMP" => {
+                    use image::codecs::bmp::BmpEncoder;
+                    use image::ImageEncoder;
+
+                    let mut bmp_data: Vec<u8> = Vec::new();
+                    let mut encoder = BmpEncoder::new(&mut bmp_data);
+                    encoder
+                        .write_image(
+                            &rgba_buffer,
+                            img_width,
+                            img_height,
+                            image::ExtendedColorType::Rgba8,
+                        )
+                        .map_err(|e| format!("BMP encoding error: {}", e))?;
+
+                    engine_io::atomic_write(Path::new(&req_path), &bmp_data)
+                        .map_err(|e| format!("IO error: {}", e))?;
+                }
+                "TIFF" => {
+                    use image::codecs::tiff::TiffEncoder;
+                    use image::ImageEncoder;
+
+                    let mut tiff_data: Vec<u8> = Vec::new();
+                    {
+                        let cursor = Cursor::new(&mut tiff_data);
+                        let encoder = TiffEncoder::new(cursor);
+                        encoder
+                            .write_image(
+                                &rgba_buffer,
+                                img_width,
+                                img_height,
+                                image::ExtendedColorType::Rgba8,
+                            )
+                            .map_err(|e| format!("TIFF encoding error: {}", e))?;
+                    }
+
+                    engine_io::atomic_write(Path::new(&req_path), &tiff_data)
                         .map_err(|e| format!("IO error: {}", e))?;
                 }
                 "SVG" => {
@@ -984,7 +1045,7 @@ impl DocumentService {
     pub async fn export_ascii(&self, req: ExportAsciiRequest) -> Result<(), AppError> {
         use engine_io::sandbox;
         use engine_project::filters::{
-            compute_ascii_job, export_ascii_bytes, AsciiExportFormat,
+            compute_ascii_job, export_ascii_bytes, prepare_layer_for_txt_export, AsciiExportFormat,
         };
         use std::path::Path;
         use std::sync::atomic::AtomicBool;
@@ -1007,13 +1068,16 @@ impl DocumentService {
         })?;
         let _io_guard = session.begin_io();
         let snapshot = session.document_handle.snapshot();
-        let layer = find_ascii_layer(&snapshot.root, req.layer_id)
+        let mut layer = find_ascii_layer(&snapshot.root, req.layer_id)
             .ok_or_else(|| {
                 AppError::InvalidOperation(
                     "No ASCII effect on this document — add an ASCII effect first".into(),
                 )
             })?
             .clone();
+        if format == AsciiExportFormat::Txt {
+            prepare_layer_for_txt_export(&mut layer);
+        }
         let doc = (*snapshot).clone();
         drop(snapshot);
 
@@ -1043,7 +1107,7 @@ impl DocumentService {
         req: AsciiClipboardRequest,
     ) -> Result<String, AppError> {
         use engine_project::filters::{
-            compute_ascii_job, export_ascii_bytes, AsciiExportFormat,
+            compute_ascii_job, export_ascii_bytes, prepare_layer_for_txt_export, AsciiExportFormat,
         };
         use std::sync::atomic::AtomicBool;
 
@@ -1064,13 +1128,16 @@ impl DocumentService {
             ))
         })?;
         let snapshot = session.document_handle.snapshot();
-        let layer = find_ascii_layer(&snapshot.root, req.layer_id)
+        let mut layer = find_ascii_layer(&snapshot.root, req.layer_id)
             .ok_or_else(|| {
                 AppError::InvalidOperation(
                     "No ASCII effect on this document — add an ASCII effect first".into(),
                 )
             })?
             .clone();
+        if format == AsciiExportFormat::Txt {
+            prepare_layer_for_txt_export(&mut layer);
+        }
         let doc = (*snapshot).clone();
         drop(snapshot);
 

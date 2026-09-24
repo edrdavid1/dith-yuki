@@ -11,6 +11,12 @@
 //! that job instead of cancelling it. Cancellation happens only when a request
 //! arrives with a **different** key (params / `document_gen` / preview mode),
 //! or on explicit [`FullDocumentCache::invalidate_layer`] / [`clear`].
+//!
+//! ## Image | ASCII dual ready
+//!
+//! Each slot keeps up to two ready results (Image and ASCII preview modes).
+//! Toggling the preview switch must not drop the sibling raster — republish
+//! from cache instead of recomputing ASCII.
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -62,9 +68,10 @@ struct CacheSlot {
     job_token: u64,
     /// Key currently being computed (owner holds this until publish or drop).
     inflight_key: Option<FullDocumentKey>,
-    /// Last successfully published key + result.
-    ready_key: Option<FullDocumentKey>,
-    result: Option<FullDocumentResult>,
+    /// Ready results for Image (`false`) and ASCII (`true`) preview modes.
+    /// Sibling is preserved across Image|ASCII toggles; both cleared on
+    /// [`FullDocumentCache::invalidate_layer`] / [`clear`].
+    ready: [Option<(FullDocumentKey, FullDocumentResult)>; 2],
 }
 
 impl CacheSlot {
@@ -73,9 +80,26 @@ impl CacheSlot {
             cancel: Arc::new(AtomicBool::new(false)),
             job_token: 0,
             inflight_key: None,
-            ready_key: None,
-            result: None,
+            ready: [None, None],
         }
+    }
+
+    fn ready_for(&self, key: &FullDocumentKey) -> Option<FullDocumentResult> {
+        let slot = self.ready[usize::from(key.include_ascii)].as_ref()?;
+        if slot.0 == *key {
+            Some(slot.1.clone())
+        } else {
+            None
+        }
+    }
+
+    fn clear_ready(&mut self) {
+        self.ready = [None, None];
+    }
+
+    fn store_ready(&mut self, key: FullDocumentKey, result: FullDocumentResult) {
+        let idx = usize::from(key.include_ascii);
+        self.ready[idx] = Some((key, result));
     }
 }
 
@@ -101,8 +125,7 @@ impl FullDocumentCache {
         for slot in guard.values_mut() {
             slot.cancel.store(true, Ordering::Relaxed);
             slot.inflight_key = None;
-            slot.ready_key = None;
-            slot.result = None;
+            slot.clear_ready();
         }
         guard.clear();
         self.cv.notify_all();
@@ -113,8 +136,7 @@ impl FullDocumentCache {
         if let Some(slot) = guard.get_mut(&(doc, layer)) {
             slot.cancel.store(true, Ordering::Relaxed);
             slot.inflight_key = None;
-            slot.ready_key = None;
-            slot.result = None;
+            slot.clear_ready();
             slot.job_token = self.next_token.fetch_add(1, Ordering::Relaxed);
         }
         self.cv.notify_all();
@@ -123,12 +145,7 @@ impl FullDocumentCache {
     /// Return a cached result if it matches `key`.
     pub fn get_if_fresh(&self, key: &FullDocumentKey) -> Option<FullDocumentResult> {
         let guard = self.inner.lock().expect("full_document cache lock");
-        let slot = guard.get(&(key.doc, key.layer))?;
-        if slot.ready_key.as_ref() == Some(key) {
-            slot.result.clone()
-        } else {
-            None
-        }
+        guard.get(&(key.doc, key.layer))?.ready_for(key)
     }
 }
 
@@ -422,7 +439,8 @@ fn apply_tiled_filters_on_buffer(
 ///
 /// Single-flight: concurrent callers for the **same** key wait for one job.
 /// An in-flight job is cancelled only when a request arrives with a **different**
-/// key (or on [`FullDocumentCache::invalidate_layer`] / [`clear`]).
+/// key (or on [`FullDocumentCache::invalidate_layer`] / [`clear`]). Ready results
+/// for the sibling Image|ASCII mode are retained across that cancel.
 pub fn ensure_full_document(
     fd_cache: &FullDocumentCache,
     tile_cache: &TileCache,
@@ -459,10 +477,8 @@ pub fn ensure_full_document_ex(
                 .entry((key.doc, key.layer))
                 .or_insert_with(CacheSlot::empty);
 
-            if slot.ready_key.as_ref() == Some(&key) {
-                if let Some(ref result) = slot.result {
-                    return Ok(result.clone());
-                }
+            if let Some(result) = slot.ready_for(&key) {
+                return Ok(result);
             }
 
             match slot.inflight_key.as_ref() {
@@ -483,6 +499,7 @@ pub fn ensure_full_document_ex(
                 }
                 Some(_) => {
                     // Fresh request with a different key — cancel the old flight.
+                    // Sibling preview-mode ready results are kept.
                     slot.cancel.store(true, Ordering::Relaxed);
                 }
                 None => {}
@@ -493,8 +510,6 @@ pub fn ensure_full_document_ex(
             slot.job_token = token;
             slot.cancel = Arc::clone(&cancel);
             slot.inflight_key = Some(key.clone());
-            slot.ready_key = None;
-            slot.result = None;
             fd_cache.cv.notify_all();
             break (token, cancel);
         }
@@ -527,8 +542,7 @@ pub fn ensure_full_document_ex(
 
     match compute {
         Ok(result) => {
-            slot.ready_key = Some(key);
-            slot.result = Some(result.clone());
+            slot.store_ready(key, result.clone());
             fd_cache.cv.notify_all();
             Ok(result)
         }
@@ -768,5 +782,41 @@ mod tests {
                 include_ascii: false,
             })
             .is_some());
+    }
+
+    #[test]
+    fn image_mode_preserves_ascii_ready_for_toggle() {
+        let w = 28u32;
+        let h = 28u32;
+        let (doc, layer, cache) = doc_with_ascii(w, h);
+        let fd = FullDocumentCache::new();
+
+        let ascii = ensure_full_document_ex(&fd, &cache, &layer, &doc, 1, true).unwrap();
+
+        let _image = ensure_full_document_ex(&fd, &cache, &layer, &doc, 1, false).unwrap();
+
+        let ascii_key = FullDocumentKey {
+            doc: 1,
+            layer: 1,
+            params_hash: hash_layer_filter_params_ex(&layer, true),
+            document_gen: 1,
+            include_ascii: true,
+        };
+        let image_key = FullDocumentKey {
+            doc: 1,
+            layer: 1,
+            params_hash: hash_layer_filter_params_ex(&layer, false),
+            document_gen: 1,
+            include_ascii: false,
+        };
+        assert!(fd.get_if_fresh(&ascii_key).is_some());
+        assert!(fd.get_if_fresh(&image_key).is_some());
+
+        // Toggle back to ASCII must be a cache hit (same Arc), not a recompute.
+        let again = ensure_full_document_ex(&fd, &cache, &layer, &doc, 1, true).unwrap();
+        assert!(
+            Arc::ptr_eq(&again.rgba_f32, &ascii.rgba_f32),
+            "ASCII raster must be reused after Image-mode pass"
+        );
     }
 }
