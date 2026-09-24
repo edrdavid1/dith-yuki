@@ -15,6 +15,7 @@ import {
 import type { SnapshotLayerNode } from '../../shared/ipc/document';
 import type { EffectType } from '../../types/effects';
 import { EFFECT_DEFAULTS, EFFECT_TO_FILTER_KIND, specForAlgorithm, validateDocumentStructure } from '../../types/effects';
+import { findEffectPreset } from '../../features/effects/effectPresets';
 import type { RootState } from '../store';
 import { refreshFilters } from './filtersSlice';
 
@@ -222,6 +223,51 @@ export const addLayerWithAlgorithm = createAsyncThunk(
   }
 );
 
+/** Batch F: named param stacks over existing algorithms (not AlgorithmIds). */
+export const addLayerWithPreset = createAsyncThunk(
+  'layers/addWithPreset',
+  async (
+    args: { docId: number | null; layers: LayerNodeDto[]; presetId: string },
+    { dispatch, getState, rejectWithValue }
+  ) => {
+    if (args.docId === null) return null;
+    try {
+      const imageSourceLayer = args.layers.length > 0 ? args.layers[0] : null;
+      if (!imageSourceLayer) {
+        return rejectWithValue('No image source layer found');
+      }
+      const preset = findEffectPreset(args.presetId);
+      if (!preset) {
+        return rejectWithValue(`Unknown preset: ${args.presetId}`);
+      }
+      const lastCreatedId = (getState() as RootState).palettes.lastCreatedId;
+      let boundPaletteId = lastCreatedId;
+      if (lastCreatedId != null) {
+        const pals = await listPalettes().catch(() => [] as { id: number }[]);
+        if (!Array.isArray(pals) || !pals.some((p) => p.id === lastCreatedId)) {
+          boundPaletteId = null;
+        }
+      }
+      const spec = preset.buildSpec(boundPaletteId);
+      const algorithmId =
+        typeof spec.params.mode === 'string' ? (spec.params.mode as string) : undefined;
+      const { filter_id } = await addFilter(
+        args.docId,
+        imageSourceLayer.id,
+        spec.kind,
+        spec.params,
+        algorithmId ? { algorithmId } : undefined
+      );
+      await dispatch(refreshLayers(args.docId));
+      await dispatch(refreshFilters());
+      return { layerId: imageSourceLayer.id, filterId: filter_id };
+    } catch (err) {
+      logIpcError('layers.addWithPreset', err);
+      return rejectWithValue(formatIpcError(err));
+    }
+  }
+);
+
 export const toggleLayerVisibility = createAsyncThunk(
   'layers/toggleVisibility',
   async (
@@ -309,6 +355,12 @@ const layersSlice = createSlice({
         state.error = (action.payload as string) ?? state.error;
       })
       .addCase(addLayerWithEffect.rejected, (state, action) => {
+        state.error = (action.payload as string) ?? state.error;
+      })
+      .addCase(addLayerWithAlgorithm.rejected, (state, action) => {
+        state.error = (action.payload as string) ?? state.error;
+      })
+      .addCase(addLayerWithPreset.rejected, (state, action) => {
         state.error = (action.payload as string) ?? state.error;
       })
       .addCase(toggleLayerVisibility.rejected, (state, action) => {

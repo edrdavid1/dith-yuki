@@ -14,9 +14,10 @@ import { registerDocumentCommands, registerLayoutCommands } from '../features/sh
 import { useAppUpdates } from '../hooks/useAppUpdates';
 import { useAppDispatch, useAppSelector } from './hooks';
 import { refreshFilters } from './slices/filtersSlice';
-import { refreshLayers } from './slices/layersSlice';
+import { addLayerWithPreset, refreshLayers } from './slices/layersSlice';
 import { refreshDocument, setDocumentMeta } from './slices/documentSlice';
 import { redo as redoDocument, undo as undoDocument } from './slices/undoSlice';
+import { setSelection } from './slices/selectionSlice';
 import { refreshTabs, tabsChanged } from './slices/tabsSlice';
 import { useShell } from './shell/ShellContext';
 import { previewBackgroundStyle } from '../features/preview/previewBackground';
@@ -83,6 +84,23 @@ export default function AppLayout() {
   const filtersError = useAppSelector((s) => s.filters.error);
   const canUndo = useAppSelector((s) => s.undo.canUndo);
   const canRedo = useAppSelector((s) => s.undo.canRedo);
+  const layerTree = useAppSelector((s) => s.layers.tree);
+  const docId = useAppSelector((s) => s.document.docId);
+
+  const applyCrossStitchPreset = useCallback(() => {
+    void dispatch(addLayerWithPreset({ docId, layers: layerTree, presetId: 'cross_stitch_pattern' })).then(
+      (result) => {
+        if (addLayerWithPreset.fulfilled.match(result) && result.payload != null) {
+          void dispatch(
+            setSelection({
+              layerId: result.payload.layerId,
+              filterId: result.payload.filterId,
+            })
+          );
+        }
+      }
+    );
+  }, [dispatch, docId, layerTree]);
 
   const updates = useAppUpdates({
     autoCheckOnLaunch: true,
@@ -608,6 +626,7 @@ export default function AppLayout() {
               onShareProjectCopy={onShareProjectCopy}
               onExportPattern={() => void doc.exportPattern()}
               onImportPattern={() => void doc.importPattern()}
+              onApplyCrossStitch={applyCrossStitchPreset}
               onOpenPreferences={handleOpenPreferences}
               onOpenHelp={handleOpenHelp}
               onUndo={() => {
