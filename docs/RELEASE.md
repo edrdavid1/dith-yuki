@@ -6,8 +6,8 @@ How we cut macOS/Windows builds, sign updater artifacts, and ship a public alpha
 
 | Tag example | Release title | Updater (`/releases/latest`) |
 |---|---|---|
-| `v0.4.1-alpha` | `Dither Yuki v0.4.1-alpha (alpha)` | Becomes latest (see note) |
-| `v0.4.2-alpha` | next alpha in the 0.4 line (patch digit) | Same |
+| `v0.4.2-alpha` | `Dither Yuki v0.4.2-alpha (alpha)` | Becomes latest (see note) |
+| `v0.4.3-alpha` | next alpha in the 0.4 line (patch digit) | Same |
 | `v0.4.0-beta.1` / `v0.4.0-rc.1` | `… (alpha)` suffix when applicable | Same |
 | `v0.4.0` | `Dither Yuki v0.4.0` | Stable latest |
 
@@ -71,11 +71,11 @@ Full alpha signing guide (macOS + Windows self-sign): [`SIGNING_ALPHA.md`](./SIG
 3. Commit, then:
 
 Alpha builds use `0.4.N-alpha` (no `alpha.K` suffix): **N** is the alpha
-iteration within the minor line (`0.4.1-alpha`, then `0.4.2-alpha`, …).
+iteration within the minor line (`0.4.2-alpha`, then `0.4.3-alpha`, …).
 
 ```bash
-git tag -a v0.4.1-alpha -m "Dither Yuki 0.4.1-alpha"
-git push origin v0.4.1-alpha
+git tag -a v0.4.2-alpha -m "Dither Yuki 0.4.2-alpha"
+git push origin v0.4.2-alpha
 ```
 
 4. Watch Actions → **Release**. macOS job builds Quick Look `.appex`, creates the

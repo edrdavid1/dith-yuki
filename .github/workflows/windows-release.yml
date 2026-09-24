@@ -1,7 +1,7 @@
 name: Windows Release
 
 # Attach an NSIS installer to an existing GitHub Release without rebuilding macOS.
-# Actions → Windows Release → Run workflow → pick the release tag (e.g. v0.4.1-alpha).
+# Actions → Windows Release → Run workflow → pick the release tag (e.g. v0.4.2-alpha).
 on:
   workflow_dispatch:
     inputs:
@@ -9,7 +9,7 @@ on:
         description: Existing release tag to attach the Windows NSIS installer to
         required: true
         type: string
-        default: v0.4.1-alpha
+        default: v0.4.2-alpha
 
 permissions:
   contents: write
