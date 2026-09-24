@@ -12,6 +12,7 @@ import RGBSettings from './editors/RGBSettings';
 import GlowSettings from './editors/GlowSettings';
 import CrtSettings from './editors/CrtSettings';
 import AdjustSettings from './editors/AdjustSettings';
+import AsciiSettings from './editors/AsciiSettings';
 import AlgorithmSettingsPanel from './AlgorithmSettingsPanel';
 import { useAlgorithmCatalog } from './hooks/useAlgorithmCatalog';
 import { unwrapFilterParams } from '../../shared/unwrapFilterParams';
@@ -68,6 +69,8 @@ function EffectIcon({ type }: { type: EffectType }) {
       return <Icon name="effect.crt" width={20} height={20} />;
     case 'Adjust':
       return <Icon name="effect.adjust" width={20} height={20} />;
+    case 'Ascii':
+      return <Icon name="effect.ascii" width={20} height={20} />;
     default:
       return null;
   }
@@ -84,6 +87,8 @@ function CategoryIcon({ category }: { category: EffectCategory }) {
       return <Icon name="effect.adjust" width={20} height={20} />;
     case 'stylize':
       return <Icon name="effect.crt" width={20} height={20} />;
+    case 'ascii':
+      return <Icon name="effect.ascii" width={20} height={20} />;
     default:
       return null;
   }
@@ -101,6 +106,7 @@ const ALGO_TO_EFFECT: Record<string, { type: EffectType; label: string }> = {
   glow: { type: 'Glow', label: 'Glow' },
   crt: { type: 'CRT', label: 'CRT' },
   adjust: { type: 'Adjust', label: 'Adjust' },
+  ascii: { type: 'Ascii', label: 'ASCII' },
 };
 
 /**
@@ -189,7 +195,28 @@ export default function EffectSettingsPanel({
                   </div>
                 </button>
               )}
-              {catalog?.filter((algo: AlgorithmInfo) => algo.category !== 'dithering').map((algo) => {
+              {catalog != null && catalog.some((a) => a.category === 'ascii') && (
+                <button
+                  type="button"
+                  className={cn("effect-chooser-row")}
+                  role="option"
+                  aria-selected={false}
+                  onClick={() => onSelectEffect?.('Ascii')}
+                >
+                  <div className={cn("effect-chooser-row-icon")}>
+                    <EffectIcon type="Ascii" />
+                  </div>
+                  <div className={cn("effect-chooser-row-label")}>
+                    <span>ASCII</span>
+                  </div>
+                </button>
+              )}
+              {catalog
+                ?.filter(
+                  (algo: AlgorithmInfo) =>
+                    algo.category !== 'dithering' && algo.category !== 'ascii'
+                )
+                .map((algo) => {
                 const mapped = ALGO_TO_EFFECT[algo.id];
                 return (
                   <button
@@ -259,6 +286,10 @@ export default function EffectSettingsPanel({
     if (dithering) {
       return <DitherSettings params={params} onUpdate={handleUpdate} />;
     }
+    // Dedicated Ascii editor — never the generic AlgorithmSettingsPanel.
+    if (effectType === 'Ascii' || filter.kind === 'Ascii' || filter.algorithm_id === 'ascii') {
+      return <AsciiSettings params={params} onUpdate={handleUpdate} />;
+    }
     if (filter.algorithm_id) {
       return (
         <AlgorithmSettingsPanel
@@ -298,7 +329,11 @@ export default function EffectSettingsPanel({
             effectType === 'Dithering' ||
             (filter.algorithm_id != null && isDitheringAlgorithmId(filter.algorithm_id))
               ? 'Dithering'
-              : (filter.algorithm_id ?? effectType ?? 'Dithering')
+              : effectType === 'Ascii' ||
+                  filter.kind === 'Ascii' ||
+                  filter.algorithm_id === 'ascii'
+                ? 'ASCII'
+                : (filter.algorithm_id ?? effectType ?? 'Dithering')
           }
           onMouseDown={onTitleBarMouseDown}
           dockSide={dockSide}

@@ -49,10 +49,10 @@ pub use crate::commands::color_lab::{
 };
 pub use crate::services::document_service::{
     blank_rgba_f32, encode_rgba_to_png, f32_to_u8, import_raster_layer, install_raster_document,
-    place_image_at_origin, validate_document_dimensions, BlankBackground, DocumentResponse,
-    ExportImageRequest, ExportPatternRequest, ImportPatternRequest, ImportPatternResponse,
-    LoadImageResponse, OpenProjectResponse, SaveProjectResponse, ShareProjectCopyOptions,
-    IMAGE_IMPORT_EXTENSIONS, MAX_DOCUMENT_DIMENSION,
+    place_image_at_origin, validate_document_dimensions, AsciiClipboardRequest, BlankBackground,
+    DocumentResponse, ExportAsciiRequest, ExportImageRequest, ExportPatternRequest,
+    ImportPatternRequest, ImportPatternResponse, LoadImageResponse, OpenProjectResponse,
+    SaveProjectResponse, ShareProjectCopyOptions, IMAGE_IMPORT_EXTENSIONS, MAX_DOCUMENT_DIMENSION,
 };
 pub use crate::services::palette_service::find_layers_referencing_palette;
 pub use crate::services::palette_service::{hex_to_linear, linear_to_hex};
@@ -78,6 +78,10 @@ pub struct AppState {
     pub dock_affinity: Mutex<crate::dock_affinity::DockAffinityController>,
     pub preview_pass_inflight: AtomicUsize,
     pub pending_preview_refresh: Mutex<Option<PendingPreviewRefresh>>,
+    /// Preview Image|ASCII switch: when true (default), Ascii full-doc filters run.
+    pub ascii_preview: AtomicBool,
+    /// Refcount of callers inside a full-document ensure (monolithic “Rendering…”).
+    pub full_document_busy: AtomicUsize,
     /// FlexLayout persistence layer (B3: Layers panel on FlexLayout).
     /// During B3, effect/colorlab panels still use old PanelManager system.
     /// This persistence handles the new v3 FlexLayout JSON format.
@@ -115,6 +119,39 @@ pub(crate) fn emit_document_changed(
         doc_id,
     };
     let _ = app_handle.emit_to(tauri::EventTarget::Any, "document-changed", payload);
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FullDocumentBusyPayload {
+    pub busy: bool,
+    pub doc_id: u32,
+}
+
+/// Enter a full-document ensure; emit `full-document-busy` when the first caller enters.
+pub(crate) fn begin_full_document_busy(state: &AppState, doc_id: u32) {
+    let prev = state.full_document_busy.fetch_add(1, Ordering::AcqRel);
+    if prev == 0 {
+        emit_full_document_busy(state, true, doc_id);
+    }
+}
+
+/// Leave a full-document ensure; emit clear when the last caller exits.
+pub(crate) fn end_full_document_busy(state: &AppState, doc_id: u32) {
+    let prev = state.full_document_busy.fetch_sub(1, Ordering::AcqRel);
+    if prev == 1 {
+        emit_full_document_busy(state, false, doc_id);
+    }
+}
+
+fn emit_full_document_busy(state: &AppState, busy: bool, doc_id: u32) {
+    let Ok(guard) = state.app_handle.lock() else {
+        return;
+    };
+    let Some(ref app) = *guard else {
+        return;
+    };
+    let payload = FullDocumentBusyPayload { busy, doc_id };
+    let _ = app.emit_to(tauri::EventTarget::Any, "full-document-busy", payload);
 }
 
 pub(crate) fn reset_tiles_for_new_document(state: &AppState) {
@@ -215,7 +252,9 @@ pub(crate) fn layer_needs_dither_cache_reset(
                     f.enabled
                         && matches!(
                             f.params,
-                            FilterParams::DitherV2(_) | FilterParams::Dither { .. }
+                            FilterParams::DitherV2(_)
+                                | FilterParams::Dither { .. }
+                                | FilterParams::Ascii(_)
                         )
                 });
             }

@@ -5,7 +5,15 @@ import type { FilterKind } from './index';
 // =============================================================================
 
 /** Effect types available in the new design */
-export type EffectType = 'Dithering' | 'Glitching' | 'Curves' | 'RGBChannels' | 'Glow' | 'CRT' | 'Adjust';
+export type EffectType =
+  | 'Dithering'
+  | 'Glitching'
+  | 'Curves'
+  | 'RGBChannels'
+  | 'Glow'
+  | 'CRT'
+  | 'Adjust'
+  | 'Ascii';
 
 /** Maps EffectType to the corresponding FilterKind used in IPC.
  * Registry algorithms are added via `specForAlgorithm` / `onSelectAlgorithm`.
@@ -19,6 +27,7 @@ export const EFFECT_TO_FILTER_KIND: Record<EffectType, FilterKind> = {
   Glow: 'Glow',
   CRT: 'Crt',
   Adjust: 'Adjust',
+  Ascii: 'Ascii',
 };
 
 /** Default params for each effect type on creation */
@@ -77,6 +86,23 @@ export const EFFECT_DEFAULTS: Record<EffectType, Record<string, unknown>> = {
     blur: 0,
     sharpness: 0,
     noise: 0,
+  },
+  Ascii: {
+    font: 'departure_mono',
+    size_mode: 'px',
+    font_px: 11,
+    columns: 120,
+    antialias: false,
+    hinting: false,
+    symbol_set: 'bourke_70',
+    match_mode: 'shape',
+    contrast: 1,
+    color_mode: 'mono',
+    color_target: 'truecolor',
+    cell_dither: 'none',
+    serpentine: false,
+    edge_overlay: false,
+    edge_tau: 40,
   },
 };
 
@@ -155,6 +181,8 @@ export function specForAlgorithm(
       return { kind: 'Curves', params: { ...EFFECT_DEFAULTS.Curves } };
     case 'glitch':
       return { kind: 'Glitch', params: { ...EFFECT_DEFAULTS.Glitching } };
+    case 'ascii':
+      return { kind: 'Ascii', params: { ...EFFECT_DEFAULTS.Ascii } };
     default:
       return null;
   }

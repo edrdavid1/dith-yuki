@@ -81,6 +81,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
     let ids = read_registry_txt();
     let expected = [
         "adjust",
+        "ascii",
         "atkinson",
         "bayer_16x16",
         "bayer_2x2",
@@ -254,8 +255,8 @@ fn register_all_ids_unique() {
     );
     assert_eq!(
         all_ids.len(),
-        34,
-        "must register all 34 built-in algorithms"
+        35,
+        "must register all 35 built-in algorithms"
     );
 }
 
@@ -302,7 +303,7 @@ fn migration_corpus() {
         );
     }
     assert_eq!(
-        count, 34,
+        count, 35,
         "expected one migration fixture per built-in algorithm"
     );
 }

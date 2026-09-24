@@ -8,6 +8,7 @@ members = [
     "crates/engine-project",
     "crates/engine-gpu",
     "crates/engine-registry",
+    "crates/engine-ascii",
     "crates/dither-zip-safe",
     "crates/dither-thumb",
     "crates/dither-thumb-ffi",
@@ -35,6 +36,8 @@ opt-level = 2
 [profile.dev.package.engine-core]
 opt-level = 2
 [profile.dev.package.engine-io]
+opt-level = 2
+[profile.dev.package.engine-ascii]
 opt-level = 2
 [profile.dev.package.dither]
 opt-level = 2

@@ -64,6 +64,7 @@ function filterKindToName(kind: string): string {
     case 'Glow': return 'Glow';
     case 'Crt': return 'CRT';
     case 'Adjust': return 'Adjust';
+    case 'Ascii': return 'ASCII';
     default: return kind;
   }
 }
@@ -77,6 +78,7 @@ function filterKindToIconType(kind: string): string {
     case 'Glow': return 'glow';
     case 'Crt': return 'crt';
     case 'Adjust': return 'adjust';
+    case 'Ascii': return 'ascii';
     default: return 'dithering';
   }
 }
@@ -589,6 +591,8 @@ function EffectIconSvg({ type }: { type: string }) {
       return <Icon name="effect.crt" width={18} height={18} />;
     case 'adjust':
       return <Icon name="effect.adjust" width={18} height={18} />;
+    case 'ascii':
+      return <Icon name="effect.ascii" width={18} height={18} />;
     default:
       return <Icon name="effect.dithering" width={18} height={18} />;
   }

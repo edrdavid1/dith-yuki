@@ -102,3 +102,15 @@ export async function onDockAffinity(
 ): Promise<UnlistenFn> {
   return listen<DockAffinityEvent>('dock-affinity', handler);
 }
+
+/** Monolithic full-document job (ASCII / Riemersma) in flight — Preview “Rendering…”. */
+export interface FullDocumentBusyPayload {
+  busy: boolean;
+  doc_id: number;
+}
+
+export async function onFullDocumentBusy(
+  handler: (event: Event<FullDocumentBusyPayload>) => void
+): Promise<UnlistenFn> {
+  return listen<FullDocumentBusyPayload>('full-document-busy', handler);
+}

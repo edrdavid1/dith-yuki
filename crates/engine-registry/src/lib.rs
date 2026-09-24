@@ -190,6 +190,8 @@ pub enum EffectCategory {
     ColorAdjust,
     Stylize,
     Palette,
+    /// Text-art / ASCII output (not dithering).
+    Ascii,
 }
 
 // ---------------------------------------------------------------------------

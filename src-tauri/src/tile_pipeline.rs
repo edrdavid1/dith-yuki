@@ -89,16 +89,23 @@ pub fn compute_processed_tile(
         return Err(EngineError::EdDependenciesPending);
     }
 
-    // Full-document algorithms (Riemersma): monolithic pass, then slice tiles.
-    if engine_project::filters::layer_has_full_document_filter(layer) {
+    // Full-document algorithms (Riemersma / ASCII): monolithic pass, then slice tiles.
+    // Image preview mode omits Ascii so only non-ASCII full-doc filters force this path;
+    // Ascii-only stacks fall through to the tiled apply (Ascii tile apply is identity).
+    let include_ascii = state.ascii_preview.load(Ordering::Relaxed);
+    if engine_project::filters::layer_has_full_document_filter_ex(layer, include_ascii) {
         let compute_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
-        let result = engine_project::filters::ensure_full_document(
+        crate::commands::begin_full_document_busy(state, key.doc);
+        let result = engine_project::filters::ensure_full_document_ex(
             &state.tiles.full_document,
             &state.tiles.tile_cache,
             layer,
             &snapshot,
             compute_gen,
-        )?;
+            include_ascii,
+        );
+        crate::commands::end_full_document_busy(state, key.doc);
+        let result = result?;
         let now_gen = snapshot_for_key(state, key)?
             .generations
             .document_gen

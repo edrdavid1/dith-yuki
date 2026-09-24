@@ -15,6 +15,9 @@ interface MenuBarProps {
   onOpenImage: () => void;
   onImportImageLayer?: () => void;
   onSaveImage: () => void;
+  onExportAscii?: () => void;
+  onCopyAsciiText?: () => void;
+  onCopyAsciiAnsi?: () => void;
   onOpenProject: () => void;
   onOpenRecent?: (entry: RecentFileEntry) => void;
   onSaveProject: () => void;
@@ -55,6 +58,9 @@ function MenuBar({
   onOpenImage,
   onImportImageLayer,
   onSaveImage,
+  onExportAscii,
+  onCopyAsciiText,
+  onCopyAsciiAnsi,
   onOpenProject,
   onOpenRecent,
   onSaveProject,
@@ -223,6 +229,14 @@ function MenuBar({
             >
               Save/Export
             </button>
+            <button
+              className={cn("menubar-dropdown-item")}
+              role="menuitem"
+              onClick={() => onExportAscii && handleAction(onExportAscii)}
+              disabled={!hasDocument || !onExportAscii}
+            >
+              Export ASCII…
+            </button>
           </div>
         );
       case 'edit': {
@@ -245,6 +259,22 @@ function MenuBar({
             >
               <span>Redo</span>
               <span className={cn('menubar-shortcut')}>{formatChords(shortcuts.redo)}</span>
+            </button>
+            <button
+              className={cn("menubar-dropdown-item")}
+              role="menuitem"
+              onClick={() => onCopyAsciiText && handleAction(onCopyAsciiText)}
+              disabled={!hasDocument || !onCopyAsciiText}
+            >
+              Copy ASCII Text
+            </button>
+            <button
+              className={cn("menubar-dropdown-item")}
+              role="menuitem"
+              onClick={() => onCopyAsciiAnsi && handleAction(onCopyAsciiAnsi)}
+              disabled={!hasDocument || !onCopyAsciiAnsi}
+            >
+              Copy ASCII ANSI
             </button>
           </div>
         );

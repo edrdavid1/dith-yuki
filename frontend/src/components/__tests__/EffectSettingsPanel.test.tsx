@@ -12,7 +12,7 @@ vi.mock('../../ipc/commands', () => ({
 }));
 
 vi.mock('../../shared/ipc/registry', () => ({
-  EFFECT_CATEGORIES: ['dithering', 'glitch', 'color_adjust', 'stylize', 'palette'],
+  EFFECT_CATEGORIES: ['dithering', 'glitch', 'color_adjust', 'stylize', 'palette', 'ascii'],
   listAlgorithmsForCategory: vi.fn(async (category: string) => {
     if (category === 'dithering') {
       return [
@@ -26,6 +26,16 @@ vi.mock('../../shared/ipc/registry', () => ({
           id: 'bayer_4x4',
           display_name: 'Bayer 4×4',
           category: 'dithering',
+          deprecated: false,
+        },
+      ];
+    }
+    if (category === 'ascii') {
+      return [
+        {
+          id: 'ascii',
+          display_name: 'ASCII',
+          category: 'ascii',
           deprecated: false,
         },
       ];
@@ -199,6 +209,23 @@ describe('EffectSettingsPanel', () => {
       });
       fireEvent.click(screen.getByText('Dithering'));
       expect(onSelectEffect).toHaveBeenCalledWith('Dithering');
+    });
+
+    it('shows a single ASCII row outside dithering', async () => {
+      const onSelectEffect = vi.fn();
+      render(
+        <EffectSettingsPanel
+          selectedLayer={null}
+          onUpdateParams={onUpdateParams}
+          onSelectEffect={onSelectEffect}
+        />
+      );
+      await waitFor(() => {
+        expect(screen.getByText('ASCII')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('ascii')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByText('ASCII'));
+      expect(onSelectEffect).toHaveBeenCalledWith('Ascii');
     });
 
     it('calls onSelectEffect for the leftover RGB channels row', async () => {
@@ -508,6 +535,47 @@ describe('EffectSettingsPanel', () => {
       expect(screen.getByText('Blur')).toBeInTheDocument();
       expect(screen.getByText('Sharpness')).toBeInTheDocument();
       expect(screen.getByText('Noise')).toBeInTheDocument();
+    });
+  });
+
+  describe('ASCII settings', () => {
+    it('renders dedicated ASCII controls, not dither algorithm list', () => {
+      render(
+        <EffectSettingsPanel
+          selectedLayer={{
+            id: 10,
+            name: 'ASCII',
+            filters: [{
+              id: 'filter-10',
+              kind: 'Ascii',
+              params: {
+                type: 'Ascii',
+                font: 'departure_mono',
+                size_mode: 'px',
+                font_px: 11,
+                columns: 120,
+                antialias: false,
+                hinting: false,
+                symbol_set: 'bourke_70',
+                match_mode: 'shape',
+                contrast: 1,
+                color_mode: 'mono',
+              },
+              enabled: true,
+              opacity: 1,
+              blend_mode: 'Normal',
+              algorithm_id: 'ascii',
+            } as FilterInfo],
+          }}
+          onUpdateParams={onUpdateParams}
+        />
+      );
+      expect(screen.getByText('ASCII')).toBeInTheDocument();
+      expect(screen.getByText('Font')).toBeInTheDocument();
+      expect(screen.getByText('Symbol Set')).toBeInTheDocument();
+      expect(screen.getByText('Match Mode')).toBeInTheDocument();
+      expect(screen.queryByText('Algorithm')).not.toBeInTheDocument();
+      expect(screen.queryByText('Pixel Size')).not.toBeInTheDocument();
     });
   });
 

@@ -28,6 +28,8 @@ pub enum FilterKind {
     Glow,
     Crt,
     Adjust,
+    /// Text-art / ASCII (not a dither mode).
+    Ascii,
     Placeholder,
 }
 
@@ -42,6 +44,7 @@ impl std::fmt::Display for FilterKind {
             FilterKind::Glow => write!(f, "Glow"),
             FilterKind::Crt => write!(f, "Crt"),
             FilterKind::Adjust => write!(f, "Adjust"),
+            FilterKind::Ascii => write!(f, "Ascii"),
             FilterKind::Placeholder => write!(f, "Placeholder"),
         }
     }
@@ -822,10 +825,205 @@ pub enum FilterParams {
         /// Deterministic RGB noise amount (0 .. 1). 0 = skip.
         noise: f32,
     },
+    /// Text-art / ASCII output stage (`engine-ascii`). Not a dither mode.
+    Ascii(AsciiParams),
     /// Placeholder for unknown or future filters.
     ///
     /// Old JSON `{"Placeholder": "x"}` still deserialises (`raw_params: None`).
     Placeholder(PlaceholderParams),
+}
+
+/// Parameters for [`FilterParams::Ascii`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AsciiParams {
+    /// Bundled font id: `ibm_plex_mono` | `departure_mono`.
+    #[serde(default = "default_ascii_font")]
+    pub font: String,
+    /// `px` or `columns`.
+    #[serde(default = "default_ascii_size_mode")]
+    pub size_mode: String,
+    /// Font size in px when `size_mode == "px"`.
+    #[serde(default = "default_ascii_font_px")]
+    pub font_px: f32,
+    /// Column count when `size_mode == "columns"`.
+    #[serde(default = "default_ascii_columns")]
+    pub columns: u32,
+    #[serde(default = "default_false")]
+    pub antialias: bool,
+    #[serde(default = "default_false")]
+    pub hinting: bool,
+    /// Symbol set id (e.g. `bourke_10`, `printable_ascii`, `blocks`).
+    #[serde(default = "default_ascii_symbol_set")]
+    pub symbol_set: String,
+    /// `tone` | `shape` | `shape_contrast` | `mask_two_color`.
+    #[serde(default = "default_ascii_match_mode")]
+    pub match_mode: String,
+    /// Contrast gamma for shape_contrast (1.0 = identity).
+    #[serde(default = "default_ascii_contrast")]
+    pub contrast: f32,
+    /// `mono` | `fg` | `fg_bg`.
+    #[serde(default = "default_ascii_color_mode")]
+    pub color_mode: String,
+    /// `truecolor` | `xterm256` | `ansi16_vga` | `ansi16_xterm` | `ansi16_win10`.
+    #[serde(default = "default_ascii_color_target")]
+    pub color_target: String,
+    /// `none` | `bayer2` | `bayer4` | `bayer8` | `floyd_steinberg`.
+    #[serde(default = "default_ascii_cell_dither")]
+    pub cell_dither: String,
+    #[serde(default = "default_false")]
+    pub serpentine: bool,
+    #[serde(default = "default_false")]
+    pub edge_overlay: bool,
+    /// Edge strength threshold 0..=255 when `edge_overlay` is on.
+    #[serde(default = "default_ascii_edge_tau")]
+    pub edge_tau: u8,
+}
+
+fn default_ascii_font() -> String {
+    "departure_mono".into()
+}
+fn default_ascii_size_mode() -> String {
+    "px".into()
+}
+fn default_ascii_font_px() -> f32 {
+    11.0
+}
+fn default_ascii_columns() -> u32 {
+    120
+}
+fn default_false() -> bool {
+    false
+}
+fn default_ascii_symbol_set() -> String {
+    "bourke_70".into()
+}
+fn default_ascii_match_mode() -> String {
+    "shape".into()
+}
+fn default_ascii_contrast() -> f32 {
+    1.0
+}
+fn default_ascii_color_mode() -> String {
+    "mono".into()
+}
+fn default_ascii_color_target() -> String {
+    "truecolor".into()
+}
+fn default_ascii_cell_dither() -> String {
+    "none".into()
+}
+fn default_ascii_edge_tau() -> u8 {
+    40
+}
+
+impl Default for AsciiParams {
+    fn default() -> Self {
+        Self {
+            font: default_ascii_font(),
+            size_mode: default_ascii_size_mode(),
+            font_px: default_ascii_font_px(),
+            columns: default_ascii_columns(),
+            antialias: false,
+            hinting: false,
+            symbol_set: default_ascii_symbol_set(),
+            match_mode: default_ascii_match_mode(),
+            contrast: default_ascii_contrast(),
+            color_mode: default_ascii_color_mode(),
+            color_target: default_ascii_color_target(),
+            cell_dither: default_ascii_cell_dither(),
+            serpentine: false,
+            edge_overlay: false,
+            edge_tau: default_ascii_edge_tau(),
+        }
+    }
+}
+
+impl AsciiParams {
+    pub fn validate(&self) -> Result<(), EngineError> {
+        match self.font.as_str() {
+            "ibm_plex_mono" | "departure_mono" => {}
+            other => {
+                return Err(EngineError::invalid_filter_params(format!(
+                    "ascii font must be ibm_plex_mono or departure_mono, got {other}"
+                )));
+            }
+        }
+        match self.size_mode.as_str() {
+            "px" | "columns" => {}
+            other => {
+                return Err(EngineError::invalid_filter_params(format!(
+                    "ascii size_mode must be px or columns, got {other}"
+                )));
+            }
+        }
+        if !(4.0..=256.0).contains(&self.font_px) {
+            return Err(EngineError::invalid_filter_params(
+                "ascii font_px must be in [4, 256]",
+            ));
+        }
+        if !(1..=1024).contains(&self.columns) {
+            return Err(EngineError::invalid_filter_params(
+                "ascii columns must be in [1, 1024]",
+            ));
+        }
+        const SETS: &[&str] = &[
+            "bourke_10",
+            "bourke_70",
+            "printable_ascii",
+            "ascii_box_drawing",
+            "blocks",
+            "quadrants",
+            "sextants",
+            "octants",
+            "braille",
+            "cp437",
+        ];
+        if !SETS.contains(&self.symbol_set.as_str()) {
+            return Err(EngineError::invalid_filter_params(format!(
+                "unknown ascii symbol_set: {}",
+                self.symbol_set
+            )));
+        }
+        match self.match_mode.as_str() {
+            "tone" | "shape" | "shape_contrast" | "mask_two_color" => {}
+            other => {
+                return Err(EngineError::invalid_filter_params(format!(
+                    "ascii match_mode invalid: {other}"
+                )));
+            }
+        }
+        if !(0.25..=4.0).contains(&self.contrast) {
+            return Err(EngineError::invalid_filter_params(
+                "ascii contrast must be in [0.25, 4]",
+            ));
+        }
+        match self.color_mode.as_str() {
+            "mono" | "fg" | "fg_bg" => {}
+            other => {
+                return Err(EngineError::invalid_filter_params(format!(
+                    "ascii color_mode invalid: {other}"
+                )));
+            }
+        }
+        match self.color_target.as_str() {
+            "truecolor" | "xterm256" | "ansi16" | "ansi16_vga" | "ansi16_xterm" | "ansi16_win10" => {
+            }
+            other => {
+                return Err(EngineError::invalid_filter_params(format!(
+                    "ascii color_target invalid: {other}"
+                )));
+            }
+        }
+        match self.cell_dither.as_str() {
+            "none" | "bayer2" | "bayer4" | "bayer8" | "floyd_steinberg" => {}
+            other => {
+                return Err(EngineError::invalid_filter_params(format!(
+                    "ascii cell_dither invalid: {other}"
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Wire format for [`FilterParams::Placeholder`].
@@ -1123,6 +1321,7 @@ impl FilterInstance {
                 }
                 Ok(())
             }
+            FilterParams::Ascii(p) => p.validate(),
             FilterParams::Placeholder(_) => Ok(()),
         }
     }
@@ -1143,6 +1342,7 @@ pub fn algorithm_id_for_params(params: &FilterParams) -> Option<&'static str> {
         FilterParams::Adjust { .. } => Some("adjust"),
         FilterParams::Curves { .. } => Some("curves"),
         FilterParams::Glitch { .. } => Some("glitch"),
+        FilterParams::Ascii(_) => Some("ascii"),
         FilterParams::Levels { .. } | FilterParams::Placeholder(_) => None,
     }
 }
@@ -1184,6 +1384,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         "adjust" => Some(FilterKind::Adjust),
         "curves" => Some(FilterKind::Curves),
         "glitch" => Some(FilterKind::Glitch),
+        "ascii" => Some(FilterKind::Ascii),
         _ => None,
     }
 }
@@ -1265,6 +1466,7 @@ pub fn filter_params_to_json(params: &FilterParams) -> Result<serde_json::Value,
             "intensity": intensity,
             "seed": seed,
         })),
+        FilterParams::Ascii(p) => serde_json::to_value(p),
         other => serde_json::to_value(other),
     }
     .map_err(|e| EngineError::invalid_filter_params(e.to_string()))

@@ -1,0 +1,17 @@
+[package]
+name = "engine-ascii"
+version = "0.1.0"
+edition = "2021"
+description = "ASCII / text-art output stage: fonts, glyph atlas, symbol sets, matching and exporters"
+
+[dependencies]
+engine-color = { path = "../engine-color" }
+swash = "0.2.10"
+dashmap = "5.5"
+thiserror = "1"
+png = "0.17"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+proptest = "1.4"

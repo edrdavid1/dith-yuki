@@ -25,7 +25,8 @@ export type FilterKind =
   | 'PaletteQuantize'
   | 'Glow'
   | 'Crt'
-  | 'Adjust';
+  | 'Adjust'
+  | 'Ascii';
 
 export type FilterParams =
   | DitherParams
@@ -36,7 +37,8 @@ export type FilterParams =
   | PaletteQuantizeParams
   | GlowParams
   | CrtParams
-  | AdjustParams;
+  | AdjustParams
+  | AsciiParams;
 
 export interface DitherParams {
   type: 'Dither';
@@ -179,6 +181,31 @@ export interface AdjustParams {
   blur: number;        // 0–2
   sharpness: number;   // 0–2
   noise: number;       // 0–1
+}
+
+/** Text-art / ASCII — not a dither mode. */
+export interface AsciiParams {
+  type: 'Ascii';
+  font: 'ibm_plex_mono' | 'departure_mono';
+  size_mode: 'px' | 'columns';
+  font_px: number;
+  columns: number;
+  antialias: boolean;
+  hinting: boolean;
+  symbol_set: string;
+  match_mode: 'tone' | 'shape' | 'shape_contrast' | 'mask_two_color';
+  contrast: number;
+  color_mode: 'mono' | 'fg' | 'fg_bg';
+  color_target:
+    | 'truecolor'
+    | 'xterm256'
+    | 'ansi16_vga'
+    | 'ansi16_xterm'
+    | 'ansi16_win10';
+  cell_dither: 'none' | 'bayer2' | 'bayer4' | 'bayer8' | 'floyd_steinberg';
+  serpentine: boolean;
+  edge_overlay: boolean;
+  edge_tau: number;
 }
 
 export type DitherAlgorithm = 'FloydSteinberg' | 'Ordered' | 'Threshold';

@@ -26,6 +26,8 @@ function filterKindToEffect(kind: string): EffectType | null {
       return 'CRT';
     case 'Adjust':
       return 'Adjust';
+    case 'Ascii':
+      return 'Ascii';
     default:
       return null;
   }

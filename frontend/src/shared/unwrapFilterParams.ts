@@ -9,6 +9,7 @@ const TAGGED_KEYS = [
   'Glitch',
   'Dither',
   'PaletteQuantize',
+  'Ascii',
 ] as const;
 
 /**

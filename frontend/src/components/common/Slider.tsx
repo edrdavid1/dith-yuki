@@ -4,8 +4,9 @@ import retro from '../../shared/ui/RetroSlider.module.css';
 import { bind } from '../../shared/ui/cn';
 const cn = bind({ ...styles, ...retro });
 
-// Immediate onChange for local/parent state. IPC debounce (100ms) lives in
-// useEffectLayer.updateParams — do not add a second timer here (would stack to 200ms).
+// Immediate onChange for local/parent state. IPC debounce (100ms default;
+// 350ms for ASCII / Riemersma) lives in useEffectLayer.updateParams — do not
+// add a second timer here (would stack delays).
 // Text field Enter/blur commits immediately (bypass; still one IPC layer).
 
 interface SliderProps {

@@ -1,0 +1,8 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "kind": "Ascii",
+  "params": {"Ascii": {"font": "departure_mono", "size_mode": "px", "font_px": 11.0, "symbol_set": "bourke_70", "match_mode": "shape", "color_mode": "mono"}},
+  "enabled": true,
+  "algorithm_id": "ascii",
+  "schema_version": 1
+}

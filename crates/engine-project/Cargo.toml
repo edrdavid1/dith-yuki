@@ -11,6 +11,7 @@ engine-color = { path = "../engine-color" }
 engine-tiles = { path = "../engine-tiles" }
 engine-gpu = { path = "../engine-gpu" }
 engine-io = { path = "../engine-io" }
+engine-ascii = { path = "../engine-ascii" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 arc-swap = "1.6"

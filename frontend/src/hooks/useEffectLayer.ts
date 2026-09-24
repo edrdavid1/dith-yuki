@@ -34,7 +34,27 @@ function toFilterParams(kind: string, params: Record<string, unknown>): FilterPa
   return { type: kind, ...unwrapFilterParams(params) } as unknown as FilterParams;
 }
 
-const DEBOUNCE_MS = 100;
+const DEFAULT_DEBOUNCE_MS = 100;
+/**
+ * Monolithic full-document filters (ASCII, Riemersma): longer coalesce so slider
+ * ticks do not cancel/restart an expensive job every 100 ms (Riemersma §3 /
+ * ASCII debounce rule).
+ */
+const FULL_DOCUMENT_DEBOUNCE_MS = 350;
+
+function debounceMsForParams(params: FilterParams | null): number {
+  if (!params) return DEFAULT_DEBOUNCE_MS;
+  const record = params as unknown as Record<string, unknown>;
+  const kind = typeof record.type === 'string' ? record.type : '';
+  if (kind === 'Ascii') return FULL_DOCUMENT_DEBOUNCE_MS;
+  if (
+    (kind === 'DitherV2' || kind === 'Dither') &&
+    record.mode === 'riemersma'
+  ) {
+    return FULL_DOCUMENT_DEBOUNCE_MS;
+  }
+  return DEFAULT_DEBOUNCE_MS;
+}
 
 /**
  * Effect editor state for the selected filter.
@@ -130,7 +150,7 @@ export function useEffectLayer(
         void dispatch(refreshFilters());
         setError(formatIpcError(err));
       }
-    }, DEBOUNCE_MS);
+    }, DEFAULT_DEBOUNCE_MS);
   }, [dispatch]);
 
   const updateParams = useCallback((params: Record<string, unknown>) => {
@@ -149,6 +169,16 @@ export function useEffectLayer(
       return { type: kind, ...unwrapFilterParams(record), ...params } as FilterParams;
     });
     setError(null);
+
+    // Optimistic merge is sync above; read the coalesced view for debounce length.
+    const delayMs = debounceMsForParams(
+      paramsRef.current
+        ? ({
+            ...(paramsRef.current as unknown as Record<string, unknown>),
+            ...params,
+          } as unknown as FilterParams)
+        : prevParams
+    );
 
     debounceRef.current = setTimeout(async () => {
       const fullParams = (): Record<string, unknown> => {
@@ -185,7 +215,7 @@ export function useEffectLayer(
         return;
       }
       await flush(fullParams());
-    }, DEBOUNCE_MS);
+    }, delayMs);
   }, []);
 
   useEffect(() => {

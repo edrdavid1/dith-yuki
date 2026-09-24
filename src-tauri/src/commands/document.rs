@@ -8,10 +8,10 @@ use crate::commands::{
 use crate::document_session::{emit_tabs_changed, OpenDocumentsPayload};
 pub use crate::services::document_service::{
     blank_rgba_f32, encode_rgba_to_png, f32_to_u8, place_image_at_origin,
-    validate_document_dimensions, BlankBackground, DocumentResponse as DocResponse,
-    ExportImageRequest, ExportPatternRequest, ImportPatternRequest, ImportPatternResponse,
-    LoadImageResponse, OpenProjectResponse, SaveProjectResponse, ShareProjectCopyOptions,
-    IMAGE_IMPORT_EXTENSIONS, MAX_DOCUMENT_DIMENSION,
+    validate_document_dimensions, AsciiClipboardRequest, BlankBackground,
+    DocumentResponse as DocResponse, ExportAsciiRequest, ExportImageRequest, ExportPatternRequest,
+    ImportPatternRequest, ImportPatternResponse, LoadImageResponse, OpenProjectResponse,
+    SaveProjectResponse, ShareProjectCopyOptions, IMAGE_IMPORT_EXTENSIONS, MAX_DOCUMENT_DIMENSION,
 };
 use crate::services::{AppError, DocumentService};
 
@@ -183,6 +183,61 @@ pub async fn export_image(
         .export_image(req)
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn export_ascii(
+    req: ExportAsciiRequest,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    DocumentService::new(state.inner().clone())
+        .export_ascii(req)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn ascii_clipboard_text(
+    req: AsciiClipboardRequest,
+    state: State<'_, Arc<AppState>>,
+) -> Result<String, String> {
+    DocumentService::new(state.inner().clone())
+        .ascii_clipboard_text(req)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Preview Image|ASCII switch. `true` = show ASCII raster; `false` = Image (skip Ascii filters).
+#[tauri::command]
+pub fn set_ascii_preview(
+    enabled: bool,
+    state: State<'_, Arc<AppState>>,
+) -> Result<bool, String> {
+    use engine_tiles::CacheStage;
+
+    let prev = state.ascii_preview.swap(enabled, Ordering::Relaxed);
+    if prev == enabled {
+        return Ok(enabled);
+    }
+
+    state.tiles.full_document.clear();
+    let mut keys = Vec::new();
+    for entry in state.tiles.tile_cache.entries.iter() {
+        let key = *entry.key();
+        if matches!(key.stage, CacheStage::Processed | CacheStage::Composite) {
+            keys.push(key);
+        }
+    }
+    for key in keys {
+        state.tiles.tile_cache.mark_dirty(key);
+    }
+    schedule_dirty_viewport_tiles(state.inner());
+    Ok(enabled)
+}
+
+#[tauri::command]
+pub fn get_ascii_preview(state: State<'_, Arc<AppState>>) -> bool {
+    state.ascii_preview.load(Ordering::Relaxed)
 }
 
 #[tauri::command]
