@@ -6,7 +6,8 @@ export type EffectCategory =
   | 'glitch'
   | 'color_adjust'
   | 'stylize'
-  | 'palette';
+  | 'palette'
+  | 'ascii';
 
 /** Mirrors `engine_registry::ParamField` (`tag = "type"`, `rename_all = "snake_case"`). */
 export type ParamField =
@@ -59,4 +60,5 @@ export const EFFECT_CATEGORIES: EffectCategory[] = [
   'color_adjust',
   'stylize',
   'palette',
+  'ascii',
 ];

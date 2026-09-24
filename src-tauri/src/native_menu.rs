@@ -104,6 +104,8 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
         None::<&str>,
     )?;
     let save_export = MenuItem::with_id(app, "save-export", "Save/Export", true, None::<&str>)?;
+    let export_ascii =
+        MenuItem::with_id(app, "export-ascii", "Export ASCII…", true, None::<&str>)?;
 
     let file_menu = Submenu::with_items(
         app,
@@ -119,12 +121,22 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
             &save_project_as,
             &share_project_copy,
             &save_export,
+            &export_ascii,
         ],
     )?;
 
     let undo = MenuItem::with_id(app, "undo", "Undo", true, Some("CmdOrCtrl+Z"))?;
     let redo = MenuItem::with_id(app, "redo", "Redo", true, Some("CmdOrCtrl+Shift+Z"))?;
-    let edit_menu = Submenu::with_items(app, "Edit", true, &[&undo, &redo])?;
+    let copy_ascii_text =
+        MenuItem::with_id(app, "copy-ascii-text", "Copy ASCII Text", true, None::<&str>)?;
+    let copy_ascii_ansi =
+        MenuItem::with_id(app, "copy-ascii-ansi", "Copy ASCII ANSI", true, None::<&str>)?;
+    let edit_menu = Submenu::with_items(
+        app,
+        "Edit",
+        true,
+        &[&undo, &redo, &copy_ascii_text, &copy_ascii_ansi],
+    )?;
 
     let export_pattern =
         MenuItem::with_id(app, "export-pattern", "Export Pattern…", true, None::<&str>)?;

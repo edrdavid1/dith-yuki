@@ -120,6 +120,7 @@ impl FilterService {
             "Glow" => FilterKind::Glow,
             "Crt" => FilterKind::Crt,
             "Adjust" => FilterKind::Adjust,
+            "Ascii" => FilterKind::Ascii,
             other => filter_kind_for_algorithm_id(other).ok_or_else(|| {
                 AppError::InvalidOperation(format!("Invalid filter kind: {other}"))
             })?,
@@ -383,6 +384,15 @@ impl FilterService {
                 FilterKind::Adjust => {
                     parse_adjust_params(&req.params, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
                 }
+                FilterKind::Ascii => {
+                    let p: engine_project::filter::AsciiParams =
+                        serde_json::from_value(req.params.clone()).map_err(|e| {
+                            AppError::InvalidOperation(format!("Invalid Ascii params: {e}"))
+                        })?;
+                    p.validate()
+                        .map_err(|e| AppError::InvalidOperation(format!("{e}")))?;
+                    FilterParams::Ascii(p)
+                }
                 FilterKind::Placeholder => FilterParams::Placeholder(PlaceholderParams {
                     label: "unknown".to_string(),
                     raw_params: None,
@@ -395,6 +405,9 @@ impl FilterService {
             engine_project::algorithms::builtin_registry()
                 .get_by_str(&req.kind)
                 .map(|_| req.kind.clone())
+        }).or_else(|| {
+            // FilterKind aliases (Ascii, Crt, …) → registry AlgorithmId.
+            engine_project::algorithm_id_for_params(&filter.params).map(str::to_string)
         });
         if let Some(id) = resolved_id.as_deref() {
             let algo = engine_project::algorithms::builtin_registry()
@@ -413,7 +426,10 @@ impl FilterService {
             let layer_id = req.layer_id;
             let mut found = false;
 
-            if matches!(&filter.params, FilterParams::DitherV2(_)) {
+            if matches!(
+                &filter.params,
+                FilterParams::DitherV2(_) | FilterParams::Ascii(_)
+            ) {
                 self.state
                     .tiles
                     .error_residuals
@@ -994,6 +1010,15 @@ impl FilterService {
                         _ => (0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
                     };
                     parse_adjust_params(&req.params, ec, eb, es, ebl, esh, en)
+                }
+                FilterKind::Ascii => {
+                    let p: engine_project::filter::AsciiParams =
+                        serde_json::from_value(req.params.clone()).map_err(|e| {
+                            AppError::InvalidOperation(format!("Invalid Ascii params: {e}"))
+                        })?;
+                    p.validate()
+                        .map_err(|e| AppError::InvalidOperation(format!("{e}")))?;
+                    FilterParams::Ascii(p)
                 }
                 FilterKind::Placeholder => FilterParams::Placeholder(PlaceholderParams {
                     label: "unknown".to_string(),

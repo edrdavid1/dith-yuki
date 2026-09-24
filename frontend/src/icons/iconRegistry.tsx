@@ -16,6 +16,7 @@ import { Grid3x3 } from 'pixelarticons/react/Grid3x3';
 import { Image } from 'pixelarticons/react/Image';
 import { ImageNew } from 'pixelarticons/react/ImageNew';
 import { InfoBox } from 'pixelarticons/react/InfoBox';
+import { LetterA } from 'pixelarticons/react/LetterA';
 import { Lightbulb } from 'pixelarticons/react/Lightbulb';
 import { Minus } from 'pixelarticons/react/Minus';
 import { Monitor } from 'pixelarticons/react/Monitor';
@@ -38,6 +39,7 @@ export type IconName =
   | 'effect.glow'
   | 'effect.crt'
   | 'effect.adjust'
+  | 'effect.ascii'
   | 'image.source'
   | 'plus'
   | 'trash'
@@ -75,6 +77,7 @@ const PIXEL_ICONS: Record<string, PixelIcon> = {
   'effect.glow': Lightbulb,
   'effect.crt': Monitor,
   'effect.adjust': Settings2,
+  'effect.ascii': LetterA,
   'image.source': Image,
   plus: Plus,
   trash: Trash,

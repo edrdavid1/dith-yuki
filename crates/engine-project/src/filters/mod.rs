@@ -9,6 +9,7 @@
 //! - Adjust: Contrast / brightness / saturation / blur / sharpness / noise
 
 pub mod adjust;
+pub mod ascii_job;
 pub mod context;
 pub mod crosshatch;
 pub mod crt;
@@ -40,10 +41,14 @@ pub use apply::apply_filter_to_tile;
 pub use apply::apply_filter_to_tile_with_caches;
 pub use apply::apply_filter_to_tile_with_park;
 pub use apply::apply_filter_to_tile_with_residuals;
+pub use ascii_job::{
+    apply_ascii_rgba, export_ascii_bytes, run_ascii_job, AsciiExportFormat, AsciiJobResult,
+};
 pub use curves::{CurveChannel, CurvesFilter};
 pub use dither::{DitherAlgorithm, DitherFilter};
 pub use full_document::{
-    ensure_full_document, layer_has_full_document_filter, publish_processed_tiles,
+    compute_ascii_job, ensure_full_document, ensure_full_document_ex,
+    layer_has_full_document_filter, layer_has_full_document_filter_ex, publish_processed_tiles,
     slice_processed_tile, FullDocumentCache, FullDocumentResult,
 };
 pub use glitch::{GlitchFilter, GlitchType};

@@ -4,7 +4,6 @@ use tauri::AppHandle;
 use engine_project::commands as engine_commands;
 use engine_project::commands::AddLayerArgs;
 use engine_project::types::LayerKind;
-use engine_tiles::PixelTile;
 use serde::{Deserialize, Serialize};
 
 use crate::commands::{emit_document_changed, schedule_dirty_viewport_tiles, AppState};
@@ -92,6 +91,26 @@ pub struct ExportImageRequest {
     pub quality: Option<u8>,
     #[serde(default)]
     pub svg_algorithm: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExportAsciiRequest {
+    pub doc_id: u32,
+    pub path: String,
+    /// `txt` | `ansi` | `html` | `svg` | `png` | `json`
+    pub format: String,
+    /// Optional layer id; default = first leaf with an Ascii filter.
+    #[serde(default)]
+    pub layer_id: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AsciiClipboardRequest {
+    pub doc_id: u32,
+    /// `txt` | `ansi`
+    pub format: String,
+    #[serde(default)]
+    pub layer_id: Option<u32>,
 }
 
 pub fn validate_document_dimensions(width: u32, height: u32) -> Result<(), String> {
@@ -307,24 +326,55 @@ pub fn encode_rgba_to_png(buffer: &[u8], width: u32, height: u32) -> Result<Vec<
     Ok(png_data)
 }
 
-fn find_first_visible_layer(nodes: &[engine_project::LayerNode]) -> Option<&engine_project::Layer> {
-    for node in nodes {
-        match node {
-            engine_project::LayerNode::Leaf(layer) => {
-                if layer.visible {
-                    return Some(layer);
-                }
-            }
-            engine_project::LayerNode::Group(group) => {
-                if group.visible {
-                    if let Some(layer) = find_first_visible_layer(&group.children) {
-                        return Some(layer);
-                    }
-                }
+fn find_ascii_layer(
+    nodes: &[engine_project::LayerNode],
+    prefer_id: Option<u32>,
+) -> Option<&engine_project::Layer> {
+    if let Some(id) = prefer_id {
+        if let Some(layer) = find_layer_by_id(nodes, id) {
+            if layer_has_ascii(layer) {
+                return Some(layer);
             }
         }
     }
+    for node in nodes {
+        match node {
+            engine_project::LayerNode::Leaf(layer) if layer_has_ascii(layer) => return Some(layer),
+            engine_project::LayerNode::Group(group) => {
+                if let Some(layer) = find_ascii_layer(&group.children, None) {
+                    return Some(layer);
+                }
+            }
+            _ => {}
+        }
+    }
     None
+}
+
+fn find_layer_by_id(
+    nodes: &[engine_project::LayerNode],
+    id: u32,
+) -> Option<&engine_project::Layer> {
+    for node in nodes {
+        match node {
+            engine_project::LayerNode::Leaf(layer) if layer.id.0 == id => return Some(layer),
+            engine_project::LayerNode::Group(group) => {
+                if let Some(layer) = find_layer_by_id(&group.children, id) {
+                    return Some(layer);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn layer_has_ascii(layer: &engine_project::Layer) -> bool {
+    use engine_project::filter::FilterParams;
+    layer
+        .filters
+        .iter()
+        .any(|f| f.enabled && matches!(f.params, FilterParams::Ascii(_)))
 }
 
 pub struct DocumentService {
@@ -832,8 +882,7 @@ impl DocumentService {
     }
 
     pub async fn export_image(&self, req: ExportImageRequest) -> Result<(), AppError> {
-        use engine_project::filters::apply::apply_filter_to_tile;
-        use engine_tiles::{CacheStage, TileCoord, TileKey, HALO, TILE_SIZE};
+        use engine_project::serialize::{build_processed_composite_rgba8, ProjectError};
         use std::io::Cursor;
         use std::path::Path;
 
@@ -853,39 +902,6 @@ impl DocumentService {
         let snapshot = session.document_handle.snapshot();
         let img_width = snapshot.width;
         let img_height = snapshot.height;
-
-        let cols = (img_width + TILE_SIZE - 1) / TILE_SIZE;
-        let rows = (img_height + TILE_SIZE - 1) / TILE_SIZE;
-        let layer_id = 1u32;
-
-        let mut tiles: Vec<Vec<Arc<PixelTile>>> = Vec::with_capacity(rows as usize);
-        for row in 0..rows {
-            let mut row_tiles: Vec<Arc<PixelTile>> = Vec::with_capacity(cols as usize);
-            for col in 0..cols {
-                let key = TileKey {
-                    doc: req.doc_id,
-                    layer: layer_id,
-                    coord: TileCoord {
-                        level: 0,
-                        x: col,
-                        y: row,
-                    },
-                    stage: CacheStage::Raw,
-                };
-                match self.state.tiles.tile_cache.get_entry(key) {
-                    Some(tile) => row_tiles.push(tile),
-                    None => {
-                        return Err(AppError::Generic(format!(
-                            "Cannot export: image tiles missing from memory for document {} layer {} — reopen the file",
-                            req.doc_id, layer_id
-                        )));
-                    }
-                }
-            }
-            tiles.push(row_tiles);
-        }
-
-        let layer_clone = find_first_visible_layer(&snapshot.root).cloned();
         let doc_snapshot = (*snapshot).clone();
         drop(snapshot);
 
@@ -896,68 +912,17 @@ impl DocumentService {
         let state_clone = Arc::clone(&self.state);
 
         tauri::async_runtime::spawn_blocking(move || {
-            let mut rgba_buffer: Vec<u8> = vec![0u8; (img_width * img_height * 4) as usize];
-
-            for row in 0..rows {
-                for col in 0..cols {
-                    let tile = &tiles[row as usize][col as usize];
-
-                    let processed_tile = if let Some(ref layer) = layer_clone {
-                        let coord = TileCoord {
-                            level: 0,
-                            x: col,
-                            y: row,
-                        };
-                        apply_filter_to_tile(
-                            tile,
-                            layer,
-                            coord,
-                            &state_clone.tiles.palette_cache,
-                            &state_clone.tiles.palette_lut_cache,
-                            &state_clone.tiles.threshold_cache,
-                            &doc_snapshot,
-                        )
-                        .map_err(|e| format!("Render error: {:?}", e))?
-                    } else {
-                        let mut copy = engine_tiles::PixelTile::new();
-                        for y in 0u32..260 {
-                            for x in 0u32..260 {
-                                for c in 0..4 {
-                                    copy.set(x, y, c, tile.at(x, y, c));
-                                }
-                            }
-                        }
-                        copy
-                    };
-
-                    let tile_origin_x = col * TILE_SIZE;
-                    let tile_origin_y = row * TILE_SIZE;
-
-                    for ty in 0..TILE_SIZE {
-                        let img_y = tile_origin_y + ty;
-                        if img_y >= img_height {
-                            break;
-                        }
-                        for tx in 0..TILE_SIZE {
-                            let img_x = tile_origin_x + tx;
-                            if img_x >= img_width {
-                                break;
-                            }
-                            let tile_x = tx + HALO;
-                            let tile_y = ty + HALO;
-                            let buf_idx = ((img_y * img_width + img_x) * 4) as usize;
-
-                            rgba_buffer[buf_idx] = f32_to_u8(processed_tile.at(tile_x, tile_y, 0));
-                            rgba_buffer[buf_idx + 1] =
-                                f32_to_u8(processed_tile.at(tile_x, tile_y, 1));
-                            rgba_buffer[buf_idx + 2] =
-                                f32_to_u8(processed_tile.at(tile_x, tile_y, 2));
-                            rgba_buffer[buf_idx + 3] =
-                                f32_to_u8(processed_tile.at(tile_x, tile_y, 3));
-                        }
-                    }
-                }
-            }
+            // True multi-layer composite (same path as project thumbnails / Space Quick Look).
+            let rgba_buffer = build_processed_composite_rgba8(
+                &state_clone.tiles.tile_cache,
+                &doc_snapshot,
+            )
+            .map_err(|e| match e {
+                ProjectError::IncompleteRaw { doc_id, layer_id } => AppError::Generic(format!(
+                    "Cannot export: image tiles missing from memory for document {doc_id} layer {layer_id} — reopen the file"
+                )),
+                other => AppError::Generic(format!("Export composite error: {other}")),
+            })?;
 
             match req_format.as_str() {
                 "PNG" => {
@@ -1013,6 +978,118 @@ impl DocumentService {
         })
         .await
         .map_err(|e| AppError::Generic(format!("Export error: {}", e)))?
+    }
+
+    /// Export ASCII art from a layer that has an Ascii filter.
+    pub async fn export_ascii(&self, req: ExportAsciiRequest) -> Result<(), AppError> {
+        use engine_io::sandbox;
+        use engine_project::filters::{
+            compute_ascii_job, export_ascii_bytes, AsciiExportFormat,
+        };
+        use std::path::Path;
+        use std::sync::atomic::AtomicBool;
+
+        let format = AsciiExportFormat::from_str(&req.format).ok_or_else(|| {
+            AppError::InvalidOperation(
+                "format must be txt, ansi, html, svg, png, or json".into(),
+            )
+        })?;
+        let ext = format.extension();
+        let path = sandbox::ensure_extension(&req.path, ext);
+        let resolved = sandbox::resolve_export_path(&path, &[ext])
+            .map_err(|e| AppError::InvalidOperation(e.to_string()))?;
+
+        let session = self.state.session(req.doc_id).map_err(|_| {
+            AppError::Generic(format!(
+                "Document was closed (id {}); cannot export ASCII",
+                req.doc_id
+            ))
+        })?;
+        let _io_guard = session.begin_io();
+        let snapshot = session.document_handle.snapshot();
+        let layer = find_ascii_layer(&snapshot.root, req.layer_id)
+            .ok_or_else(|| {
+                AppError::InvalidOperation(
+                    "No ASCII effect on this document — add an ASCII effect first".into(),
+                )
+            })?
+            .clone();
+        let doc = (*snapshot).clone();
+        drop(snapshot);
+
+        let state_clone = Arc::clone(&self.state);
+        tauri::async_runtime::spawn_blocking(move || {
+            let cancel = AtomicBool::new(false);
+            let result = compute_ascii_job(
+                &state_clone.tiles.tile_cache,
+                &layer,
+                &doc,
+                &cancel,
+            )
+            .map_err(|e| AppError::Generic(e.to_string()))?;
+            let bytes = export_ascii_bytes(&result, format)
+                .map_err(|e| AppError::Generic(e.to_string()))?;
+            engine_io::atomic_write(Path::new(&resolved), &bytes)
+                .map_err(|e| AppError::Generic(format!("IO error: {e}")))?;
+            Ok::<(), AppError>(())
+        })
+        .await
+        .map_err(|e| AppError::Generic(format!("ASCII export error: {e}")))?
+    }
+
+    /// Render ASCII to a clipboard string (`txt` or `ansi`).
+    pub async fn ascii_clipboard_text(
+        &self,
+        req: AsciiClipboardRequest,
+    ) -> Result<String, AppError> {
+        use engine_project::filters::{
+            compute_ascii_job, export_ascii_bytes, AsciiExportFormat,
+        };
+        use std::sync::atomic::AtomicBool;
+
+        let format = match req.format.to_ascii_lowercase().as_str() {
+            "txt" | "text" => AsciiExportFormat::Txt,
+            "ansi" | "ans" => AsciiExportFormat::Ansi,
+            _ => {
+                return Err(AppError::InvalidOperation(
+                    "clipboard format must be txt or ansi".into(),
+                ));
+            }
+        };
+
+        let session = self.state.session(req.doc_id).map_err(|_| {
+            AppError::Generic(format!(
+                "Document was closed (id {}); cannot copy ASCII",
+                req.doc_id
+            ))
+        })?;
+        let snapshot = session.document_handle.snapshot();
+        let layer = find_ascii_layer(&snapshot.root, req.layer_id)
+            .ok_or_else(|| {
+                AppError::InvalidOperation(
+                    "No ASCII effect on this document — add an ASCII effect first".into(),
+                )
+            })?
+            .clone();
+        let doc = (*snapshot).clone();
+        drop(snapshot);
+
+        let state_clone = Arc::clone(&self.state);
+        tauri::async_runtime::spawn_blocking(move || {
+            let cancel = AtomicBool::new(false);
+            let result = compute_ascii_job(
+                &state_clone.tiles.tile_cache,
+                &layer,
+                &doc,
+                &cancel,
+            )
+            .map_err(|e| AppError::Generic(e.to_string()))?;
+            let bytes = export_ascii_bytes(&result, format)
+                .map_err(|e| AppError::Generic(e.to_string()))?;
+            String::from_utf8(bytes).map_err(|e| AppError::Generic(e.to_string()))
+        })
+        .await
+        .map_err(|e| AppError::Generic(format!("ASCII clipboard error: {e}")))?
     }
 
     pub fn set_active_document(

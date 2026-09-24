@@ -1,4 +1,5 @@
 adjust
+ascii
 atkinson
 bayer_16x16
 bayer_2x2

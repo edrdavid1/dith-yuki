@@ -16,3 +16,4 @@ export * from './dialogs';
 export * from './errors';
 export * from './updates';
 export * from './recovery';
+export * from './ascii';

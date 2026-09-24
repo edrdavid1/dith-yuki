@@ -45,6 +45,39 @@
   color: var(--text-color);
   line-height: 1;
   white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pv-ascii-mode {
+  display: inline-flex;
+  align-items: stretch;
+  height: 16px;
+  border: var(--border);
+  box-sizing: border-box;
+}
+
+.pv-ascii-mode-btn {
+  border: none;
+  border-radius: 0;
+  background: var(--color-gray);
+  color: var(--text-color);
+  font-family: var(--font-family);
+  font-size: 9px;
+  line-height: 1;
+  padding: 0 5px;
+  cursor: pointer;
+}
+
+.pv-ascii-mode-btn + .pv-ascii-mode-btn {
+  border-left: var(--border);
+}
+
+.pv-ascii-mode-btn-active {
+  background: var(--bg-hover-accent);
+  color: var(--color-hover-inverted);
 }
 
 /* Segmented zoom strip: | − | 100% | + | */

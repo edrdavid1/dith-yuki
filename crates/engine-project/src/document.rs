@@ -240,6 +240,7 @@ impl Document {
             | FilterParams::Glow { .. }
             | FilterParams::Crt { .. }
             | FilterParams::Adjust { .. }
+            | FilterParams::Ascii(_)
             | FilterParams::Placeholder(_) => false,
         }
     }

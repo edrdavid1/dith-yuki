@@ -6,6 +6,10 @@ import WindowTitlebar from '../shared/ui/WindowTitlebar';
 import Icon from '../icons/iconRegistry';
 import Tooltip from '../shared/ui/Tooltip';
 import { useShell } from '../app/shell/ShellContext';
+import { useAppSelector } from '../app/hooks';
+import { selectFiltersList } from '../app/slices/filtersSlice';
+import { getAsciiPreview, setAsciiPreview } from '../shared/ipc/ascii';
+import { onFullDocumentBusy } from '../shared/ipc/events';
 import { previewBackgroundStyle } from '../features/preview/previewBackground';
 import styles from '../features/preview/PreviewWindow.module.css';
 import previewStyles from '../features/preview/Preview.module.css';
@@ -56,6 +60,10 @@ export default function PreviewWindow({
   hideTitleBar,
 }: PreviewWindowProps) {
   const { previewBackground } = useShell();
+  const filters = useAppSelector(selectFiltersList);
+  const hasAscii = filters.some((f) => f.kind === 'Ascii' && f.enabled);
+  const [asciiPreview, setAsciiPreviewState] = useState(true);
+  const [fullDocumentBusy, setFullDocumentBusy] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
   const lastPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -67,6 +75,41 @@ export default function PreviewWindow({
 
   const [editingZoom, setEditingZoom] = useState(false);
   const [zoomDraft, setZoomDraft] = useState(String(zoomPercent));
+
+  useEffect(() => {
+    if (!hasAscii) return;
+    void getAsciiPreview().then(setAsciiPreviewState).catch(() => {});
+  }, [hasAscii, docId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void onFullDocumentBusy((event) => {
+      if (cancelled) return;
+      if (event.payload.doc_id !== docId) return;
+      setFullDocumentBusy(event.payload.busy);
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+      setFullDocumentBusy(false);
+    };
+  }, [docId]);
+
+  const toggleAsciiPreview = useCallback(
+    async (enabled: boolean) => {
+      try {
+        const next = await setAsciiPreview(enabled);
+        setAsciiPreviewState(next);
+      } catch {
+        // IPC errors surface via engine events elsewhere
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     if (!editingZoom) {
@@ -206,12 +249,41 @@ export default function PreviewWindow({
           viewport={viewport}
           onViewportChange={handleViewportChange}
         />
+        {fullDocumentBusy && (
+          <div className={cn('preview-loading')} role="status" aria-live="polite">
+            <span className={cn('pv-rendering-label')}>Rendering…</span>
+          </div>
+        )}
       </div>
 
       {/* Footer: resolution | zoom | fit */}
       <div className={cn('preview-footer')}>
         <span className={cn('pv-footer-resolution')} aria-label="Canvas size">
           {docWidth} × {docHeight}
+          {hasAscii && (
+            <span className={cn('pv-ascii-mode')} role="group" aria-label="Preview mode">
+              <Tooltip label="Show image without ASCII">
+                <button
+                  type="button"
+                  className={cn('pv-ascii-mode-btn', !asciiPreview && 'pv-ascii-mode-btn-active')}
+                  aria-pressed={!asciiPreview}
+                  onClick={() => void toggleAsciiPreview(false)}
+                >
+                  Image
+                </button>
+              </Tooltip>
+              <Tooltip label="Show ASCII text-art preview">
+                <button
+                  type="button"
+                  className={cn('pv-ascii-mode-btn', asciiPreview && 'pv-ascii-mode-btn-active')}
+                  aria-pressed={asciiPreview}
+                  onClick={() => void toggleAsciiPreview(true)}
+                >
+                  ASCII
+                </button>
+              </Tooltip>
+            </span>
+          )}
         </span>
         <div className={cn('pv-footer-zoom')}>
           <Tooltip label="Zoom out">

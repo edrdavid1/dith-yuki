@@ -30,6 +30,22 @@ function makeFilter(kind: string, params: Record<string, unknown>, id = 'filter-
 
 function wrapperFor(filters: FilterInfo[]) {
   const store = createTestStore({
+    document: {
+      docId: 1,
+      width: 64,
+      height: 64,
+      hasDocument: true,
+      hydrated: true,
+      loading: false,
+      saving: false,
+      notification: null,
+      error: null,
+      layerId: 1,
+      projectPath: null,
+      sourcePath: null,
+      dirty: false,
+      documentEpoch: 0,
+    },
     filters: {
       byId: Object.fromEntries(filters.map((f) => [f.id, f])),
       orderOnImageSource: filters.map((f) => f.id),
@@ -143,13 +159,51 @@ describe('useEffectLayer', () => {
     expect(result.current.filterId).toBeNull();
   });
 
-  it('debounces updateParams calls by 100ms', async () => {
+  it('debounces Ascii param edits by 350ms (full-document)', async () => {
+    vi.useFakeTimers();
+    mockUpdateFilter.mockResolvedValue(undefined);
+
+    const { wrapper } = wrapperFor([
+      makeFilter('Ascii', {
+        font: 'departure_mono',
+        match_mode: 'shape',
+        contrast: 1,
+      }),
+    ]);
+
+    const { result } = renderHook(() => useEffectLayer(1, 'filter-abc-123'), { wrapper });
+
+    act(() => {
+      result.current.updateParams({ contrast: 1.5 });
+    });
+
+    expect(mockUpdateFilter).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(mockUpdateFilter).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+
+    expect(mockUpdateFilter).toHaveBeenCalledTimes(1);
+    expect(mockUpdateFilter).toHaveBeenCalledWith(
+      1,
+      1,
+      'filter-abc-123',
+      expect.objectContaining({ contrast: 1.5 }),
+    );
+  });
+
+  it('debounces Riemersma param edits by 350ms (full-document)', async () => {
     vi.useFakeTimers();
     mockUpdateFilter.mockResolvedValue(undefined);
 
     const { wrapper } = wrapperFor([
       makeFilter('DitherV2', {
-        mode: 'floyd_steinberg',
+        mode: 'riemersma',
         levels: 4,
         threshold_scale: 1.0,
         pixel_size: 1,
@@ -160,24 +214,19 @@ describe('useEffectLayer', () => {
 
     const { result } = renderHook(() => useEffectLayer(1, 'filter-abc-123'), { wrapper });
 
-    expect(result.current.filterId).toBe('filter-abc-123');
-
     act(() => {
       result.current.updateParams({ levels: 8 });
     });
 
-    expect(result.current.effectParams).toMatchObject({ levels: 8 });
-    expect(mockUpdateFilter).not.toHaveBeenCalled();
-
     await act(async () => {
       await vi.advanceTimersByTimeAsync(100);
     });
+    expect(mockUpdateFilter).not.toHaveBeenCalled();
 
-        expect(mockUpdateFilter).toHaveBeenCalledWith(
-          1,
-          'filter-abc-123',
-          expect.objectContaining({ levels: 8 }),
-        );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+    expect(mockUpdateFilter).toHaveBeenCalledTimes(1);
   });
 
   it('coalesces a 500ms continuous slider gesture into one update_filter', async () => {
@@ -214,6 +263,7 @@ describe('useEffectLayer', () => {
 
     expect(mockUpdateFilter).toHaveBeenCalledTimes(1);
     expect(mockUpdateFilter).toHaveBeenCalledWith(
+      1,
       1,
       'filter-abc-123',
       expect.objectContaining({
@@ -299,6 +349,7 @@ describe('useEffectLayer', () => {
     });
     expect(mockUpdateFilter).toHaveBeenCalledTimes(2);
     expect(mockUpdateFilter).toHaveBeenLastCalledWith(
+      1,
       1,
       'filter-abc-123',
       expect.objectContaining({

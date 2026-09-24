@@ -25,4 +25,21 @@ describe('unwrapFilterParams', () => {
     expect(flat.mode).toBe('floyd_steinberg');
     expect(flat.levels).toBe(4);
   });
+
+  it('flattens externally tagged Ascii params from the engine', () => {
+    const flat = unwrapFilterParams({
+      Ascii: {
+        font: 'ibm_plex_mono',
+        font_px: 14,
+        antialias: true,
+        contrast: 1.5,
+        edge_overlay: true,
+      },
+    });
+    expect(flat.font).toBe('ibm_plex_mono');
+    expect(flat.font_px).toBe(14);
+    expect(flat.antialias).toBe(true);
+    expect(flat.contrast).toBe(1.5);
+    expect(flat.edge_overlay).toBe(true);
+  });
 });

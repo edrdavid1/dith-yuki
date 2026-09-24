@@ -438,11 +438,20 @@ export default function AppLayout() {
         case 'save-export':
           if (doc.hasDocument) onSaveImage();
           break;
+        case 'export-ascii':
+          if (doc.hasDocument) void doc.exportAscii();
+          break;
         case 'undo':
           if (canUndo && doc.docId != null) void dispatch(undoDocument(doc.docId));
           break;
         case 'redo':
           if (canRedo && doc.docId != null) void dispatch(redoDocument(doc.docId));
+          break;
+        case 'copy-ascii-text':
+          if (doc.hasDocument) void doc.copyAsciiText('txt');
+          break;
+        case 'copy-ascii-ansi':
+          if (doc.hasDocument) void doc.copyAsciiText('ansi');
           break;
         case 'export-pattern':
           if (doc.hasDocument) void doc.exportPattern();
@@ -589,6 +598,9 @@ export default function AppLayout() {
               onOpenImage={welcome.onOpenImage}
               onImportImageLayer={() => void doc.importImageLayer()}
               onSaveImage={onSaveImage}
+              onExportAscii={() => void doc.exportAscii()}
+              onCopyAsciiText={() => void doc.copyAsciiText('txt')}
+              onCopyAsciiAnsi={() => void doc.copyAsciiText('ansi')}
               onOpenProject={welcome.onOpenProject}
               onOpenRecent={welcome.onOpenRecent}
               onSaveProject={onSaveProject}

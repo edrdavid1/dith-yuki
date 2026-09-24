@@ -20,10 +20,10 @@ describe('EffectChooserDialog', () => {
     expect(container.innerHTML).toBe('');
   });
 
-  it('renders 7 effect items when isOpen=true', () => {
+  it('renders 8 effect items when isOpen=true', () => {
     renderDialog();
     const items = screen.getAllByRole('option');
-    expect(items).toHaveLength(7);
+    expect(items).toHaveLength(8);
     expect(screen.getByText('Dithering')).toBeInTheDocument();
     expect(screen.getByText('Glitching')).toBeInTheDocument();
     expect(screen.getByText('Curves')).toBeInTheDocument();
@@ -31,6 +31,7 @@ describe('EffectChooserDialog', () => {
     expect(screen.getByText('Glow')).toBeInTheDocument();
     expect(screen.getByText('CRT')).toBeInTheDocument();
     expect(screen.getByText('Adjust')).toBeInTheDocument();
+    expect(screen.getByText('ASCII')).toBeInTheDocument();
   });
 
   it('calls onSelect with "Dithering" when first item is clicked', () => {

@@ -27,8 +27,14 @@ import {
   shouldWarnOpenDocMemory,
 } from '../shared/memoryWarning';
 import SvgExportDialog, { type SvgExportAlgorithm } from '../components/SvgExportDialog';
+import AsciiExportDialog from '../components/AsciiExportDialog';
 import ShareCopyDialog from '../components/ShareCopyDialog';
 import type { ShareProjectCopyOptions } from '../shared/ipc/project';
+import {
+  asciiClipboardText,
+  exportAscii,
+  type AsciiExportFormat,
+} from '../shared/ipc/ascii';
 
 /**
  * Document open/save flows backed by RTK `document` slice.
@@ -41,6 +47,8 @@ export function useDocument() {
   const [svgOpen, setSvgOpen] = useState(false);
   const svgResolver = useRef<((algo: SvgExportAlgorithm | null) => void) | null>(null);
   const [shareCopyOpen, setShareCopyOpen] = useState(false);
+  const [asciiExportOpen, setAsciiExportOpen] = useState(false);
+  const asciiResolver = useRef<((format: AsciiExportFormat | null) => void) | null>(null);
 
   const maybeWarnMemory = useCallback(async () => {
     try {
@@ -143,6 +151,61 @@ export function useDocument() {
       // Dialog cancel / IPC errors handled in thunk
     }
   }, [dispatch, state.docId]);
+
+  const exportAsciiFn = useCallback(async () => {
+    if (!state.docId) return;
+    try {
+      const format = await new Promise<AsciiExportFormat | null>((resolve) => {
+        asciiResolver.current = resolve;
+        setAsciiExportOpen(true);
+      });
+      setAsciiExportOpen(false);
+      asciiResolver.current = null;
+      if (!format) return;
+
+      const ext =
+        format === 'ansi' ? 'ans' : format === 'txt' ? 'txt' : format;
+      const filePath = await saveDialog({
+        filters: [{ name: format.toUpperCase(), extensions: [ext] }],
+      });
+      if (!filePath) return;
+      const lower = filePath.toLowerCase();
+      const withExt = lower.endsWith(`.${ext}`) ? filePath : `${filePath}.${ext}`;
+      await exportAscii({
+        doc_id: state.docId,
+        path: withExt,
+        format,
+        layer_id: selectedLayerId,
+      });
+    } catch (err) {
+      dispatch(
+        setDocumentMeta({
+          notification: err instanceof Error ? err.message : String(err),
+        })
+      );
+    }
+  }, [dispatch, selectedLayerId, state.docId]);
+
+  const copyAsciiTextFn = useCallback(
+    async (format: 'txt' | 'ansi') => {
+      if (!state.docId) return;
+      try {
+        const text = await asciiClipboardText({
+          doc_id: state.docId,
+          format,
+          layer_id: selectedLayerId,
+        });
+        await navigator.clipboard.writeText(text);
+      } catch (err) {
+        dispatch(
+          setDocumentMeta({
+            notification: err instanceof Error ? err.message : String(err),
+          })
+        );
+      }
+    },
+    [dispatch, selectedLayerId, state.docId]
+  );
 
   const openProjectAtFn = useCallback(
     async (filePath: string) => {
@@ -370,6 +433,8 @@ export function useDocument() {
     importImageLayer: importImageLayerFn,
     exportPattern: exportPatternFn,
     importPattern: importPatternFn,
+    exportAscii: exportAsciiFn,
+    copyAsciiText: copyAsciiTextFn,
     clearNotification: clearNotificationFn,
     svgDialog: (
       <>
@@ -377,6 +442,11 @@ export function useDocument() {
           isOpen={svgOpen}
           onExport={(algo) => svgResolver.current?.(algo)}
           onClose={() => svgResolver.current?.(null)}
+        />
+        <AsciiExportDialog
+          isOpen={asciiExportOpen}
+          onExport={(format) => asciiResolver.current?.(format)}
+          onClose={() => asciiResolver.current?.(null)}
         />
         <ShareCopyDialog
           isOpen={shareCopyOpen}

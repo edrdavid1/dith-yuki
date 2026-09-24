@@ -25,6 +25,7 @@ const EFFECT_OPTIONS: EffectOption[] = [
   { type: 'Glow', icon: '✨', label: 'Glow' },
   { type: 'CRT', icon: '📺', label: 'CRT' },
   { type: 'Adjust', icon: '🎚️', label: 'Adjust' },
+  { type: 'Ascii', icon: 'A', label: 'ASCII' },
 ];
 
 function EffectChooserDialog({ isOpen, onSelect, onClose }: EffectChooserDialogProps) {
