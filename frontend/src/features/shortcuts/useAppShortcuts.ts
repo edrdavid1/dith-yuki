@@ -6,8 +6,9 @@ import { removeFilter as removeFilterThunk, selectFiltersList } from '../../app/
 import { setSelection } from '../../app/slices/selectionSlice';
 import type { EffectType } from '../../types/effects';
 import { findMatchingShortcut, isEditableKeyboardTarget } from './bindings';
-import { getDocumentCommands, getLayoutCommands, getPreviewCommands } from './commandRegistry';
+import { getDocumentCommands, getLayersCommands, getLayoutCommands, getPreviewCommands } from './commandRegistry';
 import { useShortcuts } from './ShortcutsContext';
+import { subscribeShortcutRelay } from './shortcutRelay';
 
 function filterKindToEffect(kind: string): EffectType | null {
   switch (kind) {
@@ -103,6 +104,7 @@ export function useAppShortcuts() {
           if (!hasDocument) return;
           steal();
           void dispatch(setSelection({ layerId: null, filterId: null }));
+          getLayersCommands()?.openEffectChooser?.();
           return;
         case 'duplicateLayer': {
           if (!hasDocument) return;
@@ -164,7 +166,11 @@ export function useAppShortcuts() {
     };
 
     window.addEventListener('keydown', onKeyDown, true);
-    return () => window.removeEventListener('keydown', onKeyDown, true);
+    const unsubRelay = subscribeShortcutRelay(onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true);
+      unsubRelay();
+    };
   }, [
     bindings,
     capturing,

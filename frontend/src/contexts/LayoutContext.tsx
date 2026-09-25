@@ -1,11 +1,12 @@
 /**
- * LayoutContext — provides two FlexLayout Model instances (left + right) to the tree.
+ * LayoutContext — provides three FlexLayout Model instances (left + right + center).
  *
  * Responsibilities:
- * - Load each side's JSON from disk via Tauri `load_layout_left` / `load_layout_right`
+ * - Load each side's JSON from disk via Tauri `load_layout_{left,right,center}`
  * - Parse JSON → Model.fromJson(); graceful fallback to side-specific default
- * - Cross-side panel moves (two models — FlexLayout cannot drag across them)
- * - Expose leftModel / rightModel + setters + per-side loading flag
+ * - Cross-side panel moves (left↔right only — FlexLayout cannot drag across models)
+ * - Center hosts Preview (canvas); float = flex-popout, dock = main canvas
+ * - Expose models + setters + per-side loading flag
  *
  * Save-to-disk lives in FlexLayoutContainer (debounced 500 ms, per side).
  */
@@ -31,6 +32,8 @@ export interface SideModelState {
 export interface LayoutContextType {
   left: SideModelState;
   right: SideModelState;
+  /** Preview canvas host (not a sidebar). */
+  center: SideModelState;
   /**
    * Increments when a side model is mutated in place (float/dock). Consumers that
    * derive docked vs floating must read this so React re-renders — Model identity
@@ -40,19 +43,19 @@ export interface LayoutContextType {
   /** One-shot layout migration / recovery message for the shell toast. */
   layoutToast: string | null;
   clearLayoutToast: () => void;
-  /** Move a FlexLayout tab (by component id) from one side model to the other. */
-  movePanelBetweenSides: (panelComponent: string, to: FlexSide) => void;
+  /** Move a FlexLayout tab (by component id) from one sidebar model to the other. */
+  movePanelBetweenSides: (panelComponent: string, to: 'left' | 'right') => void;
   /** Swap left/right FlexLayout models (titlebar sidebar-swap button). */
   swapFlexSides: () => void;
   /** Pop a docked tab into a FlexLayout OS popout window. */
   floatPanel: (side: FlexSide, panelComponent: string) => void;
-  /** Dock a floated tab back into its sidebar. */
+  /** Dock a floated tab back into its host (sidebar or center canvas). */
   dockPanel: (side: FlexSide, panelComponent: string) => void;
   /**
    * Redock a floated FlexLayout panel onto `to` (same side = unfloat,
-   * opposite = move + dock). Used by drag-to-redock affinity.
+   * opposite = move + dock). Preview always returns to center.
    */
-  redockFlexPanelToSide: (panelComponent: string, to: FlexSide) => void;
+  redockFlexPanelToSide: (panelComponent: string, to: 'left' | 'right') => void;
 }
 
 const LayoutContext = createContext<LayoutContextType | undefined>(undefined);
@@ -194,7 +197,12 @@ function applyAppChromePolicy(model: Model): Model {
 // ─── Helper: load one side ────────────────────────────────────────────────────
 
 async function loadSideModel(side: FlexSide): Promise<Model> {
-  const command = side === 'left' ? 'load_layout_left' : 'load_layout_right';
+  const command =
+    side === 'left'
+      ? 'load_layout_left'
+      : side === 'right'
+        ? 'load_layout_right'
+        : 'load_layout_center';
   let json = getDefaultFlexLayout(side);
 
   try {
@@ -212,7 +220,12 @@ async function loadSideModel(side: FlexSide): Promise<Model> {
 }
 
 function persistSide(side: FlexSide, model: Model): void {
-  const command = side === 'left' ? 'save_layout_left' : 'save_layout_right';
+  const command =
+    side === 'left'
+      ? 'save_layout_left'
+      : side === 'right'
+        ? 'save_layout_right'
+        : 'save_layout_center';
   const json = JSON.stringify(model.toJson());
   void invoke<void>(command, { json }).catch((err) => {
     console.error(`[LayoutProvider] ${command} failed:`, err);
@@ -227,9 +240,22 @@ function tabDisplayName(component: string): string {
       return 'Effect Settings';
     case 'colorlab':
       return 'Color Lab';
+    case 'preview':
+      return 'Preview';
     default:
       return component;
   }
+}
+
+function modelForSide(
+  side: FlexSide,
+  left: Model | null,
+  right: Model | null,
+  center: Model | null,
+): Model | null {
+  if (side === 'left') return left;
+  if (side === 'right') return right;
+  return center;
 }
 
 /** Empty but valid side layout (no tabs) — used after the last tab is moved away. */
@@ -287,25 +313,41 @@ function ensureColorLabPresent(
   return { left, right: rightNext, injected: true };
 }
 
+/**
+ * B5: ensure Preview exists in the center model (first run / corrupt / pre-B5).
+ */
+function ensurePreviewPresent(center: Model): { center: Model; injected: boolean } {
+  if (findTabByComponent(center, 'preview')) {
+    return { center, injected: false };
+  }
+  const seeded = applyAppChromePolicy(Model.fromJson(getDefaultFlexLayoutJson('center')));
+  return { center: seeded, injected: true };
+}
+
 // ─── Provider ────────────────────────────────────────────────────────────────
 
 export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [leftModel,  setLeftModelState]  = useState<Model | null>(null);
   const [rightModel, setRightModelState] = useState<Model | null>(null);
+  const [centerModel, setCenterModelState] = useState<Model | null>(null);
   const [leftLoading,  setLeftLoading]  = useState(true);
   const [rightLoading, setRightLoading] = useState(true);
+  const [centerLoading, setCenterLoading] = useState(true);
   const [layoutEpoch, setLayoutEpoch] = useState(0);
   const [layoutToast, setLayoutToast] = useState<string | null>(null);
 
   // Refs so move/float always see latest models without stale closures.
   const leftRef = useRef<Model | null>(null);
   const rightRef = useRef<Model | null>(null);
+  const centerRef = useRef<Model | null>(null);
   leftRef.current = leftModel;
   rightRef.current = rightModel;
+  centerRef.current = centerModel;
 
   const redockFlexPanelToSideRef = useRef<
-    ((panelComponent: string, to: FlexSide) => void) | null
+    ((panelComponent: string, to: 'left' | 'right') => void) | null
   >(null);
+  const dockPanelRef = useRef<((side: FlexSide, panelComponent: string) => void) | null>(null);
 
   const bumpLayout = useCallback(() => {
     setLayoutEpoch((n) => n + 1);
@@ -323,25 +365,36 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setRightModelState(m);
     setLayoutEpoch((n) => n + 1);
   }, []);
+  const setCenterModel = useCallback((m: Model) => {
+    setCenterModelState(m);
+    setLayoutEpoch((n) => n + 1);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [left, right] = await Promise.all([
+      const [left, right, center] = await Promise.all([
         loadSideModel('left'),
         loadSideModel('right'),
+        loadSideModel('center'),
       ]);
       if (cancelled) return;
 
       const ensured = ensureColorLabPresent(left, right);
+      const previewEnsured = ensurePreviewPresent(center);
       setLeftModelState(ensured.left);
       setRightModelState(ensured.right);
+      setCenterModelState(previewEnsured.center);
       setLeftLoading(false);
       setRightLoading(false);
+      setCenterLoading(false);
 
       if (ensured.injected) {
         persistSide('right', ensured.right);
         setLayoutToast(LAYOUT_TOAST_MESSAGES.COLORLAB_ADDED);
+      } else if (previewEnsured.injected) {
+        persistSide('center', previewEnsured.center);
+        setLayoutToast(LAYOUT_TOAST_MESSAGES.PREVIEW_ADDED);
       }
     })();
     return () => { cancelled = true; };
@@ -351,14 +404,19 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | null = null;
-    void listen<{ panelId: string; side: FlexSide }>(
+    void listen<{ panelId: string; side: 'left' | 'right' }>(
       'flex-panel-dock-request',
       (event) => {
         if (cancelled) return;
         const { panelId, side } = event.payload;
         if (!isPanelOnFlexLayout(panelId)) return;
-        if (side !== 'left' && side !== 'right') return;
-        redockFlexPanelToSideRef.current?.(panelId, side);
+        // Preview never joins a sidebar — affinity is disabled for it, but if a
+        // request arrives, always restore the canvas host.
+        if (panelId === 'preview') {
+          dockPanelRef.current?.('center', 'preview');
+        } else if (side === 'left' || side === 'right') {
+          redockFlexPanelToSideRef.current?.(panelId, side);
+        }
         void getAllWebviewWindows().then((wins) => {
           void Promise.all(
             wins
@@ -383,8 +441,9 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
   }, []);
 
-  const movePanelBetweenSides = useCallback((panelComponent: string, to: FlexSide) => {
-    const from: FlexSide = to === 'left' ? 'right' : 'left';
+  const movePanelBetweenSides = useCallback((panelComponent: string, to: 'left' | 'right') => {
+    if (panelComponent === 'preview') return;
+    const from: 'left' | 'right' = to === 'left' ? 'right' : 'left';
     const fromModel = from === 'left' ? leftRef.current : rightRef.current;
     const toModel = to === 'left' ? leftRef.current : rightRef.current;
     if (!fromModel || !toModel) {
@@ -483,7 +542,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, []);
 
   const floatPanel = useCallback((side: FlexSide, panelComponent: string) => {
-    const model = side === 'left' ? leftRef.current : rightRef.current;
+    const model = modelForSide(side, leftRef.current, rightRef.current, centerRef.current);
     if (!model) {
       console.warn('[LayoutContext] floatPanel: model missing', side);
       return;
@@ -506,7 +565,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [bumpLayout]);
 
   const dockPanel = useCallback((side: FlexSide, panelComponent: string) => {
-    const model = side === 'left' ? leftRef.current : rightRef.current;
+    const model = modelForSide(side, leftRef.current, rightRef.current, centerRef.current);
     if (!model) {
       console.warn('[LayoutContext] dockPanel: model missing', side);
       return;
@@ -532,14 +591,19 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     persistSide(side, model);
     bumpLayout();
   }, [bumpLayout]);
+  dockPanelRef.current = dockPanel;
 
   const redockFlexPanelToSide = useCallback(
-    (panelComponent: string, to: FlexSide) => {
+    (panelComponent: string, to: 'left' | 'right') => {
+      if (panelComponent === 'preview') {
+        dockPanel('center', 'preview');
+        return;
+      }
       const leftM = leftRef.current;
       const rightM = rightRef.current;
       const onLeft = leftM ? findTabByComponent(leftM, panelComponent) : null;
       const onRight = rightM ? findTabByComponent(rightM, panelComponent) : null;
-      const from: FlexSide | null = onLeft?.isFloating()
+      const from: 'left' | 'right' | null = onLeft?.isFloating()
         ? 'left'
         : onRight?.isFloating()
           ? 'right'
@@ -577,6 +641,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const value: LayoutContextType = {
     left:  { model: leftModel,  setModel: setLeftModel,  isLoading: leftLoading  },
     right: { model: rightModel, setModel: setRightModel, isLoading: rightLoading },
+    center: { model: centerModel, setModel: setCenterModel, isLoading: centerLoading },
     layoutEpoch,
     layoutToast,
     clearLayoutToast,
@@ -605,5 +670,14 @@ export function useLayoutContext(): LayoutContextType {
 /** Convenience hook for a single side. */
 export function useSideLayout(side: FlexSide): SideModelState {
   const ctx = useLayoutContext();
-  return side === 'left' ? ctx.left : ctx.right;
+  if (side === 'left') return ctx.left;
+  if (side === 'right') return ctx.right;
+  return ctx.center;
+}
+
+/** True when Preview is floated out of the center canvas into a flex-popout. */
+export function isPreviewFloating(centerModel: Model | null): boolean {
+  if (!centerModel) return false;
+  const tab = findTabByComponent(centerModel, 'preview');
+  return tab?.isFloating() ?? false;
 }

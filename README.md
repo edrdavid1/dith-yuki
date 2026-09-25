@@ -28,7 +28,7 @@ A focused **dither / palette studio** — not a paint app, not a print pipeline.
 - Palette dither modes: Strict, Guided, Mixed, Simple
 - Non-destructive layers, blend modes, undo / redo
 - Projects (`.dyproj`) and shareable patterns (`.dyuki`)
-- Dockable panels (Layers, Effect, Color Lab)
+- Dockable panels (Layers, Effect, Color Lab, Preview)
 - In-app updates from GitHub Releases (from 0.2.0)
 
 Tile-based preview keeps large documents responsive.

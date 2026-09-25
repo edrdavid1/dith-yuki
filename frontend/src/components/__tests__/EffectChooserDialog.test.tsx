@@ -36,25 +36,25 @@ describe('EffectChooserDialog', () => {
 
   it('calls onSelect with "Dithering" when first item is clicked', () => {
     const { props } = renderDialog();
-    fireEvent.click(screen.getByText('Dithering'));
+    fireEvent.pointerDown(screen.getByText('Dithering'), { button: 0 });
     expect(props.onSelect).toHaveBeenCalledWith('Dithering');
   });
 
   it('calls onSelect with "Glitching" when second item is clicked', () => {
     const { props } = renderDialog();
-    fireEvent.click(screen.getByText('Glitching'));
+    fireEvent.pointerDown(screen.getByText('Glitching'), { button: 0 });
     expect(props.onSelect).toHaveBeenCalledWith('Glitching');
   });
 
   it('calls onSelect with "Curves" when third item is clicked', () => {
     const { props } = renderDialog();
-    fireEvent.click(screen.getByText('Curves'));
+    fireEvent.pointerDown(screen.getByText('Curves'), { button: 0 });
     expect(props.onSelect).toHaveBeenCalledWith('Curves');
   });
 
   it('calls onSelect with "RGBChannels" when fourth item is clicked', () => {
     const { props } = renderDialog();
-    fireEvent.click(screen.getByText('RGB Channels'));
+    fireEvent.pointerDown(screen.getByText('RGB Channels'), { button: 0 });
     expect(props.onSelect).toHaveBeenCalledWith('RGBChannels');
   });
 

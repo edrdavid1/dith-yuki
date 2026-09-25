@@ -22,7 +22,8 @@ pub const GAP_HIT_HALF_EXIT: f64 = 28.0;
 pub const HYSTERESIS_EXIT_PADDING: f64 = 24.0;
 
 /// Panels that never participate in drag-to-redock.
-pub const FLOATING_ONLY_PANELS: &[&str] = &["preview", "preferences"];
+/// Preferences is a dialog. Preview redocks via affinity → center FlexLayout.
+pub const FLOATING_ONLY_PANELS: &[&str] = &["preferences"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -636,7 +637,9 @@ mod tests {
     #[test]
     fn floating_only_begin_rejected() {
         let mut c = DockAffinityController::new(true);
-        assert!(!c.begin("preview"));
+        // Preview participates in affinity (redock → center FlexLayout).
+        assert!(c.begin("preview"));
+        let _ = c.cancel();
         assert!(!c.begin("preferences"));
         assert!(c.begin("colorlab"));
         assert!(c.session.is_some());

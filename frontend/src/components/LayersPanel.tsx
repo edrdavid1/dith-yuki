@@ -548,7 +548,16 @@ export default function LayersPanel({
 
           {/* Empty state */}
           {filters.length === 0 && !imageSourceLayer && (
-            <div className={cn("lp-add-placeholder")} onClick={onAddLayer}>
+            <div
+              className={cn("lp-add-placeholder")}
+              onPointerDown={(e) => {
+                if (e.button !== 0) return;
+                e.preventDefault();
+                e.stopPropagation();
+                onAddLayer();
+              }}
+              onClick={(e) => e.preventDefault()}
+            >
               <span>add layer</span>
             </div>
           )}
@@ -559,7 +568,17 @@ export default function LayersPanel({
       {/* Footer */}
       <div className={cn("lp-footer")}>
         <Tooltip label={`Add effect (${formatChords(shortcuts.newLayer)})`}>
-          <button className={cn("lp-footer-btn")} onClick={onAddLayer} aria-label="Add effect">
+          <button
+            className={cn("lp-footer-btn")}
+            onPointerDown={(e) => {
+              if (e.button !== 0) return;
+              e.preventDefault();
+              e.stopPropagation();
+              onAddLayer();
+            }}
+            onClick={(e) => e.preventDefault()}
+            aria-label="Add effect"
+          >
             <Icon name="plus" width={14} height={14} />
           </button>
         </Tooltip>

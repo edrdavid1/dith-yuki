@@ -4,14 +4,17 @@
  * Produces an IJsonModel compatible with Model.fromJson().
  * Format: { global?, borders?, layout: IJsonRowNode }
  *
- * B3/B4a/B4b:
- *   left  — Layers tab
- *   right — Effect Settings + Color Lab (vertical stack via applyAppChromePolicy)
+ * B3/B4a/B4b/B5:
+ *   left   — Layers tab
+ *   right  — Effect Settings + Color Lab (vertical stack via applyAppChromePolicy)
+ *   center — Preview (canvas host; float = flex-popout, not PanelManager)
  */
 
 import type { IJsonModel } from 'flexlayout-react';
 
-export type FlexSide = 'left' | 'right';
+export type FlexSide = 'left' | 'right' | 'center';
+/** Sidebar columns only (swap / cross-move). */
+export type SidebarFlexSide = 'left' | 'right';
 
 // ─── Shared global config ─────────────────────────────────────────────────────
 
@@ -34,21 +37,28 @@ const FLEX_GLOBAL = {
 
 // ─── Default layout JSON ──────────────────────────────────────────────────────
 
+function defaultTabsForSide(side: FlexSide): Array<{ type: string; name: string; component: string }> {
+  switch (side) {
+    case 'left':
+      return [{ type: 'tab', name: 'Layers', component: 'layers' }];
+    case 'right':
+      return [
+        { type: 'tab', name: 'Effect Settings', component: 'effect' },
+        { type: 'tab', name: 'Color Lab', component: 'colorlab' },
+      ];
+    case 'center':
+      return [{ type: 'tab', name: 'Preview', component: 'preview' }];
+  }
+}
+
 /**
  * Returns the IJsonModel object for the given side's default layout.
  *
- * left  → Layers
- * right → Effect Settings + Color Lab (peer tabs; normalized to vertical stack on load)
+ * left   → Layers
+ * right  → Effect Settings + Color Lab (peer tabs; normalized to vertical stack on load)
+ * center → Preview
  */
 export function getDefaultFlexLayoutJson(side: FlexSide = 'left'): IJsonModel {
-  const tabs =
-    side === 'left'
-      ? [{ type: 'tab', name: 'Layers', component: 'layers' }]
-      : [
-          { type: 'tab', name: 'Effect Settings', component: 'effect' },
-          { type: 'tab', name: 'Color Lab', component: 'colorlab' },
-        ];
-
   return {
     global: FLEX_GLOBAL,
     borders: [],
@@ -59,7 +69,7 @@ export function getDefaultFlexLayoutJson(side: FlexSide = 'left'): IJsonModel {
         {
           type: 'tabset',
           weight: 100,
-          children: tabs,
+          children: defaultTabsForSide(side),
         },
       ],
     },
@@ -81,6 +91,8 @@ export const LAYOUT_TOAST_MESSAGES = {
   CORRUPT_RECOVERED: 'Layout file was corrupted; recovered to default',
   /** Existing flexlayout_* without colorlab — tab injected, rest of layout kept. */
   COLORLAB_ADDED: 'Color Lab added to the panel',
+  /** Existing flexlayout_center without preview — tab injected. */
+  PREVIEW_ADDED: 'Preview restored to the canvas',
 } as const;
 
 // ─── Validation helpers ───────────────────────────────────────────────────────

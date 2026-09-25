@@ -31,7 +31,7 @@ export function applySnapshot(state: PanelsState, snapshot: PanelStateSnapshot) 
   state.rightOrder = snapshot.right_order;
 }
 
-/** Docked+visible panel IDs on one side, in side order (excludes floating-only). */
+/** Docked+visible panel IDs on one side, in side order (excludes dialogs + FlexLayout hosts). */
 export function selectVisibleDocked(
   entities: PanelInfo[],
   leftOrder: PanelId[],
@@ -41,6 +41,10 @@ export function selectVisibleDocked(
   const order = side === 'left' ? leftOrder : rightOrder;
   return order.filter((id) => {
     if (FLOATING_ONLY_PANELS.has(id)) return false;
+    // Layers / Effect / Color Lab / Preview are owned by FlexLayout models.
+    if (id === 'layers' || id === 'effect' || id === 'colorlab' || id === 'preview') {
+      return false;
+    }
     const panel = entities.find((p) => p.id === id);
     return Boolean(panel?.docked && panel?.visible);
   });

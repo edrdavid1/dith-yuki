@@ -39,7 +39,7 @@
   height: 12px !important;
   border-radius: 0 !important;
   border: var(--border) !important;
-  box-shadow:  var(--shadow-inset-light), var(--shadow-inset-dark), !important;
+  box-shadow: var(--shadow-inset-light), var(--shadow-inset-dark) !important;
 }
 
 .color-picker-popup :global(.react-colorful__saturation-pointer) {

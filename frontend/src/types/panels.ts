@@ -23,8 +23,8 @@ export interface PanelInfo {
 
 export type PanelId = 'effect' | 'layers' | 'colorlab' | 'preview' | 'preferences';
 
-/** Panels that never appear in the docked sidebar (floating-only). */
-export const FLOATING_ONLY_PANELS: ReadonlySet<PanelId> = new Set(['preview', 'preferences']);
+/** Panels that never appear in the docked sidebar (dialog / leftover stubs). */
+export const FLOATING_ONLY_PANELS: ReadonlySet<PanelId> = new Set(['preferences']);
 
 export const PANEL_IDS: PanelId[] = ['effect', 'layers', 'colorlab', 'preview', 'preferences'];
 

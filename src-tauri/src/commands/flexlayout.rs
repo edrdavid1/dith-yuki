@@ -115,6 +115,26 @@ pub fn save_layout_right(state: State<Arc<AppState>>, json: String) -> Result<()
         .map_err(|e| format!("Failed to save right layout: {:?}", e))
 }
 
+#[tauri::command]
+pub fn load_layout_center(state: State<Arc<AppState>>) -> Result<String, String> {
+    let p = state
+        .flexlayout_center
+        .lock()
+        .map_err(|e| format!("Failed to lock center persistence: {}", e))?;
+    p.load()
+        .map_err(|e| format!("Failed to load center layout: {:?}", e))
+}
+
+#[tauri::command]
+pub fn save_layout_center(state: State<Arc<AppState>>, json: String) -> Result<(), String> {
+    let p = state
+        .flexlayout_center
+        .lock()
+        .map_err(|e| format!("Failed to lock center persistence: {}", e))?;
+    p.save(&json)
+        .map_err(|e| format!("Failed to save center layout: {:?}", e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -207,7 +207,10 @@ describe('EffectSettingsPanel', () => {
       await waitFor(() => {
         expect(screen.getByText('Dithering')).toBeInTheDocument();
       });
-      fireEvent.click(screen.getByText('Dithering'));
+      // Chooser rows respond to pointerdown so the click works on the first
+      // press even when the main window was inactive (macOS/WKWebView
+      // acceptsFirstMouse override delivers the activation click too).
+      fireEvent.pointerDown(screen.getByText('Dithering'), { button: 0 });
       expect(onSelectEffect).toHaveBeenCalledWith('Dithering');
     });
 
@@ -224,7 +227,7 @@ describe('EffectSettingsPanel', () => {
         expect(screen.getByText('ASCII')).toBeInTheDocument();
       });
       expect(screen.queryByText('ascii')).not.toBeInTheDocument();
-      fireEvent.click(screen.getByText('ASCII'));
+      fireEvent.pointerDown(screen.getByText('ASCII'), { button: 0 });
       expect(onSelectEffect).toHaveBeenCalledWith('Ascii');
     });
 
@@ -234,7 +237,7 @@ describe('EffectSettingsPanel', () => {
       await waitFor(() => {
         expect(screen.getByText('RGB channels')).toBeInTheDocument();
       });
-      fireEvent.click(screen.getByText('RGB channels'));
+      fireEvent.pointerDown(screen.getByText('RGB channels'), { button: 0 });
       expect(onSelectEffect).toHaveBeenCalledWith('RGBChannels');
     });
   });
@@ -458,6 +461,23 @@ describe('EffectSettingsPanel', () => {
       expect(screen.getByTestId('curve-graph')).toBeInTheDocument();
       expect(screen.getByLabelText('Input')).toHaveValue('0');
       expect(screen.getByLabelText('Output')).toHaveValue('0');
+    });
+
+    it('renders dedicated Curves editor when algorithm_id is stamped', () => {
+      render(
+        <EffectSettingsPanel
+          selectedLayer={{
+            ...makeCurvesLayer(),
+            filters: [{
+              ...makeCurvesLayer().filters[0],
+              algorithm_id: 'curves',
+            } as FilterInfo],
+          }}
+          onUpdateParams={onUpdateParams}
+        />
+      );
+      expect(screen.getByTestId('curve-graph')).toBeInTheDocument();
+      expect(screen.getByText('Channel')).toBeInTheDocument();
     });
 
     it('calls onUpdateParams when channel changes', () => {

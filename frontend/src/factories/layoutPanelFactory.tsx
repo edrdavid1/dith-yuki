@@ -10,16 +10,20 @@ import type { TabNode } from 'flexlayout-react';
 import LayersFeature from '../features/layers/LayersFeature';
 import EffectsFeature from '../features/effects/EffectsFeature';
 import ColorLabFeature from '../features/color-lab/ColorLabFeature';
+import PreviewFeature from '../features/preview/PreviewFeature';
 import FlexPopoutChrome from '../features/panels/FlexPopoutChrome';
 import type { FlexSide } from '../defaults/DefaultLayouts';
 import type { DockSide } from '../types/panels';
 import type { PanelChromeProps } from '../features/panels/PanelChrome';
+import type { WelcomeActions } from '../hooks/useWelcomeScreen';
 
 export type LayoutPanelFactoryOptions = {
   side: FlexSide;
   onMoveToSide?: (side: DockSide) => void;
   onPopOut?: () => void;
   onDockBack?: () => void;
+  /** Welcome actions for Preview (main + flex-popout share the main React tree). */
+  welcome?: WelcomeActions;
 };
 
 /**
@@ -34,8 +38,8 @@ export function layoutPanelFactory(
   const chrome: PanelChromeProps = {
     // Docked: tab strip chrome. Floated: FlexPopoutChrome owns the titlebar.
     hideChrome: true,
-    dockSide: options?.side as DockSide | undefined,
-    onMoveToSide: floating ? undefined : options?.onMoveToSide,
+    dockSide: options?.side === 'center' ? undefined : (options?.side as DockSide | undefined),
+    onMoveToSide: floating || options?.side === 'center' ? undefined : options?.onMoveToSide,
     onPopOut: floating ? undefined : options?.onPopOut,
     onDockBack: undefined,
   };
@@ -54,6 +58,15 @@ export function layoutPanelFactory(
             {...chrome}
           />
         );
+      case 'preview':
+        return (
+          <PreviewFeature
+            {...chrome}
+            hideTitleBar
+            fill={floating}
+            welcome={options?.welcome}
+          />
+        );
       default:
         return <ErrorPanel componentId={componentId} />;
     }
@@ -66,6 +79,11 @@ export function layoutPanelFactory(
       title={node.getName() || getPanelDisplayName(componentId)}
       panelId={componentId}
       onDockBack={() => options?.onDockBack?.()}
+      closeLabel={
+        componentId === 'preview'
+          ? 'Return preview to main window (or double-click titlebar)'
+          : 'Dock panel back to sidebar'
+      }
     >
       {body}
     </FlexPopoutChrome>
@@ -103,19 +121,26 @@ export function getPanelDisplayName(panelId: string): string {
     case 'layers':   return 'Layers';
     case 'effect':   return 'Effect Settings';
     case 'colorlab': return 'Color Lab';
+    case 'preview':  return 'Preview';
     default:         return panelId;
   }
 }
 
-/** Returns true if the panel is allowed inside the FlexLayout. */
+/** Returns true if the panel is allowed inside a sidebar FlexLayout. */
 export function isPanelDockable(panelId: string): boolean {
   return panelId === 'layers' || panelId === 'effect' || panelId === 'colorlab';
 }
 
 /**
  * Returns true if the panel is currently rendered by FlexLayout
- * (as opposed to the legacy DockedSidebar).  B3: Layers.  B4a: Effect.  B4b: Color Lab.
+ * (as opposed to the legacy DockedSidebar / PanelManager undock).
+ * B3: Layers. B4a: Effect. B4b: Color Lab. B5: Preview (center model).
  */
 export function isPanelOnFlexLayout(panelId: string): boolean {
-  return panelId === 'layers' || panelId === 'effect' || panelId === 'colorlab';
+  return (
+    panelId === 'layers' ||
+    panelId === 'effect' ||
+    panelId === 'colorlab' ||
+    panelId === 'preview'
+  );
 }

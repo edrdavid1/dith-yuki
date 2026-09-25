@@ -1,5 +1,6 @@
 import type { DockSide, PanelId, PanelInfo, PanelStateSnapshot } from '../../types/panels';
 import { FLOATING_ONLY_PANELS } from '../../types/panels';
+import { isPanelOnFlexLayout } from '../../factories/layoutPanelFactory';
 import type { SidebarGeom } from '../../app/shell/ShellContext';
 import {
   dockPanelAt,
@@ -138,7 +139,10 @@ export function snapshotFromPanelState(
       left_order: [...state.left_order],
       right_order: [...state.right_order],
       panels: state.panels
-        .filter((p) => !FLOATING_ONLY_PANELS.has(p.id as PanelId))
+        .filter(
+          (p) =>
+            !FLOATING_ONLY_PANELS.has(p.id as PanelId) && !isPanelOnFlexLayout(p.id),
+        )
         .map((p) => ({
           id: p.id as PanelId,
           docked: p.docked,

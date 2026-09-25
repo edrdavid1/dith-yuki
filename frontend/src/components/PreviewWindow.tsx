@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useState } from 'react';
+import { useRef, useEffect, useLayoutEffect, useCallback, useState } from 'react';
 import TileCanvas from '../features/preview/TileCanvas';
 import type { ViewportState } from '../features/preview/TileCanvas';
 import type { ZoomMode } from '../features/preview/zoomSnap';
@@ -130,7 +130,7 @@ export default function PreviewWindow({
 
   // ─── Space key tracking (Photoshop-style hand tool) ────────────────────
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code !== 'Space' || e.repeat) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
@@ -147,13 +147,15 @@ export default function PreviewWindow({
         containerRef.current.style.cursor = 'default';
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
+    // Prefer the browsing context that hosts the canvas (flex-popout when floated).
+    const view = containerRef.current?.ownerDocument.defaultView ?? window;
+    view.addEventListener('keydown', handleKeyDown);
+    view.addEventListener('keyup', handleKeyUp);
     return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
+      view.removeEventListener('keydown', handleKeyDown);
+      view.removeEventListener('keyup', handleKeyUp);
     };
-  }, []);
+  }, [hideTitleBar]);
 
   // ─── Pan drag handling (Space+left or middle mouse — like Photoshop) ───
 

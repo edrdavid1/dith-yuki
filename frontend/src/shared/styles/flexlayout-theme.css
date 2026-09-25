@@ -235,6 +235,17 @@
   background: var(--bg-window) !important;
 }
 
+/* Center Preview: single outer frame (avoid double stroke with former app-canvas border).
+ * Tabstrip keeps top/left/right; body owns the shared strip edge + bottom. */
+[data-dock-side='center'] .flexlayout__tabset_tabbar_outer,
+[data-dock-side='center'] .flexlayout__tabset_tabbar_outer_top {
+  border-bottom: none !important;
+}
+
+[data-dock-side='center'] .flexlayout__tab {
+  border-top: var(--border) !important;
+}
+
 /* Empty placeholder under the strip (not the absolute tab) — no extra frame. */
 .flexlayout__tabset_content {
   border: none !important;
