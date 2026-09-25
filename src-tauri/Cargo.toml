@@ -1,6 +1,6 @@
 [package]
 name = "dither"
-version = "0.4.2-alpha"
+version = "0.4.3-alpha"
 edition = "2021"
 description = "Tile-based dithering studio for pixel art, palettes, and layered images"
 authors = ["L'eco non di Bergamo"]
