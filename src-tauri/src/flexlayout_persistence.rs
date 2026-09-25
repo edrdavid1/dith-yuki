@@ -126,38 +126,47 @@ impl FlexLayoutPersistence {
     ///
     /// All error cases are logged (except missing file on first run).
     pub fn load(&self) -> Result<String, LayoutPersistenceError> {
-        // Check for v2 layout file (old system) — if present, use default v3
-        if self.detect_v2_migration() {
-            log::info!("Detected v2 layout file; using default v3 layout for migration");
-            return Ok(Self::default_layout_json());
-        }
-
         let layout_path = self.layout_file_path();
 
-        // Read v3 layout file
-        let contents = match fs::read_to_string(&layout_path) {
-            Ok(c) => c,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // First run: no layout file yet
-                log::info!("No layout file found; using default v3 layout");
-                return Ok(Self::default_layout_json());
-            }
+        // Prefer a valid on-disk layout even if a leftover v2 file exists.
+        match fs::read_to_string(&layout_path) {
+            Ok(contents) => match serde_json::from_str::<Value>(&contents) {
+                // As-built: frontend persists raw FlexLayout Model.toJson() (IJsonModel).
+                Ok(value) if value.get("layout").is_some() => {
+                    return Ok(contents);
+                }
+                // Legacy B3 wrapper shape (version/root) — still accepted if present.
+                Ok(value)
+                    if value.get("version").and_then(|v| v.as_u64()) == Some(3)
+                        && value.get("root").is_some() =>
+                {
+                    return Ok(contents);
+                }
+                Ok(_) => {
+                    log::warn!("Layout JSON missing FlexLayout schema; using default layout");
+                    return Ok(Self::default_layout_json());
+                }
+                Err(e) => {
+                    log::warn!("Failed to parse layout JSON: {}; using default layout", e);
+                    return Ok(Self::default_layout_json());
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => {
                 return Err(LayoutPersistenceError::ReadError(format!(
                     "failed to read layout file: {}",
                     e
                 )));
             }
-        };
-
-        // Validate and parse JSON
-        match serde_json::from_str::<Value>(&contents) {
-            Ok(_) => Ok(contents),
-            Err(e) => {
-                log::warn!("Failed to parse layout JSON: {}; using default layout", e);
-                Ok(Self::default_layout_json())
-            }
         }
+
+        // No layout file yet: first run, or migrate from leftover v2 → default.
+        if self.detect_v2_migration() {
+            log::info!("Detected v2 layout file; using default v3 layout for migration");
+        } else {
+            log::info!("No layout file found; using default v3 layout");
+        }
+        Ok(Self::default_layout_json())
     }
 
     /// Reset layout to default v3 (called on explicit "reset layout" action).

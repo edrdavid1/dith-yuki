@@ -46,6 +46,7 @@ export default function EffectsFeature({
   const lastCreatedId = useAppSelector((s) => s.palettes.lastCreatedId);
   const docId = useAppSelector((s) => s.document.docId);
   const doc = useDocument();
+  const addingRef = useRef(false);
 
   const imageSourceLayer = layers.length > 0 ? layers[0] : null;
   const selectedFilter =
@@ -188,48 +189,66 @@ export default function EffectsFeature({
 
   const handleSelectEffect = useCallback(
     (effectType: EffectType) => {
-      void dispatch(addLayerWithEffect({ docId, layers, effectType })).then((result) => {
-        if (addLayerWithEffect.fulfilled.match(result) && result.payload != null) {
-          void dispatch(
-            setSelection({
-              layerId: result.payload.layerId,
-              filterId: result.payload.filterId,
-            })
-          );
-        }
-      });
+      if (addingRef.current || docId == null) return;
+      addingRef.current = true;
+      void dispatch(addLayerWithEffect({ docId, layers, effectType }))
+        .then((result) => {
+          if (addLayerWithEffect.fulfilled.match(result) && result.payload != null) {
+            void dispatch(
+              setSelection({
+                layerId: result.payload.layerId,
+                filterId: result.payload.filterId,
+              })
+            );
+          }
+        })
+        .finally(() => {
+          addingRef.current = false;
+        });
     },
     [dispatch, docId, layers]
   );
 
   const handleSelectAlgorithm = useCallback(
     (algorithmId: string) => {
-      void dispatch(addLayerWithAlgorithm({ docId, layers, algorithmId })).then((result) => {
-        if (addLayerWithAlgorithm.fulfilled.match(result) && result.payload != null) {
-          void dispatch(
-            setSelection({
-              layerId: result.payload.layerId,
-              filterId: result.payload.filterId,
-            })
-          );
-        }
-      });
+      if (addingRef.current || docId == null) return;
+      addingRef.current = true;
+      void dispatch(addLayerWithAlgorithm({ docId, layers, algorithmId }))
+        .then((result) => {
+          if (addLayerWithAlgorithm.fulfilled.match(result) && result.payload != null) {
+            void dispatch(
+              setSelection({
+                layerId: result.payload.layerId,
+                filterId: result.payload.filterId,
+              })
+            );
+          }
+        })
+        .finally(() => {
+          addingRef.current = false;
+        });
     },
     [dispatch, docId, layers]
   );
 
   const handleSelectPreset = useCallback(
     (presetId: string) => {
-      void dispatch(addLayerWithPreset({ docId, layers, presetId })).then((result) => {
-        if (addLayerWithPreset.fulfilled.match(result) && result.payload != null) {
-          void dispatch(
-            setSelection({
-              layerId: result.payload.layerId,
-              filterId: result.payload.filterId,
-            })
-          );
-        }
-      });
+      if (addingRef.current || docId == null) return;
+      addingRef.current = true;
+      void dispatch(addLayerWithPreset({ docId, layers, presetId }))
+        .then((result) => {
+          if (addLayerWithPreset.fulfilled.match(result) && result.payload != null) {
+            void dispatch(
+              setSelection({
+                layerId: result.payload.layerId,
+                filterId: result.payload.filterId,
+              })
+            );
+          }
+        })
+        .finally(() => {
+          addingRef.current = false;
+        });
     },
     [dispatch, docId, layers]
   );

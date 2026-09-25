@@ -135,6 +135,12 @@ impl AppState {
                     "flexlayout_right.json",
                 ),
             ),
+            flexlayout_center: Mutex::new(
+                crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
+                    std::env::temp_dir(),
+                    "flexlayout_center.json",
+                ),
+            ),
             ram_budget_source: crate::memory_budget::RamBudgetSource::TestOverride,
             journal: Mutex::new(crate::journal::JournalRuntime::disabled()),
         }

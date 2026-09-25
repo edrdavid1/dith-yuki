@@ -23,6 +23,8 @@ export interface UseDockZoneReporterOptions {
    * thin edge strip so the first panel can redock onto an empty side.
    */
   reportEmptyEdge?: boolean;
+  /** When true, clears zones and skips reporting (center Preview host). */
+  disabled?: boolean;
 }
 
 /**
@@ -51,7 +53,12 @@ export function useDockZoneReporter(options: UseDockZoneReporterOptions): void {
         sidebarWidth: widthPref,
         hasDockTargets: hasTargets,
         reportEmptyEdge = true,
+        disabled = false,
       } = latestRef.current;
+
+      if (disabled) {
+        return;
+      }
 
       if (!hasTargets && !reportEmptyEdge) {
         try {

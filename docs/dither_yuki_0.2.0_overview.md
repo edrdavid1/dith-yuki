@@ -32,7 +32,7 @@
 | **Холодный GPU** | ~3× медленнее CPU — поэтому cold compute opt-in, не default-on |
 | **Полный invalidate слайдера** | 100 ms debounce режет IPC, не работу |
 | **Нет paint / ICC / batch** | Модель документа — структура + undo snapshot |
-| **Preview не на FlexLayout** | PanelManager leftover; B7 OS-окно — Needs Spec |
+| **Preview не на FlexLayout** | ✅ B5 — center FlexLayout Model; float = flex-popout |
 
 ---
 

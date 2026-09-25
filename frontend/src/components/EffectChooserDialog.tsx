@@ -111,7 +111,13 @@ function EffectChooserDialog({ isOpen, onSelect, onClose }: EffectChooserDialogP
               className={cn("effect-chooser-item", focusedIndex === index && "effect-chooser-item-focused")}
               role="option"
               aria-selected={focusedIndex === index}
-              onClick={() => onSelect(option.type)}
+              onPointerDown={(e) => {
+                if (e.button !== 0) return;
+                e.preventDefault();
+                e.stopPropagation();
+                onSelect(option.type);
+              }}
+              onClick={(e) => e.preventDefault()}
               onFocus={() => setFocusedIndex(index)}
               tabIndex={focusedIndex === index ? 0 : -1}
               type="button"

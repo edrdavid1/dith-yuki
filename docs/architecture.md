@@ -25,7 +25,7 @@
 - **Push-based tile rendering** — backend вычисляет тайлы инкрементально и уведомляет frontend о готовности
 - **Lock-free конкурентность** — ArcSwap для документа, DashMap для кэшей, SegQueue для scheduling
 - **Perceptually-uniform color** — Oklab space для палитровой квантизации, linear RGB f32 как внутреннее представление
-- **Dockable UI** — Layers / Effect / Color Lab на FlexLayout (float = `flex-popout-*`); Preview — отдельный floating-only путь
+- **Dockable UI** — Layers / Effect / Color Lab (left/right FlexLayout) + Preview (center FlexLayout); float = `flex-popout-*`
 
 ### 1.1 Стек технологий
 
@@ -64,7 +64,7 @@ dither-yuki-2/
 │       ├── undo.rs             # UndoManager (Arc<Document> stacks)
 │       ├── dock_affinity.rs    # dock-zone hit-test (Flex redock complete = JS)
 │       ├── flexlayout_persistence.rs
-│       ├── panel_manager.rs    # Preview / Preferences leftover
+│       ├── panel_manager.rs    # Preferences leftover (+ Preview stub)
 │       └── recent_files.rs
 ├── crates/
 │   ├── engine-core/            # Phase 0 stub (не используется)
@@ -277,7 +277,7 @@ pub struct AppState {
     pub ed_frontier: EdFrontier,             // ED/Composite blocked-on-deps (wavefront)
     /// Optional wgpu (None = CPU-only / no adapter)
     pub gpu: Option<Arc<engine_gpu::GpuContext>>,
-    pub panel_manager: Mutex<PanelManager>,  // Preview / Preferences leftover
+    pub panel_manager: Mutex<PanelManager>,  // Preferences leftover (+ Preview stub)
     pub undo_manager: Mutex<UndoManager>,    // Track N: snapshot Arc<Document> stacks, max_depth=50
     pub saved_snapshot: Mutex<Option<Arc<Document>>>, // Track P: Saved_Mark; dirty = !ptr_eq(live, mark)
     pub worker_wake: WorkerWake,             // Condvar; notify_one on enqueue
@@ -419,7 +419,7 @@ loop {
 
 **Dockable panels** (`layers`, `effect`, `colorlab`) живут в двух FlexLayout `Model` (left / right). Persist: `flexlayout_left.json` / `flexlayout_right.json`. Float: `flex-popout-*` + JS `setPosition` (B4c). Подробно: [FLEXLAYOUT_DOCKING.md](./FLEXLAYOUT_DOCKING.md).
 
-`PanelManager` остаётся для **Preview / Preferences** (floating-only) и старых `panel-*` окон. Affinity hit-test (`dock_affinity.rs` + `update_dock_zone`) — тонкий мост для redock Flex popout. `global_mouseup.rs` **удалён**.
+`PanelManager` остаётся для **Preferences leftover** и старых `panel-*` окон. Preview — center FlexLayout Model (`flexlayout_center.json`). Affinity hit-test (`dock_affinity.rs` + `update_dock_zone`) — тонкий мост для redock Flex popout (Preview affinity не армится). `global_mouseup.rs` **удалён**.
 
 ### 3.8 IPC-команды (сводка)
 
@@ -451,8 +451,8 @@ loop {
 | `generate_palette` | Async MedianCut/KMeans from layer tiles → new Palette |
 | `list_builtin_palettes` / `import_builtin_palette` | Built-in retro presets → Document palette |
 | `generate_ramp_palette` / `generate_harmony_palette` / `colors_to_oklab` / `get_palette_oklab` | Color Lab & Oklab conversion utilities |
-| `save_layout_left` / `save_layout_right` / `load_layout_*` | FlexLayout persist (per side) |
-| `undock_panel` / `dock_panel` / `show_panel` / `hide_panel` | Leftover Preview / Preferences windows |
+| `undock_panel` / `dock_panel` / `show_panel` / `hide_panel` | Leftover Preferences / PanelManager stubs |
+| `save_layout_left` / `save_layout_right` / `save_layout_center` / `load_layout_*` | FlexLayout persist (per side + center Preview) |
 | `update_dock_zone` / `begin_float_drag` / `complete_float_drag` / `cancel_float_drag` | Affinity hit-test + JS redock complete |
 
 ### 3.9 Welcome Screen и Recent Files (Track G)
@@ -1141,12 +1141,11 @@ Crash recovery (atomic Save, debounce journal, clean-exit marker, session roster
 
 Canonical: [FLEXLAYOUT_DOCKING.md](./FLEXLAYOUT_DOCKING.md).
 
-- Dockable: `layers`, `effect`, `colorlab` — two FlexLayout models (left / right)
+- Dockable: `layers`, `effect`, `colorlab` — left/right FlexLayout models; `preview` — center model
 - Float: patched FloatingWindow → `flex-popout-*` + `FlexPopoutChrome`
-- Redock: JS `setPosition` + in-WebView mouseup → `complete_float_drag`; hit-test via `dock_affinity`
-- Persist: `save_layout_{left,right}` (raw `Model.toJson()`)
-- **Not FL:** `preview`, `preferences` (PanelManager leftover; Preview still OS `startDragging`)
-
+- Redock: JS `setPosition` + in-WebView mouseup → `complete_float_drag`; hit-test via `dock_affinity` (Preview affinity never arms — close returns to canvas)
+- Persist: `save_layout_{left,right,center}` (raw `Model.toJson()`)
+- **Not FL:** `preferences` (dialog; PanelManager leftover)
 ### 7.7 Обработка ошибок и debouncing
 
 - Ошибки из всех hooks агрегируются → Notification toast (красный, auto-dismiss 5s)

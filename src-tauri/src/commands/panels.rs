@@ -7,11 +7,14 @@
 //! `startDragging`, no platform mouseup hook). Affinity hit-test stays in
 //! `dock_affinity` (zones from the main window; positions via `WindowEvent::Moved`).
 //!
-//! Preview / Preferences still use PanelManager + OS `startDragging` for move-only
-//! (FLOATING_ONLY — affinity never arms).
+//! Preview still uses PanelManager state only as a leftover stub. Float/redock for
+//! Preview is FlexLayout center model + JS `setPosition` (same path as Layers /
+//! Effect / Color Lab). Affinity arms for Preview and completes → center canvas.
+//!
+//! Preferences is a dialog, not a docked panel.
 //!
 //! ## Commands still used
-//! DO NOT remove Preview/PanelManager undock/dock paths here.
+//! DO NOT remove leftover Preview PanelManager dock stubs until PanelManager is retired.
 //!
 //! Float-drag (Flex): `begin_float_drag` / `cancel_float_drag` / `complete_float_drag`
 //! + `update_dock_zone`. Hit-test: `dock_affinity.rs` (no `global_mouseup`).
@@ -559,9 +562,9 @@ fn sidebar_side_to_dock(side: SidebarSide) -> DockSide {
     }
 }
 
-/// Layers + Effect + Color Lab live in FlexLayout — redock must not go through PanelManager.
+/// Layers + Effect + Color Lab + Preview live in FlexLayout — redock must not go through PanelManager.
 fn is_flex_layout_panel(panel_id: &str) -> bool {
-    matches!(panel_id, "layers" | "effect" | "colorlab")
+    matches!(panel_id, "layers" | "effect" | "colorlab" | "preview")
 }
 
 /// Color Lab uses `panel-{id}`; FlexLayout popouts use `flex-popout-N`.

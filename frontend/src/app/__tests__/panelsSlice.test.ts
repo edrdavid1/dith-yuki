@@ -65,15 +65,16 @@ describe('panelsSlice dual orders', () => {
     expect(next.rightOrder).toEqual(['effect', 'colorlab']);
   });
 
-  it('selectVisibleDocked filters hidden and floating-only', () => {
+  it('selectVisibleDocked excludes FlexLayout hosts and floating-only', () => {
     const state = emptyState();
     applySnapshot(state, snapshot);
-    expect(selectVisibleDocked(state.entities, state.leftOrder, state.rightOrder, 'left')).toEqual([
-      'layers',
-    ]);
-    expect(selectVisibleDocked(state.entities, state.leftOrder, state.rightOrder, 'right')).toEqual([
-      'effect',
-    ]);
+    // layers / effect / colorlab / preview are owned by FlexLayout — not DockedSidebar.
+    expect(selectVisibleDocked(state.entities, state.leftOrder, state.rightOrder, 'left')).toEqual(
+      [],
+    );
+    expect(selectVisibleDocked(state.entities, state.leftOrder, state.rightOrder, 'right')).toEqual(
+      [],
+    );
   });
 
   it('legacy panels-only event keeps previous orders', () => {

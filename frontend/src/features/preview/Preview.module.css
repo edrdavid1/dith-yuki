@@ -8,6 +8,12 @@
   background: var(--color-dark-gray);
   overflow: hidden;
   position: relative;
+  /* FlexLayout center tab owns the frame when Preview is docked.
+     Placeholder (floated) gets its own edge via :has() below. */
+  border: none;
+}
+
+.app-canvas:has(.preview-undocked-placeholder) {
   border: var(--border);
 }
 

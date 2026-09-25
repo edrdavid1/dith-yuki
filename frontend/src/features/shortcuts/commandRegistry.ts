@@ -14,12 +14,17 @@ export type DocumentCommands = {
   openPreferences: () => void;
 };
 
+export type LayersCommands = {
+  openEffectChooser: () => void;
+};
+
 export type LayoutCommands = {
   toggleFocusMode: () => void;
 };
 
 let previewCommands: PreviewCommands | null = null;
 let documentCommands: DocumentCommands | null = null;
+let layersCommands: LayersCommands | null = null;
 let layoutCommands: LayoutCommands | null = null;
 
 export function registerPreviewCommands(commands: PreviewCommands): () => void {
@@ -42,6 +47,17 @@ export function registerDocumentCommands(commands: DocumentCommands): () => void
 
 export function getDocumentCommands(): DocumentCommands | null {
   return documentCommands;
+}
+
+export function registerLayersCommands(commands: LayersCommands): () => void {
+  layersCommands = commands;
+  return () => {
+    if (layersCommands === commands) layersCommands = null;
+  };
+}
+
+export function getLayersCommands(): LayersCommands | null {
+  return layersCommands;
 }
 
 export function registerLayoutCommands(commands: LayoutCommands): () => void {

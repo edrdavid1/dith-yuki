@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import MenuBar from '../components/MenuBar';
@@ -30,16 +30,15 @@ import {
   allowAppExit,
   confirmAppQuit,
   swapSidebars as swapSidebarPanels,
-  undockPanelWithSize,
   type DockAffinityEvent,
 } from '../shared/ipc';
-import PreviewSlot from '../features/preview/PreviewSlot';
 import DockedSidebar, { sidebarEffectiveWidth } from '../features/panels/DockedSidebar';
 import SidebarCollapseStrip from '../features/panels/SidebarCollapseStrip';
 import FlexLayoutContainer from '../components/FlexLayoutContainer';
 import ResizeHandle from '../components/common/ResizeHandle';
 import { isPanelOnFlexLayout } from '../factories/layoutPanelFactory';
 import {
+  isPreviewFloating,
   listDockedFlexComponents,
   listFlexComponents,
   useLayoutContext,
@@ -50,15 +49,14 @@ import { isMacOS } from '../lib/platform';
 import styles from './AppLayout.module.css';
 import menuStyles from '../features/document/MenuBar.module.css';
 import previewStyles from '../features/preview/Preview.module.css';
+import previewWindowStyles from '../features/preview/PreviewWindow.module.css';
 import resizeStyles from '../shared/ui/ResizeHandle.module.css';
 import { windowChromeTitle } from '../shared/windowTitle';
 import { isTooNewFileError } from '../shared/appUpdates';
 import { bind } from '../shared/ui/cn';
 import Icon from '../icons/iconRegistry';
 
-const cn = bind({ ...styles, ...menuStyles, ...previewStyles, ...resizeStyles });
-
-const PREVIEW_UNDOCK_THRESHOLD_PX = 5;
+const cn = bind({ ...styles, ...menuStyles, ...previewStyles, ...previewWindowStyles, ...resizeStyles });
 
 /**
  * Main shell layout: menubar + optional left sidebar | canvas | optional right sidebar.
@@ -229,6 +227,7 @@ export default function AppLayout() {
   const {
     left: leftLayout,
     right: rightLayout,
+    center: centerLayout,
     layoutEpoch,
     swapFlexSides,
     layoutToast,
@@ -251,7 +250,7 @@ export default function AppLayout() {
   const leftPanelsAll  = visibleDocked('left');
   const rightPanelsAll = visibleDocked('right');
 
-  // Legacy docked panels only (Preview still uses PanelManager; dockables are on FlexLayout).
+  // Legacy docked panels only (Preferences leftover; dockables + Preview are on FlexLayout).
   const leftPanels  = leftPanelsAll.filter( (id): id is PanelId => !isPanelOnFlexLayout(id));
   const rightPanels = rightPanelsAll.filter((id): id is PanelId => !isPanelOnFlexLayout(id));
 
@@ -268,6 +267,8 @@ export default function AppLayout() {
   const rightDockedFlexIds = listDockedFlexComponents(rightLayout.model).filter(
     (id): id is PanelId => isPanelOnFlexLayout(id)
   );
+
+  const previewFloating = isPreviewFloating(centerLayout.model);
 
   // Any flex tab (incl. floating) keeps Layout mounted so OS popouts stay alive.
   const leftHasFlex  = leftFlexIds.length > 0;
@@ -539,47 +540,6 @@ export default function AppLayout() {
     });
   }, []);
 
-  /** Drag Preview titlebar past threshold → floating window (preview is floating-only). */
-  const handlePreviewTitleMouseDown = useCallback((e: ReactMouseEvent) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-
-    const startX = e.clientX;
-    const startY = e.clientY;
-    let dragged = false;
-
-    const onMove = (ev: MouseEvent) => {
-      if (dragged) return;
-      const dx = ev.clientX - startX;
-      const dy = ev.clientY - startY;
-      if (Math.hypot(dx, dy) >= PREVIEW_UNDOCK_THRESHOLD_PX) {
-        dragged = true;
-        document.body.style.userSelect = 'none';
-      }
-    };
-
-    const onUp = (ev: MouseEvent) => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-      document.body.style.userSelect = '';
-      if (!dragged) return;
-
-      const el = document.querySelector<HTMLElement>('[data-panel-id="preview"]');
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      void undockPanelWithSize(
-        'preview',
-        Math.round(rect.width),
-        Math.round(rect.height),
-        Math.round(ev.screenX),
-        Math.round(ev.screenY)
-      ).catch((err) => console.error('Preview undock failed:', err));
-    };
-
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  }, []);
-
   const handleSwapSidebars = useCallback(async () => {
     try {
       // Legacy PanelManager orders (Preview etc.) + shell column prefs + Flex models.
@@ -841,7 +801,29 @@ export default function AppLayout() {
         data-app-edges={previewAppEdges}
         style={previewBackgroundStyle(previewBackground)}
       >
-        <PreviewSlot onTitleBarMouseDown={handlePreviewTitleMouseDown} welcome={welcome} />
+        {/* Keep center FlexLayout mounted while floated so the popout portal stays alive. */}
+        <div
+          style={
+            previewFloating
+              ? {
+                  position: 'fixed',
+                  width: 0,
+                  height: 0,
+                  overflow: 'hidden',
+                  pointerEvents: 'none',
+                  opacity: 0,
+                }
+              : { width: '100%', height: '100%', minHeight: 0 }
+          }
+          aria-hidden={previewFloating || undefined}
+        >
+          <FlexLayoutContainer side="center" welcome={welcome} appEdges={previewAppEdges} />
+        </div>
+        {previewFloating && (
+          <div className={cn('preview-undocked-placeholder')} style={previewBackgroundStyle(previewBackground)}>
+            <span>Preview is in a separate window</span>
+          </div>
+        )}
       </div>
 
       {!focusMode && (

@@ -22,6 +22,19 @@ import styles from './EffectSettingsPanel.module.css';
 import { bind } from '../../shared/ui/cn';
 const cn = bind(styles);
 
+/**
+ * Fire on pointerdown so the first click works even when the main window was
+ * unfocused (e.g. Preview flex-popout had focus — macOS/WKWebView focus-steal).
+ */
+function chooseOnPointerDown(action: () => void) {
+  return (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    action();
+  };
+}
+
 export interface LayerWithFilters {
   id: number;
   name: string;
@@ -188,7 +201,8 @@ export default function EffectSettingsPanel({
                   className={cn("effect-chooser-row")}
                   role="option"
                   aria-selected={false}
-                  onClick={() => onSelectEffect?.('Dithering')}
+                  onPointerDown={chooseOnPointerDown(() => onSelectEffect?.('Dithering'))}
+                  onClick={(e) => e.preventDefault()}
                 >
                   <div className={cn("effect-chooser-row-icon")}>
                     <EffectIcon type="Dithering" />
@@ -204,7 +218,8 @@ export default function EffectSettingsPanel({
                   className={cn("effect-chooser-row")}
                   role="option"
                   aria-selected={false}
-                  onClick={() => onSelectEffect?.('Ascii')}
+                  onPointerDown={chooseOnPointerDown(() => onSelectEffect?.('Ascii'))}
+                  onClick={(e) => e.preventDefault()}
                 >
                   <div className={cn("effect-chooser-row-icon")}>
                     <EffectIcon type="Ascii" />
@@ -227,11 +242,12 @@ export default function EffectSettingsPanel({
                     className={cn("effect-chooser-row")}
                     role="option"
                     aria-selected={false}
-                    onClick={() =>
+                    onPointerDown={chooseOnPointerDown(() =>
                       mapped
                         ? onSelectEffect?.(mapped.type)
                         : onSelectAlgorithm?.(algo.id)
-                    }
+                    )}
+                    onClick={(e) => e.preventDefault()}
                     type="button"
                   >
                     <div className={cn("effect-chooser-row-icon")}>
@@ -253,7 +269,8 @@ export default function EffectSettingsPanel({
                   className={cn("effect-chooser-row")}
                   role="option"
                   aria-selected={false}
-                  onClick={() => onSelectEffect?.(option.type)}
+                  onPointerDown={chooseOnPointerDown(() => onSelectEffect?.(option.type))}
+                  onClick={(e) => e.preventDefault()}
                   type="button"
                 >
                   <div className={cn("effect-chooser-row-icon")}>
@@ -270,7 +287,8 @@ export default function EffectSettingsPanel({
                   className={cn('effect-chooser-row')}
                   role="option"
                   aria-selected={false}
-                  onClick={() => onSelectPreset?.(preset.id)}
+                  onPointerDown={chooseOnPointerDown(() => onSelectPreset?.(preset.id))}
+                  onClick={(e) => e.preventDefault()}
                   type="button"
                   title={preset.hint}
                 >
@@ -307,20 +325,17 @@ export default function EffectSettingsPanel({
     if (dithering) {
       return <DitherSettings params={params} onUpdate={handleUpdate} />;
     }
-    // Dedicated Ascii editor — never the generic AlgorithmSettingsPanel.
-    if (effectType === 'Ascii' || filter.kind === 'Ascii' || filter.algorithm_id === 'ascii') {
-      return <AsciiSettings params={params} onUpdate={handleUpdate} />;
-    }
-    if (filter.algorithm_id) {
-      return (
-        <AlgorithmSettingsPanel
-          algorithmId={filter.algorithm_id}
-          values={params}
-          onChange={handleUpdate}
-        />
-      );
-    }
-    switch (effectType) {
+
+    // Prefer dedicated editors over AlgorithmSettingsPanel. Registry migration
+    // stamps algorithm_id on legacy effects (curves, glitch, …); Curves has an
+    // empty param_schema, so the generic panel would render blank.
+    const dedicated: EffectType | null =
+      effectType ??
+      (filter.algorithm_id != null ? (ALGO_TO_EFFECT[filter.algorithm_id]?.type ?? null) : null);
+
+    switch (dedicated) {
+      case 'Ascii':
+        return <AsciiSettings params={params} onUpdate={handleUpdate} />;
       case 'Glitching':
         return <GlitchSettings params={params} onUpdate={handleUpdate} />;
       case 'Curves':
@@ -334,8 +349,20 @@ export default function EffectSettingsPanel({
       case 'Adjust':
         return <AdjustSettings params={params} onUpdate={handleUpdate} />;
       default:
-        return <div className={cn("effect-settings-content")}>Unknown effect type</div>;
+        break;
     }
+
+    if (filter.algorithm_id) {
+      return (
+        <AlgorithmSettingsPanel
+          algorithmId={filter.algorithm_id}
+          values={params}
+          onChange={handleUpdate}
+        />
+      );
+    }
+
+    return <div className={cn("effect-settings-content")}>Unknown effect type</div>;
   };
 
   return (

@@ -4,6 +4,7 @@
  * Docked chrome matches Color Lab WindowTitlebar (squares + stripes).
  * Float: Color Lab–style frameless popout (FlexPopoutChrome).
  * Drag titlebar out of the column → undock (same gesture as Color Lab).
+ * Center hosts Preview (canvas); no sidebar move / dock-zone reporting.
  */
 
 import React, { useEffect, useRef, useCallback } from 'react';
@@ -34,12 +35,13 @@ import {
   markDockBottomCorner,
 } from '../shared/ui/markDockBottomCorner';
 import { isMacOS } from '../lib/platform';
+import type { WelcomeActions } from '../hooks/useWelcomeScreen';
 import 'flexlayout-react/style/dark.css';
 import '../shared/styles/flexlayout-theme.css';
 import '../shared/styles/dockCorners.css';
 
 export interface FlexLayoutContainerProps {
-  /** Which sidebar this container manages. */
+  /** Which FlexLayout host this container manages. */
   side: FlexSide;
   /**
    * App-window edges this column surface touches (e.g. bottom+right).
@@ -51,6 +53,8 @@ export interface FlexLayoutContainerProps {
   className?: string;
   /** Inline styles for the wrapper div */
   style?: React.CSSProperties;
+  /** Welcome actions for Preview (center host only). */
+  welcome?: WelcomeActions;
 }
 
 export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
@@ -58,23 +62,26 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
   appEdges,
   className,
   style,
+  welcome,
 }) => {
   const { model, setModel, isLoading } = useSideLayout(side);
   const { movePanelBetweenSides, floatPanel, dockPanel } = useLayoutContext();
   const { leftSidebar, rightSidebar, setSidebarCollapsed } = useShell();
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const columnRef = useRef<HTMLDivElement>(null);
+  const isCenter = side === 'center';
   const sidebarPrefs = side === 'left' ? leftSidebar : rightSidebar;
   const dockedCount = listDockedFlexComponents(model).length;
 
   useDockZoneReporter({
     sidebarRef: columnRef,
-    sidebarSide: side,
-    sidebarCollapsed: sidebarPrefs.collapsed,
-    sidebarWidth: sidebarPrefs.width,
-    hasDockTargets: dockedCount > 0,
-    // Always report a zone so floated panels can redock onto this side.
-    reportEmptyEdge: true,
+    sidebarSide: isCenter ? 'left' : side,
+    sidebarCollapsed: isCenter ? true : sidebarPrefs.collapsed,
+    sidebarWidth: isCenter ? 0 : sidebarPrefs.width,
+    hasDockTargets: !isCenter && dockedCount > 0,
+    // Center is not a redock target; sidebars always report a zone.
+    reportEmptyEdge: !isCenter,
+    disabled: isCenter,
   });
 
   useEffect(() => {
@@ -249,7 +256,12 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
     return () => root.removeEventListener('mousedown', onDown, true);
   }, [model]);
 
-  const saveCommand = side === 'left' ? 'save_layout_left' : 'save_layout_right';
+  const saveCommand =
+    side === 'left'
+      ? 'save_layout_left'
+      : side === 'right'
+        ? 'save_layout_right'
+        : 'save_layout_center';
 
   const scheduleSave = useCallback(
     (m: Model) => {
@@ -314,21 +326,25 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
       const component = node.getComponent() ?? '';
       return layoutPanelFactory(node, {
         side,
-        onMoveToSide: (target) => {
-          movePanelBetweenSides(component, target);
-          setSidebarCollapsed(target, false);
-        },
+        onMoveToSide: isCenter
+          ? undefined
+          : (target) => {
+              movePanelBetweenSides(component, target);
+              setSidebarCollapsed(target, false);
+            },
         onPopOut: () => floatPanel(side, component),
         onDockBack: () => dockPanel(side, component),
+        welcome,
       });
     },
-    [side, movePanelBetweenSides, setSidebarCollapsed, floatPanel, dockPanel],
+    [side, isCenter, movePanelBetweenSides, setSidebarCollapsed, floatPanel, dockPanel, welcome],
   );
 
   // Latest float target for undock-drag (set in onRenderTab per tab).
   const undockComponentRef = useRef<string>('');
   const onUndockDrag = useFlexTitlebarUndock({
     columnRef,
+    mode: isCenter ? 'anyDirection' : 'sidebar',
     onUndock: () => {
       const component = undockComponentRef.current;
       if (component) floatPanel(side, component);
@@ -351,20 +367,24 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
         <WindowTitlebar
           title={node.getName()}
           className="flex-dock-titlebar"
-          dockSide={side}
+          dockSide={side === 'left' || side === 'right' ? side : undefined}
           onMouseDown={(e) => {
             undockComponentRef.current = component;
             onUndockDrag(e);
           }}
-          onMoveToSide={(target) => {
-            movePanelBetweenSides(component, target);
-            setSidebarCollapsed(target, false);
-          }}
+          onMoveToSide={
+            isCenter
+              ? undefined
+              : (target) => {
+                  movePanelBetweenSides(component, target);
+                  setSidebarCollapsed(target, false);
+                }
+          }
           onPopOut={() => floatPanel(side, component)}
         />
       );
     },
-    [side, movePanelBetweenSides, setSidebarCollapsed, floatPanel, onUndockDrag],
+    [side, isCenter, movePanelBetweenSides, setSidebarCollapsed, floatPanel, onUndockDrag],
   );
 
   const onRenderTabSet = useCallback((_node: unknown, renderValues: {

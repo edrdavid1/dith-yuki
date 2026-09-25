@@ -12,6 +12,8 @@ mod gpu_resident_shadow;
 mod ipc_guard;
 mod journal;
 #[cfg(target_os = "macos")]
+mod macos_first_mouse;
+#[cfg(target_os = "macos")]
 mod macos_title;
 mod memory_budget;
 mod native_menu;
@@ -212,6 +214,14 @@ fn main() {
             }
         })
         .setup(move |app| {
+            // Deliver first-click events to every WKWebView even when its
+            // window is inactive. Without this, macOS swallows the activation
+            // click and users must double-click to add a layer/effect once
+            // Preview has floated into its own OS window and stolen focus.
+            // See `macos_first_mouse.rs` for the full explanation.
+            #[cfg(target_os = "macos")]
+            macos_first_mouse::install_accepts_first_mouse_override();
+
             // Main window is create:false in tauri.conf — build here so we can
             // allow FlexLayout's window.open() popouts (denied by default in Tauri).
             let main_conf = app
@@ -358,11 +368,19 @@ fn main() {
                         app_data_dir.clone(),
                         "flexlayout_right.json",
                     );
+                let center_persistence =
+                    crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
+                        app_data_dir.clone(),
+                        "flexlayout_center.json",
+                    );
                 if let Ok(mut slot) = state.flexlayout_left.lock() {
                     *slot = left_persistence;
                 }
                 if let Ok(mut slot) = state.flexlayout_right.lock() {
                     *slot = right_persistence;
+                }
+                if let Ok(mut slot) = state.flexlayout_center.lock() {
+                    *slot = center_persistence;
                 }
 
                 // Crash-recovery journal root: {app_data}/recovery/
@@ -596,6 +614,8 @@ fn main() {
             commands::flexlayout::save_layout_left,
             commands::flexlayout::load_layout_right,
             commands::flexlayout::save_layout_right,
+            commands::flexlayout::load_layout_center,
+            commands::flexlayout::save_layout_center,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

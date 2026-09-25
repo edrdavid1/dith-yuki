@@ -5,15 +5,19 @@
  * B4c: titlebar drag is JS setPosition on the flex-popout WebviewWindow +
  * mouseup on the *popout* document window (portal from main — do not use
  * getCurrentWindow / main `window` for drag). Affinity via WindowEvent::Moved.
+ *
+ * Shortcuts: keydown is relayed from the popout browsing context to the main
+ * shortcut engine (portaled React still runs in main JS).
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getAllWebviewWindows } from '@tauri-apps/api/webviewWindow';
 import type { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import {
   cancelFloatDrag,
   onDockAffinity,
 } from '../../shared/ipc';
+import { relayShortcutEvent } from '../shortcuts/shortcutRelay';
 import styles from './PanelWindow.module.css';
 import { bind } from '../../shared/ui/cn';
 import WindowTitlebar from '../../shared/ui/WindowTitlebar';
@@ -54,13 +58,17 @@ export default function FlexPopoutChrome({
   title,
   panelId,
   onDockBack,
+  closeLabel = 'Dock panel back to sidebar',
   children,
 }: {
   title: string;
   panelId: string;
   onDockBack: () => void;
+  /** Tooltip / aria for the close control (Preview returns to canvas). */
+  closeLabel?: string;
   children: React.ReactNode;
 }) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const [affinityArmed, setAffinityArmed] = useState(false);
   const { onTitlebarMouseDown, cancelActiveDrag } = useFlexPopoutJsDrag(panelId);
 
@@ -70,6 +78,20 @@ export default function FlexPopoutChrome({
     onDockBack();
     void closeAllFlexPopouts();
   }, [onDockBack, cancelActiveDrag]);
+
+  const handleTitlebarMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      // Double-click titlebar = dock back (discoverable return for Preview).
+      if (e.detail === 2) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleClose();
+        return;
+      }
+      onTitlebarMouseDown(e);
+    },
+    [handleClose, onTitlebarMouseDown],
+  );
 
   const handleMinimize = useCallback(() => {
     void focusedFlexPopout()
@@ -105,19 +127,29 @@ export default function FlexPopoutChrome({
     };
   }, [panelId]);
 
+  // Relay popout keydowns → main shortcut engine; Escape cancels drag.
   useEffect(() => {
+    const view = rootRef.current?.ownerDocument.defaultView;
+    if (!view) return;
+
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         cancelActiveDrag();
         setAffinityArmed(false);
       }
+      // Always relay — main window never sees popout key events otherwise.
+      if (view !== window) {
+        relayShortcutEvent(e);
+      }
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+
+    view.addEventListener('keydown', onKeyDown, true);
+    return () => view.removeEventListener('keydown', onKeyDown, true);
   }, [cancelActiveDrag]);
 
   return (
     <div
+      ref={rootRef}
       className={cn('panel-window', affinityArmed && 'panel-window-affinity')}
       data-flex-popout-chrome
       style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
@@ -126,11 +158,11 @@ export default function FlexPopoutChrome({
         variant="floating"
         title={title}
         className={affinityArmed ? cn('panel-window-titlebar-affinity') : undefined}
-        onMouseDown={onTitlebarMouseDown}
+        onMouseDown={handleTitlebarMouseDown}
         onClose={handleClose}
         onMinimize={handleMinimize}
         onMaximize={handleMaximize}
-        closeLabel="Dock panel back to sidebar"
+        closeLabel={closeLabel}
       />
       <div
         className={cn('panel-window-content')}
