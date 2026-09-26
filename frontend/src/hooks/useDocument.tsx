@@ -308,24 +308,27 @@ export function useDocument() {
   );
 
   const exportPatternFn = useCallback(
-    async (layerId?: number | null) => {
+    async (layerId?: number | null): Promise<string | null> => {
       const target = layerId ?? selectedLayerId;
       if (target == null || state.docId == null) {
         dispatch(setDocumentMeta({ error: 'Select a layer to export a pattern' }));
-        return;
+        return null;
       }
       const docId = state.docId;
       try {
         const filePath = await saveDialog({
           filters: [{ name: 'Dither Pattern', extensions: ['dyuki'] }],
         });
-        if (!filePath) return;
+        if (!filePath) return null;
         const path = filePath.toLowerCase().endsWith('.dyuki')
           ? filePath
           : `${filePath}.dyuki`;
-        await dispatch(exportPattern({ docId, layerId: target, path }));
+        const result = await dispatch(exportPattern({ docId, layerId: target, path }));
+        if (exportPattern.fulfilled.match(result)) return path;
+        return null;
       } catch {
         // Dialog cancel / IPC errors handled in thunk
+        return null;
       }
     },
     [dispatch, selectedLayerId, state.docId]

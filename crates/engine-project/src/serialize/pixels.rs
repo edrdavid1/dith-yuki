@@ -270,6 +270,79 @@ fn assemble_layer_processed_rgba8(
     let bounds = layer.bounds_l0;
     let (off_x, off_y) = layer.offset;
 
+    // Any error-diffusion in the stack: process each tile-row as a strip so
+    // FS below-left taps reach the previous tile (also when Glow/Glitch/… wrap ED).
+    if crate::filters::apply::layer_needs_ed_strip(layer) {
+        use crate::filters::apply::apply_filter_stack_tile_row_strip;
+
+        for ty in bounds.min_y..=bounds.max_y {
+            let mut coords = Vec::new();
+            let mut raws = Vec::new();
+            for tx in bounds.min_x..=bounds.max_x {
+                let coord = TileCoord {
+                    level: 0,
+                    x: tx,
+                    y: ty,
+                };
+                let key = TileKey {
+                    doc: doc_id,
+                    layer: layer.id.0,
+                    coord,
+                    stage: CacheStage::Raw,
+                };
+                let tile = cache.get_entry(key).ok_or(ProjectError::IncompleteRaw {
+                    doc_id,
+                    layer_id: layer.id.0,
+                })?;
+                coords.push(coord);
+                raws.push(tile);
+            }
+            let strip: Vec<(TileCoord, &engine_tiles::PixelTile)> = coords
+                .iter()
+                .zip(raws.iter())
+                .map(|(c, t)| (*c, t.as_ref()))
+                .collect();
+            let mut outputs: Vec<engine_tiles::PixelTile> =
+                (0..strip.len()).map(|_| engine_tiles::PixelTile::new()).collect();
+            apply_filter_stack_tile_row_strip(
+                &strip,
+                layer,
+                palette_cache,
+                lut_cache,
+                threshold_cache,
+                doc,
+                &residuals_store,
+                &block_cache,
+                None,
+                &mut outputs,
+            )
+            .map_err(|e| ProjectError::Codec(format!("ED strip stack apply: {e}")))?;
+
+            for (i, coord) in coords.iter().enumerate() {
+                let processed = &outputs[i];
+                let tx = coord.x;
+                for ly in 0..TILE_SIZE {
+                    for lx in 0..TILE_SIZE {
+                        let gx = off_x + (tx * TILE_SIZE + lx) as i32;
+                        let gy = off_y + (ty * TILE_SIZE + ly) as i32;
+                        if gx < 0 || gy < 0 || gx >= doc_width as i32 || gy >= doc_height as i32
+                        {
+                            continue;
+                        }
+                        let dst = ((gy as usize) * (doc_width as usize) + (gx as usize)) * 4;
+                        let sx = HALO + lx;
+                        let sy = HALO + ly;
+                        canvas[dst] = f32_to_u8(processed.at(sx, sy, 0));
+                        canvas[dst + 1] = f32_to_u8(processed.at(sx, sy, 1));
+                        canvas[dst + 2] = f32_to_u8(processed.at(sx, sy, 2));
+                        canvas[dst + 3] = f32_to_u8(processed.at(sx, sy, 3));
+                    }
+                }
+            }
+        }
+        return Ok(canvas);
+    }
+
     // Row-major order so left/top/diag residuals exist before each tile runs.
     for ty in bounds.min_y..=bounds.max_y {
         for tx in bounds.min_x..=bounds.max_x {
@@ -687,7 +760,7 @@ mod tests {
         use crate::filter::{
             DitherColorMode, DitherModeV2, DitherParamsV2, FilterInstance, FilterKind, FilterParams,
         };
-        use crate::filters::apply::{apply_filter_to_tile, apply_filter_to_tile_with_caches};
+        use crate::filters::apply::apply_filter_to_tile;
         use crate::filters::dither_residuals::ErrorResidualsStore;
         use crate::types::DocumentId;
         use engine_color::palette_cache::PaletteKdCache;
@@ -720,12 +793,14 @@ mod tests {
 
         let exported = build_processed_composite_rgba8(&cache, &doc).unwrap();
 
-        // Golden: same filter stack + shared residuals, row-major (preview contract).
+        // Golden: row-interleaved strip (correct ED across tiles).
+        use crate::filters::dither_diffusion::apply_error_diffusion_tile_row_strip;
         let residuals = ErrorResidualsStore::new();
         let blocks = BlockRepresentativeCache::new();
         let pc = PaletteKdCache::new();
         let lc = PaletteLutCache::new();
         let tc = ThresholdMapCache::new();
+        let _ = tc;
         let raw_00 = cache
             .get_entry(TileKey {
                 doc: 1,
@@ -750,42 +825,40 @@ mod tests {
                 stage: CacheStage::Raw,
             })
             .unwrap();
-        apply_filter_to_tile_with_caches(
-            raw_00.as_ref(),
-            &layer,
-            TileCoord {
-                level: 0,
-                x: 0,
-                y: 0,
+        let left_c = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
+        let right_c = TileCoord {
+            level: 0,
+            x: 1,
+            y: 0,
+        };
+        let strip = [(left_c, raw_00.as_ref()), (right_c, raw_10.as_ref())];
+        let mut outs = [
+            engine_tiles::PixelTile::new(),
+            engine_tiles::PixelTile::new(),
+        ];
+        apply_error_diffusion_tile_row_strip(
+            &strip,
+            match &layer.filters[0].params {
+                FilterParams::DitherV2(p) => p,
+                _ => panic!("expected DitherV2"),
             },
+            &residuals,
+            layer.id,
+            layer.filters[0].id.as_u128(),
             &pc,
             &lc,
-            &tc,
             &doc,
-            &residuals,
             &blocks,
-            None,
+            &mut outs,
         )
         .unwrap();
-        let wavefront_10 = apply_filter_to_tile_with_caches(
-            raw_10.as_ref(),
-            &layer,
-            TileCoord {
-                level: 0,
-                x: 1,
-                y: 0,
-            },
-            &pc,
-            &lc,
-            &tc,
-            &doc,
-            &residuals,
-            &blocks,
-            None,
-        )
-        .unwrap();
+        let wavefront_10 = &outs[1];
 
-        // Isolated apply (old export bug) must differ from wavefront at the seam.
+        // Isolated apply (old tile-at-a-time without left residuals) must differ.
         let isolated = apply_filter_to_tile(
             raw_10.as_ref(),
             &layer,
@@ -796,7 +869,7 @@ mod tests {
             },
             &pc,
             &lc,
-            &tc,
+            &ThresholdMapCache::new(),
             &doc,
         )
         .unwrap();
@@ -805,7 +878,6 @@ mod tests {
         let mut isolated_differs = false;
         for ly in 0..TILE_SIZE {
             for lx in 0..8 {
-                // Left fringe of tile (1,0) — where left residuals land.
                 let sx = HALO + lx;
                 let sy = HALO + ly;
                 let gx = TILE_SIZE + lx;
@@ -823,11 +895,11 @@ mod tests {
         }
         assert!(
             isolated_differs,
-            "precondition: isolated ED must differ from wavefront at seam"
+            "precondition: isolated ED must differ from strip wavefront at seam"
         );
         assert!(
             export_matches_wavefront,
-            "export composite must match wavefront ED (shared residuals), not isolated tiles"
+            "export composite must match strip ED, not isolated tiles"
         );
     }
 
@@ -849,6 +921,186 @@ mod tests {
                 doc_id: 1,
                 layer_id: 1
             }
+        );
+    }
+
+    /// Palette export must use strip ED (not restart every tile).
+    #[test]
+    fn processed_export_propagates_ed_residuals_with_palette() {
+        use crate::document::Document;
+        use crate::filter::{
+            DitherColorMode, DitherModeV2, DitherParamsV2, FilterInstance, FilterKind, FilterParams,
+            PaletteDitherMode,
+        };
+        use crate::filters::apply::apply_filter_to_tile;
+        use crate::types::DocumentId;
+        use engine_color::palette::LinearColor;
+        use engine_color::palette_cache::PaletteKdCache;
+        use engine_color::palette_lut::PaletteLutCache;
+        use engine_color::threshold_map::ThresholdMapCache;
+
+        let w = 512u32;
+        let h = 256u32;
+        let buf = solid_f32(w, h, [0.45, 0.45, 0.45, 1.0]);
+        let cache = TileCache::new(50_000_000);
+        decompose_image_to_tiles(&buf, w, h, 1, 1, &cache).unwrap();
+
+        let mut doc = Document::new(DocumentId::new(1), w, h);
+        let palette_id = doc.add_palette(
+            "BW".into(),
+            vec![
+                LinearColor { r: 0.0, g: 0.0, b: 0.0 },
+                LinearColor { r: 1.0, g: 1.0, b: 1.0 },
+            ],
+        );
+        let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, w, h);
+        let mut filter = FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::FloydSteinberg,
+                levels: 2,
+                threshold_scale: 1.0,
+                pixel_size: 1,
+                color_mode: DitherColorMode::Rgb,
+                palette_id: Some(palette_id),
+                palette_dither_mode: PaletteDitherMode::Strict,
+                ..Default::default()
+            }),
+        );
+        filter.algorithm_id = Some("floyd_steinberg".into());
+        layer.filters.push(filter);
+        doc.root.push(LayerNode::Leaf(layer.clone()));
+
+        let exported = build_processed_composite_rgba8(&cache, &doc).unwrap();
+        let raw_10 = cache
+            .get_entry(TileKey {
+                doc: 1,
+                layer: 1,
+                coord: TileCoord { level: 0, x: 1, y: 0 },
+                stage: CacheStage::Raw,
+            })
+            .unwrap();
+        let pc = PaletteKdCache::new();
+        let lc = PaletteLutCache::new();
+        let tc = ThresholdMapCache::new();
+        let isolated = apply_filter_to_tile(
+            raw_10.as_ref(),
+            &layer,
+            TileCoord { level: 0, x: 1, y: 0 },
+            &pc,
+            &lc,
+            &tc,
+            &doc,
+        )
+        .unwrap();
+
+        let mut differs = false;
+        for ly in 0..TILE_SIZE {
+            for lx in 0..8 {
+                let dst = ((ly * w + TILE_SIZE + lx) * 4) as usize;
+                let exp = exported[dst] as f32 / 255.0;
+                if (exp - isolated.at(HALO + lx, HALO + ly, 0)).abs() > 1.5 / 255.0 {
+                    differs = true;
+                }
+            }
+        }
+        assert!(differs, "palette export must differ from isolated per-tile ED at the seam");
+    }
+
+    /// FS under Glitch must still use strip ED (stacked path, not single-filter-only).
+    #[test]
+    fn processed_export_strip_ed_when_stacked_with_glitch() {
+        use crate::document::Document;
+        use crate::filter::{
+            DitherColorMode, DitherModeV2, DitherParamsV2, FilterInstance, FilterKind, FilterParams,
+        };
+        use crate::filters::apply::apply_filter_to_tile;
+        use crate::filters::glitch::GlitchType;
+        use crate::types::DocumentId;
+        use engine_color::palette_cache::PaletteKdCache;
+        use engine_color::palette_lut::PaletteLutCache;
+        use engine_color::threshold_map::ThresholdMapCache;
+
+        let w = 512u32;
+        let h = 256u32;
+        let buf = solid_f32(w, h, [0.42, 0.42, 0.42, 1.0]);
+        let cache = TileCache::new(50_000_000);
+        decompose_image_to_tiles(&buf, w, h, 1, 1, &cache).unwrap();
+
+        let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, w, h);
+        // Panel top → bottom: Glitch then FS. Apply order is reverse: FS then Glitch.
+        layer.filters.push(FilterInstance::new(
+            FilterKind::Glitch,
+            FilterParams::Glitch {
+                glitch_type: GlitchType::RGBShift,
+                intensity: 0.35,
+                seed: 7,
+            },
+        ));
+        layer.filters.push(FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::FloydSteinberg,
+                levels: 4,
+                threshold_scale: 1.0,
+                pixel_size: 1,
+                color_mode: DitherColorMode::Rgb,
+                palette_id: None,
+                ..Default::default()
+            }),
+        ));
+        assert!(
+            crate::filters::layer_needs_ed_strip(&layer),
+            "stacked FS+Glitch must take the ED strip path"
+        );
+
+        let mut doc = Document::new(DocumentId::new(1), w, h);
+        doc.root.push(LayerNode::Leaf(layer.clone()));
+
+        let exported = build_processed_composite_rgba8(&cache, &doc).unwrap();
+        let raw_10 = cache
+            .get_entry(TileKey {
+                doc: 1,
+                layer: 1,
+                coord: TileCoord {
+                    level: 0,
+                    x: 1,
+                    y: 0,
+                },
+                stage: CacheStage::Raw,
+            })
+            .unwrap();
+        let pc = PaletteKdCache::new();
+        let lc = PaletteLutCache::new();
+        let tc = ThresholdMapCache::new();
+        let isolated = apply_filter_to_tile(
+            raw_10.as_ref(),
+            &layer,
+            TileCoord {
+                level: 0,
+                x: 1,
+                y: 0,
+            },
+            &pc,
+            &lc,
+            &tc,
+            &doc,
+        )
+        .unwrap();
+
+        let mut differs = false;
+        for ly in 0..TILE_SIZE {
+            for lx in 0..8 {
+                let dst = ((ly * w + TILE_SIZE + lx) * 4) as usize;
+                let exp = exported[dst] as f32 / 255.0;
+                if (exp - isolated.at(HALO + lx, HALO + ly, 0)).abs() > 1.5 / 255.0 {
+                    differs = true;
+                }
+            }
+        }
+        assert!(
+            differs,
+            "stacked FS+Glitch export must use strip ED (differ from isolated tiles at seam)"
         );
     }
 

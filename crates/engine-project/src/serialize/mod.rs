@@ -51,9 +51,9 @@ pub use migrate::{
 };
 pub use pattern::{
     check_app_version_min, export_pattern_from_document, import_pattern_into_document,
-    min_app_version_for_filters, pack_pattern_to_bytes, unpack_pattern_from_bytes,
-    write_pattern_to_path, ImportPatternResult, PalettePayload, PatternExportMeta,
-    PatternFilterFile, PatternManifest, UnpackedPattern,
+    min_app_version_for_filters, pack_pattern_to_bytes, peek_pattern_manifest,
+    unpack_pattern_from_bytes, write_pattern_to_path, ImportPatternResult, PalettePayload,
+    PatternExportMeta, PatternFilterFile, PatternManifest, UnpackedPattern,
 };
 pub use pixels::{
     assemble_layer_png, build_composite_png, build_composite_rgba8,

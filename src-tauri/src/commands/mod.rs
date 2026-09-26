@@ -18,6 +18,8 @@ pub mod color_lab;
 pub use color_lab::*;
 pub mod document;
 pub use document::*;
+pub mod pattern_library;
+pub use pattern_library::*;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};

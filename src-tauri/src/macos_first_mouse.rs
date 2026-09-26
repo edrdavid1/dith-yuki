@@ -7,7 +7,7 @@
 //! consumed by AppKit **for window activation** and never delivered to the
 //! WKWebView. No `mousedown`, no `pointerdown`, no `click` fires in JS — so the
 //! React `onPointerDown` handlers on the Layers "+" button and the
-//! EffectSettingsPanel / EffectChooserDialog tiles never see the first click,
+//! EffectSettingsPanel chooser tiles never see the first click,
 //! and adding a layer/effect requires two clicks.
 //!
 //! Overriding `-[WKWebView acceptsFirstMouse:]` to return YES makes AppKit

@@ -907,6 +907,11 @@ SIMD-ускорение: `levels_row_simd` (wide f32x4) для batch processing 
 **Error diffusion (FS, Atkinson, JJN, Stucki, Burkes, Sierra):**
 - Processing L→R, T→B internal to tile; `serpentine` → odd **global** Y rows R→L, kernel mirrored X
 - Serpentine×wavefront уже сделан в Track M; не переоткрывать без нового seam-бага
+- **Strip ED (as-built):** tile-at-a-time drops below-left `(-1,+1)` into the previous
+  tile → 256 px **pattern** seams (esp. small palettes; also `ps=1`). Layers with any
+  ED use `apply_filter_stack_tile_row_strip` / `apply_error_diffusion_tile_row_strip`
+  (row-interleaved across `tx` for each `ty`). Details: `.local-doc/TILE_FIX`,
+  [tile-pipeline.md](./tile-pipeline.md) §3.2.
 - Known follow-up (margin scaling, `pixel_size>1`): edge/corner residual depth is
   `pixel_size × kernel_max_offset`, not a fixed 2 columns/rows. A seam that appears
   only for `pixel_size>1` (and is clean at `ps=1`) is this buffer, not serpentine.

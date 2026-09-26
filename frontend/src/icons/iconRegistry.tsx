@@ -1,4 +1,6 @@
 import React from 'react';
+import { ArrowLeft } from 'pixelarticons/react/ArrowLeft';
+import { ArrowRight } from 'pixelarticons/react/ArrowRight';
 import { Chart } from 'pixelarticons/react/Chart';
 import { Close } from 'pixelarticons/react/Close';
 import { ColorsSwatch } from 'pixelarticons/react/ColorsSwatch';
@@ -65,6 +67,8 @@ export type IconName =
   | 'layers'
   | 'sidebar-swap'
   | 'focus-mode'
+  | 'arrow-left'
+  | 'arrow-right'
   ;
 
 type PixelIcon = React.ComponentType<React.SVGProps<SVGSVGElement>>;
@@ -103,6 +107,8 @@ const PIXEL_ICONS: Record<string, PixelIcon> = {
   layers: Files,
   'sidebar-swap': FlipHorizontal2,
   'focus-mode': Monitor,
+  'arrow-left': ArrowLeft,
+  'arrow-right': ArrowRight,
 };
 
 export function Icon({

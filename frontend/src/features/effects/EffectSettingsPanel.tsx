@@ -58,6 +58,8 @@ export interface EffectSettingsPanelProps {
   targetLayerId?: number | null;
   onExportPattern?: () => void;
   onImportPattern?: () => void;
+  onSavePattern?: () => void;
+  onLoadPattern?: () => void;
 }
 
 function filterKindToEffectType(kind: FilterKind): EffectType | null {
@@ -142,18 +144,20 @@ export default function EffectSettingsPanel({
   targetLayerId = null,
   onExportPattern,
   onImportPattern,
+  onSavePattern,
+  onLoadPattern,
 }: EffectSettingsPanelProps) {
   const catalog = useAlgorithmCatalog();
   const canUsePattern = targetLayerId != null;
   const patternActions = (
     <div className={cn('pattern-actions')}>
-      <Tooltip label="Export as pattern">
+      <Tooltip label="Export pattern">
         <button
           type="button"
           className={cn('pattern-action-btn')}
           disabled={!canUsePattern}
           onClick={() => onExportPattern?.()}
-          aria-label="Export as pattern"
+          aria-label="Export pattern"
         >
           <Icon name="export" width={16} height={16} />
         </button>
@@ -167,6 +171,28 @@ export default function EffectSettingsPanel({
           aria-label="Import pattern"
         >
           <Icon name="import" width={16} height={16} />
+        </button>
+      </Tooltip>
+      <Tooltip label="Save pattern">
+        <button
+          type="button"
+          className={cn('pattern-action-btn')}
+          disabled={!canUsePattern}
+          onClick={() => onSavePattern?.()}
+          aria-label="Save pattern"
+        >
+          <Icon name="save" width={16} height={16} />
+        </button>
+      </Tooltip>
+      <Tooltip label="Load pattern">
+        <button
+          type="button"
+          className={cn('pattern-action-btn')}
+          disabled={!canUsePattern}
+          onClick={() => onLoadPattern?.()}
+          aria-label="Load pattern"
+        >
+          <Icon name="layers" width={16} height={16} />
         </button>
       </Tooltip>
     </div>

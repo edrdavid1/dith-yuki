@@ -126,13 +126,24 @@
 .pattern-actions {
   display: flex;
   flex-direction: row;
+  align-items: stretch;
   gap: 6px;
-  padding: 10px 10px 12px;
+  padding: 10px 0 12px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.pattern-actions :global([data-tooltip-host]) {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
 }
 
 .pattern-action-btn {
-  height: 28px;
-  width: 36px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 30px;
+  width: 100%;
   padding: 0;
   border: none;
   background: var(--bg-window);

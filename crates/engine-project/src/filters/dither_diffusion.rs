@@ -824,7 +824,444 @@ pub fn apply_error_diffusion_with_cache_into(
     Ok(())
 }
 
-// ─── Halo Copy Helper ────────────────────────────────────────────────────────
+/// Error-diffuse one horizontal tile strip with **row-interleaved** scan.
+///
+/// Tile-at-a-time ED drops kernel taps with `dx < 0` that land in the earlier
+/// tile (FS/Atkinson/JJN below-left). Those taps target the previous tile's
+/// *next* row, so we must finish row `y` of every `tx` before row `y+1` of
+/// `tx-1`. Merging the strip into a wide buffer does that by construction.
+///
+/// `tiles` must be contiguous ascending `tx` at one `ty`. `outputs` matches.
+pub fn apply_error_diffusion_tile_row_strip(
+    tiles: &[(TileCoord, &PixelTile)],
+    params: &DitherParamsV2,
+    residuals_store: &ErrorResidualsStore,
+    layer_id: LayerId,
+    filter_key: u128,
+    palette_cache: &PaletteKdCache,
+    lut_cache: &PaletteLutCache,
+    document: &Document,
+    block_cache: &BlockRepresentativeCache,
+    outputs: &mut [PixelTile],
+) -> Result<(), EngineError> {
+    if tiles.is_empty() {
+        return Ok(());
+    }
+    if tiles.len() == 1 {
+        return apply_error_diffusion_with_cache_into(
+            tiles[0].1,
+            tiles[0].0,
+            params,
+            residuals_store,
+            layer_id,
+            filter_key,
+            palette_cache,
+            lut_cache,
+            document,
+            block_cache,
+            &mut outputs[0],
+        );
+    }
+    if outputs.len() != tiles.len() {
+        return Err(EngineError::invalid_filter_params(
+            "ED strip: outputs length must match tiles",
+        ));
+    }
+
+    let n = tiles.len();
+    let first_tx = tiles[0].0.x;
+    let ty = tiles[0].0.y;
+    let level = tiles[0].0.level;
+    for (i, (c, _)) in tiles.iter().enumerate() {
+        if c.level != level || c.y != ty || c.x != first_tx + i as u32 {
+            return Err(EngineError::invalid_filter_params(
+                "ED strip: need contiguous ascending tx in one ty",
+            ));
+        }
+    }
+
+    let levels = params.levels as f32;
+    let ps = params.pixel_size.max(1) as u32;
+    let kernel = params.mode.diffusion_kernel().ok_or_else(|| {
+        EngineError::invalid_filter_params("error diffusion strip called with ordered mode")
+    })?;
+    let serpentine = matches!(
+        kernel,
+        DiffusionKernel::Ostromoukhov | DiffusionKernel::ZhouFang
+    ) || params.serpentine;
+    let margin = kernel.edge_margin(ps);
+    let wide = n * SIZE;
+
+    let palette_quant = if let Some(palette_id) = params.palette_id {
+        let palette = document
+            .get_palette(palette_id)
+            .ok_or_else(|| EngineError::palette_not_found(palette_id))?;
+        match params.palette_dither_mode {
+            PaletteDitherMode::Guided { channel_levels } => PaletteQuant::Guided {
+                ranges: lut_cache.channel_ranges(document.id.0, palette),
+                levels: channel_levels.unwrap_or_else(|| default_channel_levels(palette)),
+            },
+            PaletteDitherMode::Mixed { channel_levels } => PaletteQuant::Mixed {
+                ranges: lut_cache.channel_ranges(document.id.0, palette),
+                levels: channel_levels.unwrap_or_else(|| default_channel_levels(palette)),
+                picker: if params.match_by_brightness {
+                    OrderedPalettePicker::with_match_by_brightness(palette, true)
+                } else {
+                    OrderedPalettePicker::new(palette)
+                },
+            },
+            PaletteDitherMode::Simple => PaletteQuant::Simple(SimpleRgbPicker::new(palette)),
+            PaletteDitherMode::Strict if params.match_by_brightness => {
+                let sorted = BrightnessSortedPalette::build(palette)
+                    .map_err(|_| EngineError::palette_not_found(palette_id))?;
+                PaletteQuant::StrictBrightness { palette, sorted }
+            }
+            PaletteDitherMode::Strict => {
+                let lut = lut_cache
+                    .get_or_build(document.id.0, palette, palette_cache, DEFAULT_LUT_SIZE)
+                    .map_err(|_| EngineError::palette_not_found(palette_id))?;
+                PaletteQuant::Strict { palette, lut }
+            }
+        }
+    } else {
+        PaletteQuant::Uniform
+    };
+
+    let mut src = vec![0.0f32; wide * SIZE * 4];
+    let mut out = vec![0.0f32; wide * SIZE * 4];
+    let mut err = vec![0.0f32; wide * SIZE * 3];
+    let mut bottom = vec![0.0f32; margin.max(1) * wide * 3];
+
+    for (ti, &(_, tile)) in tiles.iter().enumerate() {
+        let x0 = ti * SIZE;
+        for y in 0..SIZE {
+            for x in 0..SIZE {
+                let di = (y * wide + x0 + x) * 4;
+                let sx = HALO + x as u32;
+                let sy = HALO + y as u32;
+                src[di] = tile.at(sx, sy, 0);
+                src[di + 1] = tile.at(sx, sy, 1);
+                src[di + 2] = tile.at(sx, sy, 2);
+                src[di + 3] = tile.at(sx, sy, 3);
+            }
+        }
+        outputs[ti].copy_halo_from(tile);
+    }
+
+    let doc = document.id.0;
+    for (ti, &(coord, _)) in tiles.iter().enumerate() {
+        let x0 = ti * SIZE;
+        if let Some(top) = residuals_store.get_top(doc, layer_id, filter_key, coord) {
+            let m = top.margin.min(SIZE);
+            for row in 0..m {
+                for col in 0..SIZE {
+                    let s = (row * SIZE + col) * 3;
+                    let d = (row * wide + x0 + col) * 3;
+                    err[d] += top.bottom[s];
+                    err[d + 1] += top.bottom[s + 1];
+                    err[d + 2] += top.bottom[s + 2];
+                }
+            }
+        }
+        if ti == 0 {
+            if let Some(diag) = residuals_store.get_diag(doc, layer_id, filter_key, coord) {
+                let m = diag.margin.min(SIZE);
+                for row in 0..m {
+                    for col in 0..m {
+                        let s = (row * diag.margin + col) * 3;
+                        let d = (row * wide + col) * 3;
+                        err[d] += diag.corner[s];
+                        err[d + 1] += diag.corner[s + 1];
+                        err[d + 2] += diag.corner[s + 2];
+                    }
+                }
+            }
+        }
+    }
+
+    let step = ps.max(1) as i32;
+    let origin_gx = first_tx as i32 * TILE_SIZE as i32;
+    let origin_gy = ty as i32 * TILE_SIZE as i32;
+
+    for y in 0..SIZE {
+        let gy = origin_gy + y as i32;
+        let scan_parity = if ps > 1 { gy.div_euclid(step) } else { gy };
+        let row_dir = row_direction(serpentine, scan_parity);
+        for i in 0..wide {
+            let x = if row_dir > 0 { i } else { wide - 1 - i };
+            let gx = origin_gx + x as i32;
+            let block_gx = if ps > 1 {
+                gx.div_euclid(step) * step
+            } else {
+                gx
+            };
+            let block_gy = if ps > 1 {
+                gy.div_euclid(step) * step
+            } else {
+                gy
+            };
+            let is_rep = gx == block_gx && gy == block_gy;
+
+            let si = (y * wide + x) * 4;
+            let ei = (y * wide + x) * 3;
+            out[si + 3] = params.map_alpha(src[si + 3], 0.5);
+
+            if ps > 1 && !is_rep {
+                // Mega-pixel non-reps: copy the block representative. Within this
+                // strip that is usually an earlier scan pixel; across vertical
+                // strip boundaries the rep lives on the previous ty and must
+                // come from BlockRepresentativeCache (same as single-tile ED).
+                // Falling back to per-pixel quantize here cuts blocks in half at
+                // y = k·TILE_SIZE and draws hard tile lines when pixel_size > 1.
+                let rep_x = (block_gx - origin_gx) as isize;
+                let rep_y = (block_gy - origin_gy) as isize;
+                let in_strip = rep_x >= 0
+                    && rep_y >= 0
+                    && (rep_x as usize) < wide
+                    && (rep_y as usize) < SIZE;
+                let rep_already = in_strip
+                    && ((rep_y as usize) < y
+                        || ((rep_y as usize) == y
+                            && ((row_dir > 0 && (rep_x as usize) < x)
+                                || (row_dir < 0 && (rep_x as usize) > x))));
+
+                if rep_already {
+                    let ri = (rep_y as usize * wide + rep_x as usize) * 4;
+                    out[si] = out[ri];
+                    out[si + 1] = out[ri + 1];
+                    out[si + 2] = out[ri + 2];
+                    out[si + 3] = out[ri + 3];
+                } else if block_gx >= 0 && block_gy >= 0 {
+                    let key = BlockCoord::from_global(
+                        document.id.0,
+                        layer_id.0,
+                        block_gx as u32,
+                        block_gy as u32,
+                        ps,
+                    );
+                    if let Some(rgb) = block_cache.get_dithered(key, filter_key) {
+                        out[si] = rgb[0];
+                        out[si + 1] = rgb[1];
+                        out[si + 2] = rgb[2];
+                        if let Some(px) = block_cache.get_raw(key) {
+                            out[si + 3] = params.map_alpha(px[3], 0.5);
+                        } else if in_strip {
+                            let ri = (rep_y as usize * wide + rep_x as usize) * 4;
+                            out[si + 3] = params.map_alpha(src[ri + 3], 0.5);
+                        }
+                    } else {
+                        let (sr, sg, sb, sa) = if let Some(px) = block_cache.get_raw(key) {
+                            (px[0], px[1], px[2], px[3])
+                        } else if in_strip {
+                            let ri = (rep_y as usize * wide + rep_x as usize) * 4;
+                            (src[ri], src[ri + 1], src[ri + 2], src[ri + 3])
+                        } else {
+                            (src[si], src[si + 1], src[si + 2], src[si + 3])
+                        };
+                        out[si + 3] = params.map_alpha(sa, 0.5);
+                        let (qr, qg, qb) = match params.color_mode {
+                            DitherColorMode::Grayscale => {
+                                let lum = to_luminance(sr, sg, sb);
+                                match &palette_quant {
+                                    PaletteQuant::Uniform => {
+                                        let q = quantize_uniform(lum, levels);
+                                        (q, q, q)
+                                    }
+                                    _ => quantize_ed_rgb(lum, lum, lum, levels, &palette_quant),
+                                }
+                            }
+                            DitherColorMode::Rgb => {
+                                quantize_ed_rgb(sr, sg, sb, levels, &palette_quant)
+                            }
+                        };
+                        out[si] = qr;
+                        out[si + 1] = qg;
+                        out[si + 2] = qb;
+                    }
+                }
+                if params.dither_alpha && out[si + 3] <= 0.0 {
+                    out[si] = 0.0;
+                    out[si + 1] = 0.0;
+                    out[si + 2] = 0.0;
+                }
+                continue;
+            }
+
+            let (src_r, src_g, src_b) = (src[si], src[si + 1], src[si + 2]);
+            let (acc_r, acc_g, acc_b) = (err[ei], err[ei + 1], err[ei + 2]);
+            let (quant_r, quant_g, quant_b, q_err, diffusion_tone);
+
+            match params.color_mode {
+                DitherColorMode::Rgb => {
+                    let adj_r = (src_r + acc_r).clamp(0.0, 1.0);
+                    let adj_g = (src_g + acc_g).clamp(0.0, 1.0);
+                    let adj_b = (src_b + acc_b).clamp(0.0, 1.0);
+                    diffusion_tone =
+                        ostromoukhov_table::tone_from_unit(to_luminance(adj_r, adj_g, adj_b));
+                    let (sr, sg, sb) = if matches!(kernel, DiffusionKernel::ZhouFang) {
+                        (
+                            zhou_fang_table::modulate_unit(adj_r, diffusion_tone, gx, gy),
+                            zhou_fang_table::modulate_unit(adj_g, diffusion_tone, gx, gy),
+                            zhou_fang_table::modulate_unit(adj_b, diffusion_tone, gx, gy),
+                        )
+                    } else {
+                        (adj_r, adj_g, adj_b)
+                    };
+                    if let PaletteQuant::Simple(picker) = &palette_quant {
+                        let (rgb, _) =
+                            simple_ed_step(picker, sr, sg, sb, 0.0, 0.0, 0.0, params.threshold_scale);
+                        quant_r = rgb.0;
+                        quant_g = rgb.1;
+                        quant_b = rgb.2;
+                    } else {
+                        let (qr, qg, qb) = quantize_ed_rgb(sr, sg, sb, levels, &palette_quant);
+                        quant_r = qr;
+                        quant_g = qg;
+                        quant_b = qb;
+                    }
+                    q_err = [adj_r - quant_r, adj_g - quant_g, adj_b - quant_b];
+                }
+                DitherColorMode::Grayscale => {
+                    let lum = to_luminance(src_r, src_g, src_b);
+                    let adj_lum = (lum + acc_r).clamp(0.0, 1.0);
+                    diffusion_tone = ostromoukhov_table::tone_from_unit(adj_lum);
+                    let sample = if matches!(kernel, DiffusionKernel::ZhouFang) {
+                        zhou_fang_table::modulate_unit(adj_lum, diffusion_tone, gx, gy)
+                    } else {
+                        adj_lum
+                    };
+                    if let PaletteQuant::Simple(picker) = &palette_quant {
+                        let (rgb, _) = simple_ed_step(
+                            picker,
+                            sample,
+                            sample,
+                            sample,
+                            0.0,
+                            0.0,
+                            0.0,
+                            params.threshold_scale,
+                        );
+                        quant_r = rgb.0;
+                        quant_g = rgb.1;
+                        quant_b = rgb.2;
+                    } else if matches!(&palette_quant, PaletteQuant::Uniform) {
+                        let q = quantize_uniform(sample, levels);
+                        quant_r = q;
+                        quant_g = q;
+                        quant_b = q;
+                    } else {
+                        let (qr, qg, qb) =
+                            quantize_ed_rgb(sample, sample, sample, levels, &palette_quant);
+                        quant_r = qr;
+                        quant_g = qg;
+                        quant_b = qb;
+                    }
+                    let e = adj_lum - to_luminance(quant_r, quant_g, quant_b);
+                    q_err = [e, e, e];
+                }
+            }
+
+            out[si] = quant_r;
+            out[si + 1] = quant_g;
+            out[si + 2] = quant_b;
+            if params.dither_alpha && out[si + 3] <= 0.0 {
+                out[si] = 0.0;
+                out[si + 1] = 0.0;
+                out[si + 2] = 0.0;
+            }
+
+            if ps > 1 && is_rep && block_gx >= 0 && block_gy >= 0 {
+                let key = BlockCoord::from_global(
+                    document.id.0,
+                    layer_id.0,
+                    block_gx as u32,
+                    block_gy as u32,
+                    ps,
+                );
+                block_cache.insert_dithered(key, filter_key, [quant_r, quant_g, quant_b]);
+            }
+
+            let tone_offsets = ostromoukhov_table::normalized_offsets(diffusion_tone);
+            let offsets: &[(i32, i32, f32)] = match kernel {
+                DiffusionKernel::Ostromoukhov | DiffusionKernel::ZhouFang => &tone_offsets,
+                other => other.offsets(),
+            };
+            for &(dx, dy, weight) in offsets {
+                let nx = x as i32 + dx * row_dir * step;
+                let ny = y as i32 + dy * step;
+                let wr = [q_err[0] * weight, q_err[1] * weight, q_err[2] * weight];
+                if nx >= 0 && (nx as usize) < wide && ny >= 0 && (ny as usize) < SIZE {
+                    let ni = (ny as usize * wide + nx as usize) * 3;
+                    err[ni] += wr[0];
+                    err[ni + 1] += wr[1];
+                    err[ni + 2] += wr[2];
+                } else if ny >= SIZE as i32 && nx >= 0 && (nx as usize) < wide {
+                    let row = ny as usize - SIZE;
+                    if row < margin {
+                        let ni = (row * wide + nx as usize) * 3;
+                        bottom[ni] += wr[0];
+                        bottom[ni + 1] += wr[1];
+                        bottom[ni + 2] += wr[2];
+                    }
+                }
+            }
+        }
+    }
+
+    for (ti, &(coord, _)) in tiles.iter().enumerate() {
+        let x0 = ti * SIZE;
+        for y in 0..SIZE {
+            for x in 0..SIZE {
+                let si = (y * wide + x0 + x) * 4;
+                let dx = HALO + x as u32;
+                let dy = HALO + y as u32;
+                outputs[ti].set(dx, dy, 0, out[si]);
+                outputs[ti].set(dx, dy, 1, out[si + 1]);
+                outputs[ti].set(dx, dy, 2, out[si + 2]);
+                outputs[ti].set(dx, dy, 3, out[si + 3]);
+            }
+        }
+
+        let right = vec![0.0f32; SIZE * margin.max(1) * 3];
+        let mut bottom_t = vec![0.0f32; margin.max(1) * SIZE * 3];
+        let mut corner = vec![0.0f32; margin.max(1) * margin.max(1) * 3];
+        for row in 0..margin {
+            for col in 0..SIZE {
+                let s = (row * wide + x0 + col) * 3;
+                let d = (row * SIZE + col) * 3;
+                bottom_t[d] = bottom[s];
+                bottom_t[d + 1] = bottom[s + 1];
+                bottom_t[d + 2] = bottom[s + 2];
+            }
+        }
+        if ti + 1 < n {
+            for row in 0..margin {
+                for col in 0..margin {
+                    let s = (row * wide + x0 + SIZE + col) * 3;
+                    let d = (row * margin + col) * 3;
+                    corner[d] = bottom[s];
+                    corner[d + 1] = bottom[s + 1];
+                    corner[d + 2] = bottom[s + 2];
+                }
+            }
+        }
+
+        residuals_store.store(
+            doc,
+            layer_id,
+            filter_key,
+            coord,
+            ErrorResiduals {
+                margin,
+                right,
+                bottom: bottom_t,
+                corner,
+            },
+        );
+    }
+
+    Ok(())
+}
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 

@@ -334,6 +334,56 @@ pub fn render_pattern_preview_rgba(
     let rows = h.div_ceil(TILE_SIZE);
     let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
 
+    if crate::filters::layer_needs_ed_strip(&layer) {
+        use crate::filters::apply_filter_stack_tile_row_strip;
+        for ty in 0..rows {
+            let mut coords = Vec::new();
+            let mut raws = Vec::new();
+            for tx in 0..cols {
+                let coord = TileCoord {
+                    level: 0,
+                    x: tx,
+                    y: ty,
+                };
+                let key = TileKey {
+                    doc: doc_id.0,
+                    layer: layer_id.0,
+                    coord,
+                    stage: CacheStage::Raw,
+                };
+                let raw = cache.get_entry(key).ok_or_else(|| {
+                    ProjectError::Codec("pattern preview missing Raw tile".into())
+                })?;
+                coords.push(coord);
+                raws.push(raw);
+            }
+            let strip: Vec<(TileCoord, &PixelTile)> = coords
+                .iter()
+                .zip(raws.iter())
+                .map(|(c, t)| (*c, t.as_ref()))
+                .collect();
+            let mut outputs: Vec<PixelTile> =
+                (0..strip.len()).map(|_| PixelTile::new()).collect();
+            apply_filter_stack_tile_row_strip(
+                &strip,
+                &layer,
+                &palette_cache,
+                &lut_cache,
+                &threshold_cache,
+                &doc,
+                &residuals_store,
+                &block_cache,
+                None,
+                &mut outputs,
+            )
+            .map_err(|e| ProjectError::Codec(format!("pattern preview ED strip: {e}")))?;
+            for (i, coord) in coords.iter().enumerate() {
+                blit_tile_to_rgba8(&outputs[i], coord.x, coord.y, w, h, &mut out);
+            }
+        }
+        return Ok((w, h, out));
+    }
+
     for ty in 0..rows {
         for tx in 0..cols {
             let coord = TileCoord {

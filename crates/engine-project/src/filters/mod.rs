@@ -41,6 +41,7 @@ pub use apply::apply_filter_to_tile;
 pub use apply::apply_filter_to_tile_with_caches;
 pub use apply::apply_filter_to_tile_with_park;
 pub use apply::apply_filter_to_tile_with_residuals;
+pub use apply::{apply_filter_stack_tile_row_strip, layer_needs_ed_strip};
 pub use ascii_job::{
     apply_ascii_rgba, export_ascii_bytes, prepare_layer_for_txt_export, run_ascii_job,
     AsciiExportFormat, AsciiJobResult,
@@ -63,7 +64,9 @@ pub use crate::filter::{DiffusionKernel, DitherMode};
 pub use dither_residuals::{ErrorResiduals, ErrorResidualsStore, CORNER_PATCH};
 
 // Re-export error diffusion engine
-pub use dither_diffusion::{apply_error_diffusion, apply_error_diffusion_with_cache};
+pub use dither_diffusion::{
+    apply_error_diffusion, apply_error_diffusion_tile_row_strip, apply_error_diffusion_with_cache,
+};
 
 // Re-export FilterContext
 pub use context::FilterContext;
