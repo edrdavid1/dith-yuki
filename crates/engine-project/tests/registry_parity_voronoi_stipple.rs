@@ -13,9 +13,7 @@ use engine_project::filters::dither_residuals::ErrorResidualsStore;
 use engine_project::filters::voronoi_stipple;
 use engine_project::types::{DocumentId, LayerId, LayerKind};
 use engine_project::{Document, FilterContext, Layer};
-use engine_registry::{
-    AlgorithmId, AlgorithmRegistry, CpuCheckpointKind, GpuEligibility,
-};
+use engine_registry::{AlgorithmId, AlgorithmRegistry, CpuCheckpointKind, GpuEligibility};
 use engine_tiles::block_cache::BlockRepresentativeCache;
 use engine_tiles::{PixelTile, TileCoord, HALO, TILE_SIZE};
 
@@ -101,8 +99,12 @@ fn registry_parity_voronoi_stipple() {
     );
     let mut via_trait = PixelTile::new();
     via_trait.copy_from(&src);
-    algo.apply(&mut via_trait, &serde_json::to_value(&params).unwrap(), &ctx)
-        .expect("registry apply");
+    algo.apply(
+        &mut via_trait,
+        &serde_json::to_value(&params).unwrap(),
+        &ctx,
+    )
+    .expect("registry apply");
     assert_eq!(expected.data.as_ref(), via_trait.data.as_ref());
 
     let mut layer = Layer::new(layer_id, LayerKind::Raster, 512, 512);
@@ -125,5 +127,7 @@ fn registry_parity_voronoi_stipple() {
 
 #[test]
 fn voronoi_geometry_helpers() {
-    assert!(!voronoi_stipple::voronoi_stipple_ink(0, 0, 0.0, 8.0, 1.0, 1.0));
+    assert!(!voronoi_stipple::voronoi_stipple_ink(
+        0, 0, 0.0, 8.0, 1.0, 1.0
+    ));
 }

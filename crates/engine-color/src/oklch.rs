@@ -24,11 +24,7 @@ impl From<Oklab> for OkLch {
         // atan2(0, 0) is defined as 0.0 in IEEE-754 / Rust — no NaN.
         let c = lab.a.hypot(lab.b);
         let h = lab.b.atan2(lab.a);
-        OkLch {
-            l: lab.l,
-            c,
-            h,
-        }
+        OkLch { l: lab.l, c, h }
     }
 }
 

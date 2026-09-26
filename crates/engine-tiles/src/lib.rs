@@ -44,6 +44,6 @@ pub use decompose::*;
 mod tests {
     #[test]
     fn stub_compiles() {
-        assert!(true);
+        // Crate smoke: modules link.
     }
 }

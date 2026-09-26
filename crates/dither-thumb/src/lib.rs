@@ -343,7 +343,9 @@ mod tests {
             .unwrap();
             zip.write_all(br#"{"format_version":1}"#).unwrap();
             if with_thumb {
-                let rgba = vec![10u8, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255];
+                let rgba = vec![
+                    10u8, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255,
+                ];
                 let png = png_rgba(2, 2, &rgba);
                 zip.start_file("thumbnail.png", stored).unwrap();
                 zip.write_all(&png).unwrap();

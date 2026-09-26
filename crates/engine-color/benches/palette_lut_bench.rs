@@ -112,7 +112,13 @@ fn bench_lut(c: &mut Criterion) {
         &dense
             .colors
             .iter()
-            .map(|c| linear_to_oklab(LinRgb { r: c.r, g: c.g, b: c.b }))
+            .map(|c| {
+                linear_to_oklab(LinRgb {
+                    r: c.r,
+                    g: c.g,
+                    b: c.b,
+                })
+            })
             .collect::<Vec<_>>(),
     )
     .unwrap();

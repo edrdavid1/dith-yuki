@@ -178,7 +178,9 @@ pub fn peek_mimetype(zip_bytes: &[u8]) -> Result<Option<String>, ArchiveError> {
 }
 
 /// Detect archive kind from `mimetype` (canonical or legacy).
-pub fn detect_archive_kind_from_bytes(zip_bytes: &[u8]) -> Option<crate::serialize::migrate::ArchiveKind> {
+pub fn detect_archive_kind_from_bytes(
+    zip_bytes: &[u8],
+) -> Option<crate::serialize::migrate::ArchiveKind> {
     let mime = peek_mimetype(zip_bytes).ok().flatten()?;
     match mime.as_str() {
         MIME_DYPROJ | MIME_DYPROJ_LEGACY => Some(crate::serialize::migrate::ArchiveKind::Dyproj),

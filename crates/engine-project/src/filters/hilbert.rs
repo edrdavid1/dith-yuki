@@ -65,10 +65,7 @@ mod tests {
     /// Canonical order-1 (2×2) Hilbert starting at (0,0), U-shape.
     #[test]
     fn hilbert_2x2_matches_canonical_u_shape() {
-        assert_eq!(
-            hilbert_cells(2, 2),
-            vec![(0, 0), (0, 1), (1, 1), (1, 0)]
-        );
+        assert_eq!(hilbert_cells(2, 2), vec![(0, 0), (0, 1), (1, 1), (1, 0)]);
     }
 
     /// Order-2 (4×4): recursive construction from `hilbert_point` (Hacker's Delight /

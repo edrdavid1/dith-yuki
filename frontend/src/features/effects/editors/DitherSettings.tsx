@@ -180,9 +180,12 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
   ].includes(simpleMode);
   const serpentine = Boolean(params.serpentine);
   const ditherAlpha = params.dither_alpha !== false;
+  const matchByBrightness = Boolean(params.match_by_brightness);
   const paletteDitherMode = params.palette_dither_mode;
   const paletteMode = paletteModeKey(paletteDitherMode);
   const channelLevels = clampParam(guidedChannelLevels(paletteDitherMode) ?? 3, 2, 16);
+  const brightnessMatchAvailable =
+    paletteMode === 'strict' || paletteMode === 'mixed';
 
   const emit = (overrides: Record<string, unknown>) => {
     onUpdate({
@@ -206,6 +209,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
       pattern_angle: overrides.pattern_angle ?? patternAngle,
       serpentine: overrides.serpentine ?? serpentine,
       dither_alpha: overrides.dither_alpha ?? ditherAlpha,
+      match_by_brightness: overrides.match_by_brightness ?? matchByBrightness,
     });
   };
 
@@ -312,6 +316,23 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
           }
         />
       )}
+
+      <label
+        className={cn('param-checkbox-row')}
+        title={
+          brightnessMatchAvailable
+            ? 'Match palette colors by lightness only (ignore hue/chroma)'
+            : 'Available in Strict / Mixed palette dither mode'
+        }
+      >
+        <input
+          type="checkbox"
+          checked={matchByBrightness && brightnessMatchAvailable}
+          disabled={!brightnessMatchAvailable}
+          onChange={(e) => emit({ match_by_brightness: e.target.checked })}
+        />
+        Match by brightness
+      </label>
 
       <Slider
         label="Pixel Size"

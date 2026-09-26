@@ -50,12 +50,7 @@ fn mean_rgb(
 }
 
 /// Reconstruction error: Σ (actual − reconstructed)² × weight.
-fn reconstruct_error(
-    cell_rgba: &[[f32; 3]],
-    coverage: &[u8],
-    fg: [f32; 3],
-    bg: [f32; 3],
-) -> u64 {
+fn reconstruct_error(cell_rgba: &[[f32; 3]], coverage: &[u8], fg: [f32; 3], bg: [f32; 3]) -> u64 {
     let mut err = 0u64;
     for (i, &cov) in coverage.iter().enumerate() {
         let t = cov as f32 / 255.0;
@@ -74,7 +69,11 @@ fn reconstruct_error(
 }
 
 fn u8_to_lin(c: [u8; 3]) -> [f32; 3] {
-    [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0]
+    [
+        c[0] as f32 / 255.0,
+        c[1] as f32 / 255.0,
+        c[2] as f32 / 255.0,
+    ]
 }
 
 /// Best glyph + fg/bg for one cell's linear RGB samples (`cell_w*cell_h` triples).

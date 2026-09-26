@@ -54,7 +54,10 @@ fn is_header_line(line: &str) -> bool {
 fn parse_csv_line(line: &str) -> Result<(u8, u8, u8), String> {
     let parts: Vec<&str> = line.split(',').collect();
     if parts.len() < 3 {
-        return Err(format!("expected 3 comma-separated values, got {}", parts.len()));
+        return Err(format!(
+            "expected 3 comma-separated values, got {}",
+            parts.len()
+        ));
     }
 
     let r = parts[0]
@@ -161,7 +164,11 @@ fn parse_rgb_object(text: &str, start: usize) -> Result<(u8, u8, u8, usize), Pal
     loop {
         pos = skip_whitespace(text, pos);
         if pos >= text.len() {
-            return Err(parse_error("JSON", &format!("char {}", pos), "unexpected end in object"));
+            return Err(parse_error(
+                "JSON",
+                &format!("char {}", pos),
+                "unexpected end in object",
+            ));
         }
         if text.as_bytes()[pos] == b'}' {
             pos += 1;
@@ -179,7 +186,11 @@ fn parse_rgb_object(text: &str, start: usize) -> Result<(u8, u8, u8, usize), Pal
         // Skip colon
         pos = skip_whitespace(text, pos);
         if pos >= text.len() || text.as_bytes()[pos] != b':' {
-            return Err(parse_error("JSON", &format!("char {}", pos), "expected ':'"));
+            return Err(parse_error(
+                "JSON",
+                &format!("char {}", pos),
+                "expected ':'",
+            ));
         }
         pos += 1;
 
@@ -197,9 +208,12 @@ fn parse_rgb_object(text: &str, start: usize) -> Result<(u8, u8, u8, usize), Pal
         }
     }
 
-    let r = r.ok_or_else(|| parse_error("JSON", &format!("char {}", start), "missing 'r' field"))?;
-    let g = g.ok_or_else(|| parse_error("JSON", &format!("char {}", start), "missing 'g' field"))?;
-    let b = b.ok_or_else(|| parse_error("JSON", &format!("char {}", start), "missing 'b' field"))?;
+    let r =
+        r.ok_or_else(|| parse_error("JSON", &format!("char {}", start), "missing 'r' field"))?;
+    let g =
+        g.ok_or_else(|| parse_error("JSON", &format!("char {}", start), "missing 'g' field"))?;
+    let b =
+        b.ok_or_else(|| parse_error("JSON", &format!("char {}", start), "missing 'b' field"))?;
 
     Ok((r, g, b, pos))
 }
@@ -239,7 +253,11 @@ fn parse_json_arrays(text: &str) -> Result<Vec<(u8, u8, u8)>, PaletteError> {
         loop {
             pos = skip_whitespace(text, pos);
             if pos >= text.len() {
-                return Err(parse_error("JSON", &format!("char {}", pos), "unexpected end in array"));
+                return Err(parse_error(
+                    "JSON",
+                    &format!("char {}", pos),
+                    "unexpected end in array",
+                ));
             }
             if text.as_bytes()[pos] == b']' {
                 pos += 1;
@@ -275,7 +293,9 @@ fn parse_json_arrays(text: &str) -> Result<Vec<(u8, u8, u8)>, PaletteError> {
 
 fn skip_whitespace(text: &str, mut pos: usize) -> usize {
     let bytes = text.as_bytes();
-    while pos < bytes.len() && (bytes[pos] == b' ' || bytes[pos] == b'\t' || bytes[pos] == b'\n' || bytes[pos] == b'\r') {
+    while pos < bytes.len()
+        && (bytes[pos] == b' ' || bytes[pos] == b'\t' || bytes[pos] == b'\n' || bytes[pos] == b'\r')
+    {
         pos += 1;
     }
     pos
@@ -293,7 +313,11 @@ fn skip_to(text: &str, mut pos: usize, ch: char) -> usize {
 fn parse_json_string(text: &str, start: usize) -> Result<(String, usize), PaletteError> {
     let bytes = text.as_bytes();
     if start >= bytes.len() || bytes[start] != b'"' {
-        return Err(parse_error("JSON", &format!("char {}", start), "expected '\"'"));
+        return Err(parse_error(
+            "JSON",
+            &format!("char {}", start),
+            "expected '\"'",
+        ));
     }
 
     let mut pos = start + 1;
@@ -317,7 +341,11 @@ fn parse_json_string(text: &str, start: usize) -> Result<(String, usize), Palett
         pos += 1;
     }
 
-    Err(parse_error("JSON", &format!("char {}", start), "unterminated string"))
+    Err(parse_error(
+        "JSON",
+        &format!("char {}", start),
+        "unterminated string",
+    ))
 }
 
 /// Parse a JSON number (integer). Returns (value, position_after_number).
@@ -345,13 +373,21 @@ fn parse_json_number(text: &str, start: usize) -> Result<(i32, usize), PaletteEr
     }
 
     if num_start == pos && !negative {
-        return Err(parse_error("JSON", &format!("char {}", start), "expected number"));
+        return Err(parse_error(
+            "JSON",
+            &format!("char {}", start),
+            "expected number",
+        ));
     }
 
     let num_str = &text[start..pos];
     // Parse as f64 first to handle decimals, then truncate to i32
     let value: f64 = num_str.parse().map_err(|e| {
-        parse_error("JSON", &format!("char {}", start), &format!("invalid number: {}", e))
+        parse_error(
+            "JSON",
+            &format!("char {}", start),
+            &format!("invalid number: {}", e),
+        )
     })?;
 
     Ok((value as i32, pos))

@@ -1,5 +1,10 @@
 //! Center the native macOS window title in the system title bar.
-#![cfg(target_os = "macos")]
+//!
+//! Cocoa/objc APIs are intentionally on the legacy `cocoa` crate until an objc2
+//! migration; suppress deprecation + macro `cargo-clippy` cfg noise here.
+#![allow(deprecated)]
+#![allow(unexpected_cfgs)]
+#![allow(dead_code)] // alternate titlebar path; kept for possible re-enable
 
 use cocoa::base::{id, nil, NO, YES};
 use cocoa::foundation::{NSPoint, NSRect, NSSize, NSString};
@@ -287,7 +292,7 @@ unsafe fn find_by_id(parent: id, id_str: &str) -> Option<id> {
         if ident == nil {
             continue;
         }
-        let equal: BOOLISH = msg_send![ident, isEqual: want];
+        let equal: Boolish = msg_send![ident, isEqual: want];
         if equal != 0 {
             return Some(view);
         }
@@ -303,19 +308,12 @@ unsafe fn layout_views(titlebar: id, host: id, fill: id, label: id) {
     let fitted: NSRect = msg_send![label, frame];
     let host_bounds: NSRect = msg_send![host, bounds];
 
-    let mut title_h = bar_bounds.size.height;
-    if title_h < 16.0 {
-        title_h = 28.0;
-    }
-    let mut title_y = host_bounds.size.height - title_h;
-    if host == titlebar {
-        title_y = 0.0;
-        title_h = host_bounds.size.height;
+    let (title_y, title_h) = if host == titlebar {
+        (0.0, host_bounds.size.height)
     } else {
         let bar_in_host: NSRect = msg_send![host, convertRect: bar_bounds fromView: titlebar];
-        title_y = bar_in_host.origin.y;
-        title_h = bar_in_host.size.height.max(16.0);
-    }
+        (bar_in_host.origin.y, bar_in_host.size.height.max(16.0))
+    };
 
     let max_w = (host_bounds.size.width - 156.0).max(80.0);
     let w = (fitted.size.width.max(40.0) + 8.0).min(max_w);
@@ -331,7 +329,7 @@ unsafe fn sync_label(ns_window: id, label: id) {
     if title != nil {
         let _: () = msg_send![label, setStringValue: title];
     }
-    let is_main: BOOLISH = msg_send![ns_window, isMainWindow];
+    let is_main: Boolish = msg_send![ns_window, isMainWindow];
     let (r, g, b) = if is_main != 0 {
         TITLE_ACTIVE
     } else {
@@ -347,7 +345,7 @@ unsafe fn sync_label(ns_window: id, label: id) {
     let _: () = msg_send![label, setTextColor: color];
 }
 
-type BOOLISH = i8;
+type Boolish = i8;
 
 unsafe fn observe_window(ns_window: id, label: id) {
     use block::ConcreteBlock;
@@ -373,7 +371,7 @@ unsafe fn observe_window(ns_window: id, label: id) {
                 let before: id = msg_send![lbl, stringValue];
                 sync_label(win, lbl);
                 let after: id = msg_send![lbl, stringValue];
-                let unchanged: BOOLISH = if before != nil && after != nil {
+                let unchanged: Boolish = if before != nil && after != nil {
                     msg_send![before, isEqual: after]
                 } else {
                     0

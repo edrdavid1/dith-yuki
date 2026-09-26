@@ -9,6 +9,9 @@ const cn = bind({ ...styles, ...buttonStyles });
 export interface ColorLabFooterProps {
   cancelLabel: 'Reset' | 'Cancel';
   onSort: () => void;
+  /** When false, Auto Interpolate stays disabled (no gaps / too few colors). */
+  canAutoInterpolate?: boolean;
+  onAutoInterpolate?: () => void;
   onCancel: () => void;
   onApply: () => void;
 }
@@ -16,6 +19,8 @@ export interface ColorLabFooterProps {
 export default function ColorLabFooter({
   cancelLabel,
   onSort,
+  canAutoInterpolate = false,
+  onAutoInterpolate,
   onCancel,
   onApply,
 }: ColorLabFooterProps) {
@@ -32,10 +37,17 @@ export default function ColorLabFooter({
             <Icon name="sort" width={16} height={16} />
           </button>
         </Tooltip>
-        <Tooltip label="Auto interpolate">
+        <Tooltip
+          label={
+            canAutoInterpolate
+              ? 'Auto interpolate — fill large brightness gaps'
+              : 'Auto interpolate — no large gaps to fill'
+          }
+        >
           <button
             type="button"
-            disabled
+            disabled={!canAutoInterpolate || !onAutoInterpolate}
+            onClick={onAutoInterpolate}
             className={cn("color-lab-button", "color-lab-button-icon")}
             aria-label="Auto interpolate"
           >

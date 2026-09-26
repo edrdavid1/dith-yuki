@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use engine_tiles::{TileCache, TileKey, TileCoord, CacheStage, PixelTile};
+use engine_tiles::{CacheStage, PixelTile, TileCache, TileCoord, TileKey};
 use std::sync::Arc;
 
 /// Benchmark TileCache::get_or_insert() latency with 1000 tiles.

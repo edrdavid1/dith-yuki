@@ -12,8 +12,8 @@ use std::sync::Arc;
 use crate::kdtree::KdTree;
 use crate::oklab::Oklab;
 use crate::palette::{Palette, PaletteError, PaletteId};
-use crate::palette_guided::{palette_channel_ranges, ChannelRange, PaletteChannelRangeCache};
 use crate::palette_cache::PaletteKdCache;
+use crate::palette_guided::{palette_channel_ranges, ChannelRange, PaletteChannelRangeCache};
 
 /// Default grid resolution (frozen by Track B §1.5 bench, 2026-08-11).
 ///
@@ -402,12 +402,8 @@ mod tests {
                 })
                 .collect(),
         );
-        let _ = lut_cache
-            .get_or_build(1, &large, &kd, 8)
-            .unwrap();
-        let lut_small = lut_cache
-            .get_or_build(2, &small, &kd, 8)
-            .unwrap();
+        let _ = lut_cache.get_or_build(1, &large, &kd, 8).unwrap();
+        let lut_small = lut_cache.get_or_build(2, &small, &kd, 8).unwrap();
         // Every LUT cell for doc2 must index into the 15-color palette.
         for i in 0..lut_small.size() {
             for j in 0..lut_small.size() {
@@ -444,9 +440,7 @@ mod tests {
                 },
             ],
         );
-        let lut1 = lut_cache
-            .get_or_build(1, &v1, &kd, 8)
-            .unwrap();
+        let lut1 = lut_cache.get_or_build(1, &v1, &kd, 8).unwrap();
 
         let v2 = make_palette(
             1,
@@ -464,9 +458,7 @@ mod tests {
                 },
             ],
         );
-        let lut2 = lut_cache
-            .get_or_build(1, &v2, &kd, 8)
-            .unwrap();
+        let lut2 = lut_cache.get_or_build(1, &v2, &kd, 8).unwrap();
         assert!(!Arc::ptr_eq(&lut1, &lut2));
 
         let query = linear_to_oklab(LinRgb {

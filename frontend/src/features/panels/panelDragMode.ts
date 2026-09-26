@@ -54,10 +54,20 @@ function isOverOpposite(
   return clientX >= viewportWidth - emptyEdgePx;
 }
 
-/** Clamp vertical split ratio used by DockedSidebar. */
+/** Clamp vertical split ratio (shell presets / legacy stack math). */
 export function clampSplitRatio(ratio: number): number {
   if (!Number.isFinite(ratio)) return 0.5;
   return Math.min(0.8, Math.max(0.2, ratio));
+}
+
+/** Column grid width for a Flex sidebar: 0 if empty, 40 if collapsed, else preferred. */
+export function sidebarColumnWidth(
+  hasDocked: boolean,
+  collapsed: boolean,
+  width: number
+): number {
+  if (!hasDocked) return 0;
+  return collapsed ? 40 : width;
 }
 
 /**

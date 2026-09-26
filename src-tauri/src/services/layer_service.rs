@@ -41,6 +41,7 @@ pub struct ReorderLayerRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)] // DTO kept for forward-compat with richer set_layer_props payloads
 pub struct LayerPropsPatchDto {
     pub name: Option<String>,
     pub opacity: Option<f32>,

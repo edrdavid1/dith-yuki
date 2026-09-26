@@ -11,6 +11,6 @@ pub mod commands;
 pub mod roster;
 pub mod signals;
 
-pub use meta::{list_metas, recovery_subdir, JournalMeta, JOURNAL_MAX_BYTES};
+pub use meta::recovery_subdir;
 pub use runtime::{schedule_dirty, set_recovery_dir, start_heartbeat, JournalRuntime};
 pub use write::{delete_journal, write_journal_for_doc};

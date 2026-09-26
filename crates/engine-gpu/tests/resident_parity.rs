@@ -2,20 +2,18 @@
 
 use std::sync::{Arc, OnceLock};
 
+use engine_gpu::resident::default_vram_config;
 use engine_gpu::{
     compile_graph, palette_guided_params, palette_mixed_params_from_palette,
     palette_quantize_params_from_lut, BayerPassParams, CrtPassParams, GpuCompositeFrameJob,
-    GpuCompositeLayerOp, GpuCompositeTileWork, GpuContext, GpuExecutor, GpuFrameJob, GpuTileCache,
-    GpuTileWork, GraphLayerFilter, GpuPipelineKey, HalftonePassParams,
+    GpuCompositeLayerOp, GpuCompositeTileWork, GpuContext, GpuExecutor, GpuFrameJob,
+    GpuPipelineKey, GpuTileCache, GpuTileWork, GraphLayerFilter, HalftonePassParams,
 };
-use engine_gpu::resident::default_vram_config;
 use engine_tiles::{CacheStage, PixelTile, TileCoord, TileKey};
 
 fn shared_test_ctx() -> Arc<GpuContext> {
     static CTX: OnceLock<Arc<GpuContext>> = OnceLock::new();
-    Arc::clone(CTX.get_or_init(|| {
-        Arc::new(GpuContext::try_new_blocking().expect("adapter"))
-    }))
+    Arc::clone(CTX.get_or_init(|| Arc::new(GpuContext::try_new_blocking().expect("adapter"))))
 }
 
 fn test_cache(ctx: &GpuContext) -> GpuTileCache {
@@ -68,14 +66,86 @@ fn bayer_threshold_i32(gx: i32, gy: i32, matrix: u32) -> f32 {
             let mx = (gx as i64).rem_euclid(8) as usize;
             let my = (gy as i64).rem_euclid(8) as usize;
             const M: [[f32; 8]; 8] = [
-                [0.0 / 64.0, 32.0 / 64.0, 8.0 / 64.0, 40.0 / 64.0, 2.0 / 64.0, 34.0 / 64.0, 10.0 / 64.0, 42.0 / 64.0],
-                [48.0 / 64.0, 16.0 / 64.0, 56.0 / 64.0, 24.0 / 64.0, 50.0 / 64.0, 18.0 / 64.0, 58.0 / 64.0, 26.0 / 64.0],
-                [12.0 / 64.0, 44.0 / 64.0, 4.0 / 64.0, 36.0 / 64.0, 14.0 / 64.0, 46.0 / 64.0, 6.0 / 64.0, 38.0 / 64.0],
-                [60.0 / 64.0, 28.0 / 64.0, 52.0 / 64.0, 20.0 / 64.0, 62.0 / 64.0, 30.0 / 64.0, 54.0 / 64.0, 22.0 / 64.0],
-                [3.0 / 64.0, 35.0 / 64.0, 11.0 / 64.0, 43.0 / 64.0, 1.0 / 64.0, 33.0 / 64.0, 9.0 / 64.0, 41.0 / 64.0],
-                [51.0 / 64.0, 19.0 / 64.0, 59.0 / 64.0, 27.0 / 64.0, 49.0 / 64.0, 17.0 / 64.0, 57.0 / 64.0, 25.0 / 64.0],
-                [15.0 / 64.0, 47.0 / 64.0, 7.0 / 64.0, 39.0 / 64.0, 13.0 / 64.0, 45.0 / 64.0, 5.0 / 64.0, 37.0 / 64.0],
-                [63.0 / 64.0, 31.0 / 64.0, 55.0 / 64.0, 23.0 / 64.0, 61.0 / 64.0, 29.0 / 64.0, 53.0 / 64.0, 21.0 / 64.0],
+                [
+                    0.0 / 64.0,
+                    32.0 / 64.0,
+                    8.0 / 64.0,
+                    40.0 / 64.0,
+                    2.0 / 64.0,
+                    34.0 / 64.0,
+                    10.0 / 64.0,
+                    42.0 / 64.0,
+                ],
+                [
+                    48.0 / 64.0,
+                    16.0 / 64.0,
+                    56.0 / 64.0,
+                    24.0 / 64.0,
+                    50.0 / 64.0,
+                    18.0 / 64.0,
+                    58.0 / 64.0,
+                    26.0 / 64.0,
+                ],
+                [
+                    12.0 / 64.0,
+                    44.0 / 64.0,
+                    4.0 / 64.0,
+                    36.0 / 64.0,
+                    14.0 / 64.0,
+                    46.0 / 64.0,
+                    6.0 / 64.0,
+                    38.0 / 64.0,
+                ],
+                [
+                    60.0 / 64.0,
+                    28.0 / 64.0,
+                    52.0 / 64.0,
+                    20.0 / 64.0,
+                    62.0 / 64.0,
+                    30.0 / 64.0,
+                    54.0 / 64.0,
+                    22.0 / 64.0,
+                ],
+                [
+                    3.0 / 64.0,
+                    35.0 / 64.0,
+                    11.0 / 64.0,
+                    43.0 / 64.0,
+                    1.0 / 64.0,
+                    33.0 / 64.0,
+                    9.0 / 64.0,
+                    41.0 / 64.0,
+                ],
+                [
+                    51.0 / 64.0,
+                    19.0 / 64.0,
+                    59.0 / 64.0,
+                    27.0 / 64.0,
+                    49.0 / 64.0,
+                    17.0 / 64.0,
+                    57.0 / 64.0,
+                    25.0 / 64.0,
+                ],
+                [
+                    15.0 / 64.0,
+                    47.0 / 64.0,
+                    7.0 / 64.0,
+                    39.0 / 64.0,
+                    13.0 / 64.0,
+                    45.0 / 64.0,
+                    5.0 / 64.0,
+                    37.0 / 64.0,
+                ],
+                [
+                    63.0 / 64.0,
+                    31.0 / 64.0,
+                    55.0 / 64.0,
+                    23.0 / 64.0,
+                    61.0 / 64.0,
+                    29.0 / 64.0,
+                    53.0 / 64.0,
+                    21.0 / 64.0,
+                ],
             ];
             M[my][mx]
         }
@@ -127,10 +197,7 @@ fn cpu_bayer_core(
             let gx = (ox + x) as i32;
             let gy = (oy + y) as i32;
             let (pgx, pgy) = rotate_pattern_coord(gx, gy, pattern_angle);
-            let t = apply_threshold_bias(
-                bayer_threshold_i32(pgx, pgy, matrix),
-                threshold_bias,
-            );
+            let t = apply_threshold_bias(bayer_threshold_i32(pgx, pgy, matrix), threshold_bias);
             let offset = (t - 0.5) * threshold_scale;
             let sx = x + 2;
             let sy = y + 2;
@@ -205,22 +272,21 @@ fn run_resident_bayer_parity(
         }
     }
 
-    executor.submit_frame_blocking(GpuFrameJob {
-        doc_gen: 1,
-        graph,
-        speculative: false,
-        tiles: vec![GpuTileWork {
-            key,
-            coord: key.coord,
-            generation: 1,
-            pixels: Arc::new(raw),
-        }],
-    }).expect("gpu submit");
+    executor
+        .submit_frame_blocking(GpuFrameJob {
+            doc_gen: 1,
+            graph,
+            speculative: false,
+            tiles: vec![GpuTileWork {
+                key,
+                coord: key.coord,
+                generation: 1,
+                pixels: Arc::new(raw),
+            }],
+        })
+        .expect("gpu submit");
 
-    let gpu_tile = cache
-        .demote(&ctx, &key)
-        .expect("demote")
-        .expect("slot");
+    let gpu_tile = cache.demote(&ctx, &key).expect("demote").expect("slot");
 
     assert_tile_matches_cpu(&gpu_tile, &cpu);
     executor.shutdown();
@@ -276,12 +342,7 @@ fn resident_bayer4_seam_2x2() {
         .expect("graph"),
     );
 
-    let tiles = [
-        (0u32, 0u32),
-        (1u32, 0u32),
-        (0u32, 1u32),
-        (1u32, 1u32),
-    ];
+    let tiles = [(0u32, 0u32), (1u32, 0u32), (0u32, 1u32), (1u32, 1u32)];
     let mut works = Vec::new();
     for (tx, ty) in tiles {
         let coord = TileCoord {
@@ -303,12 +364,14 @@ fn resident_bayer4_seam_2x2() {
         });
     }
 
-    executor.submit_frame_blocking(GpuFrameJob {
-        doc_gen: 1,
-        graph,
-        speculative: false,
-        tiles: works,
-    }).expect("gpu submit");
+    executor
+        .submit_frame_blocking(GpuFrameJob {
+            doc_gen: 1,
+            graph,
+            speculative: false,
+            tiles: works,
+        })
+        .expect("gpu submit");
 
     for (tx, ty) in tiles {
         let coord = TileCoord {
@@ -323,10 +386,7 @@ fn resident_bayer4_seam_2x2() {
             stage: CacheStage::Processed,
         };
         let cpu = cpu_bayer_core(&raw, tx, ty, 4, 4, 1.0, 0.0, 0.0);
-        let gpu_tile = cache
-            .demote(&ctx, &key)
-            .expect("demote")
-            .expect("slot");
+        let gpu_tile = cache.demote(&ctx, &key).expect("demote").expect("slot");
         assert_tile_matches_cpu(&gpu_tile, &cpu);
     }
     executor.shutdown();
@@ -468,22 +528,21 @@ fn run_resident_halftone_parity(grayscale: bool) {
         .expect("graph"),
     );
 
-    executor.submit_frame_blocking(GpuFrameJob {
-        doc_gen: 1,
-        graph,
-        speculative: false,
-        tiles: vec![GpuTileWork {
-            key,
-            coord: key.coord,
-            generation: 1,
-            pixels: Arc::new(raw),
-        }],
-    }).expect("gpu submit");
+    executor
+        .submit_frame_blocking(GpuFrameJob {
+            doc_gen: 1,
+            graph,
+            speculative: false,
+            tiles: vec![GpuTileWork {
+                key,
+                coord: key.coord,
+                generation: 1,
+                pixels: Arc::new(raw),
+            }],
+        })
+        .expect("gpu submit");
 
-    let gpu_tile = cache
-        .demote(&ctx, &key)
-        .expect("demote")
-        .expect("slot");
+    let gpu_tile = cache.demote(&ctx, &key).expect("demote").expect("slot");
 
     assert_tile_within_eps(&gpu_tile, &cpu, HALFTONE_PARITY_EPS);
     executor.shutdown();
@@ -541,12 +600,14 @@ fn resident_halftone_seam_2x1() {
         });
     }
 
-    executor.submit_frame_blocking(GpuFrameJob {
-        doc_gen: 1,
-        graph,
-        speculative: false,
-        tiles: works,
-    }).expect("gpu submit");
+    executor
+        .submit_frame_blocking(GpuFrameJob {
+            doc_gen: 1,
+            graph,
+            speculative: false,
+            tiles: works,
+        })
+        .expect("gpu submit");
 
     for (tx, ty) in tiles {
         let coord = TileCoord {
@@ -561,10 +622,7 @@ fn resident_halftone_seam_2x1() {
             stage: CacheStage::Processed,
         };
         let cpu = cpu_halftone_core(&raw, tx, ty, 8.0, 1.0, false);
-        let gpu_tile = cache
-            .demote(&ctx, &key)
-            .expect("demote")
-            .expect("slot");
+        let gpu_tile = cache.demote(&ctx, &key).expect("demote").expect("slot");
         assert_tile_within_eps(&gpu_tile, &cpu, HALFTONE_PARITY_EPS);
     }
     executor.shutdown();
@@ -667,22 +725,21 @@ fn run_resident_crt_parity(period: u8, strength: f32, mask_strength: f32) {
         .expect("graph"),
     );
 
-    executor.submit_frame_blocking(GpuFrameJob {
-        doc_gen: 1,
-        graph,
-        speculative: false,
-        tiles: vec![GpuTileWork {
-            key,
-            coord: key.coord,
-            generation: 1,
-            pixels: Arc::new(raw),
-        }],
-    }).expect("gpu submit");
+    executor
+        .submit_frame_blocking(GpuFrameJob {
+            doc_gen: 1,
+            graph,
+            speculative: false,
+            tiles: vec![GpuTileWork {
+                key,
+                coord: key.coord,
+                generation: 1,
+                pixels: Arc::new(raw),
+            }],
+        })
+        .expect("gpu submit");
 
-    let gpu_tile = cache
-        .demote(&ctx, &key)
-        .expect("demote")
-        .expect("slot");
+    let gpu_tile = cache.demote(&ctx, &key).expect("demote").expect("slot");
 
     assert_tile_within_eps(&gpu_tile, &cpu, CRT_PARITY_EPS);
     executor.shutdown();
@@ -739,12 +796,14 @@ fn resident_crt_horizontal_seam() {
         });
     }
 
-    executor.submit_frame_blocking(GpuFrameJob {
-        doc_gen: 1,
-        graph,
-        speculative: false,
-        tiles: works,
-    }).expect("gpu submit");
+    executor
+        .submit_frame_blocking(GpuFrameJob {
+            doc_gen: 1,
+            graph,
+            speculative: false,
+            tiles: works,
+        })
+        .expect("gpu submit");
 
     for (tx, ty) in tiles {
         let coord = TileCoord {
@@ -759,10 +818,7 @@ fn resident_crt_horizontal_seam() {
             stage: CacheStage::Processed,
         };
         let cpu = cpu_crt_core(&raw, tx, ty, 2, 0.5, 0.0);
-        let gpu_tile = cache
-            .demote(&ctx, &key)
-            .expect("demote")
-            .expect("slot");
+        let gpu_tile = cache.demote(&ctx, &key).expect("demote").expect("slot");
         assert_tile_within_eps(&gpu_tile, &cpu, CRT_PARITY_EPS);
     }
 
@@ -816,11 +872,13 @@ fn build_test_palette_params(lut_size: u32) -> engine_gpu::PaletteQuantizePassPa
     let labs: Vec<_> = palette
         .colors
         .iter()
-        .map(|c| linear_to_oklab(LinRgb {
-            r: c.r,
-            g: c.g,
-            b: c.b,
-        }))
+        .map(|c| {
+            linear_to_oklab(LinRgb {
+                r: c.r,
+                g: c.g,
+                b: c.b,
+            })
+        })
         .collect();
     let tree = KdTree::build(&labs).expect("kd");
     let lut = PaletteLut3D::build(&palette, lut_size, &tree).expect("lut");
@@ -891,27 +949,24 @@ fn resident_palette_quantize_matches_cpu() {
         stage: CacheStage::Processed,
     };
 
-    let graph = Arc::new(
-        compile_graph(&[GraphLayerFilter::PaletteQuantize(params)])
-            .expect("graph"),
-    );
+    let graph =
+        Arc::new(compile_graph(&[GraphLayerFilter::PaletteQuantize(params)]).expect("graph"));
 
-    executor.submit_frame_blocking(GpuFrameJob {
-        doc_gen: 1,
-        graph,
-        speculative: false,
-        tiles: vec![GpuTileWork {
-            key,
-            coord: key.coord,
-            generation: 1,
-            pixels: Arc::new(raw),
-        }],
-    }).expect("gpu submit");
+    executor
+        .submit_frame_blocking(GpuFrameJob {
+            doc_gen: 1,
+            graph,
+            speculative: false,
+            tiles: vec![GpuTileWork {
+                key,
+                coord: key.coord,
+                generation: 1,
+                pixels: Arc::new(raw),
+            }],
+        })
+        .expect("gpu submit");
 
-    let gpu_tile = cache
-        .demote(&ctx, &key)
-        .expect("demote")
-        .expect("slot");
+    let gpu_tile = cache.demote(&ctx, &key).expect("demote").expect("slot");
 
     // Oklab cbrt can differ by 1 ULP across CPU/GPU → allow tiny channel eps.
     assert_tile_within_eps(&gpu_tile, &cpu, 1e-5);
@@ -1142,15 +1197,7 @@ fn resident_palette_guided_matches_cpu() {
 
     let palette = test_bw_palette();
     let ranges = palette_channel_ranges(&palette);
-    let params = palette_guided_params(
-        GpuPipelineKey::Bayer4,
-        4,
-        1.0,
-        0,
-        0.0,
-        0.0,
-        ranges,
-    );
+    let params = palette_guided_params(GpuPipelineKey::Bayer4, 4, 1.0, 0, 0.0, 0.0, ranges);
     let raw = gradient_tile();
     let cpu = cpu_guided_core(&raw, 0, 0, 4, &params);
 
@@ -1164,24 +1211,21 @@ fn resident_palette_guided_matches_cpu() {
         },
         stage: CacheStage::Processed,
     };
-    let graph = Arc::new(
-        compile_graph(&[GraphLayerFilter::PaletteGuided(params)]).expect("graph"),
-    );
-    executor.submit_frame_blocking(GpuFrameJob {
-        doc_gen: 1,
-        graph,
-        speculative: false,
-        tiles: vec![GpuTileWork {
-            key,
-            coord: key.coord,
-            generation: 1,
-            pixels: Arc::new(raw),
-        }],
-    }).expect("gpu submit");
-    let gpu_tile = cache
-        .demote(&ctx, &key)
-        .expect("demote")
-        .expect("slot");
+    let graph = Arc::new(compile_graph(&[GraphLayerFilter::PaletteGuided(params)]).expect("graph"));
+    executor
+        .submit_frame_blocking(GpuFrameJob {
+            doc_gen: 1,
+            graph,
+            speculative: false,
+            tiles: vec![GpuTileWork {
+                key,
+                coord: key.coord,
+                generation: 1,
+                pixels: Arc::new(raw),
+            }],
+        })
+        .expect("gpu submit");
+    let gpu_tile = cache.demote(&ctx, &key).expect("demote").expect("slot");
     assert_tile_matches_cpu(&gpu_tile, &cpu);
     executor.shutdown();
 }
@@ -1197,15 +1241,7 @@ fn resident_palette_mixed_matches_cpu() {
 
     let palette = test_bw_palette();
     let ranges = palette_channel_ranges(&palette);
-    let guided = palette_guided_params(
-        GpuPipelineKey::Bayer4,
-        4,
-        1.0,
-        0,
-        0.0,
-        0.0,
-        ranges,
-    );
+    let guided = palette_guided_params(GpuPipelineKey::Bayer4, 4, 1.0, 0, 0.0, 0.0, ranges);
     let mixed = palette_mixed_params_from_palette(guided, &palette);
     let raw = gradient_tile();
     let cpu = cpu_mixed_core(&raw, 0, 0, 4, &mixed);
@@ -1220,24 +1256,21 @@ fn resident_palette_mixed_matches_cpu() {
         },
         stage: CacheStage::Processed,
     };
-    let graph = Arc::new(
-        compile_graph(&[GraphLayerFilter::PaletteMixed(mixed)]).expect("graph"),
-    );
-    executor.submit_frame_blocking(GpuFrameJob {
-        doc_gen: 1,
-        graph,
-        speculative: false,
-        tiles: vec![GpuTileWork {
-            key,
-            coord: key.coord,
-            generation: 1,
-            pixels: Arc::new(raw),
-        }],
-    }).expect("gpu submit");
-    let gpu_tile = cache
-        .demote(&ctx, &key)
-        .expect("demote")
-        .expect("slot");
+    let graph = Arc::new(compile_graph(&[GraphLayerFilter::PaletteMixed(mixed)]).expect("graph"));
+    executor
+        .submit_frame_blocking(GpuFrameJob {
+            doc_gen: 1,
+            graph,
+            speculative: false,
+            tiles: vec![GpuTileWork {
+                key,
+                coord: key.coord,
+                generation: 1,
+                pixels: Arc::new(raw),
+            }],
+        })
+        .expect("gpu submit");
+    let gpu_tile = cache.demote(&ctx, &key).expect("demote").expect("slot");
     // Oklab + sqrt mix can be 1 ULP off vs CPU.
     assert_tile_within_eps(&gpu_tile, &cpu, 1e-5);
     executor.shutdown();
@@ -1364,29 +1397,31 @@ fn resident_composite_two_layers_normal() {
         stage: CacheStage::Composite,
     };
 
-    executor.submit_composite_blocking(GpuCompositeFrameJob {
-        doc_gen: 1,
-        speculative: false,
-        tiles: vec![GpuCompositeTileWork {
-            coord,
-            composite_key,
-            generation: 1,
-            layers: vec![
-                GpuCompositeLayerOp {
-                    processed_key: bottom_key,
-                    blend_mode: 0,
-                    opacity: 1.0,
-                    pixels: Some(Arc::clone(&bottom)),
-                },
-                GpuCompositeLayerOp {
-                    processed_key: top_key,
-                    blend_mode: 0,
-                    opacity: 0.5,
-                    pixels: Some(Arc::clone(&top)),
-                },
-            ],
-        }],
-    }).expect("gpu submit");
+    executor
+        .submit_composite_blocking(GpuCompositeFrameJob {
+            doc_gen: 1,
+            speculative: false,
+            tiles: vec![GpuCompositeTileWork {
+                coord,
+                composite_key,
+                generation: 1,
+                layers: vec![
+                    GpuCompositeLayerOp {
+                        processed_key: bottom_key,
+                        blend_mode: 0,
+                        opacity: 1.0,
+                        pixels: Some(Arc::clone(&bottom)),
+                    },
+                    GpuCompositeLayerOp {
+                        processed_key: top_key,
+                        blend_mode: 0,
+                        opacity: 0.5,
+                        pixels: Some(Arc::clone(&top)),
+                    },
+                ],
+            }],
+        })
+        .expect("gpu submit");
 
     let gpu = cache
         .demote(&ctx, &composite_key)
@@ -1433,26 +1468,28 @@ fn resident_composite_three_layers_multiply_screen() {
     let pixels = [Arc::clone(&l0), Arc::clone(&l1), Arc::clone(&l2)];
     let modes = [(0, 1.0f32), (1, 1.0), (2, 0.8)];
 
-    executor.submit_composite_blocking(GpuCompositeFrameJob {
-        doc_gen: 1,
-        speculative: false,
-        tiles: vec![GpuCompositeTileWork {
-            coord,
-            composite_key,
-            generation: 1,
-            layers: keys
-                .iter()
-                .zip(pixels.iter())
-                .zip(modes.iter())
-                .map(|((key, pix), (mode, opac))| GpuCompositeLayerOp {
-                    processed_key: *key,
-                    blend_mode: *mode,
-                    opacity: *opac,
-                    pixels: Some(Arc::clone(pix)),
-                })
-                .collect(),
-        }],
-    }).expect("gpu submit");
+    executor
+        .submit_composite_blocking(GpuCompositeFrameJob {
+            doc_gen: 1,
+            speculative: false,
+            tiles: vec![GpuCompositeTileWork {
+                coord,
+                composite_key,
+                generation: 1,
+                layers: keys
+                    .iter()
+                    .zip(pixels.iter())
+                    .zip(modes.iter())
+                    .map(|((key, pix), (mode, opac))| GpuCompositeLayerOp {
+                        processed_key: *key,
+                        blend_mode: *mode,
+                        opacity: *opac,
+                        pixels: Some(Arc::clone(pix)),
+                    })
+                    .collect(),
+            }],
+        })
+        .expect("gpu submit");
 
     let gpu = cache
         .demote(&ctx, &composite_key)

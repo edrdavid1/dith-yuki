@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "macos", allow(deprecated, unexpected_cfgs))]
+
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{App, AppHandle, Emitter, Runtime};
 
@@ -245,6 +247,7 @@ fn observe_edit_menu_for_system_items() {
 
     unsafe {
         let name: id = NSString::alloc(nil).init_str("NSMenuDidBeginTrackingNotification");
+        #[allow(unused_unsafe)] // msg_send! requires unsafe; outer block does not cover the closure
         let block = ConcreteBlock::new(|notification: id| unsafe {
             let menu: id = msg_send![notification, object];
             if menu == nil {

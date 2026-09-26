@@ -40,18 +40,9 @@ pub fn render_rgba(
                 continue;
             }
             let (fg8, bg8) = match grid.color {
-                GridColorMode::Mono => (
-                    resolve_rgb(mono_fg, target),
-                    resolve_rgb(mono_bg, target),
-                ),
-                GridColorMode::Fg => (
-                    resolve_rgb(cell.fg, target),
-                    resolve_rgb(mono_bg, target),
-                ),
-                GridColorMode::FgBg => (
-                    resolve_rgb(cell.fg, target),
-                    resolve_rgb(cell.bg, target),
-                ),
+                GridColorMode::Mono => (resolve_rgb(mono_fg, target), resolve_rgb(mono_bg, target)),
+                GridColorMode::Fg => (resolve_rgb(cell.fg, target), resolve_rgb(mono_bg, target)),
+                GridColorMode::FgBg => (resolve_rgb(cell.fg, target), resolve_rgb(cell.bg, target)),
             };
             let fg = [
                 srgb_to_linear(fg8[0]),
@@ -277,7 +268,11 @@ mod tests {
         );
         // White-on-clear soft cell matches empty/light tone → stay clear, no white fringe.
         for i in 0..(cw * ch) as usize {
-            assert_eq!(out[i * 4 + 3], 0, "empty soft-edge convert cell must stay clear");
+            assert_eq!(
+                out[i * 4 + 3],
+                0,
+                "empty soft-edge convert cell must stay clear"
+            );
         }
     }
 }

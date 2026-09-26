@@ -21,10 +21,7 @@ pub struct TileGrid {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TileError {
     /// The provided buffer size does not match width × height × 4.
-    InvalidBufferSize {
-        expected: usize,
-        actual: usize,
-    },
+    InvalidBufferSize { expected: usize, actual: usize },
     /// Image dimensions are zero.
     ZeroDimensions,
 }
@@ -103,8 +100,8 @@ pub fn decompose_image_to_tiles_at_generation(
         });
     }
 
-    let cols = (width + TILE_SIZE - 1) / TILE_SIZE;
-    let rows = (height + TILE_SIZE - 1) / TILE_SIZE;
+    let cols = width.div_ceil(TILE_SIZE);
+    let rows = height.div_ceil(TILE_SIZE);
 
     for row in 0..rows {
         for col in 0..cols {
@@ -158,10 +155,7 @@ fn extract_tile(
             let img_y = origin_y + (ty as i64) - (HALO as i64);
 
             // Check bounds — out-of-bounds pixels stay zero (transparent black)
-            if img_x >= 0
-                && img_x < (img_width as i64)
-                && img_y >= 0
-                && img_y < (img_height as i64)
+            if img_x >= 0 && img_x < (img_width as i64) && img_y >= 0 && img_y < (img_height as i64)
             {
                 let src_idx = ((img_y as usize) * (img_width as usize) + (img_x as usize)) * 4;
                 for c in 0..4u32 {

@@ -14,7 +14,7 @@ use engine_project::document::Document;
 use engine_project::layer::LayerNode;
 use engine_project::types::LayerId;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter};
 
 use crate::commands::{
     emit_document_changed, invalidate_after_document_replace, schedule_dirty_viewport_tiles,
@@ -63,6 +63,7 @@ pub fn is_dirty_doc(state: &AppState, doc_id: u32) -> bool {
 }
 
 /// Active-tab dirty (chrome poll / welcome). Prefer [`is_dirty_doc`] when id is known.
+#[allow(dead_code)]
 pub fn is_dirty(state: &AppState) -> bool {
     let Some(id) = state.active_id() else {
         return false;
@@ -130,6 +131,7 @@ impl UndoManager {
         }
     }
 
+    #[allow(dead_code)] // tests use this; IPC uses state_dto_for
     pub fn state_dto(&self) -> UndoStateDto {
         UndoStateDto {
             can_undo: !self.undo_stack.is_empty(),

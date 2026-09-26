@@ -73,9 +73,7 @@ pub fn feature_by_id(id: &str) -> Option<&'static FeatureDef> {
 ///
 /// Today no optional/required format features are emitted for live docs — always
 /// [`FormatVersion::V1_0`]. Hook for Stage 3+ when real features land.
-pub fn required_version_for_features<'a>(
-    used: impl IntoIterator<Item = &'a str>,
-) -> FormatVersion {
+pub fn required_version_for_features<'a>(used: impl IntoIterator<Item = &'a str>) -> FormatVersion {
     let mut best = FormatVersion::V1_0;
     for id in used {
         if let Some(f) = feature_by_id(id) {

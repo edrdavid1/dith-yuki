@@ -276,7 +276,11 @@ mod tests {
         for (cols, width) in [(80, 1920), (120, 1920), (160, 3840), (200, 1000)] {
             let px = face.px_for_columns(cols, width);
             let m = face.cell_metrics(px);
-            assert!(m.cell_w * cols <= width, "{cols} cols @ {width}: cell_w {}", m.cell_w);
+            assert!(
+                m.cell_w * cols <= width,
+                "{cols} cols @ {width}: cell_w {}",
+                m.cell_w
+            );
             assert!(m.cell_w >= width / cols - 1 || px == MIN_FONT_PX);
         }
     }

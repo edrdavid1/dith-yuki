@@ -20,15 +20,24 @@ vi.mock('../../shared/ipc', async (importOriginal) => {
     ...actual,
     addFilter: vi.fn(),
     addLayer: vi.fn(),
+    removeLayer: vi.fn(),
+    setLayerProps: vi.fn(),
   };
 });
 
 import { invoke } from '@tauri-apps/api/core';
-import { addFilter, addLayer as addLayerIPC } from '../../shared/ipc';
+import {
+  addFilter,
+  addLayer as addLayerIPC,
+  removeLayer as removeLayerIPC,
+  setLayerProps as setLayerPropsIPC,
+} from '../../shared/ipc';
 
 const mockInvoke = vi.mocked(invoke);
 const mockAddLayer = vi.mocked(addLayerIPC);
 const mockAddFilter = vi.mocked(addFilter);
+const mockRemoveLayer = vi.mocked(removeLayerIPC);
+const mockSetLayerProps = vi.mocked(setLayerPropsIPC);
 
 function makeLayers() {
   return [
@@ -74,6 +83,8 @@ describe('useLayers', () => {
     mockInvoke.mockReset();
     mockAddLayer.mockReset();
     mockAddFilter.mockReset();
+    mockRemoveLayer.mockReset();
+    mockSetLayerProps.mockReset();
   });
 
   describe('initial fetch and validation', () => {
@@ -123,9 +134,9 @@ describe('useLayers', () => {
       mockInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'get_layer_tree') return layers;
         if (cmd === 'get_document_snapshot') return makeValidSnapshot();
-        if (cmd === 'remove_layer') return undefined;
         return undefined;
       });
+      mockRemoveLayer.mockResolvedValue(undefined);
 
       const { result } = renderHook(() => useLayers({ docId: 1 }), { wrapper });
 
@@ -137,16 +148,16 @@ describe('useLayers', () => {
         await result.current.removeLayer(1);
       });
 
-      expect(mockInvoke).toHaveBeenCalledWith('remove_layer', { layer_id: 1 });
+      expect(mockRemoveLayer).toHaveBeenCalledWith(1, 1);
     });
 
     it('sets error on IPC failure', async () => {
       mockInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'get_layer_tree') return makeLayers();
         if (cmd === 'get_document_snapshot') return makeValidSnapshot();
-        if (cmd === 'remove_layer') throw 'Failed to remove layer';
         return undefined;
       });
+      mockRemoveLayer.mockRejectedValue('Failed to remove layer');
 
       const { result } = renderHook(() => useLayers({ docId: 1 }), { wrapper });
 
@@ -298,9 +309,9 @@ describe('useLayers', () => {
       mockInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'get_layer_tree') return makeLayers();
         if (cmd === 'get_document_snapshot') return makeValidSnapshot();
-        if (cmd === 'set_layer_props') return undefined;
         return undefined;
       });
+      mockSetLayerProps.mockResolvedValue(undefined);
 
       const { result } = renderHook(() => useLayers({ docId: 1 }), { wrapper });
 
@@ -312,15 +323,7 @@ describe('useLayers', () => {
         await result.current.toggleVisibility(1);
       });
 
-      expect(mockInvoke).toHaveBeenCalledWith('set_layer_props', {
-        req: {
-          layer_id: 1,
-          name: null,
-          opacity: null,
-          blend_mode: null,
-          visible: false,
-        },
-      });
+      expect(mockSetLayerProps).toHaveBeenCalledWith(1, 1, { visible: false });
     });
 
     it('does nothing if layer not found', async () => {
@@ -336,14 +339,13 @@ describe('useLayers', () => {
         expect(result.current.layers).toHaveLength(2);
       });
 
-      const callCountBefore = mockInvoke.mock.calls.filter((c) => c[0] === 'set_layer_props').length;
+      const callCountBefore = mockSetLayerProps.mock.calls.length;
 
       await act(async () => {
         await result.current.toggleVisibility(999);
       });
 
-      const callCountAfter = mockInvoke.mock.calls.filter((c) => c[0] === 'set_layer_props').length;
-      expect(callCountAfter).toBe(callCountBefore);
+      expect(mockSetLayerProps.mock.calls.length).toBe(callCountBefore);
     });
   });
 
@@ -355,7 +357,7 @@ describe('useLayers', () => {
         await result.current.removeLayer(1);
       });
 
-      expect(mockInvoke).not.toHaveBeenCalledWith('remove_layer', expect.anything());
+      expect(mockRemoveLayer).not.toHaveBeenCalled();
     });
 
     it('addLayerWithEffect is a no-op when docId is null', async () => {
@@ -375,7 +377,7 @@ describe('useLayers', () => {
         await result.current.toggleVisibility(1);
       });
 
-      expect(mockInvoke).not.toHaveBeenCalledWith('set_layer_props', expect.anything());
+      expect(mockSetLayerProps).not.toHaveBeenCalled();
     });
   });
 });

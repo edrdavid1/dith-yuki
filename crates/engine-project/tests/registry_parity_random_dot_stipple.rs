@@ -13,9 +13,7 @@ use engine_project::filters::dither_residuals::ErrorResidualsStore;
 use engine_project::filters::random_dot_stipple;
 use engine_project::types::{DocumentId, LayerId, LayerKind};
 use engine_project::{Document, FilterContext, Layer};
-use engine_registry::{
-    AlgorithmId, AlgorithmRegistry, CpuCheckpointKind, GpuEligibility,
-};
+use engine_registry::{AlgorithmId, AlgorithmRegistry, CpuCheckpointKind, GpuEligibility};
 use engine_tiles::block_cache::BlockRepresentativeCache;
 use engine_tiles::{PixelTile, TileCoord, HALO, TILE_SIZE};
 
@@ -100,8 +98,12 @@ fn registry_parity_random_dot_stipple() {
     );
     let mut via_trait = PixelTile::new();
     via_trait.copy_from(&src);
-    algo.apply(&mut via_trait, &serde_json::to_value(&params).unwrap(), &ctx)
-        .expect("registry apply");
+    algo.apply(
+        &mut via_trait,
+        &serde_json::to_value(&params).unwrap(),
+        &ctx,
+    )
+    .expect("registry apply");
     assert_eq!(expected.data.as_ref(), via_trait.data.as_ref());
 
     let mut layer = Layer::new(layer_id, LayerKind::Raster, 512, 512);

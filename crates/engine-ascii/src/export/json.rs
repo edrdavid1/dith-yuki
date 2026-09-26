@@ -73,7 +73,7 @@ pub fn to_json(atlas: &GlyphAtlas, grid: &AsciiGrid) -> Result<String, serde_jso
 mod tests {
     use super::*;
     use crate::atlas::{AtlasOptions, FontSize, GlyphAtlas};
-    use crate::convert::{MatchMode, convert_mono};
+    use crate::convert::{convert_mono, MatchMode};
     use crate::font::{BundledFont, FontFace};
     use crate::symbols::SymbolSet;
 

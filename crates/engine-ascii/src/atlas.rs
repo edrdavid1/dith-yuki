@@ -325,7 +325,10 @@ mod tests {
         let order = atlas.tone_order();
         assert_eq!(order.len(), 70);
         for pair in order.windows(2) {
-            let (a, b) = (&atlas.glyphs[pair[0] as usize], &atlas.glyphs[pair[1] as usize]);
+            let (a, b) = (
+                &atlas.glyphs[pair[0] as usize],
+                &atlas.glyphs[pair[1] as usize],
+            );
             assert!(a.ink < b.ink || (a.ink == b.ink && pair[0] < pair[1]));
         }
         assert_eq!(atlas.glyphs[order[0] as usize].ch, ' ');
@@ -349,11 +352,22 @@ mod tests {
             antialias: true,
             hinting: true,
         };
-        let a = cache.get_or_build(&font, &SymbolSet::Bourke10, &opts).unwrap();
-        let b = cache.get_or_build(&font, &SymbolSet::Bourke10, &opts).unwrap();
+        let a = cache
+            .get_or_build(&font, &SymbolSet::Bourke10, &opts)
+            .unwrap();
+        let b = cache
+            .get_or_build(&font, &SymbolSet::Bourke10, &opts)
+            .unwrap();
         assert!(Arc::ptr_eq(&a, &b));
         let c = cache
-            .get_or_build(&font, &SymbolSet::Bourke10, &AtlasOptions { hinting: false, ..opts })
+            .get_or_build(
+                &font,
+                &SymbolSet::Bourke10,
+                &AtlasOptions {
+                    hinting: false,
+                    ..opts
+                },
+            )
             .unwrap();
         assert!(!Arc::ptr_eq(&a, &c));
         assert_eq!(cache.len(), 2);
@@ -424,7 +438,14 @@ mod tests {
                     }
                     line.push_str("  ");
                 }
-                println!("{line}{}", if y as u32 == atlas.metrics.baseline { " <baseline" } else { "" });
+                println!(
+                    "{line}{}",
+                    if y as u32 == atlas.metrics.baseline {
+                        " <baseline"
+                    } else {
+                        ""
+                    }
+                );
             }
         }
     }

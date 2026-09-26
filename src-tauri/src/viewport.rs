@@ -5,12 +5,10 @@
 //! at the current zoom/pan state and which tiles should be prefetched for smooth panning.
 
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::State;
 
-use engine_tiles::{CacheStage, Priority, RecomputeTask, TileCoord, TileKey, TILE_SIZE};
+use engine_tiles::{Priority, TileCoord, TileKey, TILE_SIZE};
 
 use crate::commands::AppState;
 
@@ -26,14 +24,19 @@ use crate::commands::AppState;
 #[derive(Debug, Clone)]
 pub struct ViewportState {
     /// Current zoom factor (1.0 = 100%).
+    #[allow(dead_code)] // written by set_viewport; read via UI/diagnostics paths
     pub zoom: f64,
     /// Document-space X of viewport top-left.
+    #[allow(dead_code)]
     pub x: f64,
     /// Document-space Y of viewport top-left.
+    #[allow(dead_code)]
     pub y: f64,
     /// Viewport width in screen pixels.
+    #[allow(dead_code)]
     pub width: f64,
     /// Viewport height in screen pixels.
+    #[allow(dead_code)]
     pub height: f64,
     /// Computed pyramid level for the current zoom.
     pub level: u8,
@@ -145,8 +148,8 @@ pub fn compute_visible_tiles(
     let max_ty = (vp_bottom / tile_size_at_level).ceil() as u32;
 
     // Clamp to grid bounds at this level
-    let grid_cols = (doc_width + TILE_SIZE * scale - 1) / (TILE_SIZE * scale);
-    let grid_rows = (doc_height + TILE_SIZE * scale - 1) / (TILE_SIZE * scale);
+    let grid_cols = doc_width.div_ceil(TILE_SIZE * scale);
+    let grid_rows = doc_height.div_ceil(TILE_SIZE * scale);
 
     let mut tiles = Vec::new();
     for ty in min_ty..max_ty.min(grid_rows) {
@@ -195,8 +198,8 @@ pub fn compute_prefetch_ring(
 
     // Grid bounds at this level
     let scale = 1u32 << level;
-    let grid_cols = (doc_width + TILE_SIZE * scale - 1) / (TILE_SIZE * scale);
-    let grid_rows = (doc_height + TILE_SIZE * scale - 1) / (TILE_SIZE * scale);
+    let grid_cols = doc_width.div_ceil(TILE_SIZE * scale);
+    let grid_rows = doc_height.div_ceil(TILE_SIZE * scale);
 
     // Expand bounding box by one tile in each direction
     let ring_min_x = if min_x > 0 { min_x - 1 } else { 0 };
@@ -227,7 +230,7 @@ pub fn compute_prefetch_ring(
 
 /// Sort tiles in-place by ascending manhattan distance from the grid center.
 /// This ensures center-out dequeue order when tiles are enqueued into a FIFO queue.
-pub fn sort_tiles_center_out(tiles: &mut Vec<TileCoord>) {
+pub fn sort_tiles_center_out(tiles: &mut [TileCoord]) {
     if tiles.len() <= 1 {
         return;
     }

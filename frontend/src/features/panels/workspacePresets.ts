@@ -1,16 +1,5 @@
-import type { DockSide, PanelId, PanelInfo, PanelStateSnapshot } from '../../types/panels';
-import { FLOATING_ONLY_PANELS } from '../../types/panels';
-import { isPanelOnFlexLayout } from '../../factories/layoutPanelFactory';
+import type { DockSide, PanelId } from '../../types/panels';
 import type { SidebarGeom } from '../../app/shell/ShellContext';
-import {
-  dockPanelAt,
-  getPanelsState,
-  hidePanel,
-  movePanelToSide,
-  reorderSidebar,
-  showPanel,
-  undockPanel,
-} from '../../shared/ipc/panels';
 
 export type WorkspaceShellSnapshot = {
   leftSidebar: SidebarGeom;
@@ -19,10 +8,10 @@ export type WorkspaceShellSnapshot = {
   rightSplitRatio: number;
 };
 
+/** Flex-owned panel placement (left/right sidebars only; Preview stays center). */
 export type WorkspaceLayoutSnapshot = {
   left_order: PanelId[];
   right_order: PanelId[];
-  panels: Array<Pick<PanelInfo, 'id' | 'docked' | 'visible' | 'dock_side'>>;
 };
 
 export type WorkspacePreset = {
@@ -43,14 +32,6 @@ const DEFAULT_SHELL: WorkspaceShellSnapshot = {
   rightSplitRatio: 0.5,
 };
 
-function dockablePanel(
-  id: PanelId,
-  dock_side: DockSide,
-  visible = true
-): WorkspaceLayoutSnapshot['panels'][number] {
-  return { id, docked: true, visible, dock_side };
-}
-
 /** Built-in named layouts (not user-deletable). */
 export function builtinWorkspacePresets(): WorkspacePreset[] {
   return [
@@ -62,11 +43,6 @@ export function builtinWorkspacePresets(): WorkspacePreset[] {
       layout: {
         left_order: ['layers'],
         right_order: ['effect', 'colorlab'],
-        panels: [
-          dockablePanel('layers', 'left'),
-          dockablePanel('effect', 'right'),
-          dockablePanel('colorlab', 'right'),
-        ],
       },
     },
     {
@@ -77,14 +53,38 @@ export function builtinWorkspacePresets(): WorkspacePreset[] {
       layout: {
         left_order: ['effect'],
         right_order: ['layers', 'colorlab'],
-        panels: [
-          dockablePanel('layers', 'right'),
-          dockablePanel('effect', 'left'),
-          dockablePanel('colorlab', 'right'),
-        ],
       },
     },
   ];
+}
+
+function isUserPreset(value: unknown): value is WorkspacePreset {
+  if (!value || typeof value !== 'object') return false;
+  const p = value as Record<string, unknown>;
+  return (
+    typeof p.id === 'string' &&
+    typeof p.name === 'string' &&
+    p.builtin !== true &&
+    p.layout != null &&
+    typeof p.layout === 'object' &&
+    p.shell != null &&
+    typeof p.shell === 'object'
+  );
+}
+
+function normalizeLayout(raw: unknown): WorkspaceLayoutSnapshot {
+  const layout = (raw ?? {}) as Record<string, unknown>;
+  const left = Array.isArray(layout.left_order)
+    ? (layout.left_order as string[]).filter((id): id is PanelId =>
+        DOCKABLE.includes(id as PanelId)
+      )
+    : [];
+  const right = Array.isArray(layout.right_order)
+    ? (layout.right_order as string[]).filter((id): id is PanelId =>
+        DOCKABLE.includes(id as PanelId)
+      )
+    : [];
+  return { left_order: left, right_order: right };
 }
 
 function readUserPresets(): WorkspacePreset[] {
@@ -93,30 +93,26 @@ function readUserPresets(): WorkspacePreset[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isUserPreset);
+    return parsed.filter(isUserPreset).map((p) => ({
+      ...p,
+      layout: normalizeLayout(p.layout),
+      shell: {
+        leftSidebar: { ...(p.shell as WorkspaceShellSnapshot).leftSidebar },
+        rightSidebar: { ...(p.shell as WorkspaceShellSnapshot).rightSidebar },
+        leftSplitRatio: (p.shell as WorkspaceShellSnapshot).leftSplitRatio ?? 0.5,
+        rightSplitRatio: (p.shell as WorkspaceShellSnapshot).rightSplitRatio ?? 0.5,
+      },
+    }));
   } catch {
     return [];
   }
-}
-
-function isUserPreset(value: unknown): value is WorkspacePreset {
-  if (!value || typeof value !== 'object') return false;
-  const p = value as WorkspacePreset;
-  return (
-    typeof p.id === 'string' &&
-    typeof p.name === 'string' &&
-    !p.builtin &&
-    Array.isArray(p.layout?.left_order) &&
-    Array.isArray(p.layout?.right_order) &&
-    Array.isArray(p.layout?.panels)
-  );
 }
 
 function writeUserPresets(presets: WorkspacePreset[]) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(presets));
   } catch {
-    // ignore
+    /* ignore quota */
   }
 }
 
@@ -124,10 +120,17 @@ export function listWorkspacePresets(): WorkspacePreset[] {
   return [...builtinWorkspacePresets(), ...readUserPresets()];
 }
 
-export function snapshotFromPanelState(
-  state: PanelStateSnapshot,
+export function snapshotFromFlexSides(
+  leftComponents: string[],
+  rightComponents: string[],
   shell: WorkspaceShellSnapshot
 ): { layout: WorkspaceLayoutSnapshot; shell: WorkspaceShellSnapshot } {
+  const left_order = leftComponents.filter((id): id is PanelId =>
+    DOCKABLE.includes(id as PanelId)
+  );
+  const right_order = rightComponents.filter((id): id is PanelId =>
+    DOCKABLE.includes(id as PanelId)
+  );
   return {
     shell: {
       leftSidebar: { ...shell.leftSidebar },
@@ -135,30 +138,17 @@ export function snapshotFromPanelState(
       leftSplitRatio: shell.leftSplitRatio,
       rightSplitRatio: shell.rightSplitRatio,
     },
-    layout: {
-      left_order: [...state.left_order],
-      right_order: [...state.right_order],
-      panels: state.panels
-        .filter(
-          (p) =>
-            !FLOATING_ONLY_PANELS.has(p.id as PanelId) && !isPanelOnFlexLayout(p.id),
-        )
-        .map((p) => ({
-          id: p.id as PanelId,
-          docked: p.docked,
-          visible: p.visible,
-          dock_side: p.dock_side,
-        })),
-    },
+    layout: { left_order, right_order },
   };
 }
 
-export async function captureWorkspacePreset(
+export function captureWorkspacePreset(
   name: string,
-  shell: WorkspaceShellSnapshot
-): Promise<WorkspacePreset> {
-  const state = await getPanelsState();
-  const snap = snapshotFromPanelState(state, shell);
+  shell: WorkspaceShellSnapshot,
+  leftComponents: string[],
+  rightComponents: string[]
+): WorkspacePreset {
+  const snap = snapshotFromFlexSides(leftComponents, rightComponents, shell);
   const preset: WorkspacePreset = {
     id: `user-${Date.now()}`,
     name: name.trim() || 'Custom layout',
@@ -184,6 +174,11 @@ export type ApplyShellHandlers = {
   setSplitRatio: (side: DockSide, ratio: number) => void;
 };
 
+export type ApplyFlexHandlers = {
+  /** Move a dockable panel onto `to` (no-op if already there). */
+  movePanelBetweenSides: (panelComponent: string, to: 'left' | 'right') => void;
+};
+
 export function applyWorkspaceShell(
   shell: WorkspaceShellSnapshot,
   handlers: ApplyShellHandlers
@@ -197,68 +192,26 @@ export function applyWorkspaceShell(
 }
 
 /**
- * Drive existing panel IPC to match a layout snapshot (no float windows for
- * panels that remain docked).
+ * Drive FlexLayout side placement to match a layout snapshot.
+ * Order: place left targets first, then right (movePanelBetweenSides is idempotent).
  */
-export async function applyPanelLayout(target: WorkspaceLayoutSnapshot): Promise<void> {
-  const wantById = new Map(target.panels.map((p) => [p.id, p]));
-  let current = await getPanelsState();
-  const curById = () => new Map(current.panels.map((p) => [p.id, p]));
-
-  for (const id of DOCKABLE) {
-    const want = wantById.get(id);
-    if (!want) continue;
-    const now = curById().get(id);
-    if (!now) continue;
-
-    if (want.docked && want.dock_side) {
-      if (!now.docked) {
-        await dockPanelAt(id, want.dock_side, Number.MAX_SAFE_INTEGER);
-      } else if (now.dock_side !== want.dock_side) {
-        await movePanelToSide(id, want.dock_side);
-      }
-    } else if (!want.docked && now.docked) {
-      await undockPanel(id);
-    }
-    current = await getPanelsState();
+export function applyFlexPanelLayout(
+  target: WorkspaceLayoutSnapshot,
+  handlers: ApplyFlexHandlers
+): void {
+  for (const id of target.left_order) {
+    handlers.movePanelBetweenSides(id, 'left');
   }
-
-  // Place members onto sides in target order (append then reorder).
-  for (const [side, order] of [
-    ['left', target.left_order],
-    ['right', target.right_order],
-  ] as const) {
-    for (const id of order) {
-      const now = curById().get(id);
-      if (!now?.docked) continue;
-      if (now.dock_side !== side) {
-        await movePanelToSide(id, side);
-        current = await getPanelsState();
-      }
-    }
-  }
-
-  if (target.left_order.length > 0) {
-    await reorderSidebar('left', [...target.left_order]);
-  }
-  if (target.right_order.length > 0) {
-    await reorderSidebar('right', [...target.right_order]);
-  }
-
-  current = await getPanelsState();
-  for (const id of DOCKABLE) {
-    const want = wantById.get(id);
-    const now = curById().get(id);
-    if (!want || !now) continue;
-    if (want.visible && !now.visible) await showPanel(id);
-    if (!want.visible && now.visible) await hidePanel(id);
+  for (const id of target.right_order) {
+    handlers.movePanelBetweenSides(id, 'right');
   }
 }
 
-export async function applyWorkspacePreset(
+export function applyWorkspacePreset(
   preset: WorkspacePreset,
-  handlers: ApplyShellHandlers
-): Promise<void> {
-  applyWorkspaceShell(preset.shell, handlers);
-  await applyPanelLayout(preset.layout);
+  shellHandlers: ApplyShellHandlers,
+  flexHandlers: ApplyFlexHandlers
+): void {
+  applyWorkspaceShell(preset.shell, shellHandlers);
+  applyFlexPanelLayout(preset.layout, flexHandlers);
 }

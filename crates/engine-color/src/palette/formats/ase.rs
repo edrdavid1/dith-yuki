@@ -21,12 +21,20 @@ const GROUP_END: u16 = 0xC002;
 /// Parse ASE format bytes into sRGB color triples.
 pub fn parse(data: &[u8]) -> Result<Vec<(u8, u8, u8)>, PaletteError> {
     if data.len() < 12 {
-        return Err(parse_error("ASE", "byte 0", "file too short for ASE header"));
+        return Err(parse_error(
+            "ASE",
+            "byte 0",
+            "file too short for ASE header",
+        ));
     }
 
     // Check magic
     if &data[0..4] != MAGIC {
-        return Err(parse_error("ASE", "byte 0", "invalid magic bytes, expected 'ASEF'"));
+        return Err(parse_error(
+            "ASE",
+            "byte 0",
+            "invalid magic bytes, expected 'ASEF'",
+        ));
     }
 
     let _major = u16::from_be_bytes([data[4], data[5]]);
@@ -182,8 +190,16 @@ mod tests {
     #[test]
     fn export_basic() {
         let colors = vec![
-            LinearColor { r: 1.0, g: 0.0, b: 0.0 },
-            LinearColor { r: 0.0, g: 1.0, b: 0.0 },
+            LinearColor {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            LinearColor {
+                r: 0.0,
+                g: 1.0,
+                b: 0.0,
+            },
         ];
         let result = export(&colors, None).unwrap();
         // Verify magic
@@ -202,9 +218,21 @@ mod tests {
     #[test]
     fn round_trip() {
         let colors = vec![
-            LinearColor { r: 1.0, g: 0.0, b: 0.0 },
-            LinearColor { r: 0.0, g: 1.0, b: 0.0 },
-            LinearColor { r: 0.0, g: 0.0, b: 1.0 },
+            LinearColor {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            LinearColor {
+                r: 0.0,
+                g: 1.0,
+                b: 0.0,
+            },
+            LinearColor {
+                r: 0.0,
+                g: 0.0,
+                b: 1.0,
+            },
         ];
         let exported = export(&colors, None).unwrap();
         let parsed = parse(&exported).unwrap();

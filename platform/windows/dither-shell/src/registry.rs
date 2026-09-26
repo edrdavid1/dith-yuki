@@ -23,17 +23,13 @@ mod win {
 
     fn set_default(path: &str, value: &str) -> Result<(), String> {
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let (key, _) = hkcu
-            .create_subkey(path)
-            .map_err(|e| e.to_string())?;
+        let (key, _) = hkcu.create_subkey(path).map_err(|e| e.to_string())?;
         key.set_value("", &value).map_err(|e| e.to_string())
     }
 
     fn set_named(path: &str, name: &str, value: &str) -> Result<(), String> {
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let (key, _) = hkcu
-            .create_subkey(path)
-            .map_err(|e| e.to_string())?;
+        let (key, _) = hkcu.create_subkey(path).map_err(|e| e.to_string())?;
         key.set_value(name, &value).map_err(|e| e.to_string())
     }
 

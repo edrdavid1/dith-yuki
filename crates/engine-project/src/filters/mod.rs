@@ -19,20 +19,20 @@ pub mod dither_diffusion;
 pub mod dither_ordered;
 pub mod dither_residuals;
 pub mod full_document;
-pub mod hilbert;
-pub mod line_screen;
-pub mod voronoi_stipple;
-pub mod random_dot_stipple;
-pub mod ostromoukhov_table;
-pub mod riemersma;
-pub mod void_and_cluster;
-pub mod zhou_fang_table;
 pub mod glitch;
 pub mod glow;
 pub mod gpu_bridge;
 pub mod gpu_graph;
+pub mod hilbert;
 pub mod levels;
+pub mod line_screen;
+pub mod ostromoukhov_table;
 pub mod palette_quantize;
+pub mod random_dot_stipple;
+pub mod riemersma;
+pub mod void_and_cluster;
+pub mod voronoi_stipple;
+pub mod zhou_fang_table;
 
 pub mod apply;
 

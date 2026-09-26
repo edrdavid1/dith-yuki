@@ -3,8 +3,7 @@ use tauri::{AppHandle, State};
 
 use crate::commands::AppState;
 pub use crate::services::layer_service::{
-    AddLayerRequest, LayerIdResponse, LayerNodeDto, LayerPropsPatchDto, ReorderLayerRequest,
-    SetLayerPropsRequest,
+    AddLayerRequest, LayerIdResponse, LayerNodeDto, ReorderLayerRequest, SetLayerPropsRequest,
 };
 use crate::services::LayerService;
 

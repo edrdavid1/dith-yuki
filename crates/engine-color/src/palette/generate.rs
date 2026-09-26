@@ -115,7 +115,13 @@ fn weighted_resample(pixels: &[LinearColor], w: GenerateWeights) -> Vec<LinearCo
     }
     let labs: Vec<_> = pixels
         .iter()
-        .map(|c| linear_to_oklab(LinRgb { r: c.r, g: c.g, b: c.b }))
+        .map(|c| {
+            linear_to_oklab(LinRgb {
+                r: c.r,
+                g: c.g,
+                b: c.b,
+            })
+        })
         .collect();
     let chromas: Vec<f32> = labs
         .iter()
@@ -127,7 +133,10 @@ fn weighted_resample(pixels: &[LinearColor], w: GenerateWeights) -> Vec<LinearCo
     let max_k = contrasts.iter().copied().fold(0.0f32, f32::max).max(1e-6);
 
     let sample_w: Vec<f32> = (0..pixels.len())
-        .map(|i| 1.0 + w.chroma_weight * (chromas[i] / max_c) + w.contrast_weight * (contrasts[i] / max_k))
+        .map(|i| {
+            1.0 + w.chroma_weight * (chromas[i] / max_c)
+                + w.contrast_weight * (contrasts[i] / max_k)
+        })
         .collect();
     let total: f32 = sample_w.iter().sum();
     let mut cdf = Vec::with_capacity(pixels.len());
@@ -288,12 +297,11 @@ fn channel_value(color: &LinearColor, axis: usize) -> f32 {
 /// Compute the mean color of a bin.
 fn mean_color(pixels: &[LinearColor]) -> LinearColor {
     let len = pixels.len() as f32;
-    let (sum_r, sum_g, sum_b) =
-        pixels
-            .iter()
-            .fold((0.0f32, 0.0f32, 0.0f32), |(r, g, b), p| {
-                (r + p.r, g + p.g, b + p.b)
-            });
+    let (sum_r, sum_g, sum_b) = pixels
+        .iter()
+        .fold((0.0f32, 0.0f32, 0.0f32), |(r, g, b), p| {
+            (r + p.r, g + p.g, b + p.b)
+        });
     LinearColor {
         r: sum_r / len,
         g: sum_g / len,
@@ -310,10 +318,7 @@ fn mean_color(pixels: &[LinearColor]) -> LinearColor {
 /// 1. Initialize centroids via k-means++
 /// 2. Iterate: assign each pixel to nearest centroid, recompute centroid as mean
 /// 3. Stop when max centroid movement < 1e-4 or 50 iterations
-fn kmeans(
-    pixels: Vec<LinearColor>,
-    target_count: usize,
-) -> Result<Vec<LinearColor>, PaletteError> {
+fn kmeans(pixels: Vec<LinearColor>, target_count: usize) -> Result<Vec<LinearColor>, PaletteError> {
     let k = target_count;
 
     // k-means++ initialization
@@ -437,18 +442,13 @@ mod tests {
             });
         }
 
-        let result =
-            generate_palette(pixels.into_iter(), 2, PaletteGenMethod::MedianCut).unwrap();
+        let result = generate_palette(pixels.into_iter(), 2, PaletteGenMethod::MedianCut).unwrap();
 
         assert_eq!(result.len(), 2);
 
         // One should be close to red, the other close to blue
-        let has_red = result
-            .iter()
-            .any(|c| c.r > 0.9 && c.g < 0.1 && c.b < 0.1);
-        let has_blue = result
-            .iter()
-            .any(|c| c.r < 0.1 && c.g < 0.1 && c.b > 0.9);
+        let has_red = result.iter().any(|c| c.r > 0.9 && c.g < 0.1 && c.b < 0.1);
+        let has_blue = result.iter().any(|c| c.r < 0.1 && c.g < 0.1 && c.b > 0.9);
         assert!(has_red, "Expected a red-ish color in palette: {:?}", result);
         assert!(
             has_blue,
@@ -485,16 +485,8 @@ mod tests {
         // Centroids should converge near the cluster centers
         let has_red = result.iter().any(|c| c.r > 0.8 && c.b < 0.2);
         let has_blue = result.iter().any(|c| c.b > 0.8 && c.r < 0.2);
-        assert!(
-            has_red,
-            "Expected a red cluster centroid: {:?}",
-            result
-        );
-        assert!(
-            has_blue,
-            "Expected a blue cluster centroid: {:?}",
-            result
-        );
+        assert!(has_red, "Expected a red cluster centroid: {:?}", result);
+        assert!(has_blue, "Expected a blue cluster centroid: {:?}", result);
     }
 
     #[test]
@@ -549,8 +541,7 @@ mod tests {
             },
         ];
 
-        let result =
-            generate_palette(pixels.into_iter(), 8, PaletteGenMethod::MedianCut).unwrap();
+        let result = generate_palette(pixels.into_iter(), 8, PaletteGenMethod::MedianCut).unwrap();
 
         // Should return only 2 unique colors
         assert_eq!(result.len(), 2);
@@ -560,15 +551,34 @@ mod tests {
     fn test_kmeans_fewer_unique_than_target() {
         // Only 3 unique colors but requesting 10
         let pixels = vec![
-            LinearColor { r: 1.0, g: 0.0, b: 0.0 },
-            LinearColor { r: 0.0, g: 1.0, b: 0.0 },
-            LinearColor { r: 0.0, g: 0.0, b: 1.0 },
-            LinearColor { r: 1.0, g: 0.0, b: 0.0 },
-            LinearColor { r: 0.0, g: 1.0, b: 0.0 },
+            LinearColor {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            LinearColor {
+                r: 0.0,
+                g: 1.0,
+                b: 0.0,
+            },
+            LinearColor {
+                r: 0.0,
+                g: 0.0,
+                b: 1.0,
+            },
+            LinearColor {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            LinearColor {
+                r: 0.0,
+                g: 1.0,
+                b: 0.0,
+            },
         ];
 
-        let result =
-            generate_palette(pixels.into_iter(), 10, PaletteGenMethod::KMeans).unwrap();
+        let result = generate_palette(pixels.into_iter(), 10, PaletteGenMethod::KMeans).unwrap();
 
         assert_eq!(result.len(), 3);
     }
@@ -578,10 +588,15 @@ mod tests {
         let pixels: Vec<LinearColor> = (0..64)
             .map(|i| {
                 let t = i as f32 / 63.0;
-                LinearColor { r: t, g: 0.2, b: 1.0 - t }
+                LinearColor {
+                    r: t,
+                    g: 0.2,
+                    b: 1.0 - t,
+                }
             })
             .collect();
-        let a = generate_palette(pixels.clone().into_iter(), 6, PaletteGenMethod::MedianCut).unwrap();
+        let a =
+            generate_palette(pixels.clone().into_iter(), 6, PaletteGenMethod::MedianCut).unwrap();
         let b = generate_palette_weighted(
             pixels.into_iter(),
             6,
@@ -594,8 +609,22 @@ mod tests {
 
     #[test]
     fn high_chroma_weight_keeps_saturated_accent() {
-        let mut pixels = vec![LinearColor { r: 0.5, g: 0.5, b: 0.5 }; 200];
-        pixels.extend(std::iter::repeat(LinearColor { r: 1.0, g: 0.0, b: 0.0 }).take(8));
+        let mut pixels = vec![
+            LinearColor {
+                r: 0.5,
+                g: 0.5,
+                b: 0.5
+            };
+            200
+        ];
+        pixels.extend(
+            std::iter::repeat(LinearColor {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+            })
+            .take(8),
+        );
         let zero = generate_palette_weighted(
             pixels.clone().into_iter(),
             4,
@@ -626,7 +655,11 @@ mod tests {
 
     #[test]
     fn weights_out_of_range_error() {
-        let pixels = vec![LinearColor { r: 1.0, g: 0.0, b: 0.0 }];
+        let pixels = vec![LinearColor {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+        }];
         let err = generate_palette_weighted(
             pixels.into_iter(),
             2,

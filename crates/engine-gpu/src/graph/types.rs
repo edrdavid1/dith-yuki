@@ -133,6 +133,7 @@ pub enum CpuCheckpointKind {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)] // GpuPass carries wgpu resource handles by value.
 pub enum GraphNode {
     Gpu(GpuPass),
     CpuCheckpoint(CpuCheckpointKind),
@@ -161,11 +162,7 @@ impl ComputeGraph {
     }
 
     pub fn is_gpu_only(&self) -> bool {
-        !self.nodes.is_empty()
-            && self
-                .nodes
-                .iter()
-                .all(|n| matches!(n, GraphNode::Gpu(_)))
+        !self.nodes.is_empty() && self.nodes.iter().all(|n| matches!(n, GraphNode::Gpu(_)))
     }
 }
 

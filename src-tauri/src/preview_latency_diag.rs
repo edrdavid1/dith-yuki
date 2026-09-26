@@ -2323,3 +2323,169 @@ fn preview_latency_diag_vram() {
 // Silence unused helpers when only partial industrial runs are compiled in some cfgs.
 #[allow(dead_code)]
 fn _industrial_helpers_keep() {}
+
+/// Track C Phase 0 (T0.1–T0.4) — headless stress on synthetic large docs.
+/// Does **not** claim Phase 1 budget "fixed" 4K/8K; prints used/budget + origin/far timings.
+///
+/// ```text
+/// cargo test -p dither --release preview_latency_diag_track_c_t0 -- --ignored --nocapture --test-threads=1
+/// ```
+#[test]
+#[ignore = "diagnostic: Track C T0 — cargo test -p dither --release preview_latency_diag_track_c_t0 -- --ignored --nocapture --test-threads=1"]
+fn preview_latency_diag_track_c_t0() {
+    fn make_sized(doc: u32, mode: DitherModeV2, budget: usize) -> Arc<AppState> {
+        let mut document = Document::new(DocumentId::new(1), doc, doc);
+        let mut layer = Layer::new(LayerId::new(LAYER), LayerKind::Raster, doc, doc);
+        layer.filters.push(FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(dither_params(mode)),
+        ));
+        document.root.push(LayerNode::Leaf(layer));
+        // gpu=None → CPU path (T0.1 equivalent of DITHER_FORCE_CPU for this harness)
+        let state = AppState::empty_process(None, budget, true);
+        state.spawn_session(document);
+        Arc::new(state)
+    }
+
+    fn fill_raw(state: &AppState, doc: u32, coords: &[TileCoord]) {
+        for coord in coords {
+            let mut tile = PixelTile::new();
+            let full = TILE_SIZE + 2 * HALO;
+            for y in 0..full {
+                for x in 0..full {
+                    let gx = coord.x as i32 * TILE_SIZE as i32 + x as i32 - HALO as i32;
+                    let gy = coord.y as i32 * TILE_SIZE as i32 + y as i32 - HALO as i32;
+                    let r = (gx.max(0) as f32) / doc as f32;
+                    let g = (gy.max(0) as f32) / doc as f32;
+                    tile.set(x, y, 0, r.min(1.0));
+                    tile.set(x, y, 1, g.min(1.0));
+                    tile.set(x, y, 2, 0.5);
+                    tile.set(x, y, 3, 1.0);
+                }
+            }
+            state.tiles.tile_cache.insert_fresh(
+                TileKey {
+                    doc: 1,
+                    layer: LAYER,
+                    coord: *coord,
+                    stage: CacheStage::Raw,
+                },
+                Arc::new(tile),
+            );
+        }
+    }
+
+    fn set_vp(state: &AppState, doc: u32, zoom: f64, x: f64, y: f64) -> Vec<TileCoord> {
+        let max_level = crate::viewport::compute_max_level(doc, doc);
+        let level = compute_pyramid_level(zoom, max_level);
+        let visible = compute_visible_tiles(zoom, x, y, VP_W, VP_H, level, doc, doc);
+        let mut vp = state.ui.viewport.lock().unwrap();
+        vp.zoom = zoom;
+        vp.x = x;
+        vp.y = y;
+        vp.width = VP_W;
+        vp.height = VP_H;
+        vp.level = level;
+        vp.visible_tiles = visible.clone();
+        vp.prefetch_tiles = Vec::new();
+        visible
+    }
+
+    fn cache_row(state: &AppState) -> String {
+        let used = state.tiles.tile_cache.used_bytes_count();
+        let budget = state.tiles.tile_cache.budget_bytes_count();
+        let pct = if budget == 0 {
+            0
+        } else {
+            (used as u128 * 100 / budget as u128) as u64
+        };
+        format!(
+            "used_mib={:.1} budget_mib={:.1} pct={}",
+            used as f64 / (1024.0 * 1024.0),
+            budget as f64 / (1024.0 * 1024.0),
+            pct
+        )
+    }
+
+    fn run_doc(label: &str, doc: u32, mode: DitherModeV2, budget: usize) {
+        let workers = n_workers();
+        let far_x = (doc as f64 - VP_W).max(0.0);
+        let far_y = (doc as f64 - VP_H).max(0.0);
+        let state = make_sized(doc, mode.clone(), budget);
+        let origin = set_vp(&state, doc, 1.0, 0.0, 0.0);
+        let far = set_vp(&state, doc, 1.0, far_x, far_y);
+        // Prefill raw for both viewports so wall time is filter+composite, not decode.
+        let mut raw_needed = origin.clone();
+        raw_needed.extend(far.iter().copied());
+        raw_needed.sort_by_key(|c| (c.y, c.x));
+        raw_needed.dedup();
+        fill_raw(&state, doc, &raw_needed);
+
+        println!(
+            "\n--- {label} doc={doc}² mode={mode:?} workers={workers} ---\n  cold cache: {}\n  origin tiles={} far tiles={}",
+            cache_row(&state),
+            origin.len(),
+            far.len()
+        );
+
+        let _ = set_vp(&state, doc, 1.0, 0.0, 0.0);
+        crate::commands::schedule_dirty_viewport_tiles(&state);
+        let origin_stats = drain_until_visible(&state, &origin, workers, Duration::from_secs(180));
+        let origin_fresh = count_fresh(&state, 0, CacheStage::Composite, &origin);
+        println!(
+            "  T0 origin: wall={} fresh={}/{} | {}",
+            fmt_ms(origin_stats.wall),
+            origin_fresh,
+            origin.len(),
+            cache_row(&state)
+        );
+
+        let _ = set_vp(&state, doc, 1.0, far_x, far_y);
+        crate::commands::schedule_dirty_viewport_tiles(&state);
+        let far_stats = drain_until_visible(&state, &far, workers, Duration::from_secs(180));
+        let far_fresh = count_fresh(&state, 0, CacheStage::Composite, &far);
+        println!(
+            "  T0 far-corner: wall={} fresh={}/{} | {}",
+            fmt_ms(far_stats.wall),
+            far_fresh,
+            far.len(),
+            cache_row(&state)
+        );
+
+        let origin_ms = origin_stats.wall.as_secs_f64() * 1000.0;
+        let far_ms = far_stats.wall.as_secs_f64() * 1000.0;
+        let ratio = if origin_ms > 0.0 {
+            far_ms / origin_ms
+        } else {
+            f64::INFINITY
+        };
+        println!(
+            "  far/origin ratio={ratio:.2} (ED wavefront expected ≫1; Bayer ~1)\n"
+        );
+    }
+
+    let ram = crate::memory_budget::resolve_ram_budget();
+    println!(
+        "\n=== Track C T0 (synthetic docs, CPU-only) ===\nram_budget_mib={} source={:?} system_ram_mib={}\n",
+        ram.bytes / (1024 * 1024),
+        ram.source,
+        ram.total_system_ram / (1024 * 1024)
+    );
+
+    // T0.3 + T0.1/T0.2: 2K vs 8K Bayer (GPU-eligible algo on CPU path)
+    run_doc("T0.3-2K-Bayer", 2048, DitherModeV2::Bayer8x8, ram.bytes);
+    run_doc("T0.1-8K-Bayer", 8192, DitherModeV2::Bayer8x8, ram.bytes);
+    // T0.4: ED far-corner vs origin on 8K
+    run_doc(
+        "T0.4-8K-FloydSteinberg",
+        8192,
+        DitherModeV2::FloydSteinberg,
+        ram.bytes,
+    );
+
+    println!(
+        "=== Track C T0 complete — paste walls/budget into TAIL_CLOSURE_spec.md ===\n\
+         Note: synthetic gradient tiles, not a user photo. Track C Phase 1 remains \
+         'shipped unproven' until a real 8K photo confirms the same pattern.\n"
+    );
+}

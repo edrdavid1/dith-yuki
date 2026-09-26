@@ -80,7 +80,7 @@ pub fn generate_ranks(size: usize, sigma: f32, seed_fraction: f32, seed: u64) ->
     // When ones are the majority, Python's FindTightestCluster (flipped) and
     // FindLargestVoid (flipped) both select among the remaining zeros; continuing
     // with largest-void insertion matches MomentsInGraphics / demofox Phase 2–3.
-    let half = (n + 1) / 2;
+    let half = n.div_ceil(2);
     {
         let mut pattern = prototype;
         let mut e = energy_from_ones(&pattern, &kernel, size);

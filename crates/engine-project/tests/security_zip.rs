@@ -3,9 +3,7 @@
 //! Each case expects a typed refusal, no panic, and no filesystem extraction.
 
 use engine_project::serialize::archive::create_zip;
-use engine_project::serialize::{
-    ArchiveLimits, ExpectedKind, SecureZipArchive, SecureZipError,
-};
+use engine_project::serialize::{ArchiveLimits, ExpectedKind, SecureZipArchive, SecureZipError};
 
 fn open_dyproj(bytes: &[u8]) -> Result<SecureZipArchive, SecureZipError> {
     SecureZipArchive::open(bytes, ExpectedKind::Dyproj, ArchiveLimits::dyproj())
@@ -78,7 +76,10 @@ fn too_many_entries_rejected() {
     ])
     .unwrap();
     let err = SecureZipArchive::open(&zip, ExpectedKind::Dyproj, limits).unwrap_err();
-    assert!(matches!(err, SecureZipError::TooManyEntries { .. }), "{err:?}");
+    assert!(
+        matches!(err, SecureZipError::TooManyEntries { .. }),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -90,7 +91,10 @@ fn entry_budget_rejects_oversized_read() {
     let zip = create_zip(&[("manifest.json", b"0123456789abcdef")]).unwrap();
     let mut ar = SecureZipArchive::open(&zip, ExpectedKind::Dyproj, limits).unwrap();
     let err = ar.read_entry("manifest.json").unwrap_err();
-    assert!(matches!(err, SecureZipError::EntryTooLarge { .. }), "{err:?}");
+    assert!(
+        matches!(err, SecureZipError::EntryTooLarge { .. }),
+        "{err:?}"
+    );
 }
 
 #[test]

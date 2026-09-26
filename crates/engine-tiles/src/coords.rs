@@ -214,7 +214,13 @@ mod tests {
     #[test]
     fn signed_from_local_with_halo_second_tile() {
         let g = GlobalCoordSigned::from_local_with_halo(tile(1, 0), 2, 2, 2);
-        assert_eq!(g, GlobalCoordSigned { x: TILE_SIZE as i32, y: 0 });
+        assert_eq!(
+            g,
+            GlobalCoordSigned {
+                x: TILE_SIZE as i32,
+                y: 0
+            }
+        );
     }
 
     #[test]
@@ -249,7 +255,8 @@ mod tests {
     fn signed_pattern_continuous_across_tile_boundary() {
         let halo = 2u32;
         // Last pixel of core area in tile(0,0): local_x = halo + TILE_SIZE - 1
-        let last = GlobalCoordSigned::from_local_with_halo(tile(0, 0), halo + TILE_SIZE - 1, halo, halo);
+        let last =
+            GlobalCoordSigned::from_local_with_halo(tile(0, 0), halo + TILE_SIZE - 1, halo, halo);
         // First pixel of core area in tile(1,0): local_x = halo
         let first = GlobalCoordSigned::from_local_with_halo(tile(1, 0), halo, halo, halo);
 
@@ -280,7 +287,13 @@ mod tests {
     fn to_local_with_halo_inverts_from_local() {
         let halo = 2u32;
         let t = tile(1, 2);
-        for local_x in [0u32, halo, halo + 10, halo + TILE_SIZE - 1, halo + TILE_SIZE + 1] {
+        for local_x in [
+            0u32,
+            halo,
+            halo + 10,
+            halo + TILE_SIZE - 1,
+            halo + TILE_SIZE + 1,
+        ] {
             for local_y in [0u32, halo, halo + 7] {
                 let g = GlobalCoordSigned::from_local_with_halo(t, local_x, local_y, halo);
                 let (lx, ly) = g.to_local_with_halo(t, halo);

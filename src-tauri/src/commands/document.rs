@@ -7,13 +7,11 @@ use crate::commands::{
 };
 use crate::document_session::{emit_tabs_changed, OpenDocumentsPayload};
 pub use crate::services::document_service::{
-    blank_rgba_f32, encode_rgba_to_png, f32_to_u8, place_image_at_origin,
-    validate_document_dimensions, AsciiClipboardRequest, BlankBackground,
-    DocumentResponse as DocResponse, ExportAsciiRequest, ExportImageRequest, ExportPatternRequest,
-    ImportPatternRequest, ImportPatternResponse, LoadImageResponse, OpenProjectResponse,
-    SaveProjectResponse, ShareProjectCopyOptions, IMAGE_IMPORT_EXTENSIONS, MAX_DOCUMENT_DIMENSION,
+    AsciiClipboardRequest, BlankBackground, ExportAsciiRequest, ExportImageRequest,
+    ExportPatternRequest, ImportPatternRequest, ImportPatternResponse, LoadImageResponse,
+    OpenProjectResponse, SaveProjectResponse, ShareProjectCopyOptions,
 };
-use crate::services::{AppError, DocumentService};
+use crate::services::DocumentService;
 
 #[tauri::command]
 pub fn allow_app_exit(app: AppHandle, gate: State<'_, Arc<QuitGuard>>) {
@@ -56,7 +54,6 @@ pub async fn load_image(
     app_handle: AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<LoadImageResponse, String> {
-    let recent_path = path.clone();
     let state = Arc::clone(state.inner());
     tauri::async_runtime::spawn_blocking(move || {
         let service = DocumentService::new(state);

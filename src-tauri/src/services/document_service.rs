@@ -307,6 +307,7 @@ pub fn import_raster_layer(
     })
 }
 
+#[allow(dead_code)] // used by unit/diag tests; keep public for diagnostics
 pub fn f32_to_u8(val: f32) -> u8 {
     (val * 255.0).clamp(0.0, 255.0) as u8
 }
@@ -487,7 +488,7 @@ impl DocumentService {
             &rgba_f32,
             Some(app_handle),
         )
-        .map_err(|e| AppError::Generic(e))
+        .map_err(AppError::Generic)
     }
 
     pub async fn save_project(
@@ -544,7 +545,7 @@ impl DocumentService {
                 &doc,
                 &state_arc.tiles.tile_cache,
                 env!("CARGO_PKG_VERSION"),
-                |p| read_png_file(p),
+                read_png_file,
             )
         })
         .await
@@ -612,7 +613,7 @@ impl DocumentService {
                     &doc,
                     &state_arc.tiles.tile_cache,
                     env!("CARGO_PKG_VERSION"),
-                    |p| read_png_file(p),
+                    read_png_file,
                     &share_opts,
                 )
             })
@@ -759,7 +760,7 @@ impl DocumentService {
                 author: None,
             },
             env!("CARGO_PKG_VERSION"),
-            |p| read_png_file(p),
+            read_png_file,
         )
         .map_err(|e| e.to_string())?;
 
@@ -985,7 +986,7 @@ impl DocumentService {
                     use image::ImageEncoder;
 
                     let mut bmp_data: Vec<u8> = Vec::new();
-                    let mut encoder = BmpEncoder::new(&mut bmp_data);
+                    let encoder = BmpEncoder::new(&mut bmp_data);
                     encoder
                         .write_image(
                             &rgba_buffer,
@@ -1050,7 +1051,7 @@ impl DocumentService {
         use std::path::Path;
         use std::sync::atomic::AtomicBool;
 
-        let format = AsciiExportFormat::from_str(&req.format).ok_or_else(|| {
+        let format = AsciiExportFormat::parse(&req.format).ok_or_else(|| {
             AppError::InvalidOperation(
                 "format must be txt, ansi, html, svg, png, or json".into(),
             )

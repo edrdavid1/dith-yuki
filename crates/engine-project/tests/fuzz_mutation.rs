@@ -33,7 +33,14 @@ fn mutations(seed: &[u8]) -> Vec<Vec<u8>> {
         }
     }
     // Single-byte flips at several offsets
-    for &idx in &[0usize, 1, 10, 100, seed.len() / 3, seed.len().saturating_sub(1)] {
+    for &idx in &[
+        0usize,
+        1,
+        10,
+        100,
+        seed.len() / 3,
+        seed.len().saturating_sub(1),
+    ] {
         if idx < seed.len() {
             let mut m = seed.to_vec();
             m[idx] ^= 0xff;

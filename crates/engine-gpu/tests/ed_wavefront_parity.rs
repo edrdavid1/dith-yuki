@@ -8,7 +8,11 @@ fn ed_serial_gpu_matches_cpu_fs() {
         "ED serial n={} cpu={:.3}ms gpu={:.3}ms max_diff={:.6} mismatches={}",
         r.n, r.cpu_ms, r.gpu_ms, r.max_abs_diff, r.mismatches
     );
-    assert_eq!(r.mismatches, 0, "serial GPU FS must match CPU (max_diff={})", r.max_abs_diff);
+    assert_eq!(
+        r.mismatches, 0,
+        "serial GPU FS must match CPU (max_diff={})",
+        r.max_abs_diff
+    );
 }
 
 #[test]

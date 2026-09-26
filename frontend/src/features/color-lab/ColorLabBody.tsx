@@ -47,6 +47,8 @@ export interface ColorLabBodyProps {
   error: string | null;
   successMessage: string | null;
   onSort: () => void;
+  canAutoInterpolate?: boolean;
+  onAutoInterpolate?: () => void;
   onReset: () => void;
   onApply: () => void;
   onImport: () => void;
@@ -75,25 +77,18 @@ export default function ColorLabBody(props: ColorLabBodyProps) {
           .map((c) => [c.r, c.g, c.b] as [number, number, number])}
       />
 
-      <div className={cn('color-lab-stack')}>
-        <AutoExtractSection
-          extractMethod={props.extractMethod}
-          extractCount={props.extractCount}
-          chromaWeight={props.chromaWeight}
-          contrastWeight={props.contrastWeight}
-          onMethodChange={props.onMethodChange}
-          onCountChange={props.onCountChange}
-          onChromaWeightChange={props.onChromaWeightChange}
-          onContrastWeightChange={props.onContrastWeightChange}
-          onExtractRaw={props.onExtractRaw}
-          onExtractActual={props.onExtractActual}
-        />
-        <ImportExportSection
-          canExport={props.colors.length > 0}
-          onImport={props.onImport}
-          onExport={props.onExport}
-        />
-      </div>
+      <AutoExtractSection
+        extractMethod={props.extractMethod}
+        extractCount={props.extractCount}
+        chromaWeight={props.chromaWeight}
+        contrastWeight={props.contrastWeight}
+        onMethodChange={props.onMethodChange}
+        onCountChange={props.onCountChange}
+        onChromaWeightChange={props.onChromaWeightChange}
+        onContrastWeightChange={props.onContrastWeightChange}
+        onExtractRaw={props.onExtractRaw}
+        onExtractActual={props.onExtractActual}
+      />
 
       <input
         type="text"
@@ -117,6 +112,24 @@ export default function ColorLabBody(props: ColorLabBodyProps) {
         onOpenPicker={props.onOpenPicker}
       />
 
+      {(props.error || props.successMessage) && (
+        <>
+          {props.error && <div className={cn('color-lab-error')}>{props.error}</div>}
+          {props.successMessage && (
+            <div className={cn('color-lab-success')}>{props.successMessage}</div>
+          )}
+        </>
+      )}
+
+      <ColorLabFooter
+        cancelLabel="Reset"
+        onSort={props.onSort}
+        canAutoInterpolate={props.canAutoInterpolate}
+        onAutoInterpolate={props.onAutoInterpolate}
+        onCancel={props.onReset}
+        onApply={props.onApply}
+      />
+
       <div className={cn('color-lab-stack')}>
         <RampGeneratorSection
           onInsert={props.onInsertGeneratedColors}
@@ -135,20 +148,10 @@ export default function ColorLabBody(props: ColorLabBodyProps) {
         compact={isSidebar}
       />
 
-      {(props.error || props.successMessage) && (
-        <>
-          {props.error && <div className={cn('color-lab-error')}>{props.error}</div>}
-          {props.successMessage && (
-            <div className={cn('color-lab-success')}>{props.successMessage}</div>
-          )}
-        </>
-      )}
-
-      <ColorLabFooter
-        cancelLabel="Reset"
-        onSort={props.onSort}
-        onCancel={props.onReset}
-        onApply={props.onApply}
+      <ImportExportSection
+        canExport={props.colors.length > 0}
+        onImport={props.onImport}
+        onExport={props.onExport}
       />
     </div>
   );

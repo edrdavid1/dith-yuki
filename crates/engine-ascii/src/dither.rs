@@ -11,16 +11,13 @@ pub enum CellDither {
     Bayer4,
     Bayer8,
     /// Floyd–Steinberg on the descriptor residual (CPU serial).
-    FloydSteinberg { serpentine: bool },
+    FloydSteinberg {
+        serpentine: bool,
+    },
 }
 
 const BAYER_2: [[u16; 2]; 2] = [[0, 2], [3, 1]];
-const BAYER_4: [[u16; 4]; 4] = [
-    [0, 8, 2, 10],
-    [12, 4, 14, 6],
-    [3, 11, 1, 9],
-    [15, 7, 13, 5],
-];
+const BAYER_4: [[u16; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
 // Standard Bayer-8 ranks 0..=63.
 const BAYER_8: [[u16; 8]; 8] = [
     [0, 32, 8, 40, 2, 34, 10, 42],
@@ -36,10 +33,7 @@ const BAYER_8: [[u16; 8]; 8] = [
 fn ordered_bias_u16(col: u32, row: u32, dither: CellDither) -> i32 {
     // Map Bayer rank → bias in coverage units ≈ ±½ step of the matrix.
     let (rank, n) = match dither {
-        CellDither::Bayer2 => (
-            BAYER_2[(row % 2) as usize][(col % 2) as usize] as i32,
-            4i32,
-        ),
+        CellDither::Bayer2 => (BAYER_2[(row % 2) as usize][(col % 2) as usize] as i32, 4i32),
         CellDither::Bayer4 => (
             BAYER_4[(row % 4) as usize][(col % 4) as usize] as i32,
             16i32,
@@ -170,9 +164,12 @@ impl ShapeErrorBuf {
     ) {
         let mut residual = [0i32; 6];
         let mut any = false;
-        for i in 0..6 {
-            residual[i] = pre.samples[i] as i32 - chosen.samples[i] as i32;
-            any |= residual[i] != 0;
+        for (r, (pre_s, chosen_s)) in residual
+            .iter_mut()
+            .zip(pre.samples.iter().zip(chosen.samples.iter()))
+        {
+            *r = i32::from(*pre_s) - i32::from(*chosen_s);
+            any |= *r != 0;
         }
         if !any {
             return;
@@ -183,8 +180,8 @@ impl ShapeErrorBuf {
                 return;
             }
             let idx = buf.idx(c as u32, r);
-            for i in 0..6 {
-                buf.err[idx][i] += residual[i] * w / 16;
+            for (slot, res) in buf.err[idx].iter_mut().zip(residual.iter()) {
+                *slot += res * w / 16;
             }
         };
         push(self, col as i32 + forward, row, 7);

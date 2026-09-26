@@ -28,12 +28,14 @@ pub fn compute_ram_budget(total_system_ram: u64) -> usize {
     (share as usize).clamp(MIN_RAM_BUDGET_BYTES, MAX_RAM_BUDGET_BYTES)
 }
 
+#[allow(dead_code)] // unit-tested; production uses resolve_ram_budget()
 pub fn ram_budget_source(total_system_ram: u64, bytes: usize) -> RamBudgetSource {
     if (total_system_ram / 4) as usize <= MIN_RAM_BUDGET_BYTES {
         RamBudgetSource::MinFallback
-    } else if bytes == compute_ram_budget(total_system_ram) {
-        RamBudgetSource::Adaptive
     } else {
+        // Both equal and unequal-to-clamp paths are Adaptive for diagnostics;
+        // EnvOverride is only set via `resolve_ram_budget_from_env`.
+        let _ = bytes;
         RamBudgetSource::Adaptive
     }
 }

@@ -24,6 +24,8 @@ import {
 import { extractPalette } from '../../app/autoExtract';
 import {
   addPalette,
+  autoInterpolatePalette,
+  autoInterpolateWouldChange,
   emitPaletteChanged,
   exportPalette,
   formatIpcError,
@@ -91,10 +93,37 @@ export default function ColorLabFeature({
   const [builtins, setBuiltins] = useState<BuiltinPaletteDto[]>([]);
   const [colorPickerIndex, setColorPickerIndex] = useState<number | null>(null);
   const [pickerAnchorRect, setPickerAnchorRect] = useState<DOMRect | null>(null);
+  const [canAutoInterpolate, setCanAutoInterpolate] = useState(false);
   const lastLivePushRef = useRef('');
 
   const lastCreatedId = useAppSelector((s) => s.palettes.lastCreatedId);
   const filters = useAppSelector(selectFiltersList);
+
+  // Live-enable Auto Interpolate when L-sorted neighbor gaps exceed the threshold.
+  useEffect(() => {
+    const valid = colors.filter((c) => c.valid);
+    if (valid.length < 2 || valid.length >= MAX_COLORS) {
+      setCanAutoInterpolate(false);
+      return;
+    }
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      void autoInterpolateWouldChange(valid.map((c) => c.hex))
+        .then((ok) => {
+          if (!cancelled) setCanAutoInterpolate(ok);
+        })
+        .catch((err) => {
+          if (!cancelled) {
+            setCanAutoInterpolate(false);
+            logIpcError('ColorLabFeature.autoInterpolateWouldChange', err);
+          }
+        });
+    }, 120);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [colors]);
 
   useEffect(() => {
     let cancelled = false;
@@ -334,6 +363,34 @@ export default function ColorLabFeature({
     );
   }, [colors, dispatch]);
 
+  const handleAutoInterpolate = useCallback(async () => {
+    const validColors = colors.filter((c) => c.valid);
+    if (validColors.length < 2) return;
+    try {
+      const result = await autoInterpolatePalette(validColors.map((c) => c.hex));
+      if (result.inserted === 0) {
+        setCanAutoInterpolate(false);
+        return;
+      }
+      const invalidColors = colors.filter((c) => !c.valid);
+      const next = result.colors
+        .slice(0, MAX_COLORS)
+        .map((c) => createColorEntry(c.hex.startsWith('#') ? c.hex : `#${c.hex}`));
+      const added = Math.max(0, next.length - validColors.length);
+      dispatch(setColors([...next, ...invalidColors].slice(0, MAX_COLORS)));
+      dispatch(setError(null));
+      dispatch(
+        setSuccessMessage(
+          added === 1 ? 'Added 1 interpolated color.' : `Added ${added} interpolated colors.`
+        )
+      );
+      window.setTimeout(() => dispatch(setSuccessMessage(null)), 3000);
+    } catch (err: unknown) {
+      dispatch(setError(formatIpcError(err)));
+      logIpcError('ColorLabFeature.autoInterpolate', err);
+    }
+  }, [colors, dispatch]);
+
   const handleApply = useCallback(async () => {
     if (!name.trim()) {
       dispatch(setError('Palette name cannot be empty.'));
@@ -422,6 +479,8 @@ export default function ColorLabFeature({
       error={error}
       successMessage={successMessage}
       onSort={handleSortByBrightness}
+      canAutoInterpolate={canAutoInterpolate}
+      onAutoInterpolate={handleAutoInterpolate}
       onReset={() => {
         dispatch(resetDraft());
       }}

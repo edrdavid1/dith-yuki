@@ -34,11 +34,13 @@ describe('autoExtract', () => {
       color_count: 2,
     });
 
-    const store = createTestStore();
+    const store = createTestStore({
+      document: { ...createTestStore().getState().document, docId: 1 },
+    });
 
     const result = await store.dispatch(extractPalette({ layerId: 1 }));
     expect(extractPalette.fulfilled.match(result)).toBe(true);
-    expect(mockGeneratePalette).toHaveBeenCalledWith(1, 8, 'MedianCut', {
+    expect(mockGeneratePalette).toHaveBeenCalledWith(1, 1, 8, 'MedianCut', {
       chromaWeight: 0,
       contrastWeight: 0,
     });
@@ -56,7 +58,9 @@ describe('autoExtract', () => {
   it('extractPalette failures set Color Lab error without throwing past rejectValue', async () => {
     mockGeneratePalette.mockRejectedValue('No tile data');
 
-    const store = createTestStore();
+    const store = createTestStore({
+      document: { ...createTestStore().getState().document, docId: 1 },
+    });
     const result = await store.dispatch(extractPalette({ layerId: 1 }));
     expect(extractPalette.rejected.match(result)).toBe(true);
     expect(store.getState().colorLab.error).toBe('No tile data');
@@ -64,7 +68,9 @@ describe('autoExtract', () => {
   });
 
   it('maybeAutoExtractPalette skips generate_palette when toggle is off', async () => {
-    const store = createTestStore();
+    const store = createTestStore({
+      document: { ...createTestStore().getState().document, docId: 1 },
+    });
     await maybeAutoExtractPalette(store.dispatch, 1, false);
     expect(mockGeneratePalette).not.toHaveBeenCalled();
   });
@@ -78,7 +84,9 @@ describe('autoExtract', () => {
       color_count: 1,
     });
 
-    const store = createTestStore();
+    const store = createTestStore({
+      document: { ...createTestStore().getState().document, docId: 1 },
+    });
     // Simulate existing filter with palette_id elsewhere — auto-extract only updates
     // palettesSlice / colorLab, never rewrites filter params in the store.
     store.dispatch(bumpVersion({ lastCreatedId: 99 }));
@@ -86,7 +94,7 @@ describe('autoExtract', () => {
 
     await maybeAutoExtractPalette(store.dispatch, 2, true);
 
-    expect(mockGeneratePalette).toHaveBeenCalledWith(2, 8, 'MedianCut', {
+    expect(mockGeneratePalette).toHaveBeenCalledWith(1, 2, 8, 'MedianCut', {
       chromaWeight: 0,
       contrastWeight: 0,
     });

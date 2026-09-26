@@ -18,7 +18,9 @@
 //! This is safe: every webview in the app is user UI that should react to a
 //! click regardless of which of our windows currently has key focus.
 
-#![cfg(target_os = "macos")]
+#![allow(deprecated)]
+#![allow(unexpected_cfgs)]
+#![allow(clippy::manual_c_str_literals)]
 
 use std::os::raw::c_char;
 use std::sync::Once;

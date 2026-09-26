@@ -3,10 +3,10 @@
 //! **Validates: Requirement 6 (AC 1-4)**
 //!
 //! Property 9: Palette Membership Invariant
-//! - For any input tile processed with a non-null `palette_id`, every output
-//!   pixel's RGB SHALL exactly match one of the palette's color entries.
-//!
-//! Tests both ordered dithering and error diffusion with `palette_id` set.
+//! - For any input tile processed with a non-null `palette_id`, every **opaque**
+//!   output pixel's RGB SHALL exactly match one of the palette's color entries.
+//! - When `dither_alpha` is on (default), transparent pixels are cleared to
+//!   `(0,0,0,0)` and are excluded — that path is not a palette claim.
 
 use engine_color::palette::LinearColor;
 use engine_color::palette_cache::PaletteKdCache;
@@ -117,7 +117,7 @@ proptest! {
     ///
     /// Property 9: Palette Membership Invariant (Ordered Dithering)
     /// For any input tile processed with ordered dithering and a non-null palette_id,
-    /// every output pixel's RGB exactly matches one of the palette's color entries.
+    /// every opaque output pixel's RGB exactly matches one of the palette's color entries.
     #[test]
     fn palette_membership_ordered_dithering(
         tile_seed in any::<u64>(),
@@ -154,9 +154,13 @@ proptest! {
         let result = apply_ordered(&tile, coord, &params, &threshold_cache, &palette_cache, &lut_cache, &doc)
             .expect("apply_ordered should not fail with valid palette");
 
-        // Verify every output pixel matches a palette entry
+        // Verify every opaque output pixel matches a palette entry.
+        // dither_alpha (default true) clears transparent pixels to (0,0,0,0).
         for y in 0..TILE_FULL_SIZE {
             for x in 0..TILE_FULL_SIZE {
+                if result.at(x, y, 3) <= 0.0 {
+                    continue;
+                }
                 let out_r = result.at(x, y, 0);
                 let out_g = result.at(x, y, 1);
                 let out_b = result.at(x, y, 2);
@@ -245,6 +249,11 @@ proptest! {
                     || rep_tile_x >= (HALO + TILE_SIZE) as i32
                     || rep_tile_y >= (HALO + TILE_SIZE) as i32
                 {
+                    continue;
+                }
+
+                // dither_alpha clears transparent pixels — not a palette claim.
+                if result.at(x, y, 3) <= 0.0 {
                     continue;
                 }
 

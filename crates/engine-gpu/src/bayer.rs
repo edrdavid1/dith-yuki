@@ -123,10 +123,7 @@ pub fn apply_bayer_gpu(
     input: &[f32],
     params: BayerGpuParams,
 ) -> Result<Vec<f32>, GpuError> {
-    let pipes = ctx
-        .bayer
-        .as_ref()
-        .ok_or(GpuError::Pipeline("bayer"))?;
+    let pipes = ctx.bayer.as_ref().ok_or(GpuError::Pipeline("bayer"))?;
 
     let uniforms = BayerUniforms {
         tile: TileUniforms::for_tile(params.tile_x, params.tile_y),

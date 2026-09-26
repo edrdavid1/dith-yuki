@@ -446,7 +446,7 @@ impl FilterService {
                 .document_handle
                 .mutate(|doc| {
                     fn find_and_add_filter(
-                        nodes: &mut Vec<engine_project::LayerNode>,
+                        nodes: &mut [engine_project::LayerNode],
                         layer_id: u32,
                         filter: FilterInstance,
                     ) -> bool {
@@ -528,7 +528,7 @@ impl FilterService {
                 .document_handle
                 .mutate(|doc| {
                     fn find_and_remove_filter(
-                        nodes: &mut Vec<engine_project::LayerNode>,
+                        nodes: &mut [engine_project::LayerNode],
                         layer_id: u32,
                         filter_id: &str,
                     ) -> bool {
@@ -613,7 +613,7 @@ impl FilterService {
                 .document_handle
                 .mutate(|doc| {
                     fn find_and_reorder(
-                        nodes: &mut Vec<engine_project::LayerNode>,
+                        nodes: &mut [engine_project::LayerNode],
                         layer_id: u32,
                         filter_id: &str,
                         new_index: usize,
@@ -1049,7 +1049,7 @@ impl FilterService {
             let mut found = false;
             self.state.require_session(doc_id)?.document_handle.mutate(|doc| {
                 fn update_filter_in_nodes(
-                    nodes: &mut Vec<engine_project::LayerNode>,
+                    nodes: &mut [engine_project::LayerNode],
                     layer_id: u32,
                     filter_id: engine_project::types::FilterInstanceId,
                     new_params: FilterParams,

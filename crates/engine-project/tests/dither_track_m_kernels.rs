@@ -112,6 +112,7 @@ fn m1_kernels_2x2_seam_sample() {
                 &p,
                 &store,
                 layer_id,
+                0,
                 &palette_cache,
                 &lut_cache,
                 &doc,
@@ -127,6 +128,7 @@ fn m1_kernels_2x2_seam_sample() {
             &p,
             &isolated,
             layer_id,
+            0,
             &palette_cache,
             &lut_cache,
             &doc,
@@ -139,6 +141,7 @@ fn m1_kernels_2x2_seam_sample() {
             &p,
             &store,
             layer_id,
+            0,
             &palette_cache,
             &lut_cache,
             &doc,
@@ -154,10 +157,7 @@ fn m1_kernels_2x2_seam_sample() {
         );
         assert!(
             store
-                .get_diag(
-                    1,
-                    layer_id,
-                    TileCoord {
+                .get_diag(1, layer_id, 0, TileCoord {
                         level: 0,
                         x: 1,
                         y: 1
@@ -192,6 +192,7 @@ fn m1_fs_atkinson_still_quantize() {
             &p,
             &store,
             layer_id,
+            0,
             &palette_cache,
             &lut_cache,
             &doc,
@@ -243,6 +244,7 @@ fn m2_serpentine_even_and_odd_global_row_seam() {
         &p,
         &store,
         layer_id,
+        0,
         &palette_cache,
         &lut_cache,
         &doc,
@@ -255,6 +257,7 @@ fn m2_serpentine_even_and_odd_global_row_seam() {
         &p,
         &store,
         layer_id,
+        0,
         &palette_cache,
         &lut_cache,
         &doc,
@@ -269,6 +272,7 @@ fn m2_serpentine_even_and_odd_global_row_seam() {
         &p,
         &isolated,
         layer_id,
+        0,
         &palette_cache,
         &lut_cache,
         &doc,
@@ -277,7 +281,7 @@ fn m2_serpentine_even_and_odd_global_row_seam() {
     .unwrap();
 
     let incoming = store
-        .get_left(1, layer_id, right_c)
+        .get_left(1, layer_id, 0, right_c)
         .expect("left tile must store right-edge residuals");
     let energy: f32 = incoming.right.iter().map(|v| v.abs()).sum();
     assert!(

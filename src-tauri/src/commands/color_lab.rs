@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tauri::State;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::commands::AppState;
 use crate::services::palette_service::{hex_to_linear, linear_to_hex};
@@ -143,7 +143,7 @@ pub fn generate_harmony_palette(
     };
     let base = hex_arg_to_lin_rgb(&base_hex)?;
     let colors = if let Some(spread) = analogous_spread {
-        if !spread.is_finite() || spread < 0.0 || spread > std::f32::consts::PI {
+        if !spread.is_finite() || !(0.0..=std::f32::consts::PI).contains(&spread) {
             return Err("analogous_spread must be a finite value in [0, π] radians".to_string());
         }
         engine_color::generate_harmony_with_spread(base, harmony_rule, count as usize, spread)
@@ -151,6 +151,39 @@ pub fn generate_harmony_palette(
         engine_color::generate_harmony(base, harmony_rule, count as usize)
     };
     Ok(colors.into_iter().map(lin_rgb_to_generated).collect())
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AutoInterpolateDto {
+    pub colors: Vec<GeneratedColorDto>,
+    pub inserted: u32,
+}
+
+/// Preview whether Auto Interpolate would add colors (for enabling the button).
+#[tauri::command]
+pub fn auto_interpolate_would_change(colors: Vec<String>) -> Result<bool, String> {
+    if colors.len() < 2 {
+        return Ok(false);
+    }
+    let lin: Result<Vec<_>, _> = colors.iter().map(|h| hex_arg_to_lin_rgb(h)).collect();
+    Ok(engine_color::would_auto_interpolate(&lin?))
+}
+
+/// Fill large L-neighbor gaps; returns original + appended Oklab-lerp fills.
+#[tauri::command]
+pub fn auto_interpolate_palette(colors: Vec<String>) -> Result<AutoInterpolateDto, String> {
+    if colors.len() > 256 {
+        return Err("palette cannot exceed 256 colors".to_string());
+    }
+    let lin: Result<Vec<_>, _> = colors.iter().map(|h| hex_arg_to_lin_rgb(h)).collect();
+    let result = engine_color::auto_interpolate(&lin?);
+    if result.colors.len() > 256 {
+        return Err("auto interpolate would exceed 256 colors".to_string());
+    }
+    Ok(AutoInterpolateDto {
+        inserted: result.inserted as u32,
+        colors: result.colors.into_iter().map(lin_rgb_to_generated).collect(),
+    })
 }
 
 #[tauri::command]

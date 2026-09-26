@@ -1,6 +1,10 @@
 //! Filter application dispatcher.
 //!
-//! Main entry point for applying filters to tiles.
+//! **Live production path** (not a legacy stub): tile preview (`tile_pipeline`),
+//! thumbnails, pattern/serialize export, registry parity tests, and latency
+//! diagnostics all call `apply_filter_to_tile` / `*_with_caches`. Track E
+//! Registry resolves algorithm identity upstream; this module still applies
+//! the resulting `FilterParams` per tile.
 
 use super::dither_diffusion::apply_error_diffusion_with_cache_into;
 use super::dither_ordered::apply_ordered_with_cache_into;
@@ -305,10 +309,13 @@ fn apply_single_filter_into(
             block_cache,
             gpu,
             layer_id,
+            filter.id.as_u128(),
         );
         let params_json = filter_params_to_json(&filter.params)?;
         dst.copy_from(tile);
-        let result = algo.apply(dst, &params_json, &ctx).map_err(EngineError::from);
+        let result = algo
+            .apply(dst, &params_json, &ctx)
+            .map_err(EngineError::from);
         // Pre-registry dither path cleared a missing optional palette and retried
         // (levels / greyscale dither). Registry dispatch must keep that behavior —
         // otherwise Color Lab's stale `lastCreatedId` aborts every Processed tile.
@@ -359,6 +366,7 @@ fn apply_single_filter_into(
                 residuals_store,
                 block_cache,
                 layer_id,
+                filter.id.as_u128(),
                 gpu,
             )
         }
@@ -374,6 +382,7 @@ fn apply_single_filter_into(
             residuals_store,
             block_cache,
             layer_id,
+            filter.id.as_u128(),
             gpu,
         ),
         FilterParams::Placeholder(_) => {
@@ -454,6 +463,7 @@ fn dispatch_dither_v2_into(
     residuals_store: &ErrorResidualsStore,
     block_cache: &BlockRepresentativeCache,
     layer_id: LayerId,
+    filter_key: u128,
     gpu: Option<&GpuContext>,
 ) -> Result<(), EngineError> {
     let result = dispatch_dither_v2_inner_into(
@@ -468,6 +478,7 @@ fn dispatch_dither_v2_into(
         residuals_store,
         block_cache,
         layer_id,
+        filter_key,
         gpu,
     );
     if let Err(EngineError::PaletteNotFound { .. }) = &result {
@@ -486,6 +497,7 @@ fn dispatch_dither_v2_into(
                 residuals_store,
                 block_cache,
                 layer_id,
+                filter_key,
                 gpu,
             );
         }
@@ -505,26 +517,27 @@ fn dispatch_dither_v2_inner_into(
     residuals_store: &ErrorResidualsStore,
     block_cache: &BlockRepresentativeCache,
     layer_id: LayerId,
+    filter_key: u128,
     _gpu: Option<&GpuContext>,
 ) -> Result<(), EngineError> {
     match &params.mode {
-        DitherModeV2::Bayer2x2 | DitherModeV2::Bayer4x4 | DitherModeV2::Bayer8x8
+        DitherModeV2::Bayer2x2
+        | DitherModeV2::Bayer4x4
+        | DitherModeV2::Bayer8x8
         | DitherModeV2::Bayer16x16
         | DitherModeV2::ClusteredDotOrdered
-        | DitherModeV2::DispersedDotOrdered => {
-            apply_ordered_with_cache_into(
-                tile,
-                coord,
-                params,
-                threshold_cache,
-                palette_cache,
-                lut_cache,
-                document,
-                block_cache,
-                layer_id,
-                dst,
-            )
-        }
+        | DitherModeV2::DispersedDotOrdered => apply_ordered_with_cache_into(
+            tile,
+            coord,
+            params,
+            threshold_cache,
+            palette_cache,
+            lut_cache,
+            document,
+            block_cache,
+            layer_id,
+            dst,
+        ),
         DitherModeV2::CmykHalftone | DitherModeV2::HalftoneScreenAngled => {
             apply_ordered_with_cache_into(
                 tile,
@@ -557,6 +570,7 @@ fn dispatch_dither_v2_inner_into(
             params,
             residuals_store,
             layer_id,
+             filter_key,
             palette_cache,
             lut_cache,
             document,
@@ -1406,6 +1420,106 @@ mod tests {
             stacked_out.data.as_ref(),
             dither_out.data.as_ref(),
             "dither after brightness must not equal dither on the raw tile"
+        );
+    }
+
+    /// Stacked ED + mega-pixel must not punch transparent strips at the 256px
+    /// grid (preview bg showing through). Residuals / dithered BRC are per
+    /// filter; ED keeps the source halo for later block sampling.
+    #[test]
+    fn stacked_ed_pixel_size_keeps_opaque_tile_edge() {
+        use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
+        use crate::layer::Layer;
+        use crate::types::{DocumentId, LayerKind};
+        use engine_tiles::{HALO, TILE_SIZE};
+
+        let mut tile = PixelTile::new();
+        fill_gray(&mut tile, 0.42);
+
+        let fs = |ps: u8| {
+            FilterInstance::new(
+                FilterKind::Dither,
+                FilterParams::DitherV2(DitherParamsV2 {
+                    mode: DitherModeV2::FloydSteinberg,
+                    levels: 2,
+                    threshold_scale: 1.0,
+                    pixel_size: ps,
+                    color_mode: DitherColorMode::Rgb,
+                    palette_id: None,
+                    dither_alpha: true,
+                    ..Default::default()
+                }),
+            )
+        };
+
+        let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, 512, 256);
+        // Top→bottom UI: second FS on top. Apply `.rev()` → first FS then second.
+        layer.filters.push(fs(4));
+        layer.filters.push(fs(4));
+
+        let left_c = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
+        let right_c = TileCoord {
+            level: 0,
+            x: 1,
+            y: 0,
+        };
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let threshold_cache = ThresholdMapCache::new();
+        let doc = Document::new(DocumentId::new(1), 512, 256);
+        let residuals = ErrorResidualsStore::new();
+        let blocks = BlockRepresentativeCache::new();
+        // Populate Raw block reps so the first applied dither can sample across
+        // the tile seam the same way production does for dither-first stacks.
+        let mut rgba = vec![0.42f32; 512 * 256 * 4];
+        for i in 0..(512 * 256) {
+            rgba[i * 4 + 3] = 1.0;
+        }
+        blocks.populate_from_buffer(&rgba, 512, 256, doc.id.0, layer.id.0, 4);
+
+        let left = apply_filter_to_tile_with_caches(
+            &tile,
+            &layer,
+            left_c,
+            &palette_cache,
+            &lut_cache,
+            &threshold_cache,
+            &doc,
+            &residuals,
+            &blocks,
+            None,
+        )
+        .unwrap();
+        let right = apply_filter_to_tile_with_caches(
+            &tile,
+            &layer,
+            right_c,
+            &palette_cache,
+            &lut_cache,
+            &threshold_cache,
+            &doc,
+            &residuals,
+            &blocks,
+            None,
+        )
+        .unwrap();
+
+        let mut transparent_edge = 0usize;
+        for y in HALO..(HALO + TILE_SIZE) {
+            if left.at(HALO + TILE_SIZE - 1, y, 3) <= 0.0 {
+                transparent_edge += 1;
+            }
+            if right.at(HALO, y, 3) <= 0.0 {
+                transparent_edge += 1;
+            }
+        }
+        assert_eq!(
+            transparent_edge, 0,
+            "stacked ED ps=4 must not clear core alpha at the tile seam"
         );
     }
 

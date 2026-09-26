@@ -132,8 +132,7 @@ export function isPanelDockable(panelId: string): boolean {
 }
 
 /**
- * Returns true if the panel is currently rendered by FlexLayout
- * (as opposed to the legacy DockedSidebar / PanelManager undock).
+ * Returns true if the panel is currently rendered by FlexLayout.
  * B3: Layers. B4a: Effect. B4b: Color Lab. B5: Preview (center model).
  */
 export function isPanelOnFlexLayout(panelId: string): boolean {

@@ -185,11 +185,7 @@ impl DiffusionKernel {
             ],
             // Sierra Lite / 2-4A: * 2 / 1 1  (÷4). Sum = 1.0.
             // Sources: bisqwit error_diffusion.txt; ImageSharp SierraLite.
-            Self::SierraLite => &[
-                (1, 0, 2.0 / 4.0),
-                (-1, 1, 1.0 / 4.0),
-                (0, 1, 1.0 / 4.0),
-            ],
+            Self::SierraLite => &[(1, 0, 2.0 / 4.0), (-1, 1, 1.0 / 4.0), (0, 1, 1.0 / 4.0)],
             // Shiau–Fan (preferred / ShiauFan2): * 8 / 1 1 2 4  (÷16). Sum = 1.0.
             // Sources: US5353127; DitherPunk SHIAU_FAN_2; libpipi shiaufan2;
             // ionathanch Error-Diffusion-Dither-Kernels wiki.
@@ -218,16 +214,8 @@ impl DiffusionKernel {
                 (3, 3, 5.0 / 200.0),
             ],
             // Positions for margin; live weights from [`crate::filters::ostromoukhov_table`].
-            Self::Ostromoukhov => &[
-                (1, 0, 13.0 / 18.0),
-                (-1, 1, 0.0),
-                (0, 1, 5.0 / 18.0),
-            ],
-            Self::ZhouFang => &[
-                (1, 0, 13.0 / 18.0),
-                (-1, 1, 0.0),
-                (0, 1, 5.0 / 18.0),
-            ],
+            Self::Ostromoukhov => &[(1, 0, 13.0 / 18.0), (-1, 1, 0.0), (0, 1, 5.0 / 18.0)],
+            Self::ZhouFang => &[(1, 0, 13.0 / 18.0), (-1, 1, 0.0), (0, 1, 5.0 / 18.0)],
         }
     }
 
@@ -493,6 +481,10 @@ pub struct DitherParamsV2 {
     /// Ignored when `palette_id` is `None`. Missing JSON → Strict.
     #[serde(default)]
     pub palette_dither_mode: PaletteDitherMode,
+    /// When true (Strict/Mixed only), two-nearest palette pick uses Oklab `L`
+    /// alone instead of full Oklab distance. Default false; missing JSON → false.
+    #[serde(default)]
+    pub match_by_brightness: bool,
     /// CMYK halftone cell size in px (2–64, default 8). Used when mode is `CmykHalftone`.
     #[serde(default = "default_halftone_cell_size")]
     pub halftone_cell_size: u8,
@@ -567,6 +559,7 @@ impl Default for DitherParamsV2 {
             color_mode: DitherColorMode::Rgb,
             palette_id: None,
             palette_dither_mode: PaletteDitherMode::Strict,
+            match_by_brightness: false,
             halftone_cell_size: default_halftone_cell_size(),
             wave_wavelength: default_wave_wavelength(),
             wave_amplitude: default_wave_amplitude(),
@@ -619,6 +612,7 @@ impl From<(DitherMode, u8)> for DitherParamsV2 {
             color_mode: DitherColorMode::Rgb,
             palette_id: None,
             palette_dither_mode: PaletteDitherMode::Strict,
+            match_by_brightness: false,
             halftone_cell_size: default_halftone_cell_size(),
             wave_wavelength: default_wave_wavelength(),
             wave_amplitude: default_wave_amplitude(),
@@ -717,9 +711,7 @@ impl DitherParamsV2 {
         }
         if src_a <= 0.0 {
             0.0
-        } else if src_a >= 1.0 {
-            1.0
-        } else if src_a > threshold {
+        } else if src_a >= 1.0 || src_a > threshold {
             1.0
         } else {
             0.0
@@ -1006,8 +998,8 @@ impl AsciiParams {
             }
         }
         match self.color_target.as_str() {
-            "truecolor" | "xterm256" | "ansi16" | "ansi16_vga" | "ansi16_xterm" | "ansi16_win10" => {
-            }
+            "truecolor" | "xterm256" | "ansi16" | "ansi16_vga" | "ansi16_xterm"
+            | "ansi16_win10" => {}
             other => {
                 return Err(EngineError::invalid_filter_params(format!(
                     "ascii color_target invalid: {other}"
@@ -1027,6 +1019,15 @@ impl AsciiParams {
 }
 
 /// Wire format for [`FilterParams::Placeholder`].
+///
+/// **Not dead code.** Track E Registry owns known algorithms; Placeholder remains
+/// the intentional unknown-kind / forward-compat arm:
+/// - `filter_service` maps unrecognized `FilterKind` strings here
+/// - `serialize` / `id_remap` preserve unknown filters across load/save
+/// - `apply` no-ops Placeholder rather than failing the tile pipeline
+///
+/// Do not delete until product policy is "reject unknown filters on load"
+/// (would break older `.dyproj` / `.dyuki` with experimental kinds).
 ///
 /// Accepts a legacy JSON string or the v2 `{ label, raw_params }` object.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1411,7 +1412,7 @@ pub fn filter_params_to_json(params: &FilterParams) -> Result<serde_json::Value,
     match params {
         FilterParams::DitherV2(p) => serde_json::to_value(p),
         FilterParams::Dither { mode, color_depth } => {
-            serde_json::to_value(&DitherParamsV2::from((mode.clone(), *color_depth)))
+            serde_json::to_value(DitherParamsV2::from((mode.clone(), *color_depth)))
         }
         FilterParams::PaletteQuantize {
             palette_id,
@@ -2302,6 +2303,10 @@ mod tests {
         let params: DitherParamsV2 =
             serde_json::from_str(r#"{"mode":"bayer_4x4","levels":4}"#).unwrap();
         assert_eq!(params.palette_dither_mode, PaletteDitherMode::Strict);
+        assert!(
+            !params.match_by_brightness,
+            "missing match_by_brightness deserializes as false"
+        );
         let mut guided = DitherParamsV2::default();
         guided.palette_dither_mode = PaletteDitherMode::Guided {
             channel_levels: Some(1),
@@ -2397,17 +2402,17 @@ mod tests {
             assert!((got.2 - exp.2).abs() < 1e-6, "{} vs {}", got.2, exp.2);
             sum += got.2;
         }
-        assert!((sum - 1.0).abs() < 1e-6, "Sierra Two-Row weights must sum to 1.0, got {sum}");
+        assert!(
+            (sum - 1.0).abs() < 1e-6,
+            "Sierra Two-Row weights must sum to 1.0, got {sum}"
+        );
     }
 
     #[test]
     fn sierra_lite_kernel_matches_published_coefficients() {
         let offs = DiffusionKernel::SierraLite.offsets();
-        let expected: &[(i32, i32, f32)] = &[
-            (1, 0, 2.0 / 4.0),
-            (-1, 1, 1.0 / 4.0),
-            (0, 1, 1.0 / 4.0),
-        ];
+        let expected: &[(i32, i32, f32)] =
+            &[(1, 0, 2.0 / 4.0), (-1, 1, 1.0 / 4.0), (0, 1, 1.0 / 4.0)];
         assert_eq!(offs.len(), expected.len());
         let mut sum = 0.0f32;
         for (got, exp) in offs.iter().zip(expected.iter()) {
@@ -2416,7 +2421,10 @@ mod tests {
             assert!((got.2 - exp.2).abs() < 1e-6, "{} vs {}", got.2, exp.2);
             sum += got.2;
         }
-        assert!((sum - 1.0).abs() < 1e-6, "Sierra Lite weights must sum to 1.0, got {sum}");
+        assert!(
+            (sum - 1.0).abs() < 1e-6,
+            "Sierra Lite weights must sum to 1.0, got {sum}"
+        );
     }
 
     #[test]
@@ -2437,7 +2445,10 @@ mod tests {
             sum += got.2;
         }
         assert_eq!(DiffusionKernel::Fan93.max_offset(), 1);
-        assert!((sum - 1.0).abs() < 1e-6, "Fan93 weights must sum to 1.0, got {sum}");
+        assert!(
+            (sum - 1.0).abs() < 1e-6,
+            "Fan93 weights must sum to 1.0, got {sum}"
+        );
     }
 
     #[test]
@@ -2459,7 +2470,10 @@ mod tests {
             sum += got.2;
         }
         assert_eq!(DiffusionKernel::ShiauFan.max_offset(), 3);
-        assert!((sum - 1.0).abs() < 1e-6, "Shiau–Fan weights must sum to 1.0, got {sum}");
+        assert!(
+            (sum - 1.0).abs() < 1e-6,
+            "Shiau–Fan weights must sum to 1.0, got {sum}"
+        );
     }
 
     #[test]
@@ -2488,6 +2502,9 @@ mod tests {
             sum += got.2;
         }
         assert_eq!(DiffusionKernel::StevensonArce.max_offset(), 3);
-        assert!((sum - 1.0).abs() < 1e-6, "Stevenson–Arce weights must sum to 1.0, got {sum}");
+        assert!(
+            (sum - 1.0).abs() < 1e-6,
+            "Stevenson–Arce weights must sum to 1.0, got {sum}"
+        );
     }
 }

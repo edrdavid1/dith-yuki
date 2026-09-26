@@ -184,10 +184,7 @@ mod tests {
         for tone in [0u8, 22, 64, 85, 127, 200, 255] {
             let offs = normalized_offsets(tone);
             let sum: f32 = offs.iter().map(|o| o.2).sum();
-            assert!(
-                (sum - 1.0).abs() < 1e-5,
-                "tone {tone}: weight sum {sum}"
-            );
+            assert!((sum - 1.0).abs() < 1e-5, "tone {tone}: weight sum {sum}");
         }
     }
 }

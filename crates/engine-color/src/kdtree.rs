@@ -242,10 +242,26 @@ mod tests {
 
         // Any query should return index 0.
         let queries = [
-            Oklab { l: 0.0, a: 0.0, b: 0.0 },
-            Oklab { l: 1.0, a: 0.5, b: 0.5 },
-            Oklab { l: 0.5, a: 0.1, b: -0.1 },
-            Oklab { l: 0.3, a: -0.3, b: 0.4 },
+            Oklab {
+                l: 0.0,
+                a: 0.0,
+                b: 0.0,
+            },
+            Oklab {
+                l: 1.0,
+                a: 0.5,
+                b: 0.5,
+            },
+            Oklab {
+                l: 0.5,
+                a: 0.1,
+                b: -0.1,
+            },
+            Oklab {
+                l: 0.3,
+                a: -0.3,
+                b: 0.4,
+            },
         ];
         for q in &queries {
             assert_eq!(tree.nearest(*q), 0, "query {:?} should return 0", q);
@@ -255,29 +271,74 @@ mod tests {
     #[test]
     fn test_exact_match() {
         let colors = vec![
-            Oklab { l: 0.0, a: 0.0, b: 0.0 },
-            Oklab { l: 0.5, a: 0.1, b: -0.1 },
-            Oklab { l: 1.0, a: -0.2, b: 0.3 },
+            Oklab {
+                l: 0.0,
+                a: 0.0,
+                b: 0.0,
+            },
+            Oklab {
+                l: 0.5,
+                a: 0.1,
+                b: -0.1,
+            },
+            Oklab {
+                l: 1.0,
+                a: -0.2,
+                b: 0.3,
+            },
         ];
         let tree = KdTree::build(&colors).unwrap();
 
         // Querying an exact point should return its index.
-        assert_eq!(tree.nearest(Oklab { l: 0.0, a: 0.0, b: 0.0 }), 0);
-        assert_eq!(tree.nearest(Oklab { l: 0.5, a: 0.1, b: -0.1 }), 1);
-        assert_eq!(tree.nearest(Oklab { l: 1.0, a: -0.2, b: 0.3 }), 2);
+        assert_eq!(
+            tree.nearest(Oklab {
+                l: 0.0,
+                a: 0.0,
+                b: 0.0
+            }),
+            0
+        );
+        assert_eq!(
+            tree.nearest(Oklab {
+                l: 0.5,
+                a: 0.1,
+                b: -0.1
+            }),
+            1
+        );
+        assert_eq!(
+            tree.nearest(Oklab {
+                l: 1.0,
+                a: -0.2,
+                b: 0.3
+            }),
+            2
+        );
     }
 
     #[test]
     fn test_equidistant_tie_breaking_lowest_index() {
         // Two colors equidistant from the query: should return lower index.
         let colors = vec![
-            Oklab { l: 0.0, a: 0.0, b: 0.0 }, // index 0, dist_sq = 0.25
-            Oklab { l: 1.0, a: 0.0, b: 0.0 }, // index 1, dist_sq = 0.25
+            Oklab {
+                l: 0.0,
+                a: 0.0,
+                b: 0.0,
+            }, // index 0, dist_sq = 0.25
+            Oklab {
+                l: 1.0,
+                a: 0.0,
+                b: 0.0,
+            }, // index 1, dist_sq = 0.25
         ];
         let tree = KdTree::build(&colors).unwrap();
 
         // Query at midpoint: equidistant to both.
-        let query = Oklab { l: 0.5, a: 0.0, b: 0.0 };
+        let query = Oklab {
+            l: 0.5,
+            a: 0.0,
+            b: 0.0,
+        };
         assert_eq!(
             tree.nearest(query),
             0,
@@ -289,13 +350,29 @@ mod tests {
     fn test_equidistant_tie_breaking_three_colors() {
         // Three colors all equidistant from the origin.
         let colors = vec![
-            Oklab { l: 0.0, a: 0.0, b: 1.0 }, // index 0, dist_sq = 1.0
-            Oklab { l: 0.0, a: 1.0, b: 0.0 }, // index 1, dist_sq = 1.0
-            Oklab { l: 1.0, a: 0.0, b: 0.0 }, // index 2, dist_sq = 1.0
+            Oklab {
+                l: 0.0,
+                a: 0.0,
+                b: 1.0,
+            }, // index 0, dist_sq = 1.0
+            Oklab {
+                l: 0.0,
+                a: 1.0,
+                b: 0.0,
+            }, // index 1, dist_sq = 1.0
+            Oklab {
+                l: 1.0,
+                a: 0.0,
+                b: 0.0,
+            }, // index 2, dist_sq = 1.0
         ];
         let tree = KdTree::build(&colors).unwrap();
 
-        let query = Oklab { l: 0.0, a: 0.0, b: 0.0 };
+        let query = Oklab {
+            l: 0.0,
+            a: 0.0,
+            b: 0.0,
+        };
         assert_eq!(
             tree.nearest(query),
             0,
@@ -306,38 +383,111 @@ mod tests {
     #[test]
     fn test_nearest_basic() {
         let colors = vec![
-            Oklab { l: 0.2, a: 0.0, b: 0.0 },
-            Oklab { l: 0.5, a: 0.0, b: 0.0 },
-            Oklab { l: 0.8, a: 0.0, b: 0.0 },
+            Oklab {
+                l: 0.2,
+                a: 0.0,
+                b: 0.0,
+            },
+            Oklab {
+                l: 0.5,
+                a: 0.0,
+                b: 0.0,
+            },
+            Oklab {
+                l: 0.8,
+                a: 0.0,
+                b: 0.0,
+            },
         ];
         let tree = KdTree::build(&colors).unwrap();
 
         // Query closer to index 0
-        assert_eq!(tree.nearest(Oklab { l: 0.1, a: 0.0, b: 0.0 }), 0);
+        assert_eq!(
+            tree.nearest(Oklab {
+                l: 0.1,
+                a: 0.0,
+                b: 0.0
+            }),
+            0
+        );
         // Query closer to index 1
-        assert_eq!(tree.nearest(Oklab { l: 0.4, a: 0.0, b: 0.0 }), 1);
+        assert_eq!(
+            tree.nearest(Oklab {
+                l: 0.4,
+                a: 0.0,
+                b: 0.0
+            }),
+            1
+        );
         // Query closer to index 2
-        assert_eq!(tree.nearest(Oklab { l: 0.9, a: 0.0, b: 0.0 }), 2);
+        assert_eq!(
+            tree.nearest(Oklab {
+                l: 0.9,
+                a: 0.0,
+                b: 0.0
+            }),
+            2
+        );
     }
 
     #[test]
     fn test_nearest_matches_brute_force() {
         // A small palette; verify KD-tree matches brute-force for several queries.
         let colors = vec![
-            Oklab { l: 0.1, a: 0.2, b: -0.1 },
-            Oklab { l: 0.4, a: -0.1, b: 0.3 },
-            Oklab { l: 0.7, a: 0.0, b: 0.0 },
-            Oklab { l: 0.9, a: -0.3, b: -0.2 },
-            Oklab { l: 0.3, a: 0.4, b: 0.1 },
+            Oklab {
+                l: 0.1,
+                a: 0.2,
+                b: -0.1,
+            },
+            Oklab {
+                l: 0.4,
+                a: -0.1,
+                b: 0.3,
+            },
+            Oklab {
+                l: 0.7,
+                a: 0.0,
+                b: 0.0,
+            },
+            Oklab {
+                l: 0.9,
+                a: -0.3,
+                b: -0.2,
+            },
+            Oklab {
+                l: 0.3,
+                a: 0.4,
+                b: 0.1,
+            },
         ];
         let tree = KdTree::build(&colors).unwrap();
 
         let queries = vec![
-            Oklab { l: 0.0, a: 0.0, b: 0.0 },
-            Oklab { l: 0.5, a: 0.1, b: 0.1 },
-            Oklab { l: 1.0, a: -0.5, b: 0.5 },
-            Oklab { l: 0.35, a: 0.3, b: 0.0 },
-            Oklab { l: 0.6, a: -0.2, b: -0.1 },
+            Oklab {
+                l: 0.0,
+                a: 0.0,
+                b: 0.0,
+            },
+            Oklab {
+                l: 0.5,
+                a: 0.1,
+                b: 0.1,
+            },
+            Oklab {
+                l: 1.0,
+                a: -0.5,
+                b: 0.5,
+            },
+            Oklab {
+                l: 0.35,
+                a: 0.3,
+                b: 0.0,
+            },
+            Oklab {
+                l: 0.6,
+                a: -0.2,
+                b: -0.1,
+            },
         ];
 
         for q in &queries {
@@ -354,27 +504,75 @@ mod tests {
     #[test]
     fn test_two_colors() {
         let colors = vec![
-            Oklab { l: 0.0, a: 0.0, b: 0.0 },
-            Oklab { l: 1.0, a: 0.0, b: 0.0 },
+            Oklab {
+                l: 0.0,
+                a: 0.0,
+                b: 0.0,
+            },
+            Oklab {
+                l: 1.0,
+                a: 0.0,
+                b: 0.0,
+            },
         ];
         let tree = KdTree::build(&colors).unwrap();
 
-        assert_eq!(tree.nearest(Oklab { l: 0.3, a: 0.0, b: 0.0 }), 0);
-        assert_eq!(tree.nearest(Oklab { l: 0.7, a: 0.0, b: 0.0 }), 1);
+        assert_eq!(
+            tree.nearest(Oklab {
+                l: 0.3,
+                a: 0.0,
+                b: 0.0
+            }),
+            0
+        );
+        assert_eq!(
+            tree.nearest(Oklab {
+                l: 0.7,
+                a: 0.0,
+                b: 0.0
+            }),
+            1
+        );
     }
 
     #[test]
     fn test_duplicate_colors() {
         // All colors are the same; should always return index 0 (lowest).
         let colors = vec![
-            Oklab { l: 0.5, a: 0.0, b: 0.0 },
-            Oklab { l: 0.5, a: 0.0, b: 0.0 },
-            Oklab { l: 0.5, a: 0.0, b: 0.0 },
+            Oklab {
+                l: 0.5,
+                a: 0.0,
+                b: 0.0,
+            },
+            Oklab {
+                l: 0.5,
+                a: 0.0,
+                b: 0.0,
+            },
+            Oklab {
+                l: 0.5,
+                a: 0.0,
+                b: 0.0,
+            },
         ];
         let tree = KdTree::build(&colors).unwrap();
 
-        assert_eq!(tree.nearest(Oklab { l: 0.5, a: 0.0, b: 0.0 }), 0);
-        assert_eq!(tree.nearest(Oklab { l: 0.0, a: 0.0, b: 0.0 }), 0);
+        assert_eq!(
+            tree.nearest(Oklab {
+                l: 0.5,
+                a: 0.0,
+                b: 0.0
+            }),
+            0
+        );
+        assert_eq!(
+            tree.nearest(Oklab {
+                l: 0.0,
+                a: 0.0,
+                b: 0.0
+            }),
+            0
+        );
     }
 
     /// Brute-force nearest-neighbor for validation (tie-breaking by lowest index).

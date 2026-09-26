@@ -6,11 +6,13 @@
 
 use engine_color::palette::{LinearColor, Palette};
 use engine_project::document::Document;
-use engine_project::filter::{DitherModeV2, DitherParamsV2, FilterInstance, FilterKind, FilterParams};
+use engine_project::filter::{
+    DitherModeV2, DitherParamsV2, FilterInstance, FilterKind, FilterParams,
+};
 use engine_project::layer::{Layer, LayerNode};
 use engine_project::serialize::{
-    open_project_from_bytes, pack_pattern_to_bytes, save_project_to_bytes, unpack_pattern_from_bytes,
-    ArchiveKind, Manifest, PatternExportMeta, ProjectError,
+    open_project_from_bytes, pack_pattern_to_bytes, save_project_to_bytes,
+    unpack_pattern_from_bytes, ArchiveKind, Manifest, PatternExportMeta, ProjectError,
 };
 use engine_project::types::{DocumentId, LayerId, LayerKind, PaletteId};
 use engine_tiles::decompose::decompose_image_to_tiles;
@@ -69,9 +71,8 @@ fn build_minimal_dyproj_bytes() -> Result<Vec<u8>, ProjectError> {
     }
 
     let cache = TileCache::new(50_000_000);
-    decompose_image_to_tiles(&rgba, w, h, 1, 1, &cache).map_err(|e| {
-        ProjectError::Codec(format!("decompose: {e}"))
-    })?;
+    decompose_image_to_tiles(&rgba, w, h, 1, 1, &cache)
+        .map_err(|e| ProjectError::Codec(format!("decompose: {e}")))?;
 
     let mut doc = Document::new(DocumentId::new(1), w, h);
     let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, w, h);
@@ -171,8 +172,14 @@ fn write_sha256sums() -> Result<(), Box<dyn std::error::Error>> {
         "# Format: <hash>  <path-relative-to-tests/fixtures>".to_string(),
     ];
     let pairs = [
-        ("dyproj/v1/minimal.dyproj", dyproj_v1_dir().join("minimal.dyproj")),
-        ("dyuki/v1/minimal.dyuki", dyuki_v1_dir().join("minimal.dyuki")),
+        (
+            "dyproj/v1/minimal.dyproj",
+            dyproj_v1_dir().join("minimal.dyproj"),
+        ),
+        (
+            "dyuki/v1/minimal.dyuki",
+            dyuki_v1_dir().join("minimal.dyuki"),
+        ),
     ];
     for (rel, path) in pairs {
         let bytes = fs::read(&path)?;
@@ -187,8 +194,12 @@ fn write_sha256sums() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn golden_v1_sha256sums_locked() {
     let sums_path = fixtures_root().join("SHA256SUMS");
-    let text = fs::read_to_string(&sums_path)
-        .unwrap_or_else(|e| panic!("missing {}: {e} (run generate_golden_v1_fixtures first)", sums_path.display()));
+    let text = fs::read_to_string(&sums_path).unwrap_or_else(|e| {
+        panic!(
+            "missing {}: {e} (run generate_golden_v1_fixtures first)",
+            sums_path.display()
+        )
+    });
     let entries = parse_sha256sums(&text);
     assert!(
         !entries.is_empty(),
@@ -211,8 +222,8 @@ fn golden_v1_dyproj_opens() {
     let bytes = fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
 
     let staging = TileCache::new(50_000_000);
-    let opened = open_project_from_bytes(&bytes, &staging, DocumentId::new(1))
-        .expect("v1 dyproj must open");
+    let opened =
+        open_project_from_bytes(&bytes, &staging, DocumentId::new(1)).expect("v1 dyproj must open");
 
     assert_eq!(opened.document.width, 32);
     assert_eq!(opened.document.height, 24);

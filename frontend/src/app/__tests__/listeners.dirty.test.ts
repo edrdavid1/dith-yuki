@@ -19,7 +19,6 @@ vi.mock('../../shared/ipc', async () => {
     onDocumentChanged: vi.fn(async () => () => {}),
     onUndoStateChanged: vi.fn(async () => () => {}),
     onSelectionChanged: vi.fn(async () => () => {}),
-    onPanelStateChanged: vi.fn(async () => () => {}),
     onColorLabDraftChanged: vi.fn(async () => () => {}),
     onPaletteBindingChanged: vi.fn(async () => () => {}),
     isDocumentDirty: vi.fn(async () => false),

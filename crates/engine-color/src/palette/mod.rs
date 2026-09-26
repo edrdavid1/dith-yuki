@@ -176,10 +176,7 @@ pub fn import_palette(
 /// Steps:
 /// 1. Validate palette non-empty
 /// 2. Call format-specific exporter (converts LinearColor → sRGB u8 internally)
-pub fn export_palette(
-    palette: &Palette,
-    format: PaletteFormat,
-) -> Result<Vec<u8>, PaletteError> {
+pub fn export_palette(palette: &Palette, format: PaletteFormat) -> Result<Vec<u8>, PaletteError> {
     // 1. Validate palette non-empty
     if palette.colors.is_empty() {
         return Err(PaletteError::Empty);
@@ -290,8 +287,16 @@ mod tests {
             id: 1,
             name: "Test Palette".to_string(),
             colors: vec![
-                LinearColor { r: 1.0, g: 0.0, b: 0.0 },
-                LinearColor { r: 0.0, g: 1.0, b: 0.0 },
+                LinearColor {
+                    r: 1.0,
+                    g: 0.0,
+                    b: 0.0,
+                },
+                LinearColor {
+                    r: 0.0,
+                    g: 1.0,
+                    b: 0.0,
+                },
             ],
             revision: 1,
         };
@@ -306,7 +311,12 @@ mod tests {
             PaletteFormat::Pal,
         ] {
             let result = export_palette(&palette, format);
-            assert!(result.is_ok(), "export failed for {:?}: {:?}", format, result.err());
+            assert!(
+                result.is_ok(),
+                "export failed for {:?}: {:?}",
+                format,
+                result.err()
+            );
             assert!(!result.unwrap().is_empty());
         }
     }

@@ -9,7 +9,6 @@ import NewProjectDialog from '../components/NewProjectDialog';
 import HelpDialog from '../components/HelpDialog';
 import PreferencesDialog from '../features/preferences/PreferencesDialog';
 import { useWelcomeScreen } from '../hooks/useWelcomeScreen';
-import { usePanels } from '../hooks/usePanels';
 import { registerDocumentCommands, registerLayoutCommands } from '../features/shortcuts/commandRegistry';
 import { useAppUpdates } from '../hooks/useAppUpdates';
 import { useAppDispatch, useAppSelector } from './hooks';
@@ -23,17 +22,15 @@ import { useShell } from './shell/ShellContext';
 import { previewBackgroundStyle } from '../features/preview/previewBackground';
 import {
   onDockAffinity,
-  onPanelStateChanged,
   onNativeMenu,
   onAppQuitRequested,
   onTabsChanged,
   allowAppExit,
   confirmAppQuit,
-  swapSidebars as swapSidebarPanels,
   type DockAffinityEvent,
 } from '../shared/ipc';
-import DockedSidebar, { sidebarEffectiveWidth } from '../features/panels/DockedSidebar';
 import SidebarCollapseStrip from '../features/panels/SidebarCollapseStrip';
+import { sidebarColumnWidth } from '../features/panels/panelDragMode';
 import FlexLayoutContainer from '../components/FlexLayoutContainer';
 import ResizeHandle from '../components/common/ResizeHandle';
 import { isPanelOnFlexLayout } from '../factories/layoutPanelFactory';
@@ -77,7 +74,6 @@ export default function AppLayout() {
     confirmCloseTab,
     unsavedDialog,
   } = useWelcomeScreen();
-  const { panels, visibleDocked, error: panelError } = usePanels();
   const layersError = useAppSelector((s) => s.layers.error);
   const filtersError = useAppSelector((s) => s.filters.error);
   const canUndo = useAppSelector((s) => s.undo.canUndo);
@@ -215,11 +211,8 @@ export default function AppLayout() {
   const {
     leftSidebar,
     rightSidebar,
-    leftSplitRatio,
-    rightSplitRatio,
     setSidebarCollapsed,
     setSidebarWidth,
-    setSplitRatio,
     swapSidebars,
     previewBackground,
   } = useShell();
@@ -237,24 +230,14 @@ export default function AppLayout() {
   void layoutEpoch;
 
   const [dismissedError, setDismissedError] = useState<string | null>(null);
-  const [dismissedPanelError, setDismissedPanelError] = useState<string | null>(null);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [affinity, setAffinity] = useState<DockAffinityEvent | null>(null);
-  const prevDockedRef = useRef<Record<string, boolean>>({});
-  const prevSideRef = useRef<Record<string, string | null | undefined>>({});
   const leftHitRef = useRef<HTMLElement | null>(null);
   const rightHitRef = useRef<HTMLElement | null>(null);
 
-  const leftPanelsAll  = visibleDocked('left');
-  const rightPanelsAll = visibleDocked('right');
-
-  // Legacy docked panels only (Preferences leftover; dockables + Preview are on FlexLayout).
-  const leftPanels  = leftPanelsAll.filter( (id): id is PanelId => !isPanelOnFlexLayout(id));
-  const rightPanels = rightPanelsAll.filter((id): id is PanelId => !isPanelOnFlexLayout(id));
-
-  // Flex panel sides come from FlexLayout models (source of truth after cross-side moves).
+  // Flex panel sides come from FlexLayout models (source of truth).
   const leftFlexIds = listFlexComponents(leftLayout.model).filter(
     (id): id is PanelId => isPanelOnFlexLayout(id)
   );
@@ -276,24 +259,18 @@ export default function AppLayout() {
   // Only docked flex panels reserve sidebar width — floated-away panels free the dock.
   const leftHasDockedFlex  = leftDockedFlexIds.length > 0;
   const rightHasDockedFlex = rightDockedFlexIds.length > 0;
-  const leftFlexOnly  = leftHasDockedFlex  && leftPanels.length === 0;
-  const rightFlexOnly = rightHasDockedFlex && rightPanels.length === 0;
-  const leftMixed  = leftHasDockedFlex  && leftPanels.length > 0;
-  const rightMixed = rightHasDockedFlex && rightPanels.length > 0;
+  const leftFlexOnly  = leftHasDockedFlex;
+  const rightFlexOnly = rightHasDockedFlex;
   // Floated-only side: keep a zero-width Layout host + empty drop edge for redock.
-  const leftFloatHostOnly  = leftHasFlex  && !leftHasDockedFlex && leftPanels.length === 0;
-  const rightFloatHostOnly = rightHasFlex && !rightHasDockedFlex && rightPanels.length === 0;
+  const leftFloatHostOnly  = leftHasFlex  && !leftHasDockedFlex;
+  const rightFloatHostOnly = rightHasFlex && !rightHasDockedFlex;
 
   const leftW = focusMode
     ? 0
-    : leftHasDockedFlex
-      ? (leftSidebar.collapsed  ? 40 : leftSidebar.width)
-      : sidebarEffectiveWidth(leftPanels.length,  leftSidebar.collapsed,  leftSidebar.width);
+    : sidebarColumnWidth(leftHasDockedFlex, leftSidebar.collapsed, leftSidebar.width);
   const rightW = focusMode
     ? 0
-    : rightHasDockedFlex
-      ? (rightSidebar.collapsed ? 40 : rightSidebar.width)
-      : sidebarEffectiveWidth(rightPanels.length, rightSidebar.collapsed, rightSidebar.width);
+    : sidebarColumnWidth(rightHasDockedFlex, rightSidebar.collapsed, rightSidebar.width);
 
   // macOS only — Windows OS chrome differs by version; we don't version-gate.
   const leftAppEdges = isMacOS() ? appEdgesAttr('bottom', 'left') : undefined;
@@ -353,36 +330,6 @@ export default function AppLayout() {
     };
   }, [setSidebarCollapsed]);
 
-  // Auto-expand the side a panel redocks onto.
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | null = null;
-    onPanelStateChanged((event) => {
-      if (cancelled) return;
-      const raw = event.payload;
-      const list = Array.isArray(raw) ? raw : raw.panels;
-      for (const p of list) {
-        const wasDocked = prevDockedRef.current[p.id];
-        const prevSide = prevSideRef.current[p.id];
-        if (wasDocked === false && p.docked && p.dock_side) {
-          setAffinity(null);
-          setSidebarCollapsed(p.dock_side, false);
-        } else if (p.docked && p.dock_side && prevSide && prevSide !== p.dock_side) {
-          setSidebarCollapsed(p.dock_side, false);
-        }
-        prevDockedRef.current[p.id] = p.docked;
-        prevSideRef.current[p.id] = p.dock_side;
-      }
-    }).then((fn) => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [setSidebarCollapsed]);
-
   const resizeColumnWidth = useCallback(
     (side: DockSide, delta: number, allowCollapse: boolean) => {
       setSidebarWidth(side, (w) => {
@@ -397,26 +344,6 @@ export default function AppLayout() {
     },
     [setSidebarWidth, setSidebarCollapsed]
   );
-
-  const resizeColumnSplit = useCallback(
-    (side: DockSide, delta: number) => {
-      setSplitRatio(side, (prev) => {
-        // Keep both panes usable.
-        const next = prev + delta / 400;
-        return Math.min(0.85, Math.max(0.15, next));
-      });
-    },
-    [setSplitRatio]
-  );
-
-  useEffect(() => {
-    for (const p of panels) {
-      if (prevDockedRef.current[p.id] === undefined) {
-        prevDockedRef.current[p.id] = p.docked;
-        prevSideRef.current[p.id] = p.dock_side;
-      }
-    }
-  }, [panels]);
 
   const handleOpenPreferences = useCallback(() => {
     setHelpOpen(false);
@@ -540,10 +467,8 @@ export default function AppLayout() {
     });
   }, []);
 
-  const handleSwapSidebars = useCallback(async () => {
+  const handleSwapSidebars = useCallback(() => {
     try {
-      // Legacy PanelManager orders (Preview etc.) + shell column prefs + Flex models.
-      await swapSidebarPanels();
       swapSidebars();
       swapFlexSides();
     } catch (err) {
@@ -555,7 +480,6 @@ export default function AppLayout() {
   const toastError =
     currentError && !isTooNewFileError(currentError) ? currentError : null;
   const displayError = toastError && toastError !== dismissedError ? toastError : null;
-  const displayPanelError = panelError && panelError !== dismissedPanelError ? panelError : null;
 
   const gridTemplateColumns = `${leftW}px 1fr ${rightW}px`;
 
@@ -703,95 +627,6 @@ export default function AppLayout() {
               </div>
             </>
           )}
-          {/* Left mixed collapsed: one strip for flex + legacy panels on this side. */}
-          {leftMixed && leftSidebar.collapsed && (
-            <SidebarCollapseStrip
-              side="left"
-              panelIds={[...leftDockedFlexIds, ...leftPanels]}
-              onExpand={() => setSidebarCollapsed('left', false)}
-              hitTargetRef={leftHitRef}
-            />
-          )}
-          {/* Left mixed expanded: vertical stack — FlexLayout above, legacy below. */}
-          {leftMixed && !leftSidebar.collapsed && (
-            <div
-              className={cn('sidebar-area-left')}
-              data-dock-side="left"
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                minWidth: 0,
-                minHeight: 0,
-                overflow: 'hidden',
-                position: 'relative',
-              }}
-            >
-              <ResizeHandle
-                direction="horizontal"
-                onResize={(d) => resizeColumnWidth('left', d, true)}
-                className={cn('sidebar-resize-handle', 'sidebar-resize-handle-left')}
-                style={{ position: 'absolute', right: 0, top: 0, bottom: 0 }}
-              />
-              <div style={{ flex: leftSplitRatio, minHeight: 0, overflow: 'hidden' }}>
-                {/* Flex is above legacy — does not touch the app bottom edge. */}
-                <FlexLayoutContainer side="left" style={{ height: '100%', minWidth: 0 }} />
-              </div>
-              <ResizeHandle
-                direction="vertical"
-                onResize={(d) => resizeColumnSplit('left', d)}
-              />
-              <div style={{ flex: 1 - leftSplitRatio, minHeight: 0, overflow: 'hidden' }}>
-                <DockedSidebar
-                  side="left"
-                  panelIds={leftPanels}
-                  width={leftSidebar.width}
-                  collapsed={false}
-                  splitRatio={leftSplitRatio}
-                  affinity={affinity}
-                  oppositeHitRef={rightHitRef}
-                  hitTargetRef={leftHitRef}
-                  onCollapsedChange={(c) => setSidebarCollapsed('left', c)}
-                  onWidthChange={(w) => setSidebarWidth('left', w)}
-                  onSplitRatioChange={(r) => setSplitRatio('left', r)}
-                  embedded
-                  appEdges={leftAppEdges}
-                />
-              </div>
-            </div>
-          )}
-          {/* Left legacy only (no docked flex on left). */}
-          {!leftHasDockedFlex && leftPanels.length > 0 && (
-            <DockedSidebar
-              side="left"
-              panelIds={leftPanels}
-              width={leftSidebar.width}
-              collapsed={leftSidebar.collapsed}
-              splitRatio={leftSplitRatio}
-              affinity={affinity}
-              oppositeHitRef={rightHitRef}
-              hitTargetRef={leftHitRef}
-              onCollapsedChange={(c) => setSidebarCollapsed('left', c)}
-              onWidthChange={(w) => setSidebarWidth('left', w)}
-              onSplitRatioChange={(r) => setSplitRatio('left', r)}
-              appEdges={leftAppEdges}
-            />
-          )}
-          {/* Floated flex + legacy: keep Layout alive off-screen. */}
-          {!leftHasDockedFlex && leftHasFlex && leftPanels.length > 0 && (
-            <div
-              aria-hidden
-              style={{
-                position: 'fixed',
-                width: 0,
-                height: 0,
-                overflow: 'hidden',
-                pointerEvents: 'none',
-                opacity: 0,
-              }}
-            >
-              <FlexLayoutContainer side="left" />
-            </div>
-          )}
         </>
       )}
 
@@ -892,94 +727,6 @@ export default function AppLayout() {
               </div>
             </>
           )}
-          {/* Right mixed collapsed */}
-          {rightMixed && rightSidebar.collapsed && (
-            <SidebarCollapseStrip
-              side="right"
-              panelIds={[...rightDockedFlexIds, ...rightPanels]}
-              onExpand={() => setSidebarCollapsed('right', false)}
-              hitTargetRef={rightHitRef}
-            />
-          )}
-          {/* Right mixed expanded: vertical stack — FlexLayout above, legacy (colorlab) below. */}
-          {rightMixed && !rightSidebar.collapsed && (
-            <div
-              className={cn('sidebar-area-right')}
-              data-dock-side="right"
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                minWidth: 0,
-                minHeight: 0,
-                overflow: 'hidden',
-                position: 'relative',
-              }}
-            >
-              <ResizeHandle
-                direction="horizontal"
-                onResize={(d) => resizeColumnWidth('right', d, true)}
-                className={cn('sidebar-resize-handle')}
-                style={{ position: 'absolute', left: 0, top: 0, bottom: 0 }}
-              />
-              <div style={{ flex: rightSplitRatio, minHeight: 0, overflow: 'hidden' }}>
-                {/* Flex is above legacy — does not touch the app bottom edge. */}
-                <FlexLayoutContainer side="right" style={{ height: '100%', minWidth: 0 }} />
-              </div>
-              <ResizeHandle
-                direction="vertical"
-                onResize={(d) => resizeColumnSplit('right', d)}
-              />
-              <div style={{ flex: 1 - rightSplitRatio, minHeight: 0, overflow: 'hidden' }}>
-                <DockedSidebar
-                  side="right"
-                  panelIds={rightPanels}
-                  width={rightSidebar.width}
-                  collapsed={false}
-                  splitRatio={rightSplitRatio}
-                  affinity={affinity}
-                  oppositeHitRef={leftHitRef}
-                  hitTargetRef={rightHitRef}
-                  onCollapsedChange={(c) => setSidebarCollapsed('right', c)}
-                  onWidthChange={(w) => setSidebarWidth('right', w)}
-                  onSplitRatioChange={(r) => setSplitRatio('right', r)}
-                  embedded
-                  appEdges={rightAppEdges}
-                />
-              </div>
-            </div>
-          )}
-          {/* Right legacy only (no docked flex on right). */}
-          {!rightHasDockedFlex && rightPanels.length > 0 && (
-            <DockedSidebar
-              side="right"
-              panelIds={rightPanels}
-              width={rightSidebar.width}
-              collapsed={rightSidebar.collapsed}
-              splitRatio={rightSplitRatio}
-              affinity={affinity}
-              oppositeHitRef={leftHitRef}
-              hitTargetRef={rightHitRef}
-              onCollapsedChange={(c) => setSidebarCollapsed('right', c)}
-              onWidthChange={(w) => setSidebarWidth('right', w)}
-              onSplitRatioChange={(r) => setSplitRatio('right', r)}
-              appEdges={rightAppEdges}
-            />
-          )}
-          {!rightHasDockedFlex && rightHasFlex && rightPanels.length > 0 && (
-            <div
-              aria-hidden
-              style={{
-                position: 'fixed',
-                width: 0,
-                height: 0,
-                overflow: 'hidden',
-                pointerEvents: 'none',
-                opacity: 0,
-              }}
-            >
-              <FlexLayoutContainer side="right" />
-            </div>
-          )}
         </>
       )}
 
@@ -997,11 +744,6 @@ export default function AppLayout() {
         message={layoutToast}
         type="success"
         onDismiss={clearLayoutToast}
-      />
-      <Notification
-        message={displayPanelError}
-        type="error"
-        onDismiss={() => setDismissedPanelError(panelError)}
       />
       <NewProjectDialog
         isOpen={newProjectOpen}

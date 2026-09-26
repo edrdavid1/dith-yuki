@@ -3,17 +3,8 @@
  * Kept as a compatibility barrel for existing imports.
  */
 export {
-  getPanelsState,
-  undockPanel,
-  dockPanel,
-  hidePanel,
-  showPanel,
-  savePanelBounds,
-  undockPanelWithSize,
-  reorderSidebar,
-  reorderPanels,
-  movePanelToSide,
-  moveAllPanelsToSide,
-  swapSidebars,
-  dockPanelAt,
+  updateDockZone,
+  beginFloatDrag,
+  cancelFloatDrag,
+  completeFloatDrag,
 } from '../shared/ipc/panels';

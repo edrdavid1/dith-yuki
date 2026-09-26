@@ -53,9 +53,13 @@ impl ReadAt for StreamReadAt {
                 .cast()
                 .map_err(|e| IoError::Io(std::io::Error::other(e.message())))?;
             let mut read = 0u32;
-            seq.Read(buf.as_mut_ptr() as *mut _, buf.len() as u32, Some(&mut read))
-                .ok()
-                .map_err(|e| IoError::Io(std::io::Error::other(e.message())))?;
+            seq.Read(
+                buf.as_mut_ptr() as *mut _,
+                buf.len() as u32,
+                Some(&mut read),
+            )
+            .ok()
+            .map_err(|e| IoError::Io(std::io::Error::other(e.message())))?;
             Ok(read as usize)
         }
     }

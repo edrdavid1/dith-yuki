@@ -5,7 +5,7 @@
 //! at startup/shutdown to persist layout state to disk.
 
 use std::sync::Arc;
-use tauri::{Manager, State};
+use tauri::State;
 
 use crate::commands::AppState;
 use crate::flexlayout_persistence::{FlexLayoutPersistence, LayoutPersistenceError};

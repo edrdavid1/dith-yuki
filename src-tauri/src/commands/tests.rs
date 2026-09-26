@@ -11,6 +11,7 @@
 //! with a single test document, allowing mutations without side effects.
 
 use super::*;
+use crate::services::document_service::f32_to_u8;
 
 /// Create an isolated test application state with one blank document.
 ///

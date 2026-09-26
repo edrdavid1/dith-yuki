@@ -20,12 +20,8 @@ const fn srgb(hex: u32) -> (u8, u8, u8) {
 }
 
 /// Game Boy DMG LCD greens (classic 4-shade set).
-const GAMEBOY_COLORS: &[(u8, u8, u8)] = &[
-    (15, 56, 15),
-    (48, 98, 48),
-    (139, 172, 15),
-    (155, 188, 15),
-];
+const GAMEBOY_COLORS: &[(u8, u8, u8)] =
+    &[(15, 56, 15), (48, 98, 48), (139, 172, 15), (155, 188, 15)];
 
 /// Apple II 16-color lo-res palette.
 /// Gray 1 and Gray 2 are identical (indices 5 and 10), as on original hardware.

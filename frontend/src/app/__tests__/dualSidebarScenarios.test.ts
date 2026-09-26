@@ -3,126 +3,30 @@ import {
   clampSplitRatio,
   panelStackFlex,
   resolvePanelDragMode,
+  sidebarColumnWidth,
 } from '../../features/panels/panelDragMode';
-import { sidebarEffectiveWidth } from '../../features/panels/DockedSidebar';
 import {
+  applyFlexPanelLayout,
   builtinWorkspacePresets,
   deleteWorkspacePreset,
   listWorkspacePresets,
-  snapshotFromPanelState,
+  snapshotFromFlexSides,
 } from '../../features/panels/workspacePresets';
 import { migrateShellPrefs } from '../shell/ShellContext';
-import { selectVisibleDocked } from '../slices/panelsSlice';
-import type { PanelStateSnapshot } from '../../types/panels';
 
-describe('8.2 dual-sidebar scenarios (automated)', () => {
-  const defaultSnap: PanelStateSnapshot = {
-    panels: [
-      {
-        id: 'layers',
-        docked: true,
-        visible: true,
-        window_label: null,
-        saved_bounds: null,
-        dock_side: 'left',
-      },
-      {
-        id: 'effect',
-        docked: true,
-        visible: true,
-        window_label: null,
-        saved_bounds: null,
-        dock_side: 'right',
-      },
-      {
-        id: 'colorlab',
-        docked: true,
-        visible: true,
-        window_label: null,
-        saved_bounds: null,
-        dock_side: 'right',
-      },
-    ],
-    left_order: ['layers'],
-    right_order: ['effect', 'colorlab'],
-  };
-
-  it('Default: Layers left, Effect+Color Lab right → dual widths', () => {
-    const left = selectVisibleDocked(
-      defaultSnap.panels,
-      defaultSnap.left_order,
-      defaultSnap.right_order,
-      'left'
-    );
-    const right = selectVisibleDocked(
-      defaultSnap.panels,
-      defaultSnap.left_order,
-      defaultSnap.right_order,
-      'right'
-    );
-    expect(left).toEqual(['layers']);
-    expect(right).toEqual(['effect', 'colorlab']);
-    expect(sidebarEffectiveWidth(left.length, false, 332)).toBe(332);
-    expect(sidebarEffectiveWidth(right.length, false, 332)).toBe(332);
+describe('FlexLayout dual-sidebar shell width', () => {
+  it('Default: Layers left, Effect+Color Lab right → both columns have width', () => {
+    expect(sidebarColumnWidth(true, false, 332)).toBe(332);
+    expect(sidebarColumnWidth(true, false, 332)).toBe(332);
   });
 
-  it('Single-stack all right → left width 0', () => {
-    const snap: PanelStateSnapshot = {
-      panels: defaultSnap.panels.map((p) => ({ ...p, dock_side: 'right' as const })),
-      left_order: [],
-      right_order: ['layers', 'effect', 'colorlab'],
-    };
-    expect(
-      selectVisibleDocked(snap.panels, snap.left_order, snap.right_order, 'left')
-    ).toEqual([]);
-    expect(
-      selectVisibleDocked(snap.panels, snap.left_order, snap.right_order, 'right')
-    ).toHaveLength(3);
-    expect(sidebarEffectiveWidth(0, false, 332)).toBe(0);
-    expect(sidebarEffectiveWidth(3, false, 332)).toBe(332);
+  it('Empty side (no docked flex) → width 0', () => {
+    expect(sidebarColumnWidth(false, false, 332)).toBe(0);
+    expect(sidebarColumnWidth(false, true, 332)).toBe(0);
   });
 
-  it('Single-stack all left → right width 0', () => {
-    expect(sidebarEffectiveWidth(3, false, 300)).toBe(300);
-    expect(sidebarEffectiveWidth(0, false, 300)).toBe(0);
-  });
-
-  it('From single-stack, one panel on empty side restores dual widths', () => {
-    const leftN = 1;
-    const rightN = 2;
-    expect(sidebarEffectiveWidth(leftN, false, 332) > 0).toBe(true);
-    expect(sidebarEffectiveWidth(rightN, false, 332) > 0).toBe(true);
-  });
-
-  it('Collapse left only does not change right effective width', () => {
-    expect(sidebarEffectiveWidth(1, true, 332)).toBe(40);
-    expect(sidebarEffectiveWidth(2, false, 332)).toBe(332);
-  });
-
-  it('Hide last panel on a side closes that column', () => {
-    const entities = defaultSnap.panels.map((p) =>
-      p.id === 'layers' ? { ...p, visible: false } : p
-    );
-    const left = selectVisibleDocked(
-      entities,
-      defaultSnap.left_order,
-      defaultSnap.right_order,
-      'left'
-    );
-    expect(left).toEqual([]);
-    expect(sidebarEffectiveWidth(left.length, false, 332)).toBe(0);
-  });
-
-  it('Both floating → canvas full width (both columns 0)', () => {
-    const entities = defaultSnap.panels.map((p) => ({
-      ...p,
-      docked: false,
-      dock_side: null,
-    }));
-    const left = selectVisibleDocked(entities, [], [], 'left');
-    const right = selectVisibleDocked(entities, [], [], 'right');
-    expect(sidebarEffectiveWidth(left.length, false, 332)).toBe(0);
-    expect(sidebarEffectiveWidth(right.length, false, 332)).toBe(0);
+  it('Collapsed docked side → 40px strip', () => {
+    expect(sidebarColumnWidth(true, true, 332)).toBe(40);
   });
 
   it('Legacy sidebarSide=left migrates shell stack prefs to left', () => {
@@ -221,7 +125,7 @@ describe('9.2 per-side split ratios', () => {
   });
 });
 
-describe('9.3 workspace presets', () => {
+describe('9.3 workspace presets (Flex)', () => {
   beforeEach(() => {
     const store = new Map<string, string>();
     vi.stubGlobal('localStorage', {
@@ -247,22 +151,10 @@ describe('9.3 workspace presets', () => {
     expect(deleteWorkspacePreset('builtin-layers-left')).toBe(false);
   });
 
-  it('snapshotFromPanelState keeps shell + orders', () => {
-    const snap = snapshotFromPanelState(
-      {
-        panels: [
-          {
-            id: 'layers',
-            docked: true,
-            visible: true,
-            window_label: null,
-            saved_bounds: null,
-            dock_side: 'left',
-          },
-        ],
-        left_order: ['layers'],
-        right_order: [],
-      },
+  it('snapshotFromFlexSides keeps shell + orders', () => {
+    const snap = snapshotFromFlexSides(
+      ['layers'],
+      ['effect', 'colorlab'],
       {
         leftSidebar: { width: 300, collapsed: false },
         rightSidebar: { width: 332, collapsed: true },
@@ -271,7 +163,25 @@ describe('9.3 workspace presets', () => {
       }
     );
     expect(snap.layout.left_order).toEqual(['layers']);
+    expect(snap.layout.right_order).toEqual(['effect', 'colorlab']);
     expect(snap.shell.leftSplitRatio).toBe(0.4);
     expect(snap.shell.rightSidebar.collapsed).toBe(true);
+  });
+
+  it('applyFlexPanelLayout moves panels via handlers', () => {
+    const moves: Array<[string, string]> = [];
+    applyFlexPanelLayout(
+      { left_order: ['effect'], right_order: ['layers', 'colorlab'] },
+      {
+        movePanelBetweenSides: (id, to) => {
+          moves.push([id, to]);
+        },
+      }
+    );
+    expect(moves).toEqual([
+      ['effect', 'left'],
+      ['layers', 'right'],
+      ['colorlab', 'right'],
+    ]);
   });
 });

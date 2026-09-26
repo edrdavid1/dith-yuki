@@ -1,0 +1,3 @@
+# Workspace Clippy config for the PR CI gate (`-D warnings`).
+# Encode / GPU / filter paths take many explicit buffers by design.
+too-many-arguments-threshold = 16

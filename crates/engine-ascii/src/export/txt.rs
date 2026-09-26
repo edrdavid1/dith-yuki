@@ -63,7 +63,7 @@ fn is_plain_ascii_graphic(ch: char) -> bool {
 mod tests {
     use super::*;
     use crate::atlas::{AtlasOptions, FontSize, GlyphAtlas};
-    use crate::convert::{MatchMode, convert_mono};
+    use crate::convert::{convert_mono, MatchMode};
     use crate::font::{BundledFont, FontFace};
     use crate::grid::{Cell, CellColor, GridColorMode};
     use crate::symbols::SymbolSet;

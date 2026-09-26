@@ -48,13 +48,7 @@ pub fn hatch_line_distance(gx: i32, gy: i32, angle_deg: f32, spacing: f32) -> f3
 
 /// Whether the sample lies on an inked hatch stroke.
 #[inline]
-pub fn on_hatch_line(
-    gx: i32,
-    gy: i32,
-    angle_deg: f32,
-    spacing: f32,
-    half_width: f32,
-) -> bool {
+pub fn on_hatch_line(gx: i32, gy: i32, angle_deg: f32, spacing: f32, half_width: f32) -> bool {
     hatch_line_distance(gx, gy, angle_deg, spacing) <= half_width.max(0.25)
 }
 
@@ -108,7 +102,8 @@ pub fn apply_crosshatch_into(
             let b = tile.at(x, y, 2);
             let a = tile.at(x, y, 3);
 
-            let gcoord = engine_tiles::coords::GlobalCoordSigned::from_local_with_halo(coord, x, y, HALO);
+            let gcoord =
+                engine_tiles::coords::GlobalCoordSigned::from_local_with_halo(coord, x, y, HALO);
             let gx = gcoord.x;
             let gy = gcoord.y;
 
@@ -122,7 +117,16 @@ pub fn apply_crosshatch_into(
             dst.set(x, y, 0, v);
             dst.set(x, y, 1, v);
             dst.set(x, y, 2, v);
-            dst.set(x, y, 3, if params.dither_alpha && a <= 0.0 { 0.0 } else { a });
+            dst.set(
+                x,
+                y,
+                3,
+                if params.dither_alpha && a <= 0.0 {
+                    0.0
+                } else {
+                    a
+                },
+            );
         }
     }
     Ok(())
@@ -173,6 +177,9 @@ mod tests {
             }
             n
         };
-        assert!(count(0.3) < count(0.9), "darker tones must accumulate more ink");
+        assert!(
+            count(0.3) < count(0.9),
+            "darker tones must accumulate more ink"
+        );
     }
 }

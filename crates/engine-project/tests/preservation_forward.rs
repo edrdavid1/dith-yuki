@@ -3,9 +3,7 @@
 use engine_project::document::Document;
 use engine_project::layer::{Layer, LayerNode};
 use engine_project::serialize::archive::{create_zip, ZipArchiveReader};
-use engine_project::serialize::{
-    open_project_from_bytes, save_project_to_bytes, ProjectError,
-};
+use engine_project::serialize::{open_project_from_bytes, save_project_to_bytes, ProjectError};
 use engine_project::types::{DocumentId, LayerId, LayerKind};
 use engine_tiles::decompose::decompose_image_to_tiles;
 use engine_tiles::TileCache;
@@ -69,7 +67,10 @@ fn preserves_unknown_document_field_and_unknown_layer_node() {
     let opened = open_project_from_bytes(&zip, &staging, DocumentId::new(1)).unwrap();
     assert_eq!(opened.document.extra["vendor_blob"]["keep"], true);
     assert_eq!(opened.document.ext_blobs.len(), 1);
-    assert_eq!(opened.document.ext_blobs[0].0, "ext/com.example.meta/note.txt");
+    assert_eq!(
+        opened.document.ext_blobs[0].0,
+        "ext/com.example.meta/note.txt"
+    );
     assert!(opened.document.root.iter().any(|n| match n {
         LayerNode::Leaf(l) => l.extra.contains_key("__forward_compat_node"),
         _ => false,
@@ -85,7 +86,9 @@ fn preserves_unknown_document_field_and_unknown_layer_node() {
         serde_json::from_slice(&r2.read_entry("document.json").unwrap()).unwrap();
     assert_eq!(doc2["vendor_blob"]["keep"], true);
     let root = doc2["root"].as_array().unwrap();
-    assert!(root.iter().any(|n| n.get("node") == Some(&serde_json::json!("voxel_layer"))));
+    assert!(root
+        .iter()
+        .any(|n| n.get("node") == Some(&serde_json::json!("voxel_layer"))));
     let ext = r2.read_entry("ext/com.example.meta/note.txt").unwrap();
     assert_eq!(ext, b"hello-ext");
     assert_eq!(

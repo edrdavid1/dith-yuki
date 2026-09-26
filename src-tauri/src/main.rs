@@ -2,6 +2,8 @@
     all(not(debug_assertions), target_os = "windows"),
     windows_subsystem = "windows"
 )]
+// Legacy cocoa/objc until objc2 migration — deprecation + macro cfg noise.
+#![cfg_attr(target_os = "macos", allow(deprecated, unexpected_cfgs))]
 
 mod commands;
 mod dock_affinity;
@@ -17,8 +19,6 @@ mod macos_first_mouse;
 mod macos_title;
 mod memory_budget;
 mod native_menu;
-mod panel_manager;
-mod panel_persistence;
 #[cfg(test)]
 mod preview_latency_diag;
 mod recent_files;
@@ -32,20 +32,17 @@ mod viewport;
 mod webview_debug;
 mod worker;
 
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 
-use commands::{AppState, ViewportState};
-use engine_project::document::DocumentHandle;
+use commands::AppState;
 use engine_project::layer::LayerNode;
 use engine_tiles::{Priority, RecomputeTask, TileCoord, TileKey, TILE_SIZE};
 #[cfg(target_os = "macos")]
 use objc::{class, msg_send, sel, sel_impl};
-use panel_manager::PanelManager;
 use tauri::webview::{NewWindowResponse, WebviewWindowBuilder};
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 use tile_protocol::{parse_tile_url, LayerTarget};
-use worker::WorkerWake;
 
 fn main() {
     // Capture Rust-side failures (GPU init, tile://, panics) to
@@ -123,11 +120,10 @@ fn main() {
         })
         .on_window_event(|window, event| {
             let label = window.label().to_string();
-            let is_panel = label.starts_with("panel-");
             let is_flex_popout = label.starts_with("flex-popout-");
 
             match event {
-                WindowEvent::Resized(_) if !is_panel => {
+                WindowEvent::Resized(_) => {
                     #[cfg(target_os = "macos")]
                     {
                         // Photoshop-style: never stay in Mission Control fullscreen.
@@ -140,7 +136,7 @@ fn main() {
                         // after live resize was a major source of the jump.
                     }
                 }
-                WindowEvent::Moved(_) if is_panel || is_flex_popout => {
+                WindowEvent::Moved(_) if is_flex_popout => {
                     let app_handle = window.app_handle().clone();
                     let state = app_handle.state::<Arc<AppState>>();
                     if let (Ok(pos), Ok(size), Ok(scale)) = (
@@ -155,59 +151,6 @@ fn main() {
                             height: size.height as f64 / scale,
                         };
                         commands::panels::handle_panel_moved(&app_handle, state.inner(), logical);
-                    }
-                }
-                WindowEvent::CloseRequested { api, .. } => {
-                    // Only intercept close on panel windows (label pattern: "panel-{id}")
-                    if let Some(panel_id) = label.strip_prefix("panel-") {
-                        let panel_id = panel_id.to_string();
-
-                        // Prevent the default close — we'll dock the panel instead,
-                        // which will close the window as part of dock logic.
-                        api.prevent_close();
-
-                        let app_handle = window.app_handle().clone();
-                        let state = app_handle.state::<Arc<AppState>>();
-
-                        // Drop any in-flight float-drag session.
-                        if let Ok(mut ctrl) = state.dock_affinity.lock() {
-                            let _ = ctrl.cancel();
-                        }
-
-                        // Save current window bounds before docking.
-                        if let Ok(position) = window.outer_position() {
-                            if let Ok(size) = window.inner_size() {
-                                let mut pm = state.ui.panel_manager.lock().unwrap();
-                                let _ = pm.update_bounds(
-                                    &panel_id,
-                                    panel_manager::SavedBounds {
-                                        x: position.x,
-                                        y: position.y,
-                                        width: size.width,
-                                        height: size.height,
-                                    },
-                                );
-                            }
-                        }
-
-                        // Dock the panel (sets docked=true, clears window_label).
-                        let panels_snapshot = {
-                            let mut pm = state.ui.panel_manager.lock().unwrap();
-                            let side = pm.remembered_dock_side(&panel_id);
-                            let _ = pm.dock(&panel_id, side, usize::MAX);
-                            pm.get_state_with_orders()
-                        };
-
-                        // Close the window now that dock logic is done.
-                        let _ = window.destroy();
-
-                        // Emit state change to all remaining windows.
-                        let payload = panel_manager::SerializedPanelState {
-                            panels: panels_snapshot.0,
-                            left_order: panels_snapshot.1,
-                            right_order: panels_snapshot.2,
-                        };
-                        let _ = app_handle.emit("panel-state-changed", payload);
                     }
                 }
                 _ => {}
@@ -293,7 +236,7 @@ fn main() {
                                 }
                             };
 
-                            let raw = panel_manager::SavedBounds {
+                            let raw = commands::panels::SavedBounds {
                                 x,
                                 y,
                                 width,
@@ -420,79 +363,13 @@ fn main() {
                 let _ = main_window.set_decorations(false);
             }
 
-            // Load persisted panel state (if available) and replace the default.
-            // v1 files migrate to a single-stack on `fallback_side` (legacy shell
-            // sidebarSide is applied on the frontend in task 5; Rust defaults to right).
-            let fallback_side = panel_manager::DockSide::Right;
-            if let Some(loaded) = panel_persistence::load_panel_state(&app_handle, fallback_side) {
-                let mut pm = state.ui.panel_manager.lock().unwrap();
-                *pm = PanelManager::from_persisted(
-                    loaded.panels,
-                    Some(loaded.left_order),
-                    Some(loaded.right_order),
-                );
-            }
-
-            // Restore floating windows for panels that were undocked at last exit.
-            {
-                let pm = state.ui.panel_manager.lock().unwrap();
-                let panels = pm.get_state();
-
-                // Get monitor info for off-screen bounds correction.
-                let (monitors, primary) = commands::panels::get_monitor_rects(&app_handle);
-
-                for panel in &panels {
-                    if !panel.docked && panel.visible {
-                        let label = panel
-                            .window_label
-                            .clone()
-                            .unwrap_or_else(|| format!("panel-{}", panel.id));
-                        let url_path = format!("index.html?panel={}", panel.id);
-                        let url = tauri::WebviewUrl::App(url_path.into());
-
-                        // Correct bounds for off-screen positions (logical px / Retina-safe).
-                        let bounds = commands::panels::resolve_undock_bounds(
-                            &panel.id,
-                            panel.saved_bounds.clone(),
-                            &monitors,
-                            primary.as_ref(),
-                        );
-
-                        let title = format!(
-                            "Dither – {}",
-                            match panel.id.as_str() {
-                                "effect" => "Effect Settings",
-                                "layers" => "Layers",
-                                "colorlab" => "Color Lab",
-                                "preview" => "Preview",
-                                "preferences" => "Preferences",
-                                _ => "Panel",
-                            }
-                        );
-
-                        // All panels use custom titlebar with decorations disabled
-                        // and Overlay title bar style (for macOS traffic lights).
-                        let builder = webview_debug::apply(
-                            WebviewWindowBuilder::new(&app_handle, &label, url)
-                                .title(&title)
-                                .inner_size(bounds.width as f64, bounds.height as f64)
-                                .position(bounds.x as f64, bounds.y as f64)
-                                .resizable(true)
-                                .decorations(false)
-                                .min_inner_size(280.0, 200.0),
-                        );
-                        #[cfg(target_os = "macos")]
-                        let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay);
-                        let (max_w, max_h) = commands::panels::panel_max_inner_size(&panel.id);
-                        let builder = builder.max_inner_size(max_w, max_h);
-
-                        if let Err(e) = builder.build() {
-                            log::warn!(
-                                "Failed to restore floating window for panel '{}': {}",
-                                panel.id,
-                                e
-                            );
-                        }
+            // One-shot: drop leftover PanelManager `panel_state.json` (Flex owns layout).
+            if let Ok(dir) = app_handle.path().app_data_dir() {
+                let legacy = dir.join("panel_state.json");
+                if legacy.exists() {
+                    match std::fs::remove_file(&legacy) {
+                        Ok(()) => log::info!("Removed legacy panel_state.json"),
+                        Err(e) => log::warn!("Failed to remove legacy panel_state.json: {e}"),
                     }
                 }
             }
@@ -511,7 +388,7 @@ fn main() {
         })
         .register_uri_scheme_protocol("tile", |ctx, request| {
             let state = ctx.app_handle().state::<Arc<AppState>>();
-            handle_tile_request(&*state, request)
+            handle_tile_request(&state, request)
         })
         .invoke_handler(tauri::generate_handler![
             // Document commands
@@ -568,6 +445,8 @@ fn main() {
             commands::import_builtin_palette,
             commands::generate_ramp_palette,
             commands::generate_harmony_palette,
+            commands::auto_interpolate_would_change,
+            commands::auto_interpolate_palette,
             commands::colors_to_oklab,
             commands::get_palette_oklab,
             commands::import_palette,
@@ -588,23 +467,11 @@ fn main() {
             commands::get_selection,
             // Viewport commands
             commands::viewport::set_viewport,
-            // Panel commands
-            commands::panels::get_panels_state,
-            commands::panels::undock_panel,
-            commands::panels::undock_panel_with_size,
-            commands::panels::dock_panel,
-            commands::panels::hide_panel,
-            commands::panels::show_panel,
-            commands::panels::save_panel_bounds,
-            commands::panels::reorder_sidebar,
-            commands::panels::move_panel_to_side,
-            commands::panels::move_all_panels_to_side,
-            commands::panels::swap_sidebars,
+            // Flex float-drag / dock affinity
             commands::panels::update_dock_zone,
             commands::panels::begin_float_drag,
             commands::panels::cancel_float_drag,
             commands::panels::complete_float_drag,
-            commands::panels::dock_panel_at,
             // FlexLayout commands
             commands::flexlayout::save_layout,
             commands::flexlayout::load_layout,
@@ -627,22 +494,6 @@ fn main() {
             if !gate.allow_exit.load(Ordering::SeqCst) {
                 api.prevent_exit();
                 let _ = app_handle.emit("app-quit-requested", ());
-                return;
-            }
-            // Save full dual-sidebar panel state (panels + side orders) before exit.
-            let state = app_handle.state::<Arc<AppState>>();
-            let snapshot = {
-                let pm = state.ui.panel_manager.lock().unwrap();
-                pm.serialize()
-            };
-            panel_persistence::save_panel_state(app_handle, &snapshot);
-
-            // Close all floating panel windows.
-            let windows = app_handle.webview_windows();
-            for (label, win) in &windows {
-                if label.starts_with("panel-") {
-                    let _ = win.destroy();
-                }
             }
         }
     });
@@ -732,8 +583,8 @@ fn handle_tile_request(
     let doc_height = snapshot.height;
     let scale = 1u32.checked_shl(parsed.level as u32).unwrap_or(u32::MAX);
     let tile_size_at_level = TILE_SIZE.saturating_mul(scale);
-    let grid_cols = (doc_width + tile_size_at_level - 1) / tile_size_at_level;
-    let grid_rows = (doc_height + tile_size_at_level - 1) / tile_size_at_level;
+    let grid_cols = doc_width.div_ceil(tile_size_at_level);
+    let grid_rows = doc_height.div_ceil(tile_size_at_level);
 
     if parsed.x >= grid_cols || parsed.y >= grid_rows {
         let msg = format!(

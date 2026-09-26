@@ -11,11 +11,11 @@ use windows::core::{Error, Result as WinResult};
 use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG, E_POINTER};
 use windows::Win32::Graphics::Gdi::HBITMAP;
 use windows::Win32::System::Com::{IStream, STATFLAG, STATSTG};
-use windows::Win32::UI::Shell::{
-    IThumbnailProvider, IThumbnailProvider_Impl, WTSAT_ARGB, WTS_ALPHATYPE,
-};
 use windows::Win32::UI::Shell::PropertiesSystem::{
     IInitializeWithStream, IInitializeWithStream_Impl,
+};
+use windows::Win32::UI::Shell::{
+    IThumbnailProvider, IThumbnailProvider_Impl, WTSAT_ARGB, WTS_ALPHATYPE,
 };
 use windows_implement::implement;
 
@@ -98,17 +98,11 @@ impl IThumbnailProvider_Impl for DitherThumbProvider_Impl {
         let max_side = cx.min(1024).max(1);
 
         let bmp = {
-            let mut io = StreamReadAt::new(
-                stream.clone(),
-                size,
-                limits.max_read_at_ops,
-                deadline,
-            );
+            let mut io = StreamReadAt::new(stream.clone(), size, limits.max_read_at_ops, deadline);
             match extract(&mut io, ThumbKind::Project, max_side, true, &limits) {
                 Ok(b) => b,
                 Err(_) => {
-                    let mut io2 =
-                        StreamReadAt::new(stream, size, limits.max_read_at_ops, deadline);
+                    let mut io2 = StreamReadAt::new(stream, size, limits.max_read_at_ops, deadline);
                     extract(&mut io2, ThumbKind::Pattern, max_side, true, &limits)
                         .map_err(|_| Error::from(E_FAIL))?
                 }

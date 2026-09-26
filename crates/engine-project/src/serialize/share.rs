@@ -12,10 +12,10 @@ use crate::serialize::pixels::{
     collect_raster_layers, count_raster_layers, encode_rgba8_png, reencode_png_clean,
     soft_size_warning,
 };
-use crate::serialize::thumbnail::{build_thumbnail_png_cached, neutral_thumbnail_png};
 use crate::serialize::project::{
     chrono_like_now, collect_custom_png_embeds, rewrite_custom_png_paths, SaveProjectResult,
 };
+use crate::serialize::thumbnail::{build_thumbnail_png_cached, neutral_thumbnail_png};
 use engine_tiles::TileCache;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
@@ -246,10 +246,7 @@ pub fn write_project_to_bytes(
     }
 
     let files = build_manifest_files(&payload);
-    let now = opts
-        .timestamp
-        .clone()
-        .unwrap_or_else(chrono_like_now);
+    let now = opts.timestamp.clone().unwrap_or_else(chrono_like_now);
     let format = required_version_for_features(std::iter::empty::<&str>());
     let format = if opts.target_format < format {
         opts.target_format
@@ -387,7 +384,9 @@ mod tests {
         let composite = reader.read_entry("composite.png").unwrap();
         assert!(composite.starts_with(&[0x89, b'P', b'N', b'G']));
         assert!(
-            !composite.windows(4).any(|w| w == b"tEXt" || w == b"iTXt" || w == b"eXIf"),
+            !composite
+                .windows(4)
+                .any(|w| w == b"tEXt" || w == b"iTXt" || w == b"eXIf"),
             "share copy PNGs must not carry ancillary text/EXIF chunks"
         );
     }
@@ -424,7 +423,10 @@ mod tests {
         .unwrap();
         let mut reader = ZipArchiveReader::open(&saved.zip_bytes).unwrap();
         let doc_json = reader.read_entry("document.json").unwrap();
-        assert!(!doc_json.contains(&b'\n'), "compact JSON should be one line");
+        assert!(
+            !doc_json.contains(&b'\n'),
+            "compact JSON should be one line"
+        );
     }
 
     #[test]

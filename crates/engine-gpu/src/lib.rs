@@ -8,10 +8,10 @@
 //! Warm resident Composite slots may download without opt-in (auto-dispatch A1).
 
 mod bayer;
-mod decision;
 mod composite;
 mod context;
 mod crt;
+mod decision;
 mod dispatch;
 pub mod ed_prototype;
 mod executor;
@@ -22,8 +22,8 @@ mod palette_quantize;
 mod prefer;
 pub mod resident;
 mod stats;
-mod warmup;
 mod vram_budget;
+mod warmup;
 
 pub use bayer::{apply_bayer_gpu, BayerGpuParams, BayerMatrixSize};
 pub use composite::{
@@ -38,8 +38,8 @@ pub use dispatch::{
 };
 pub use executor::{GpuExecutor, GpuFrameJob, GpuTileWork};
 pub use graph::{
-    compile_graph, BayerPassParams, ComputeGraph, CpuCheckpointKind, CrtPassParams,
-    GraphCompileError, GraphLayerFilter, GraphNode, GpuPass, GpuPipelineKey, HalftonePassParams,
+    compile_graph, BayerPassParams, ComputeGraph, CpuCheckpointKind, CrtPassParams, GpuPass,
+    GpuPipelineKey, GraphCompileError, GraphLayerFilter, GraphNode, HalftonePassParams,
     PaletteGuidedPassParams, PaletteMixedPassParams, PaletteQuantizePassParams,
 };
 pub use halftone::{apply_halftone_gpu, HalftoneGpuParams};
@@ -49,19 +49,19 @@ pub use prefer::{
     force_cpu, gpu_filters_enabled, gpu_preview_enabled, gpu_resident_enabled, gpu_warmup_enabled,
     prefer_gpu, set_gpu_preview_ui_override,
 };
-pub use stats::not_worse_than;
-pub use warmup::{
-    cap_warmup_coords, select_warmup_coords, slots_per_warmup_coord, viewport_vram_reserve,
-    warmup_slot_budget,
-};
-pub use vram_budget::{
-    compute_vram_budget, query_adapter_memory, resolve_vram_budget, VramBudget, VramBudgetSource,
-    MAX_VRAM_BUDGET_BYTES, MIN_VRAM_BUDGET_BYTES,
-};
 pub use resident::{
     GpuTileCache, GpuVramStats, ResidentBayerPipelines, ResidentCompositePipelines,
     ResidentCrtPipelines, ResidentHalftonePipelines, ResidentPaletteGuidedPipelines,
     ResidentPalettePipelines,
+};
+pub use stats::not_worse_than;
+pub use vram_budget::{
+    compute_vram_budget, query_adapter_memory, resolve_vram_budget, VramBudget, VramBudgetSource,
+    MAX_VRAM_BUDGET_BYTES, MIN_VRAM_BUDGET_BYTES,
+};
+pub use warmup::{
+    cap_warmup_coords, select_warmup_coords, slots_per_warmup_coord, viewport_vram_reserve,
+    warmup_slot_budget,
 };
 
 /// Errors from a GPU tile dispatch (caller falls back to CPU).

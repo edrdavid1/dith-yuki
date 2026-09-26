@@ -3,7 +3,7 @@ use tauri::{AppHandle, State};
 
 use crate::commands::AppState;
 use crate::services::UndoService;
-pub use crate::undo::{DirtyDto, UndoStateDto};
+pub use crate::undo::UndoStateDto;
 
 #[tauri::command]
 pub fn undo(

@@ -39,11 +39,7 @@ pub fn palette_mixed_params_from_palette(
     guided: PaletteGuidedPassParams,
     palette: &Palette,
 ) -> PaletteMixedPassParams {
-    let rgb: Vec<[f32; 3]> = palette
-        .colors
-        .iter()
-        .map(|c| [c.r, c.g, c.b])
-        .collect();
+    let rgb: Vec<[f32; 3]> = palette.colors.iter().map(|c| [c.r, c.g, c.b]).collect();
     let lab: Vec<[f32; 3]> = palette
         .colors
         .iter()

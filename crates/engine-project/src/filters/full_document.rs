@@ -214,13 +214,9 @@ pub fn assemble_layer_rgba_f32(
     doc_height: u32,
     doc_id: u32,
 ) -> Result<Vec<f32>, EngineError> {
-    let rgba8 = assemble_layer_rgba8(cache, layer, doc_width, doc_height, doc_id).map_err(|e| {
-        EngineError::invalid_state(format!("assemble raw for full-document: {e}"))
-    })?;
-    Ok(rgba8
-        .into_iter()
-        .map(|b| b as f32 / 255.0)
-        .collect())
+    let rgba8 = assemble_layer_rgba8(cache, layer, doc_width, doc_height, doc_id)
+        .map_err(|e| EngineError::invalid_state(format!("assemble raw for full-document: {e}")))?;
+    Ok(rgba8.into_iter().map(|b| b as f32 / 255.0).collect())
 }
 
 /// Run the full-document filter stack for `layer`, returning RGBA f32.
@@ -323,9 +319,10 @@ pub fn compute_ascii_job(
         }
         if resolve_algorithm_id(filter).as_deref() == Some("ascii") {
             let json = filter_params_to_json(&filter.params)?;
-            ascii_params = Some(serde_json::from_value(json).map_err(|e| {
-                EngineError::invalid_filter_params(format!("ascii params: {e}"))
-            })?);
+            ascii_params =
+                Some(serde_json::from_value(json).map_err(|e| {
+                    EngineError::invalid_filter_params(format!("ascii params: {e}"))
+                })?);
             break;
         }
         let Some(id) = resolve_algorithm_id(filter) else {
@@ -344,9 +341,8 @@ pub fn compute_ascii_job(
         }
     }
 
-    let params = ascii_params.ok_or_else(|| {
-        EngineError::invalid_state("no Ascii filter on layer for ASCII export")
-    })?;
+    let params = ascii_params
+        .ok_or_else(|| EngineError::invalid_state("no Ascii filter on layer for ASCII export"))?;
     run_ascii_job(&rgba, w, h, &params, should_cancel)
 }
 
@@ -363,9 +359,8 @@ fn apply_full_document_algorithm(
     }
     if resolve_algorithm_id(filter).as_deref() == Some("ascii") {
         let json = filter_params_to_json(&filter.params)?;
-        let p: AsciiParams = serde_json::from_value(json).map_err(|e| {
-            EngineError::invalid_filter_params(format!("ascii params: {e}"))
-        })?;
+        let p: AsciiParams = serde_json::from_value(json)
+            .map_err(|e| EngineError::invalid_filter_params(format!("ascii params: {e}")))?;
         return apply_ascii_rgba(rgba, width, height, &p, should_cancel);
     }
 
@@ -373,9 +368,8 @@ fn apply_full_document_algorithm(
         FilterParams::DitherV2(p) => p.clone(),
         other => {
             let json = filter_params_to_json(other)?;
-            serde_json::from_value::<DitherParamsV2>(json).map_err(|e| {
-                EngineError::invalid_filter_params(format!("riemersma params: {e}"))
-            })?
+            serde_json::from_value::<DitherParamsV2>(json)
+                .map_err(|e| EngineError::invalid_filter_params(format!("riemersma params: {e}")))?
         }
     };
     apply_riemersma_rgba(rgba, width, height, &params, should_cancel).map_err(|e| match e {
@@ -410,8 +404,8 @@ fn apply_tiled_filters_on_buffer(
     let lut_cache = PaletteLutCache::new();
     let threshold_cache = ThresholdMapCache::new();
 
-    let cols = (width + TILE_SIZE - 1) / TILE_SIZE;
-    let rows = (height + TILE_SIZE - 1) / TILE_SIZE;
+    let cols = width.div_ceil(TILE_SIZE);
+    let rows = height.div_ceil(TILE_SIZE);
     for ty in 0..rows {
         for tx in 0..cols {
             let tile = extract_tile_from_rgba(rgba, width, height, tx, ty);
@@ -515,13 +509,7 @@ pub fn ensure_full_document_ex(
         }
     };
 
-    let compute = compute_full_document_rgba_ex(
-        tile_cache,
-        layer,
-        doc,
-        &cancel,
-        include_ascii,
-    );
+    let compute = compute_full_document_rgba_ex(tile_cache, layer, doc, &cancel, include_ascii);
 
     let mut guard = fd_cache.inner.lock().expect("full_document cache lock");
     let slot = guard
@@ -554,10 +542,7 @@ pub fn ensure_full_document_ex(
 }
 
 /// Slice one Processed-sized `PixelTile` out of a full-document result.
-pub fn slice_processed_tile(
-    result: &FullDocumentResult,
-    coord: TileCoord,
-) -> PixelTile {
+pub fn slice_processed_tile(result: &FullDocumentResult, coord: TileCoord) -> PixelTile {
     extract_tile_from_rgba(
         &result.rgba_f32,
         result.width,
@@ -575,11 +560,12 @@ pub fn publish_processed_tiles(
     layer_id: u32,
     generation: u64,
 ) {
-    let cols = (result.width + TILE_SIZE - 1) / TILE_SIZE;
-    let rows = (result.height + TILE_SIZE - 1) / TILE_SIZE;
+    let cols = result.width.div_ceil(TILE_SIZE);
+    let rows = result.height.div_ceil(TILE_SIZE);
     for ty in 0..rows {
         for tx in 0..cols {
-            let tile = extract_tile_from_rgba(&result.rgba_f32, result.width, result.height, tx, ty);
+            let tile =
+                extract_tile_from_rgba(&result.rgba_f32, result.width, result.height, tx, ty);
             let key = TileKey {
                 doc: doc_id,
                 layer: layer_id,
@@ -727,14 +713,15 @@ mod tests {
         }
         FD_TEST_COMPUTE_DELAY_MS.store(0, Ordering::Relaxed);
         assert_eq!(oks, n, "all waiters must receive the single-flight result");
-        assert!(fd.get_if_fresh(&FullDocumentKey {
-            doc: 1,
-            layer: 1,
-            params_hash: hash_layer_filter_params_ex(&layer, true),
-            document_gen: 1,
-            include_ascii: true,
-        })
-        .is_some());
+        assert!(fd
+            .get_if_fresh(&FullDocumentKey {
+                doc: 1,
+                layer: 1,
+                params_hash: hash_layer_filter_params_ex(&layer, true),
+                document_gen: 1,
+                include_ascii: true,
+            })
+            .is_some());
     }
 
     #[test]
@@ -765,10 +752,7 @@ mod tests {
 
         FD_TEST_COMPUTE_DELAY_MS.store(0, Ordering::Relaxed);
 
-        assert!(
-            second.is_ok(),
-            "Image-mode request should own the flight"
-        );
+        assert!(second.is_ok(), "Image-mode request should own the flight");
         assert!(
             first_res.is_err(),
             "ASCII-mode job must be cancelled by newer key"

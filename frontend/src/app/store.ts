@@ -4,7 +4,6 @@ import tabsReducer from './slices/tabsSlice';
 import layersReducer from './slices/layersSlice';
 import filtersReducer from './slices/filtersSlice';
 import selectionReducer from './slices/selectionSlice';
-import panelsReducer from './slices/panelsSlice';
 import palettesReducer from './slices/palettesSlice';
 import colorLabReducer from './slices/colorLabSlice';
 import undoReducer from './slices/undoSlice';
@@ -21,7 +20,6 @@ export function createAppStore() {
       layers: layersReducer,
       filters: filtersReducer,
       selection: selectionReducer,
-      panels: panelsReducer,
       palettes: palettesReducer,
       colorLab: colorLabReducer,
       undo: undoReducer,
@@ -31,8 +29,6 @@ export function createAppStore() {
       const middleware = getDefaultMiddleware({
         serializableCheck: false,
       });
-      // RTK default middleware already includes redux-thunk.
-      // Logging only in development via DevTools; avoid noisy console logger dependency.
       return middleware;
     },
   });
@@ -42,5 +38,5 @@ export type AppStore = ReturnType<typeof createAppStore>;
 export type RootState = ReturnType<AppStore['getState']>;
 export type AppDispatch = AppStore['dispatch'];
 
-/** Singleton store for the current window (main or floating panel). */
+/** Singleton store for the current window. */
 export const store = createAppStore();

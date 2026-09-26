@@ -15,7 +15,7 @@ use crate::GpuError;
 
 use super::format::{
     compute_vram_layout, create_tile_array_desc, default_vram_config, pack_tile_upload,
-    unpack_tile_download, tile_row_bytes_aligned, VramBudgetConfig, VramLayout, TILE_EXTENT,
+    tile_row_bytes_aligned, unpack_tile_download, VramBudgetConfig, VramLayout, TILE_EXTENT,
 };
 use super::slot::{GpuSlotMeta, SlotAllocator, SlotHandle};
 
@@ -50,20 +50,11 @@ impl GpuVramStats {
 
 /// Last process-wide eviction policy (active tab, open docs, visible coords).
 /// `promote` uses this instead of a doc-blind empty `EvictContext` (A6).
+#[derive(Default)]
 struct EvictPolicySnapshot {
     active_doc: Option<u32>,
     open_docs: HashSet<u32>,
     viewport_coords: HashSet<TileCoord>,
-}
-
-impl Default for EvictPolicySnapshot {
-    fn default() -> Self {
-        Self {
-            active_doc: None,
-            open_docs: HashSet::new(),
-            viewport_coords: HashSet::new(),
-        }
-    }
 }
 
 /// GPU-resident tiles: one resident `Texture2DArray` + frame scratch ping-pong.
@@ -480,11 +471,7 @@ mod tests {
         TileKey {
             doc,
             layer: 1,
-            coord: TileCoord {
-                level: 0,
-                x,
-                y,
-            },
+            coord: TileCoord { level: 0, x, y },
             stage,
         }
     }
@@ -505,10 +492,7 @@ mod tests {
     }
 
     fn insert_meta(cache: &GpuTileCache, key: TileKey, slot: u32, generation: u64) {
-        assert!(
-            cache.allocator.reserve(slot),
-            "test slot {slot} not free"
-        );
+        assert!(cache.allocator.reserve(slot), "test slot {slot} not free");
         let handle = SlotHandle { index: slot };
         cache.entries.insert(
             key,
@@ -535,8 +519,13 @@ mod tests {
         assert_eq!(cache.live_slot_count(), 3);
         cache.evict_document(1);
         assert_eq!(cache.live_slot_count(), 1);
-        assert!(cache.get_slot(&key_doc(2, 0, 0, CacheStage::Processed), 1).is_some());
-        assert!(cache.entries.get(&key_doc(1, 0, 0, CacheStage::Processed)).is_none());
+        assert!(cache
+            .get_slot(&key_doc(2, 0, 0, CacheStage::Processed), 1)
+            .is_some());
+        assert!(cache
+            .entries
+            .get(&key_doc(1, 0, 0, CacheStage::Processed))
+            .is_none());
     }
 
     #[test]
@@ -570,9 +559,7 @@ mod tests {
                 tile_old.set(x, y, 3, 1.0);
             }
         }
-        cache
-            .promote(ctx, key, &tile_old, 1)
-            .expect("promote gen1");
+        cache.promote(ctx, key, &tile_old, 1).expect("promote gen1");
         assert!(cache.get_slot(&key, 1).is_some());
 
         // Fill remaining slots with doc=2 tiles so the next promote triggers pressure
@@ -584,14 +571,9 @@ mod tests {
             let mut t = PixelTile::new();
             t.set(0, 0, 0, 0.5);
             t.set(0, 0, 3, 1.0);
-            cache
-                .promote(ctx, filler, &t, 1)
-                .expect("fill promote");
+            cache.promote(ctx, filler, &t, 1).expect("fill promote");
             next_slot_key += 1;
-            assert!(
-                next_slot_key < cap + 8,
-                "failed to fill resident cache"
-            );
+            assert!(next_slot_key < cap + 8, "failed to fill resident cache");
         }
         assert_eq!(cache.allocator.free_count(), 0);
 
@@ -600,7 +582,9 @@ mod tests {
         let mut t = PixelTile::new();
         t.set(0, 0, 0, 0.5);
         t.set(0, 0, 3, 1.0);
-        cache.promote(ctx, overflow, &t, 1).expect("pressure promote");
+        cache
+            .promote(ctx, overflow, &t, 1)
+            .expect("pressure promote");
         assert!(
             cache.get_slot(&key, 1).is_none(),
             "doc1 tile must be evicted under pressure before reuse"
@@ -615,9 +599,7 @@ mod tests {
                 tile_new.set(x, y, 3, 1.0);
             }
         }
-        cache
-            .promote(ctx, key, &tile_new, 2)
-            .expect("promote gen2");
+        cache.promote(ctx, key, &tile_new, 2).expect("promote gen2");
         assert!(cache.get_slot(&key, 1).is_none());
         assert!(cache.get_slot(&key, 2).is_some());
 
@@ -670,12 +652,7 @@ mod tests {
         // Fill all slots
         let cap = cache.max_slots();
         for i in 0..cap {
-            insert_meta(
-                cache,
-                key_doc(1, i, 0, CacheStage::Composite),
-                i,
-                1,
-            );
+            insert_meta(cache, key_doc(1, i, 0, CacheStage::Composite), i, 1);
         }
         assert_eq!(cache.allocator.free_count(), 0);
 
@@ -692,11 +669,7 @@ mod tests {
             viewport_coords: &viewport,
         });
         assert!(cache.allocator.free_count() > 0);
-        let remaining_doc1 = cache
-            .entries
-            .iter()
-            .filter(|e| e.key().doc == 1)
-            .count();
+        let remaining_doc1 = cache.entries.iter().filter(|e| e.key().doc == 1).count();
         assert!(
             remaining_doc1 < cap as usize,
             "pressure should evict at least one inactive-doc tile before active"
@@ -747,12 +720,13 @@ mod tests {
             }
         }
         let key = key_doc(9, 3, 4, CacheStage::Processed);
-        let slot = fg
-            .cache
-            .promote(&fg.ctx, key, &tile, 42)
-            .expect("promote");
+        let slot = fg.cache.promote(&fg.ctx, key, &tile, 42).expect("promote");
         assert_eq!(slot.index, 0);
-        let back = fg.cache.demote(&fg.ctx, &key).expect("demote").expect("tile");
+        let back = fg
+            .cache
+            .demote(&fg.ctx, &key)
+            .expect("demote")
+            .expect("tile");
         assert_eq!(tile.data.len(), back.data.len());
         for (a, b) in tile.data.iter().zip(back.data.iter()) {
             assert_eq!(a.to_bits(), b.to_bits());

@@ -1,7 +1,6 @@
 //! Assemble and atomically write a recovery journal for one session.
 
 use std::path::Path;
-use std::sync::Arc;
 
 use engine_project::serialize::{read_png_file, save_project_to_bytes, ProjectError};
 use uuid::Uuid;
@@ -70,7 +69,7 @@ pub fn write_journal_for_doc(state: &AppState, doc_id: u32) -> Result<(), String
         snapshot.as_ref(),
         &state.tiles.tile_cache,
         env!("CARGO_PKG_VERSION"),
-        |p| read_png_file(p),
+        read_png_file,
     );
 
     let (content_kind, zip_bytes) = match zip_result {

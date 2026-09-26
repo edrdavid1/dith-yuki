@@ -88,6 +88,10 @@ pub struct FilterContext<'a> {
     /// Layer being processed. Required by block-representative sampling when
     /// `pixel_size > 1`.
     pub layer_id: LayerId,
+
+    /// Filter instance key (`FilterInstanceId::as_u128`) for ED residuals and
+    /// dithered block side-channels. `0` is fine for single-filter tests.
+    pub filter_key: u128,
 }
 
 impl<'a> FilterContext<'a> {
@@ -107,6 +111,7 @@ impl<'a> FilterContext<'a> {
         block_cache: &'a BlockRepresentativeCache,
         gpu: Option<&'a GpuContext>,
         layer_id: LayerId,
+        filter_key: u128,
     ) -> Self {
         Self {
             coord,
@@ -118,6 +123,7 @@ impl<'a> FilterContext<'a> {
             block_cache,
             gpu,
             layer_id,
+            filter_key,
         }
     }
 
@@ -181,6 +187,7 @@ mod tests {
             &bc,
             None,
             crate::types::LayerId::new(1),
+            0,
         );
 
         // Verify all palette-quantize-required fields are accessible.
@@ -217,6 +224,7 @@ mod tests {
             &bc,
             None,
             crate::types::LayerId::new(1),
+            0,
         );
 
         assert!(std::ptr::eq(ctx.document, &doc));

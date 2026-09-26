@@ -93,6 +93,21 @@ export async function generateHarmonyPalette(
   });
 }
 
+export interface AutoInterpolateDto {
+  colors: GeneratedColorDto[];
+  inserted: number;
+}
+
+/** Live check: enable Auto Interpolate when gaps exist. */
+export async function autoInterpolateWouldChange(colors: string[]): Promise<boolean> {
+  return invoke<boolean>('auto_interpolate_would_change', { colors });
+}
+
+/** Append Oklab-lerp fills for large L-neighbor gaps (Variant A: instant). */
+export async function autoInterpolatePalette(colors: string[]): Promise<AutoInterpolateDto> {
+  return invoke<AutoInterpolateDto>('auto_interpolate_palette', { colors });
+}
+
 export async function importPalette(docId: number, path: string): Promise<PaletteDto> {
   return invoke<PaletteDto>('import_palette', { docId, path });
 }

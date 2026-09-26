@@ -96,7 +96,9 @@ fn is_ext_entry(name: &str) -> bool {
 
 fn is_id_token(s: &str) -> bool {
     let len = s.len();
-    (1..=64).contains(&len) && s.bytes().all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-'))
+    (1..=64).contains(&len)
+        && s.bytes()
+            .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-'))
 }
 
 fn is_ext_token(s: &str) -> bool {

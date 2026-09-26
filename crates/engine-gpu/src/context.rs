@@ -43,16 +43,8 @@ impl GpuContext {
             .await?;
 
         let info = adapter.get_info();
-        eprintln!(
-            "[engine-gpu] adapter {:?} ({:?})",
-            info.name,
-            info.backend
-        );
-        log::info!(
-            "engine-gpu: adapter {:?} ({:?})",
-            info.name,
-            info.backend
-        );
+        eprintln!("[engine-gpu] adapter {:?} ({:?})", info.name, info.backend);
+        log::info!("engine-gpu: adapter {:?} ({:?})", info.name, info.backend);
 
         let queried = crate::query_adapter_memory(&adapter);
         let vram = crate::resolve_vram_budget(queried);
@@ -73,10 +65,7 @@ impl GpuContext {
         }
 
         let mut required_features = wgpu::Features::empty();
-        if adapter
-            .features()
-            .contains(wgpu::Features::CLEAR_TEXTURE)
-        {
+        if adapter.features().contains(wgpu::Features::CLEAR_TEXTURE) {
             required_features |= wgpu::Features::CLEAR_TEXTURE;
         }
 

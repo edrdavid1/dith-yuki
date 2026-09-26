@@ -148,4 +148,5 @@ fn flush_stale(app: &AppHandle) {
     }
 }
 
+#[allow(dead_code)]
 pub type JournalLock = Mutex<JournalRuntime>;

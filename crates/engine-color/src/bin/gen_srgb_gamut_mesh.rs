@@ -97,12 +97,9 @@ fn build_mesh() -> GamutMesh {
 }
 
 fn main() {
-    let out = env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from("frontend/src/features/color-lab/assets/srgb-gamut-oklab.json")
-        });
+    let out = env::args().nth(1).map(PathBuf::from).unwrap_or_else(|| {
+        PathBuf::from("frontend/src/features/color-lab/assets/srgb-gamut-oklab.json")
+    });
     if let Some(parent) = out.parent() {
         fs::create_dir_all(parent).expect("create asset directory");
     }

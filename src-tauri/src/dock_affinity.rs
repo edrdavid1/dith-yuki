@@ -22,8 +22,8 @@ pub const GAP_HIT_HALF_EXIT: f64 = 28.0;
 pub const HYSTERESIS_EXIT_PADDING: f64 = 24.0;
 
 /// Panels that never participate in drag-to-redock.
-/// Preferences is a dialog. Preview redocks via affinity → center FlexLayout.
-pub const FLOATING_ONLY_PANELS: &[&str] = &["preferences"];
+/// Preferences/Help are dialogs (not float windows). Empty after PanelManager retirement.
+pub const FLOATING_ONLY_PANELS: &[&str] = &[];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -635,12 +635,12 @@ mod tests {
     }
 
     #[test]
-    fn floating_only_begin_rejected() {
+    fn flex_panels_can_begin_affinity() {
         let mut c = DockAffinityController::new(true);
         // Preview participates in affinity (redock → center FlexLayout).
         assert!(c.begin("preview"));
         let _ = c.cancel();
-        assert!(!c.begin("preferences"));
+        // FLOATING_ONLY_PANELS is empty after PanelManager retirement.
         assert!(c.begin("colorlab"));
         assert!(c.session.is_some());
     }

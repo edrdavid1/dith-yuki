@@ -7,7 +7,8 @@
 //! Floyd–Steinberg also records the *dithered* RGB of each processed
 //! representative so neighboring tiles can copy the true block color when the
 //! representative lies outside their core (same cross-tile side-channel pattern
-//! as [`ErrorResidualsStore`](../../engine-project)).
+//! as error residuals). Dithered entries are keyed by filter instance so stacked
+//! ED filters do not overwrite each other's cross-tile copies.
 
 use crate::coords::GlobalCoord;
 use crate::{CacheStage, TileCache, TileCoord, TileKey, HALO, TILE_SIZE};
@@ -65,14 +66,36 @@ impl BlockCoord {
 
     #[inline]
     pub fn origin_global(self) -> (u32, u32) {
-        (self.block_x * self.pixel_size, self.block_y * self.pixel_size)
+        (
+            self.block_x * self.pixel_size,
+            self.block_y * self.pixel_size,
+        )
+    }
+}
+
+/// Dithered block color keyed by document block + filter instance.
+///
+/// Raw samples stay on [`BlockCoord`] alone (document source). Dithered
+/// outputs include `filter_key` so two ED filters on one layer keep separate
+/// cross-tile representative streams.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DitheredBlockKey {
+    pub block: BlockCoord,
+    /// [`FilterInstanceId::as_u128`](u128) from engine-project; `0` in tests.
+    pub filter_key: u128,
+}
+
+impl DitheredBlockKey {
+    #[inline]
+    pub fn new(block: BlockCoord, filter_key: u128) -> Self {
+        Self { block, filter_key }
     }
 }
 
 /// Side-channel cache of block representatives (raw + optional dithered output).
 pub struct BlockRepresentativeCache {
     raw: DashMap<BlockCoord, RawPixelValue>,
-    dithered: DashMap<BlockCoord, DitheredRgb>,
+    dithered: DashMap<DitheredBlockKey, DitheredRgb>,
     /// Bitmask of populated `(layer, pixel_size)` keys packed as `(layer << 8) | ps`.
     populated: DashMap<u64, ()>,
     /// Generation bumped on full invalidation (tests / diagnostics).
@@ -95,7 +118,8 @@ impl BlockRepresentativeCache {
     }
 
     pub fn is_populated(&self, doc: u32, layer: u32, pixel_size: u32) -> bool {
-        self.populated.contains_key(&Self::pack_key(doc, layer, pixel_size))
+        self.populated
+            .contains_key(&Self::pack_key(doc, layer, pixel_size))
     }
 
     pub fn get_raw(&self, block: BlockCoord) -> Option<RawPixelValue> {
@@ -109,12 +133,15 @@ impl BlockRepresentativeCache {
         self.raw.insert(block, value);
     }
 
-    pub fn get_dithered(&self, block: BlockCoord) -> Option<DitheredRgb> {
-        self.dithered.get(&block).map(|v| *v)
+    pub fn get_dithered(&self, block: BlockCoord, filter_key: u128) -> Option<DitheredRgb> {
+        self.dithered
+            .get(&DitheredBlockKey::new(block, filter_key))
+            .map(|v| *v)
     }
 
-    pub fn insert_dithered(&self, block: BlockCoord, value: DitheredRgb) {
-        self.dithered.insert(block, value);
+    pub fn insert_dithered(&self, block: BlockCoord, filter_key: u128, value: DitheredRgb) {
+        self.dithered
+            .insert(DitheredBlockKey::new(block, filter_key), value);
     }
 
     /// Drop dithered outputs only (filter re-run / residuals clear). Raw stays.
@@ -129,7 +156,7 @@ impl BlockRepresentativeCache {
             ids.insert(e.key().layer);
         }
         for e in self.dithered.iter() {
-            ids.insert(e.key().layer);
+            ids.insert(e.key().block.layer);
         }
         for e in self.populated.iter() {
             ids.insert((*e.key() >> 8) as u32);
@@ -140,17 +167,18 @@ impl BlockRepresentativeCache {
     /// Drop raw, dithered, and populated entries for `layer`. Missing keys are a no-op.
     pub fn evict_layer(&self, doc: u32, layer: u32) {
         self.raw.retain(|k, _| k.doc != doc || k.layer != layer);
-        self.dithered.retain(|k, _| k.doc != doc || k.layer != layer);
+        self.dithered
+            .retain(|k, _| k.block.doc != doc || k.block.layer != layer);
         self.populated.retain(|k, _| {
             let packed_doc = (*k >> 40) as u32;
-            let packed_layer = ((*k >> 8) as u32) & 0xffff_ffff;
+            let packed_layer = (*k >> 8) as u32;
             packed_doc != doc || packed_layer != layer
         });
     }
 
     pub fn evict_document(&self, doc: u32) {
         self.raw.retain(|k, _| k.doc != doc);
-        self.dithered.retain(|k, _| k.doc != doc);
+        self.dithered.retain(|k, _| k.block.doc != doc);
         self.populated.retain(|k, _| (*k >> 40) as u32 != doc);
     }
 
@@ -181,7 +209,8 @@ impl BlockRepresentativeCache {
         if width == 0 || height == 0 {
             return;
         }
-        self.raw.retain(|k, _| !(k.doc == doc && k.layer == layer && k.pixel_size == pixel_size));
+        self.raw
+            .retain(|k, _| !(k.doc == doc && k.layer == layer && k.pixel_size == pixel_size));
 
         let w = width as usize;
         let h = height as usize;
@@ -197,7 +226,10 @@ impl BlockRepresentativeCache {
                 } else {
                     [0.0, 0.0, 0.0, 0.0]
                 };
-                self.insert_raw(BlockCoord::from_global(doc, layer, gx, gy, pixel_size), value);
+                self.insert_raw(
+                    BlockCoord::from_global(doc, layer, gx, gy, pixel_size),
+                    value,
+                );
                 gx = gx.saturating_add(pixel_size);
                 if gx == 0 {
                     break;
@@ -211,7 +243,8 @@ impl BlockRepresentativeCache {
 
         let _ = (w, h, ps);
 
-        self.populated.insert(Self::pack_key(doc, layer, pixel_size), ());
+        self.populated
+            .insert(Self::pack_key(doc, layer, pixel_size), ());
     }
 
     pub fn ensure_populated_from_tiles(
@@ -230,7 +263,8 @@ impl BlockRepresentativeCache {
             return;
         }
 
-        self.raw.retain(|k, _| !(k.doc == doc && k.layer == layer && k.pixel_size == pixel_size));
+        self.raw
+            .retain(|k, _| !(k.doc == doc && k.layer == layer && k.pixel_size == pixel_size));
 
         let mut gy = 0u32;
         while gy < height {
@@ -238,7 +272,10 @@ impl BlockRepresentativeCache {
             while gx < width {
                 let value = read_raw_from_tiles(tile_cache, doc, layer, gx, gy)
                     .unwrap_or([0.0, 0.0, 0.0, 0.0]);
-                self.insert_raw(BlockCoord::from_global(doc, layer, gx, gy, pixel_size), value);
+                self.insert_raw(
+                    BlockCoord::from_global(doc, layer, gx, gy, pixel_size),
+                    value,
+                );
                 let next = gx.saturating_add(pixel_size);
                 if next <= gx {
                     break;
@@ -252,7 +289,8 @@ impl BlockRepresentativeCache {
             gy = next;
         }
 
-        self.populated.insert(Self::pack_key(doc, layer, pixel_size), ());
+        self.populated
+            .insert(Self::pack_key(doc, layer, pixel_size), ());
     }
 }
 
@@ -345,16 +383,24 @@ mod tests {
         let rgba_b = vec![0.75f32; 4 * 4 * 4];
         cache.populate_from_buffer(&rgba_a, 4, 4, 1, 1, 2);
         cache.populate_from_buffer(&rgba_b, 4, 4, 1, 2, 2);
-        cache.insert_dithered(BlockCoord::from_global(1, 1, 0, 0, 2), [0.1, 0.2, 0.3]);
-        cache.insert_dithered(BlockCoord::from_global(1, 2, 0, 0, 2), [0.4, 0.5, 0.6]);
+        cache.insert_dithered(BlockCoord::from_global(1, 1, 0, 0, 2), 0, [0.1, 0.2, 0.3]);
+        cache.insert_dithered(BlockCoord::from_global(1, 2, 0, 0, 2), 0, [0.4, 0.5, 0.6]);
 
         cache.evict_layer(1, 1);
 
-        assert!(cache.get_raw(BlockCoord::from_global(1, 1, 0, 0, 2)).is_none());
-        assert!(cache.get_dithered(BlockCoord::from_global(1, 1, 0, 0, 2)).is_none());
+        assert!(cache
+            .get_raw(BlockCoord::from_global(1, 1, 0, 0, 2))
+            .is_none());
+        assert!(cache
+            .get_dithered(BlockCoord::from_global(1, 1, 0, 0, 2), 0)
+            .is_none());
         assert!(!cache.is_populated(1, 1, 2));
-        assert!(cache.get_raw(BlockCoord::from_global(1, 2, 0, 0, 2)).is_some());
-        assert!(cache.get_dithered(BlockCoord::from_global(1, 2, 0, 0, 2)).is_some());
+        assert!(cache
+            .get_raw(BlockCoord::from_global(1, 2, 0, 0, 2))
+            .is_some());
+        assert!(cache
+            .get_dithered(BlockCoord::from_global(1, 2, 0, 0, 2), 0)
+            .is_some());
         assert!(cache.is_populated(1, 2, 2));
     }
 
@@ -375,6 +421,17 @@ mod tests {
             .get_raw(BlockCoord::from_global(1, 1, 0, 0, 4))
             .unwrap()[0];
         assert_eq!(after, 0.75);
+    }
+
+    #[test]
+    fn dithered_entries_are_keyed_by_filter() {
+        let cache = BlockRepresentativeCache::new();
+        let block = BlockCoord::from_global(1, 1, 0, 0, 4);
+        cache.insert_dithered(block, 11, [0.1, 0.2, 0.3]);
+        cache.insert_dithered(block, 22, [0.7, 0.8, 0.9]);
+        assert_eq!(cache.get_dithered(block, 11), Some([0.1, 0.2, 0.3]));
+        assert_eq!(cache.get_dithered(block, 22), Some([0.7, 0.8, 0.9]));
+        assert!(cache.get_dithered(block, 0).is_none());
     }
 
     #[test]

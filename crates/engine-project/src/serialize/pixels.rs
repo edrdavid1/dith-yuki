@@ -213,10 +213,12 @@ fn assemble_layer_processed_rgba8(
     lut_cache: &engine_color::palette_lut::PaletteLutCache,
     threshold_cache: &engine_color::threshold_map::ThresholdMapCache,
 ) -> Result<Vec<u8>, ProjectError> {
-    use crate::filters::apply::apply_filter_to_tile;
+    use crate::filters::apply::apply_filter_to_tile_with_caches;
+    use crate::filters::dither_residuals::ErrorResidualsStore;
     use crate::filters::full_document::{
         compute_full_document_rgba, layer_has_full_document_filter,
     };
+    use engine_tiles::block_cache::BlockRepresentativeCache;
     use std::sync::atomic::AtomicBool;
 
     let doc_width = doc.width;
@@ -240,10 +242,40 @@ fn assemble_layer_processed_rgba8(
         return Ok(canvas);
     }
 
+    // Shared across the tile loop — same contract as live preview
+    // (`compute_processed_tile` + AppState residuals). A fresh store per tile
+    // (via `apply_filter_to_tile`) drops ED edge residuals and draws a 256px
+    // grid into PNG/JPEG/… exports and Space Quick Look thumbnails.
+    let residuals_store = ErrorResidualsStore::new();
+    let block_cache = BlockRepresentativeCache::new();
+    if layer.dither_is_first_applied() {
+        for filter in &layer.filters {
+            if !filter.enabled {
+                continue;
+            }
+            let ps = match &filter.params {
+                crate::filter::FilterParams::DitherV2(p) => p.pixel_size,
+                crate::filter::FilterParams::Dither { .. } => 1,
+                _ => continue,
+            };
+            if ps > 1 {
+                block_cache.ensure_populated_from_tiles(
+                    cache,
+                    doc_id,
+                    layer.id.0,
+                    ps as u32,
+                    doc_width,
+                    doc_height,
+                );
+            }
+        }
+    }
+
     let mut canvas = vec![0u8; (doc_width as usize) * (doc_height as usize) * 4];
     let bounds = layer.bounds_l0;
     let (off_x, off_y) = layer.offset;
 
+    // Row-major order so left/top/diag residuals exist before each tile runs.
     for ty in bounds.min_y..=bounds.max_y {
         for tx in bounds.min_x..=bounds.max_x {
             let coord = TileCoord {
@@ -261,7 +293,7 @@ fn assemble_layer_processed_rgba8(
                 doc_id,
                 layer_id: layer.id.0,
             })?;
-            let processed = apply_filter_to_tile(
+            let processed = apply_filter_to_tile_with_caches(
                 tile.as_ref(),
                 layer,
                 coord,
@@ -269,6 +301,9 @@ fn assemble_layer_processed_rgba8(
                 lut_cache,
                 threshold_cache,
                 doc,
+                &residuals_store,
+                &block_cache,
+                None,
             )
             .map_err(|e| ProjectError::Codec(format!("preview filter apply: {e}")))?;
 
@@ -444,9 +479,9 @@ pub fn decode_png_to_f32_with_limits(
     limits: PngDecodeLimits,
 ) -> Result<(u32, u32, Vec<f32>), ProjectError> {
     let (width, height) = peek_png_dimensions(png_bytes, limits)?;
-    let pixels = (width as u64)
-        .checked_mul(height as u64)
-        .ok_or_else(|| ProjectError::Corrupt(format!("PNG dimensions overflow {width}×{height}")))?;
+    let pixels = (width as u64).checked_mul(height as u64).ok_or_else(|| {
+        ProjectError::Corrupt(format!("PNG dimensions overflow {width}×{height}"))
+    })?;
     if pixels == 0 || pixels > limits.max_pixels {
         return Err(ProjectError::Corrupt(format!(
             "PNG pixel count {pixels} outside 1..={}",
@@ -647,6 +682,158 @@ mod tests {
             }
         );
         assert!(assemble_layer_png(&cache, &layer, w, h, 2).is_ok());
+    }
+
+    /// Export must share ED residuals across tiles (preview contract). Isolated
+    /// per-tile stores leave a visible 256px grid in PNG/JPEG exports.
+    #[test]
+    fn processed_export_propagates_ed_residuals_across_tiles() {
+        use crate::document::Document;
+        use crate::filter::{
+            DitherColorMode, DitherModeV2, DitherParamsV2, FilterInstance, FilterKind, FilterParams,
+        };
+        use crate::filters::apply::{apply_filter_to_tile, apply_filter_to_tile_with_caches};
+        use crate::filters::dither_residuals::ErrorResidualsStore;
+        use crate::types::DocumentId;
+        use engine_color::palette_cache::PaletteKdCache;
+        use engine_color::palette_lut::PaletteLutCache;
+        use engine_color::threshold_map::ThresholdMapCache;
+        use engine_tiles::block_cache::BlockRepresentativeCache;
+
+        let w = 512u32;
+        let h = 256u32;
+        // Mid-gray away from 4-level boundaries so FS generates residual error.
+        let buf = solid_f32(w, h, [0.4, 0.4, 0.4, 1.0]);
+        let cache = TileCache::new(50_000_000);
+        decompose_image_to_tiles(&buf, w, h, 1, 1, &cache).unwrap();
+
+        let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, w, h);
+        layer.filters.push(FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::FloydSteinberg,
+                levels: 4,
+                threshold_scale: 1.0,
+                pixel_size: 1,
+                color_mode: DitherColorMode::Rgb,
+                palette_id: None,
+                ..Default::default()
+            }),
+        ));
+        let mut doc = Document::new(DocumentId::new(1), w, h);
+        doc.root.push(LayerNode::Leaf(layer.clone()));
+
+        let exported = build_processed_composite_rgba8(&cache, &doc).unwrap();
+
+        // Golden: same filter stack + shared residuals, row-major (preview contract).
+        let residuals = ErrorResidualsStore::new();
+        let blocks = BlockRepresentativeCache::new();
+        let pc = PaletteKdCache::new();
+        let lc = PaletteLutCache::new();
+        let tc = ThresholdMapCache::new();
+        let raw_00 = cache
+            .get_entry(TileKey {
+                doc: 1,
+                layer: 1,
+                coord: TileCoord {
+                    level: 0,
+                    x: 0,
+                    y: 0,
+                },
+                stage: CacheStage::Raw,
+            })
+            .unwrap();
+        let raw_10 = cache
+            .get_entry(TileKey {
+                doc: 1,
+                layer: 1,
+                coord: TileCoord {
+                    level: 0,
+                    x: 1,
+                    y: 0,
+                },
+                stage: CacheStage::Raw,
+            })
+            .unwrap();
+        apply_filter_to_tile_with_caches(
+            raw_00.as_ref(),
+            &layer,
+            TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            },
+            &pc,
+            &lc,
+            &tc,
+            &doc,
+            &residuals,
+            &blocks,
+            None,
+        )
+        .unwrap();
+        let wavefront_10 = apply_filter_to_tile_with_caches(
+            raw_10.as_ref(),
+            &layer,
+            TileCoord {
+                level: 0,
+                x: 1,
+                y: 0,
+            },
+            &pc,
+            &lc,
+            &tc,
+            &doc,
+            &residuals,
+            &blocks,
+            None,
+        )
+        .unwrap();
+
+        // Isolated apply (old export bug) must differ from wavefront at the seam.
+        let isolated = apply_filter_to_tile(
+            raw_10.as_ref(),
+            &layer,
+            TileCoord {
+                level: 0,
+                x: 1,
+                y: 0,
+            },
+            &pc,
+            &lc,
+            &tc,
+            &doc,
+        )
+        .unwrap();
+
+        let mut export_matches_wavefront = true;
+        let mut isolated_differs = false;
+        for ly in 0..TILE_SIZE {
+            for lx in 0..8 {
+                // Left fringe of tile (1,0) — where left residuals land.
+                let sx = HALO + lx;
+                let sy = HALO + ly;
+                let gx = TILE_SIZE + lx;
+                let gy = ly;
+                let dst = ((gy * w + gx) * 4) as usize;
+                let exp_r = exported[dst] as f32 / 255.0;
+                let wf_r = wavefront_10.at(sx, sy, 0);
+                if (exp_r - wf_r).abs() > 1.5 / 255.0 {
+                    export_matches_wavefront = false;
+                }
+                if (isolated.at(sx, sy, 0) - wf_r).abs() > 1e-4 {
+                    isolated_differs = true;
+                }
+            }
+        }
+        assert!(
+            isolated_differs,
+            "precondition: isolated ED must differ from wavefront at seam"
+        );
+        assert!(
+            export_matches_wavefront,
+            "export composite must match wavefront ED (shared residuals), not isolated tiles"
+        );
     }
 
     #[test]

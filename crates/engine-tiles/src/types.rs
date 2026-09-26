@@ -115,7 +115,7 @@ mod tests {
         use std::collections::HashSet;
         let mut set = HashSet::new();
         let key1 = TileKey {
-           doc: 1,
+            doc: 1,
             layer: 0,
             coord: TileCoord {
                 level: 0,
@@ -125,7 +125,7 @@ mod tests {
             stage: CacheStage::Raw,
         };
         let key2 = TileKey {
-           doc: 1,
+            doc: 1,
             layer: 0,
             coord: TileCoord {
                 level: 0,
@@ -139,7 +139,7 @@ mod tests {
         assert_eq!(set.len(), 2);
 
         let same_place_other_doc = TileKey {
-           doc: 2,
+            doc: 2,
             layer: 0,
             coord: TileCoord {
                 level: 0,

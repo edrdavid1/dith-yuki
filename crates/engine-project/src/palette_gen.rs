@@ -14,10 +14,7 @@ use crate::layer::LayerNode;
 use crate::types::{LayerId, PaletteId};
 
 /// Find a layer by ID in the document tree (recursive).
-fn find_layer_in_nodes<'a>(
-    nodes: &'a [LayerNode],
-    layer_id: LayerId,
-) -> Option<&'a crate::layer::Layer> {
+fn find_layer_in_nodes(nodes: &[LayerNode], layer_id: LayerId) -> Option<&crate::layer::Layer> {
     for node in nodes {
         match node {
             LayerNode::Leaf(layer) => {

@@ -164,13 +164,7 @@ pub extern "C" fn dt_extract(
             max_ops: limits.max_read_at_ops,
             deadline,
         };
-        match extract(
-            &mut reader,
-            thumb_kind,
-            max_side,
-            premultiply != 0,
-            &limits,
-        ) {
+        match extract(&mut reader, thumb_kind, max_side, premultiply != 0, &limits) {
             Ok(bmp) => {
                 let width = bmp.width;
                 let height = bmp.height;
@@ -264,7 +258,8 @@ mod tests {
             let mut zip = ZipWriter::new(&mut cursor);
             let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
             zip.start_file("mimetype", stored).unwrap();
-            zip.write_all(b"application/vnd.dither.project+zip").unwrap();
+            zip.write_all(b"application/vnd.dither.project+zip")
+                .unwrap();
             zip.start_file("thumbnail.png", stored).unwrap();
             zip.write_all(&png).unwrap();
             zip.finish().unwrap();

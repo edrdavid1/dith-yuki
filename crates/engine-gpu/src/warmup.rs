@@ -35,7 +35,11 @@ pub fn select_warmup_coords(
     out
 }
 
-pub fn cap_warmup_coords(coords: &[TileCoord], budget_slots: u32, per_coord: u32) -> Vec<TileCoord> {
+pub fn cap_warmup_coords(
+    coords: &[TileCoord],
+    budget_slots: u32,
+    per_coord: u32,
+) -> Vec<TileCoord> {
     if per_coord == 0 || budget_slots == 0 {
         return Vec::new();
     }
@@ -48,11 +52,7 @@ mod tests {
     use super::*;
 
     fn c(x: u32) -> TileCoord {
-        TileCoord {
-            level: 0,
-            x,
-            y: 0,
-        }
+        TileCoord { level: 0, x, y: 0 }
     }
 
     #[test]
@@ -65,7 +65,14 @@ mod tests {
 
     #[test]
     fn select_skips_visible_when_opt_in_owns_them() {
-        let vis = [c(0), TileCoord { level: 1, x: 0, y: 0 }];
+        let vis = [
+            c(0),
+            TileCoord {
+                level: 1,
+                x: 0,
+                y: 0,
+            },
+        ];
         let pre = [c(1)];
         let all = select_warmup_coords(&vis, &pre, false);
         assert_eq!(all, vec![c(0), c(1)]);

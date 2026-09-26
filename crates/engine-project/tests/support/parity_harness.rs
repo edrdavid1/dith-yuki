@@ -141,6 +141,7 @@ impl Env {
             &self.block_cache,
             None,
             self.layer_id,
+            0,
         )
     }
 
@@ -242,6 +243,7 @@ impl Env {
             &params,
             &residuals,
             self.layer_id,
+            0,
             &self.palette_cache,
             &self.lut_cache,
             &self.doc,

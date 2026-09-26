@@ -90,6 +90,7 @@ fn query_metal_working_set_bytes() -> Option<u64> {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(unexpected_cfgs)] // `objc` msg_send! probes `cfg(cargo_clippy)` as a feature.
 fn macos_metal_recommended_working_set() -> Option<u64> {
     use objc::{msg_send, runtime::Object, sel, sel_impl};
 
