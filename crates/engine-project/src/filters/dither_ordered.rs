@@ -3571,8 +3571,10 @@ mod tests {
 
     #[test]
     fn custom_png_block_index_walks_map_when_pixel_size_divides_dims() {
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let path = dir.join("target/test_threshold_map_4x4.png");
+        let home = dirs::home_dir().expect("home");
+        let path = home
+            .join(".dither_yuki_test_threshold")
+            .join("test_threshold_map_4x4.png");
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
