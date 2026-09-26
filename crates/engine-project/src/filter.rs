@@ -425,9 +425,10 @@ pub enum DitherColorMode {
 /// `Simple` matches old Dither Yuki (`findClosestColor` in sRGB bytes):
 /// Bayer adds `(T-0.5)*threshold_scale*64` then nearest; ED residual is
 /// `(old−new)*threshold_scale` in sRGB. Palettes are document swatches.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PaletteDitherMode {
+    #[default]
     Strict,
     Guided {
         #[serde(default)]
@@ -438,12 +439,6 @@ pub enum PaletteDitherMode {
         channel_levels: Option<u8>,
     },
     Simple,
-}
-
-impl Default for PaletteDitherMode {
-    fn default() -> Self {
-        Self::Strict
-    }
 }
 
 impl PaletteDitherMode {

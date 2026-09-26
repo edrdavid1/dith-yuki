@@ -967,13 +967,12 @@ impl PaletteService {
                                                 layer_affected = true;
                                             }
                                         }
-                                        engine_project::filter::FilterParams::PaletteQuantize { palette_id: pid, .. } => {
-                                            if *pid == palette_id {
+                                        engine_project::filter::FilterParams::PaletteQuantize { palette_id: pid, .. }
+                                            if *pid == palette_id => {
                                                 affected_filter_ids.push(filter.id.to_string());
                                                 filters_to_remove.push(idx);
                                                 layer_affected = true;
                                             }
-                                        }
                                         _ => {}
                                     }
                                 }

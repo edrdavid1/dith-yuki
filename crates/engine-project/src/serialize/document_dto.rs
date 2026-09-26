@@ -501,7 +501,7 @@ mod tests {
     fn document_file_omits_requires_full_row_and_sets_raw_asset() {
         let mut doc = Document::new(DocumentId::new(1), 64, 64);
         let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, 64, 64);
-        let mut filt = FilterInstance::new(
+        let filt = FilterInstance::new(
             FilterKind::Dither,
             FilterParams::DitherV2(DitherParamsV2 {
                 mode: DitherModeV2::FloydSteinberg,

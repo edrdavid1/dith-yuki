@@ -240,10 +240,10 @@ pub(crate) fn layer_needs_dither_cache_reset(
                         )
                 });
             }
-            engine_project::LayerNode::Group(group) => {
-                if layer_needs_dither_cache_reset(&group.children, layer_id) {
-                    return true;
-                }
+            engine_project::LayerNode::Group(group)
+                if layer_needs_dither_cache_reset(&group.children, layer_id) =>
+            {
+                return true;
             }
             _ => {}
         }

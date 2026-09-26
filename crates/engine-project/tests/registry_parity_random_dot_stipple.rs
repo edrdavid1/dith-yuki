@@ -95,6 +95,7 @@ fn registry_parity_random_dot_stipple() {
         &block_cache,
         None,
         layer_id,
+        0,
     );
     let mut via_trait = PixelTile::new();
     via_trait.copy_from(&src);

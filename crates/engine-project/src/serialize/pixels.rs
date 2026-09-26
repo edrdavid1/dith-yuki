@@ -232,7 +232,7 @@ fn assemble_layer_processed_rgba8(
         let result = compute_full_document_rgba(cache, layer, doc, &cancel)
             .map_err(|e| ProjectError::Codec(format!("full-document filter apply: {e}")))?;
         let mut canvas = vec![0u8; (doc_width as usize) * (doc_height as usize) * 4];
-        for (i, chunk) in result.rgba_f32.chunks_exact(4).enumerate() {
+        for (i, chunk) in result.rgba_f32.as_chunks::<4>().0.iter().enumerate() {
             let dst = i * 4;
             canvas[dst] = f32_to_u8(chunk[0]);
             canvas[dst + 1] = f32_to_u8(chunk[1]);
@@ -536,7 +536,7 @@ pub fn decode_png_to_f32_with_limits(
             if used.len() < (pixels as usize) * 4 {
                 return Err(ProjectError::Corrupt("PNG RGBA truncated".into()));
             }
-            for px in used.chunks_exact(4).take(pixels as usize) {
+            for px in used.as_chunks::<4>().0.iter().take(pixels as usize) {
                 rgba_f32.push(px[0] as f32 / 255.0);
                 rgba_f32.push(px[1] as f32 / 255.0);
                 rgba_f32.push(px[2] as f32 / 255.0);
@@ -547,7 +547,7 @@ pub fn decode_png_to_f32_with_limits(
             if used.len() < (pixels as usize) * 2 {
                 return Err(ProjectError::Corrupt("PNG GrayAlpha truncated".into()));
             }
-            for px in used.chunks_exact(2).take(pixels as usize) {
+            for px in used.as_chunks::<2>().0.iter().take(pixels as usize) {
                 let g = px[0] as f32 / 255.0;
                 rgba_f32.push(g);
                 rgba_f32.push(g);

@@ -816,10 +816,10 @@ impl DocumentService {
                                                     matches!(f.params, FilterParams::DitherV2(_))
                                                 });
                                             }
-                                            engine_project::LayerNode::Group(g) => {
-                                                if has_dither(&g.children, layer_id) {
-                                                    return true;
-                                                }
+                                            engine_project::LayerNode::Group(g)
+                                                if has_dither(&g.children, layer_id) =>
+                                            {
+                                                return true;
                                             }
                                             _ => {}
                                         }
@@ -941,7 +941,7 @@ impl DocumentService {
 
                     let mut rgb_buffer: Vec<u8> =
                         Vec::with_capacity((img_width * img_height * 3) as usize);
-                    for pixel in rgba_buffer.chunks_exact(4) {
+                    for pixel in rgba_buffer.as_chunks::<4>().0 {
                         rgb_buffer.push(pixel[0]);
                         rgb_buffer.push(pixel[1]);
                         rgb_buffer.push(pixel[2]);

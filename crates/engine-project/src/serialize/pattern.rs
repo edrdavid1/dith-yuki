@@ -250,10 +250,8 @@ fn collect_custom_png_paths(filters: &[FilterInstance]) -> Vec<String> {
             FilterParams::Dither {
                 mode: crate::filter::DitherMode::ThresholdMap { path },
                 ..
-            } => {
-                if seen.insert(path.clone()) {
-                    order.push(path.clone());
-                }
+            } if seen.insert(path.clone()) => {
+                order.push(path.clone());
             }
             _ => {}
         }

@@ -587,10 +587,8 @@ pub(crate) fn layer_has_error_diffusion(nodes: &[LayerNode], layer_id: u32) -> b
                     .iter()
                     .any(|f| f.enabled && f.requires_full_row);
             }
-            LayerNode::Group(group) => {
-                if layer_has_error_diffusion(&group.children, layer_id) {
-                    return true;
-                }
+            LayerNode::Group(group) if layer_has_error_diffusion(&group.children, layer_id) => {
+                return true;
             }
             _ => {}
         }
