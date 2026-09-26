@@ -52,10 +52,9 @@ pub fn install_accepts_first_mouse_override() {
         // which on non-aarch64 is `signed char`; on aarch64 the runtime still
         // accepts `c` here — the objc crate maps BOOL to `bool` internally.)
         let types: *const c_char = b"c@:@\0".as_ptr() as *const c_char;
-        let imp: Imp = std::mem::transmute::<
-            extern "C" fn(&Object, Sel, *mut Object) -> BOOL,
-            Imp,
-        >(accepts_first_mouse);
+        let imp: Imp = std::mem::transmute::<extern "C" fn(&Object, Sel, *mut Object) -> BOOL, Imp>(
+            accepts_first_mouse,
+        );
 
         // WKWebView normally inherits `acceptsFirstMouse:` from NSView, so
         // `class_addMethod` succeeds and adds the override. If a future WebKit

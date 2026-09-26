@@ -91,16 +91,10 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
         true,
         Some("CmdOrCtrl+Shift+S"),
     )?;
-    let share_project_copy = MenuItem::with_id(
-        app,
-        "share-project-copy",
-        "Share Copy…",
-        true,
-        None::<&str>,
-    )?;
+    let share_project_copy =
+        MenuItem::with_id(app, "share-project-copy", "Share Copy…", true, None::<&str>)?;
     let save_export = MenuItem::with_id(app, "save-export", "Save/Export", true, None::<&str>)?;
-    let export_ascii =
-        MenuItem::with_id(app, "export-ascii", "Export ASCII…", true, None::<&str>)?;
+    let export_ascii = MenuItem::with_id(app, "export-ascii", "Export ASCII…", true, None::<&str>)?;
 
     let file_menu = Submenu::with_items(
         app,
@@ -121,10 +115,20 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
 
     let undo = MenuItem::with_id(app, "undo", "Undo", true, Some("CmdOrCtrl+Z"))?;
     let redo = MenuItem::with_id(app, "redo", "Redo", true, Some("CmdOrCtrl+Shift+Z"))?;
-    let copy_ascii_text =
-        MenuItem::with_id(app, "copy-ascii-text", "Copy ASCII Text", true, None::<&str>)?;
-    let copy_ascii_ansi =
-        MenuItem::with_id(app, "copy-ascii-ansi", "Copy ASCII ANSI", true, None::<&str>)?;
+    let copy_ascii_text = MenuItem::with_id(
+        app,
+        "copy-ascii-text",
+        "Copy ASCII Text",
+        true,
+        None::<&str>,
+    )?;
+    let copy_ascii_ansi = MenuItem::with_id(
+        app,
+        "copy-ascii-ansi",
+        "Copy ASCII ANSI",
+        true,
+        None::<&str>,
+    )?;
     let edit_menu = Submenu::with_items(
         app,
         "Edit",
@@ -151,13 +155,7 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
 
     Menu::with_items(
         app,
-        &[
-            &app_menu,
-            &file_menu,
-            &edit_menu,
-            &presets_menu,
-            &help_menu,
-        ],
+        &[&app_menu, &file_menu, &edit_menu, &presets_menu, &help_menu],
     )
 }
 

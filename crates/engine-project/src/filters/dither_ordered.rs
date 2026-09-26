@@ -771,11 +771,13 @@ pub fn apply_ordered_with_cache_into(
                 },
             }
         }
-        (Some(p), PaletteDitherMode::Strict) => PalettePath::Strict(if params.match_by_brightness {
-            OrderedPalettePicker::with_match_by_brightness(p, true)
-        } else {
-            OrderedPalettePicker::new(p)
-        }),
+        (Some(p), PaletteDitherMode::Strict) => {
+            PalettePath::Strict(if params.match_by_brightness {
+                OrderedPalettePicker::with_match_by_brightness(p, true)
+            } else {
+                OrderedPalettePicker::new(p)
+            })
+        }
         (Some(p), PaletteDitherMode::Simple) => PalettePath::Simple(SimpleRgbPicker::new(p)),
     };
 
@@ -3061,11 +3063,7 @@ mod tests {
         let mut used = BTreeSet::new();
         for y in (HALO..HALO + TILE_SIZE).step_by(8) {
             for x in HALO..HALO + TILE_SIZE {
-                let out = (
-                    result.at(x, y, 0),
-                    result.at(x, y, 1),
-                    result.at(x, y, 2),
-                );
+                let out = (result.at(x, y, 0), result.at(x, y, 1), result.at(x, y, 2));
                 let idx = palette
                     .colors
                     .iter()

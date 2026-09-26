@@ -157,7 +157,11 @@ fn m1_kernels_2x2_seam_sample() {
         );
         assert!(
             store
-                .get_diag(1, layer_id, 0, TileCoord {
+                .get_diag(
+                    1,
+                    layer_id,
+                    0,
+                    TileCoord {
                         level: 0,
                         x: 1,
                         y: 1

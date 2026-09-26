@@ -1065,7 +1065,9 @@ impl PaletteService {
         drop(snapshot);
 
         let total_pixels = (doc_width as u64).saturating_mul(doc_height as u64).max(1);
-        let stride = (total_pixels as usize).div_ceil(MAX_GENERATION_SAMPLES).max(1);
+        let stride = (total_pixels as usize)
+            .div_ceil(MAX_GENERATION_SAMPLES)
+            .max(1);
 
         let cols = doc_width.div_ceil(TILE_SIZE);
         let rows = doc_height.div_ceil(TILE_SIZE);

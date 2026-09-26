@@ -22,12 +22,12 @@ pub mod palette_lut;
 pub mod ramps;
 pub mod threshold_map;
 
+pub use auto_interpolate::{auto_interpolate, would_auto_interpolate, AutoInterpolateResult};
+pub use brightness_sorted::BrightnessSortedPalette;
 pub use palette_guided::{
     default_channel_levels, palette_channel_ranges, quantize_channel_guided, ChannelRange,
     PaletteChannelRangeCache,
 };
-pub use auto_interpolate::{auto_interpolate, would_auto_interpolate, AutoInterpolateResult};
-pub use brightness_sorted::BrightnessSortedPalette;
 pub use palette_lut::{PaletteLut3D, PaletteLutCache, DEFAULT_LUT_SIZE};
 
 pub use harmony::{generate_harmony, generate_harmony_with_spread, HarmonyRule};

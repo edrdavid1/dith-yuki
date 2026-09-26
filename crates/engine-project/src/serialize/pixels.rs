@@ -260,12 +260,7 @@ fn assemble_layer_processed_rgba8(
             };
             if ps > 1 {
                 block_cache.ensure_populated_from_tiles(
-                    cache,
-                    doc_id,
-                    layer.id.0,
-                    ps as u32,
-                    doc_width,
-                    doc_height,
+                    cache, doc_id, layer.id.0, ps as u32, doc_width, doc_height,
                 );
             }
         }

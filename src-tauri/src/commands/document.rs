@@ -210,10 +210,7 @@ pub async fn ascii_clipboard_text(
 /// toggling republishes from cache instead of recomputing ASCII. Processed/Composite
 /// tiles are marked dirty so the viewport swaps to the other mode.
 #[tauri::command]
-pub fn set_ascii_preview(
-    enabled: bool,
-    state: State<'_, Arc<AppState>>,
-) -> Result<bool, String> {
+pub fn set_ascii_preview(enabled: bool, state: State<'_, Arc<AppState>>) -> Result<bool, String> {
     use engine_tiles::CacheStage;
 
     let prev = state.ascii_preview.swap(enabled, Ordering::Relaxed);

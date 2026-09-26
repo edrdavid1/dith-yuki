@@ -401,14 +401,18 @@ impl FilterService {
         };
 
         let mut filter = FilterInstance::new(kind, params);
-        let resolved_id = req.algorithm_id.clone().or_else(|| {
-            engine_project::algorithms::builtin_registry()
-                .get_by_str(&req.kind)
-                .map(|_| req.kind.clone())
-        }).or_else(|| {
-            // FilterKind aliases (Ascii, Crt, …) → registry AlgorithmId.
-            engine_project::algorithm_id_for_params(&filter.params).map(str::to_string)
-        });
+        let resolved_id = req
+            .algorithm_id
+            .clone()
+            .or_else(|| {
+                engine_project::algorithms::builtin_registry()
+                    .get_by_str(&req.kind)
+                    .map(|_| req.kind.clone())
+            })
+            .or_else(|| {
+                // FilterKind aliases (Ascii, Crt, …) → registry AlgorithmId.
+                engine_project::algorithm_id_for_params(&filter.params).map(str::to_string)
+            });
         if let Some(id) = resolved_id.as_deref() {
             let algo = engine_project::algorithms::builtin_registry()
                 .get_by_str(id)
@@ -1047,27 +1051,30 @@ impl FilterService {
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
             let layer_id = req.layer_id;
             let mut found = false;
-            self.state.require_session(doc_id)?.document_handle.mutate(|doc| {
-                fn update_filter_in_nodes(
-                    nodes: &mut [engine_project::LayerNode],
-                    layer_id: u32,
-                    filter_id: engine_project::types::FilterInstanceId,
-                    new_params: FilterParams,
-                    opacity: Option<f32>,
-                    blend_mode: Option<engine_project::BlendMode>,
-                    enabled: Option<bool>,
-                ) -> bool {
-                    for node in nodes.iter_mut() {
-                        match node {
-                            engine_project::LayerNode::Leaf(layer) => {
-                                if layer.id.0 == layer_id {
-                                    if let Some(filter) = layer.find_filter_mut(filter_id) {
-                                        // Keep algorithm_id aligned with DitherV2.mode so
-                                        // registry dispatch and requires_full_row stay consistent.
-                                        if let FilterParams::DitherV2(ref p) = new_params {
-                                            filter.algorithm_id =
-                                                p.mode.algorithm_id().map(str::to_string);
-                                            filter.schema_version = filter
+            self.state
+                .require_session(doc_id)?
+                .document_handle
+                .mutate(|doc| {
+                    fn update_filter_in_nodes(
+                        nodes: &mut [engine_project::LayerNode],
+                        layer_id: u32,
+                        filter_id: engine_project::types::FilterInstanceId,
+                        new_params: FilterParams,
+                        opacity: Option<f32>,
+                        blend_mode: Option<engine_project::BlendMode>,
+                        enabled: Option<bool>,
+                    ) -> bool {
+                        for node in nodes.iter_mut() {
+                            match node {
+                                engine_project::LayerNode::Leaf(layer) => {
+                                    if layer.id.0 == layer_id {
+                                        if let Some(filter) = layer.find_filter_mut(filter_id) {
+                                            // Keep algorithm_id aligned with DitherV2.mode so
+                                            // registry dispatch and requires_full_row stay consistent.
+                                            if let FilterParams::DitherV2(ref p) = new_params {
+                                                filter.algorithm_id =
+                                                    p.mode.algorithm_id().map(str::to_string);
+                                                filter.schema_version = filter
                                                 .algorithm_id
                                                 .as_deref()
                                                 .and_then(|id| {
@@ -1075,70 +1082,85 @@ impl FilterService {
                                                         .get_by_str(id)
                                                         .map(|a| a.schema_version())
                                                 });
-                                        }
-                                        filter.requires_full_row =
+                                            }
+                                            filter.requires_full_row =
                                             engine_project::FilterInstance::params_require_full_row(
                                                 &new_params,
                                             );
-                                        filter.params = new_params;
-                                        if let Some(opacity) = opacity {
-                                            filter.opacity = opacity;
+                                            filter.params = new_params;
+                                            if let Some(opacity) = opacity {
+                                                filter.opacity = opacity;
+                                            }
+                                            if let Some(blend_mode) = blend_mode {
+                                                filter.blend_mode = blend_mode;
+                                            }
+                                            if let Some(enabled) = enabled {
+                                                filter.enabled = enabled;
+                                            }
+                                            return true;
                                         }
-                                        if let Some(blend_mode) = blend_mode {
-                                            filter.blend_mode = blend_mode;
-                                        }
-                                        if let Some(enabled) = enabled {
-                                            filter.enabled = enabled;
-                                        }
+                                    }
+                                }
+                                engine_project::LayerNode::Group(group) => {
+                                    if update_filter_in_nodes(
+                                        &mut group.children,
+                                        layer_id,
+                                        filter_id,
+                                        new_params.clone(),
+                                        opacity,
+                                        blend_mode,
+                                        enabled,
+                                    ) {
                                         return true;
                                     }
                                 }
                             }
-                            engine_project::LayerNode::Group(group) => {
-                                if update_filter_in_nodes(
-                                    &mut group.children,
-                                    layer_id,
-                                    filter_id,
-                                    new_params.clone(),
-                                    opacity,
-                                    blend_mode,
-                                    enabled,
-                                ) {
-                                    return true;
-                                }
-                            }
                         }
+                        false
                     }
-                    false
-                }
 
-                found = update_filter_in_nodes(
-                    &mut doc.root,
-                    layer_id,
-                    filter_id,
-                    new_params.clone(),
-                    req.opacity,
-                    parsed_blend,
-                    req.enabled,
-                );
-                if found {
-                    doc.increment_generation();
-                }
-            });
+                    found = update_filter_in_nodes(
+                        &mut doc.root,
+                        layer_id,
+                        filter_id,
+                        new_params.clone(),
+                        req.opacity,
+                        parsed_blend,
+                        req.enabled,
+                    );
+                    if found {
+                        doc.increment_generation();
+                    }
+                });
 
             if !found {
-                return Err(format!("Filter {} not found on layer {} during update", req.filter_id, req.layer_id));
+                return Err(format!(
+                    "Filter {} not found on layer {} during update",
+                    req.filter_id, req.layer_id
+                ));
             }
 
             {
-                let snapshot = self.state.require_session(doc_id)?.document_handle.snapshot();
+                let snapshot = self
+                    .state
+                    .require_session(doc_id)?
+                    .document_handle
+                    .snapshot();
                 snapshot.generations.increment_layer_gen(layer_id);
             }
 
             request_preview_refresh(
                 &self.state,
                 layer_id,
-                layer_needs_dither_cache_reset(&self.state.require_session(doc_id)?.document_handle.snapshot().root, layer_id),
+                layer_needs_dither_cache_reset(
+                    &self
+                        .state
+                        .require_session(doc_id)?
+                        .document_handle
+                        .snapshot()
+                        .root,
+                    layer_id,
+                ),
             );
 
             emit_document_changed(app_handle, "filter_updated", Some(layer_id), Some(doc_id));

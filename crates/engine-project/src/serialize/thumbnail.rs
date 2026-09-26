@@ -324,14 +324,8 @@ pub fn render_pattern_preview_rgba(
                 _ => continue,
             };
             if ps > 1 {
-                block_cache.ensure_populated_from_tiles(
-                    &cache,
-                    doc_id.0,
-                    layer_id.0,
-                    ps as u32,
-                    w,
-                    h,
-                );
+                block_cache
+                    .ensure_populated_from_tiles(&cache, doc_id.0, layer_id.0, ps as u32, w, h);
             }
         }
     }

@@ -78,9 +78,7 @@ pub fn list_metas(recovery_dir: &Path) -> Vec<JournalMeta> {
 pub fn file_mtime_ms(path: &Path) -> Option<u64> {
     let meta = fs::metadata(path).ok()?;
     let modified = meta.modified().ok()?;
-    let dur = modified
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?;
+    let dur = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
     Some(dur.as_millis() as u64)
 }
 

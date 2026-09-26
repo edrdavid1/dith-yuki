@@ -1052,9 +1052,7 @@ impl DocumentService {
         use std::sync::atomic::AtomicBool;
 
         let format = AsciiExportFormat::parse(&req.format).ok_or_else(|| {
-            AppError::InvalidOperation(
-                "format must be txt, ansi, html, svg, png, or json".into(),
-            )
+            AppError::InvalidOperation("format must be txt, ansi, html, svg, png, or json".into())
         })?;
         let ext = format.extension();
         let path = sandbox::ensure_extension(&req.path, ext);
@@ -1085,13 +1083,8 @@ impl DocumentService {
         let state_clone = Arc::clone(&self.state);
         tauri::async_runtime::spawn_blocking(move || {
             let cancel = AtomicBool::new(false);
-            let result = compute_ascii_job(
-                &state_clone.tiles.tile_cache,
-                &layer,
-                &doc,
-                &cancel,
-            )
-            .map_err(|e| AppError::Generic(e.to_string()))?;
+            let result = compute_ascii_job(&state_clone.tiles.tile_cache, &layer, &doc, &cancel)
+                .map_err(|e| AppError::Generic(e.to_string()))?;
             let bytes = export_ascii_bytes(&result, format)
                 .map_err(|e| AppError::Generic(e.to_string()))?;
             engine_io::atomic_write(Path::new(&resolved), &bytes)
@@ -1145,13 +1138,8 @@ impl DocumentService {
         let state_clone = Arc::clone(&self.state);
         tauri::async_runtime::spawn_blocking(move || {
             let cancel = AtomicBool::new(false);
-            let result = compute_ascii_job(
-                &state_clone.tiles.tile_cache,
-                &layer,
-                &doc,
-                &cancel,
-            )
-            .map_err(|e| AppError::Generic(e.to_string()))?;
+            let result = compute_ascii_job(&state_clone.tiles.tile_cache, &layer, &doc, &cancel)
+                .map_err(|e| AppError::Generic(e.to_string()))?;
             let bytes = export_ascii_bytes(&result, format)
                 .map_err(|e| AppError::Generic(e.to_string()))?;
             String::from_utf8(bytes).map_err(|e| AppError::Generic(e.to_string()))

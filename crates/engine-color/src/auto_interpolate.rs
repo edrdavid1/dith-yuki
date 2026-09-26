@@ -139,13 +139,7 @@ mod tests {
         let labs = [0.0f32, 0.25, 0.5, 0.75, 1.0];
         let colors: Vec<LinRgb> = labs
             .iter()
-            .map(|&l| {
-                crate::oklab::oklab_to_linear(Oklab {
-                    l,
-                    a: 0.0,
-                    b: 0.0,
-                })
-            })
+            .map(|&l| crate::oklab::oklab_to_linear(Oklab { l, a: 0.0, b: 0.0 }))
             .collect();
         assert_eq!(auto_interpolate(&colors).inserted, 0);
         assert!(!would_auto_interpolate(&colors));
@@ -188,7 +182,11 @@ mod tests {
     #[test]
     fn insert_count_clamped_to_max_per_gap() {
         // Extreme: black + near-black + white → huge gap, still ≤ 3 fills for that gap.
-        let colors = [rgb(0.0, 0.0, 0.0), rgb(0.001, 0.001, 0.001), rgb(1.0, 1.0, 1.0)];
+        let colors = [
+            rgb(0.0, 0.0, 0.0),
+            rgb(0.001, 0.001, 0.001),
+            rgb(1.0, 1.0, 1.0),
+        ];
         let r = auto_interpolate(&colors);
         assert!(r.inserted <= MAX_INSERT_PER_GAP);
         assert!(r.inserted >= 1);

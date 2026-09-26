@@ -182,7 +182,11 @@ pub fn auto_interpolate_palette(colors: Vec<String>) -> Result<AutoInterpolateDt
     }
     Ok(AutoInterpolateDto {
         inserted: result.inserted as u32,
-        colors: result.colors.into_iter().map(lin_rgb_to_generated).collect(),
+        colors: result
+            .colors
+            .into_iter()
+            .map(lin_rgb_to_generated)
+            .collect(),
     })
 }
 

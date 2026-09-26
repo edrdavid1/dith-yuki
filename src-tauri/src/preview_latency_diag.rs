@@ -2459,9 +2459,7 @@ fn preview_latency_diag_track_c_t0() {
         } else {
             f64::INFINITY
         };
-        println!(
-            "  far/origin ratio={ratio:.2} (ED wavefront expected ≫1; Bayer ~1)\n"
-        );
+        println!("  far/origin ratio={ratio:.2} (ED wavefront expected ≫1; Bayer ~1)\n");
     }
 
     let ram = crate::memory_budget::resolve_ram_budget();

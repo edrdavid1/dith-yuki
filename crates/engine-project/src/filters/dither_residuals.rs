@@ -364,7 +364,7 @@ mod tests {
 
         assert!(store.get_left(1, layer, 0, tc(1, 0)).is_some()); // (0,0) kept
         assert!(store.get_top(1, layer, 0, tc(0, 1)).is_some()); // (0,0)
-                                                              // (2,2) in cone — gone (get_left of (3,2) would need (2,2))
+                                                                 // (2,2) in cone — gone (get_left of (3,2) would need (2,2))
         assert!(store.get_left(1, layer, 0, tc(3, 2)).is_none());
         // (2,0): x>=1 but y=0 < 1 — kept
         assert!(store.get_left(1, layer, 0, tc(3, 0)).is_some());

@@ -512,7 +512,11 @@ fn track_a_fs_2x2_diagonal_seed_no_boundary_darkening() {
     );
     assert!(
         store
-            .get_diag(1, layer_id, 0, TileCoord {
+            .get_diag(
+                1,
+                layer_id,
+                0,
+                TileCoord {
                     level: 0,
                     x: 1,
                     y: 1

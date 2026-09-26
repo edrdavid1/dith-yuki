@@ -570,7 +570,7 @@ fn dispatch_dither_v2_inner_into(
             params,
             residuals_store,
             layer_id,
-             filter_key,
+            filter_key,
             palette_cache,
             lut_cache,
             document,

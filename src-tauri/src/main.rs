@@ -181,111 +181,115 @@ fn main() {
             // WKWebView/Retina; clamp like Color Lab undock so the window is visible.
             let app_for_popout = app.handle().clone();
             static FLEX_POPOUT_SEQ: AtomicU64 = AtomicU64::new(1);
-            let main_window = webview_debug::apply(WebviewWindowBuilder::from_config(app, &main_conf)?)
-                .on_new_window(move |url, features| {
-                    let n = FLEX_POPOUT_SEQ.fetch_add(1, Ordering::Relaxed);
-                    let label = format!("flex-popout-{n}");
+            let main_window =
+                webview_debug::apply(WebviewWindowBuilder::from_config(app, &main_conf)?)
+                    .on_new_window(move |url, features| {
+                        let n = FLEX_POPOUT_SEQ.fetch_add(1, Ordering::Relaxed);
+                        let label = format!("flex-popout-{n}");
 
-                    let req_pos = features.position();
-                    let req_size = features.size();
+                        let req_pos = features.position();
+                        let req_size = features.size();
 
-                    let builder = webview_debug::apply(
-                        WebviewWindowBuilder::new(
-                            &app_for_popout,
-                            &label,
-                            tauri::WebviewUrl::External(url),
-                        )
-                        .window_features(features)
-                        .title("Dither")
-                        .resizable(true)
-                        .decorations(false)
-                        .min_inner_size(280.0, 200.0),
-                    );
-                    #[cfg(target_os = "macos")]
-                    let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay);
+                        let builder = webview_debug::apply(
+                            WebviewWindowBuilder::new(
+                                &app_for_popout,
+                                &label,
+                                tauri::WebviewUrl::External(url),
+                            )
+                            .window_features(features)
+                            .title("Dither")
+                            .resizable(true)
+                            .decorations(false)
+                            .min_inner_size(280.0, 200.0),
+                        );
+                        #[cfg(target_os = "macos")]
+                        let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay);
 
-                    match builder.build() {
-                        Ok(window) => {
-                            let (monitors, primary) =
-                                commands::panels::get_monitor_rects(&app_for_popout);
+                        match builder.build() {
+                            Ok(window) => {
+                                let (monitors, primary) =
+                                    commands::panels::get_monitor_rects(&app_for_popout);
 
-                            let width = req_size
-                                .map(|s| s.width.round().max(280.0) as u32)
-                                .unwrap_or(350);
-                            let height = req_size
-                                .map(|s| s.height.round().max(200.0) as u32)
-                                .unwrap_or(500);
+                                let width = req_size
+                                    .map(|s| s.width.round().max(280.0) as u32)
+                                    .unwrap_or(350);
+                                let height = req_size
+                                    .map(|s| s.height.round().max(200.0) as u32)
+                                    .unwrap_or(500);
 
-                            let (x, y) = match req_pos {
-                                Some(p) => (p.x.round() as i32, p.y.round() as i32),
-                                None => {
-                                    // Fall back beside the main window.
-                                    if let Some(main) = app_for_popout.get_webview_window("main") {
-                                        if let (Ok(pos), Ok(scale)) =
-                                            (main.outer_position(), main.scale_factor())
+                                let (x, y) = match req_pos {
+                                    Some(p) => (p.x.round() as i32, p.y.round() as i32),
+                                    None => {
+                                        // Fall back beside the main window.
+                                        if let Some(main) =
+                                            app_for_popout.get_webview_window("main")
                                         {
-                                            let lx = (pos.x as f64 / scale).round() as i32 + 40;
-                                            let ly = (pos.y as f64 / scale).round() as i32 + 60;
-                                            (lx, ly)
+                                            if let (Ok(pos), Ok(scale)) =
+                                                (main.outer_position(), main.scale_factor())
+                                            {
+                                                let lx = (pos.x as f64 / scale).round() as i32 + 40;
+                                                let ly = (pos.y as f64 / scale).round() as i32 + 60;
+                                                (lx, ly)
+                                            } else {
+                                                (80, 80)
+                                            }
                                         } else {
                                             (80, 80)
                                         }
-                                    } else {
-                                        (80, 80)
+                                    }
+                                };
+
+                                let raw = commands::panels::SavedBounds {
+                                    x,
+                                    y,
+                                    width,
+                                    height,
+                                };
+                                let fixed = commands::panels::resolve_undock_bounds(
+                                    "layers",
+                                    Some(raw),
+                                    &monitors,
+                                    primary.as_ref(),
+                                );
+
+                                let _ =
+                                    window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+                                        fixed.width as f64,
+                                        fixed.height as f64,
+                                    )));
+                                let _ = window.set_position(tauri::Position::Logical(
+                                    tauri::LogicalPosition::new(fixed.x as f64, fixed.y as f64),
+                                ));
+                                let _ = window.set_focus();
+
+                                #[cfg(target_os = "macos")]
+                                {
+                                    macos_title::apply_overlay_csd(&window);
+                                    if let Ok(ns_window) = window.ns_window() {
+                                        use cocoa::appkit::NSWindow;
+                                        use cocoa::base::id;
+                                        let ns_window = ns_window as id;
+                                        unsafe {
+                                            let bg_color: id = msg_send![
+                                                class!(NSColor),
+                                                colorWithRed: (0xCD as f64) / 255.0
+                                                green: (0xCD as f64) / 255.0
+                                                blue: (0xCD as f64) / 255.0
+                                                alpha: 1.0f64
+                                            ];
+                                            ns_window.setBackgroundColor_(bg_color);
+                                        }
                                     }
                                 }
-                            };
-
-                            let raw = commands::panels::SavedBounds {
-                                x,
-                                y,
-                                width,
-                                height,
-                            };
-                            let fixed = commands::panels::resolve_undock_bounds(
-                                "layers",
-                                Some(raw),
-                                &monitors,
-                                primary.as_ref(),
-                            );
-
-                            let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
-                                fixed.width as f64,
-                                fixed.height as f64,
-                            )));
-                            let _ = window.set_position(tauri::Position::Logical(
-                                tauri::LogicalPosition::new(fixed.x as f64, fixed.y as f64),
-                            ));
-                            let _ = window.set_focus();
-
-                            #[cfg(target_os = "macos")]
-                            {
-                                macos_title::apply_overlay_csd(&window);
-                                if let Ok(ns_window) = window.ns_window() {
-                                    use cocoa::appkit::NSWindow;
-                                    use cocoa::base::id;
-                                    let ns_window = ns_window as id;
-                                    unsafe {
-                                        let bg_color: id = msg_send![
-                                            class!(NSColor),
-                                            colorWithRed: (0xCD as f64) / 255.0
-                                            green: (0xCD as f64) / 255.0
-                                            blue: (0xCD as f64) / 255.0
-                                            alpha: 1.0f64
-                                        ];
-                                        ns_window.setBackgroundColor_(bg_color);
-                                    }
-                                }
+                                NewWindowResponse::Create { window }
                             }
-                            NewWindowResponse::Create { window }
+                            Err(err) => {
+                                eprintln!("[flex-popout] window create failed: {err}");
+                                NewWindowResponse::Deny
+                            }
                         }
-                        Err(err) => {
-                            eprintln!("[flex-popout] window create failed: {err}");
-                            NewWindowResponse::Deny
-                        }
-                    }
-                })
-                .build()?;
+                    })
+                    .build()?;
 
             native_menu::install(app)?;
             let app_handle = app.handle().clone();
@@ -392,12 +396,12 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             // Document commands
-                    commands::allow_app_exit,
-                    commands::confirm_app_quit,
-                    crate::journal::commands::scan_recovery_journals,
-                    crate::journal::commands::recover_journal,
-                    crate::journal::commands::discard_recovery_journals,
-                    crate::journal::commands::prepare_soft_discard,
+            commands::allow_app_exit,
+            commands::confirm_app_quit,
+            crate::journal::commands::scan_recovery_journals,
+            crate::journal::commands::recover_journal,
+            crate::journal::commands::discard_recovery_journals,
+            crate::journal::commands::prepare_soft_discard,
             commands::new_document,
             commands::get_document_snapshot,
             commands::list_open_documents,
@@ -553,10 +557,7 @@ fn handle_tile_request(
     let session = match state.session(parsed.doc_id) {
         Ok(s) => s,
         Err(_) => {
-            log::warn!(
-                "tile:// document {} not found (uri={uri})",
-                parsed.doc_id
-            );
+            log::warn!("tile:// document {} not found (uri={uri})", parsed.doc_id);
             let msg = format!("404 Not Found: document {} not found", parsed.doc_id);
             return tile_response(404, "text/plain", msg.into_bytes(), None, &[]);
         }
