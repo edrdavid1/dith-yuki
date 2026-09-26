@@ -1,5 +1,5 @@
 //! Integration tests for multi-component workflows
-//! 
+//!
 //! These tests verify that different engine-tiles components work correctly together:
 //! - Cache + Pyramid: layered tile storage with downsampling
 //! - Invalidation Cascade: dirty propagation through tile stages
@@ -13,11 +13,11 @@ use engine_tiles::{
     tile::PixelTile,
     types::{CacheStage, TileCoord, TileKey},
 };
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 /// Test 1: Cache + Pyramid Integration
-/// 
+///
 /// Verifies that a parent tile can be inserted into cache and downsampled
 /// to create a child tile at a higher pyramid level.
 #[test]
@@ -44,7 +44,11 @@ fn test_cache_pyramid_integration() {
     let parent_key = TileKey {
         doc: 1,
         layer: 0,
-        coord: TileCoord { level: 0, x: 0, y: 0 },
+        coord: TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        },
         stage: CacheStage::Raw,
     };
     cache.get_or_insert(parent_key, parent_arc.clone());
@@ -59,7 +63,11 @@ fn test_cache_pyramid_integration() {
         .get(&parent_key)
         .map(|e| e.tile.clone())
         .expect("Parent should exist in cache");
-    assert_eq!(cached_parent.at(10, 10, 0), parent_arc.at(10, 10, 0), "Parent values should match");
+    assert_eq!(
+        cached_parent.at(10, 10, 0),
+        parent_arc.at(10, 10, 0),
+        "Parent values should match"
+    );
 
     // Downsample to create child
     let child = downsample_tile(&parent_arc);
@@ -69,7 +77,11 @@ fn test_cache_pyramid_integration() {
     let child_key = TileKey {
         doc: 1,
         layer: 0,
-        coord: TileCoord { level: 1, x: 0, y: 0 },
+        coord: TileCoord {
+            level: 1,
+            x: 0,
+            y: 0,
+        },
         stage: CacheStage::Raw,
     };
     cache.get_or_insert(child_key, child_arc.clone());
@@ -82,8 +94,16 @@ fn test_cache_pyramid_integration() {
         .expect("Child should exist in cache");
 
     // Verify both exist and have values
-    assert_eq!(cached_parent.at(20, 20, 1), parent_arc.at(20, 20, 1), "Parent should still be retrievable");
-    assert_eq!(cached_child.at(10, 10, 0), child_arc.at(10, 10, 0), "Child should be retrievable");
+    assert_eq!(
+        cached_parent.at(20, 20, 1),
+        parent_arc.at(20, 20, 1),
+        "Parent should still be retrievable"
+    );
+    assert_eq!(
+        cached_child.at(10, 10, 0),
+        child_arc.at(10, 10, 0),
+        "Child should be retrievable"
+    );
 
     // Verify child is actually downsampled (smaller values due to averaging)
     // Since parent was created with formula x+y+c, the downsampled values should be different
@@ -103,7 +123,11 @@ fn test_invalidation_cascade() {
     let cache = Arc::new(TileCache::new(100 * 1024 * 1024));
 
     let layer = 0;
-    let coord = TileCoord { level: 0, x: 5, y: 5 };
+    let coord = TileCoord {
+        level: 0,
+        x: 5,
+        y: 5,
+    };
 
     // Create dummy tiles
     let tile_data = Arc::new(PixelTile::new());
@@ -194,7 +218,11 @@ fn test_scheduler_priority() {
             key: TileKey {
                 doc: 1,
                 layer: 0,
-                coord: TileCoord { level: 0, x: 0, y: 0 },
+                coord: TileCoord {
+                    level: 0,
+                    x: 0,
+                    y: 0,
+                },
                 stage: CacheStage::Raw,
             },
             generation: 1,
@@ -205,7 +233,11 @@ fn test_scheduler_priority() {
             key: TileKey {
                 doc: 1,
                 layer: 0,
-                coord: TileCoord { level: 0, x: 1, y: 1 },
+                coord: TileCoord {
+                    level: 0,
+                    x: 1,
+                    y: 1,
+                },
                 stage: CacheStage::Raw,
             },
             generation: 1,
@@ -216,7 +248,11 @@ fn test_scheduler_priority() {
             key: TileKey {
                 doc: 1,
                 layer: 0,
-                coord: TileCoord { level: 0, x: 2, y: 2 },
+                coord: TileCoord {
+                    level: 0,
+                    x: 2,
+                    y: 2,
+                },
                 stage: CacheStage::Raw,
             },
             generation: 1,
@@ -227,7 +263,11 @@ fn test_scheduler_priority() {
             key: TileKey {
                 doc: 1,
                 layer: 0,
-                coord: TileCoord { level: 0, x: 3, y: 3 },
+                coord: TileCoord {
+                    level: 0,
+                    x: 3,
+                    y: 3,
+                },
                 stage: CacheStage::Raw,
             },
             generation: 1,
@@ -238,7 +278,11 @@ fn test_scheduler_priority() {
             key: TileKey {
                 doc: 1,
                 layer: 0,
-                coord: TileCoord { level: 0, x: 4, y: 4 },
+                coord: TileCoord {
+                    level: 0,
+                    x: 4,
+                    y: 4,
+                },
                 stage: CacheStage::Raw,
             },
             generation: 1,
@@ -249,7 +293,11 @@ fn test_scheduler_priority() {
             key: TileKey {
                 doc: 1,
                 layer: 0,
-                coord: TileCoord { level: 0, x: 5, y: 5 },
+                coord: TileCoord {
+                    level: 0,
+                    x: 5,
+                    y: 5,
+                },
                 stage: CacheStage::Raw,
             },
             generation: 1,
@@ -276,7 +324,9 @@ fn test_scheduler_priority() {
     );
 
     // Verify that Immediate tasks come before ViewportCenter
-    let first_immediate = dequeued_priorities.iter().position(|p| *p == Priority::Immediate);
+    let first_immediate = dequeued_priorities
+        .iter()
+        .position(|p| *p == Priority::Immediate);
     let first_viewport_center = dequeued_priorities
         .iter()
         .position(|p| *p == Priority::ViewportCenter);
@@ -300,7 +350,9 @@ fn test_scheduler_priority() {
     }
 
     // Verify that ViewportEdge comes before Prefetch
-    let first_prefetch = dequeued_priorities.iter().position(|p| *p == Priority::Prefetch);
+    let first_prefetch = dequeued_priorities
+        .iter()
+        .position(|p| *p == Priority::Prefetch);
     if let (Some(ve_idx), Some(pf_idx)) = (first_viewport_edge, first_prefetch) {
         assert!(
             ve_idx < pf_idx,

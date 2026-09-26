@@ -35,7 +35,16 @@ Tile-based preview keeps large documents responsive.
 
 ### Alpha scope
 
-No paint tools, ICC / print pipeline, or video / batch yet. GPU acceleration is warm-viewport; cold compute is opt-in.
+No paint tools, ICC / print pipeline, or video / batch export. Linux is not a supported platform.
+
+**UI:** Layers, Effect, Color Lab, and Preview use FlexLayout docking; Preferences remains a dialog.
+
+**Performance (honest):**
+- GPU auto-dispatch accelerates warm-viewport pattern dithering and some palette modes. Error Diffusion always runs on CPU; far from the document origin it stays sequential (wavefront fill).
+- Riemersma, ASCII, and similar full-document algorithms do not progressive-tile the preview — they show a “Rendering…” state until the whole pass finishes.
+- An adaptive RAM tile-cache budget is in the build; it is **not** proven as a 4K/8K fix yet (diagnostics incomplete).
+
+**Platforms:** macOS is the primary QA surface. Windows ships and is usable, but newer and less battle-tested — please file bugs. Alpha DMGs are self-signed (Gatekeeper → Open Anyway) unless Apple Developer ID notarization secrets are present in CI.
 
 ### Install
 
@@ -77,7 +86,7 @@ npm run tauri:dev
 
 Production bundle: `npm run tauri:build` → artifacts under `src-tauri/target/release/bundle/`.
 
-GPU env (no Preferences toggle): `DITHER_GPU_PREVIEW=1` (cold compute), `DITHER_FORCE_CPU=1`.
+GPU env (no Preferences toggle): `DITHER_GPU_PREVIEW=1` (cold compute), `DITHER_FORCE_CPU=1`. Optional RAM tile-cache override: `DITHER_RAM_BUDGET_MIB`.
 
 ### Checks
 

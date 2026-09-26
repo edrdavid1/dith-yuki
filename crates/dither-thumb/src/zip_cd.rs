@@ -44,14 +44,12 @@ pub fn parse_central_directory(
     let cd_offset = u32::from_le_bytes([eocd[16], eocd[17], eocd[18], eocd[19]]) as u64;
 
     // ZIP64 EOCD locator may precede EOCD — handle when classic fields are all-ones.
-    let (cd_offset, cd_size, cd_entries) = if cd_offset == 0xFFFF_FFFF
-        || cd_size == 0xFFFF_FFFF
-        || cd_entries == 0xFFFF
-    {
-        parse_zip64(io, start + eocd_rel as u64, limits)?
-    } else {
-        (cd_offset, cd_size, cd_entries)
-    };
+    let (cd_offset, cd_size, cd_entries) =
+        if cd_offset == 0xFFFF_FFFF || cd_size == 0xFFFF_FFFF || cd_entries == 0xFFFF {
+            parse_zip64(io, start + eocd_rel as u64, limits)?
+        } else {
+            (cd_offset, cd_size, cd_entries)
+        };
 
     if cd_size > limits.max_central_directory {
         return Err(ThumbError::Limit);
@@ -75,7 +73,8 @@ pub fn parse_central_directory(
         let flags = u16::from_le_bytes([cd[pos + 8], cd[pos + 9]]);
         let method = u16::from_le_bytes([cd[pos + 10], cd[pos + 11]]);
         let crc32 = u32::from_le_bytes([cd[pos + 16], cd[pos + 17], cd[pos + 18], cd[pos + 19]]);
-        let mut comp = u32::from_le_bytes([cd[pos + 20], cd[pos + 21], cd[pos + 22], cd[pos + 23]]) as u64;
+        let mut comp =
+            u32::from_le_bytes([cd[pos + 20], cd[pos + 21], cd[pos + 22], cd[pos + 23]]) as u64;
         let mut uncomp =
             u32::from_le_bytes([cd[pos + 24], cd[pos + 25], cd[pos + 26], cd[pos + 27]]) as u64;
         let name_len = u16::from_le_bytes([cd[pos + 28], cd[pos + 29]]) as usize;

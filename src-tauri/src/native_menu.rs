@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "macos", allow(deprecated, unexpected_cfgs))]
+
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{App, AppHandle, Emitter, Runtime};
 
@@ -89,16 +91,10 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
         true,
         Some("CmdOrCtrl+Shift+S"),
     )?;
-    let share_project_copy = MenuItem::with_id(
-        app,
-        "share-project-copy",
-        "Share Copy…",
-        true,
-        None::<&str>,
-    )?;
+    let share_project_copy =
+        MenuItem::with_id(app, "share-project-copy", "Share Copy…", true, None::<&str>)?;
     let save_export = MenuItem::with_id(app, "save-export", "Save/Export", true, None::<&str>)?;
-    let export_ascii =
-        MenuItem::with_id(app, "export-ascii", "Export ASCII…", true, None::<&str>)?;
+    let export_ascii = MenuItem::with_id(app, "export-ascii", "Export ASCII…", true, None::<&str>)?;
 
     let file_menu = Submenu::with_items(
         app,
@@ -119,10 +115,20 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
 
     let undo = MenuItem::with_id(app, "undo", "Undo", true, Some("CmdOrCtrl+Z"))?;
     let redo = MenuItem::with_id(app, "redo", "Redo", true, Some("CmdOrCtrl+Shift+Z"))?;
-    let copy_ascii_text =
-        MenuItem::with_id(app, "copy-ascii-text", "Copy ASCII Text", true, None::<&str>)?;
-    let copy_ascii_ansi =
-        MenuItem::with_id(app, "copy-ascii-ansi", "Copy ASCII ANSI", true, None::<&str>)?;
+    let copy_ascii_text = MenuItem::with_id(
+        app,
+        "copy-ascii-text",
+        "Copy ASCII Text",
+        true,
+        None::<&str>,
+    )?;
+    let copy_ascii_ansi = MenuItem::with_id(
+        app,
+        "copy-ascii-ansi",
+        "Copy ASCII ANSI",
+        true,
+        None::<&str>,
+    )?;
     let edit_menu = Submenu::with_items(
         app,
         "Edit",
@@ -149,13 +155,7 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
 
     Menu::with_items(
         app,
-        &[
-            &app_menu,
-            &file_menu,
-            &edit_menu,
-            &presets_menu,
-            &help_menu,
-        ],
+        &[&app_menu, &file_menu, &edit_menu, &presets_menu, &help_menu],
     )
 }
 
@@ -245,6 +245,7 @@ fn observe_edit_menu_for_system_items() {
 
     unsafe {
         let name: id = NSString::alloc(nil).init_str("NSMenuDidBeginTrackingNotification");
+        #[allow(unused_unsafe)] // msg_send! requires unsafe; outer block does not cover the closure
         let block = ConcreteBlock::new(|notification: id| unsafe {
             let menu: id = msg_send![notification, object];
             if menu == nil {

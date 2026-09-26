@@ -72,11 +72,10 @@ fn default_log_dir() -> PathBuf {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."));
-        return home
-            .join("Library")
+        home.join("Library")
             .join("Application Support")
             .join(APP_DATA_DIR_NAME)
-            .join("logs");
+            .join("logs")
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {

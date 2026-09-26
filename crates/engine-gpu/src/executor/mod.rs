@@ -8,7 +8,7 @@ use engine_tiles::{PixelTile, TileCoord, TileKey};
 
 use crate::composite::GpuCompositeFrameJob;
 use crate::context::GpuContext;
-use crate::graph::{ComputeGraph, GraphNode, GpuPipelineKey};
+use crate::graph::{ComputeGraph, GpuPipelineKey, GraphNode};
 use crate::resident::{
     GpuTileCache, ReadbackRing, ResidentBayerPipelines, ResidentCompositePipelines,
     ResidentCrtPipelines, ResidentGatherPipelines, ResidentHalftonePipelines,
@@ -66,10 +66,7 @@ pub struct GpuExecutor {
 }
 
 impl GpuExecutor {
-    pub fn spawn(
-        ctx: Arc<GpuContext>,
-        cache: Arc<GpuTileCache>,
-    ) -> Result<Self, GpuError> {
+    pub fn spawn(ctx: Arc<GpuContext>, cache: Arc<GpuTileCache>) -> Result<Self, GpuError> {
         let bayer = ResidentBayerPipelines::create(&ctx.device)?;
         let halftone = ResidentHalftonePipelines::create(&ctx.device)?;
         let crt = ResidentCrtPipelines::create(&ctx.device)?;
@@ -259,7 +256,14 @@ fn run_frame(
     for (batch_i, work) in job.tiles.iter().enumerate() {
         let slot = match cache.get_slot(&work.key, work.generation) {
             Some(s) => s,
-            None => match acquire_slot(cache, ctx, work.key, &work.pixels, work.generation, job.speculative) {
+            None => match acquire_slot(
+                cache,
+                ctx,
+                work.key,
+                &work.pixels,
+                work.generation,
+                job.speculative,
+            ) {
                 Ok(s) => s,
                 Err(_) if job.speculative => continue,
                 Err(e) => return Err(e),
@@ -275,7 +279,9 @@ fn run_frame(
                     if let Some(bayer_params) = pass.bayer {
                         if matches!(
                             pass.pipeline,
-                            GpuPipelineKey::Bayer2 | GpuPipelineKey::Bayer4 | GpuPipelineKey::Bayer8
+                            GpuPipelineKey::Bayer2
+                                | GpuPipelineKey::Bayer4
+                                | GpuPipelineKey::Bayer8
                         ) {
                             bayer.encode_bayer_pass(
                                 &ctx.device,
@@ -454,13 +460,7 @@ fn run_frame(
                 &gather_buf,
             );
             let staging = readback.next_buffer();
-            encoder.copy_buffer_to_buffer(
-                &gather_buf,
-                0,
-                staging,
-                0,
-                TILE_CORE_RGBA8_BYTES,
-            );
+            encoder.copy_buffer_to_buffer(&gather_buf, 0, staging, 0, TILE_CORE_RGBA8_BYTES);
         }
     }
 

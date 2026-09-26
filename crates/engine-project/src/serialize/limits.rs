@@ -79,7 +79,9 @@ mod tests {
 
     #[test]
     fn dyuki_stricter_than_dyproj_on_archive_size() {
-        assert!(ArchiveLimits::dyuki().max_archive_bytes < ArchiveLimits::dyproj().max_archive_bytes);
+        assert!(
+            ArchiveLimits::dyuki().max_archive_bytes < ArchiveLimits::dyproj().max_archive_bytes
+        );
         assert!(ArchiveLimits::dyuki().max_entries < ArchiveLimits::dyproj().max_entries);
     }
 }

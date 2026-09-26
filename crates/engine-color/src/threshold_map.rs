@@ -87,14 +87,11 @@ impl ThresholdMapCache {
     /// 5. LRU eviction at 64 entries
     pub fn get_or_load(&self, path: &Path) -> Result<Arc<ThresholdMap>, ThresholdMapError> {
         // 1. Resolve and validate the path via sandbox
-        let canonical = sandbox::resolve_user_path(
-            path.to_str().unwrap_or(""),
-            &["png"],
-        )?;
+        let canonical = sandbox::resolve_user_path(path.to_str().unwrap_or(""), &["png"])?;
 
         // 2. Get file modification time
-        let metadata = fs::metadata(&canonical)
-            .map_err(|e| ThresholdMapError::Io(e.to_string()))?;
+        let metadata =
+            fs::metadata(&canonical).map_err(|e| ThresholdMapError::Io(e.to_string()))?;
         let mtime = metadata
             .modified()
             .map_err(|e| ThresholdMapError::Io(e.to_string()))?;
@@ -114,8 +111,7 @@ impl ThresholdMapCache {
         }
 
         // 4. Cache miss: load PNG from disk
-        let bytes = fs::read(&canonical)
-            .map_err(|e| ThresholdMapError::Io(e.to_string()))?;
+        let bytes = fs::read(&canonical).map_err(|e| ThresholdMapError::Io(e.to_string()))?;
 
         let threshold_map = load_png_threshold_map(&bytes)?;
         let arc_map = Arc::new(threshold_map);
@@ -181,7 +177,10 @@ fn load_png_threshold_map(bytes: &[u8]) -> Result<ThresholdMap, ThresholdMapErro
 
     // Validate dimensions
     if width > 4096 || height > 4096 {
-        return Err(ThresholdMapError::TooLarge { w: width, h: height });
+        return Err(ThresholdMapError::TooLarge {
+            w: width,
+            h: height,
+        });
     }
 
     // Read all pixel data
@@ -193,14 +192,12 @@ fn load_png_threshold_map(bytes: &[u8]) -> Result<ThresholdMap, ThresholdMapErro
 
     // Normalize to [0.0, 1.0]
     let data = match bit_depth {
-        png::BitDepth::Eight => {
-            buf.iter().map(|&v| v as f32 / 255.0).collect()
-        }
+        png::BitDepth::Eight => buf.iter().map(|&v| v as f32 / 255.0).collect(),
         png::BitDepth::One => {
             // 1-bit: each byte contains 8 pixels (MSB first)
             let mut pixels = Vec::with_capacity((width * height) as usize);
             // Rows are byte-aligned in PNG
-            let bytes_per_row = (width as usize + 7) / 8;
+            let bytes_per_row = (width as usize).div_ceil(8);
             for row in 0..height as usize {
                 let row_start = row * bytes_per_row;
                 for col in 0..width as usize {
@@ -215,7 +212,11 @@ fn load_png_threshold_map(bytes: &[u8]) -> Result<ThresholdMap, ThresholdMapErro
         _ => unreachable!(), // Already validated above
     };
 
-    Ok(ThresholdMap { data, width, height })
+    Ok(ThresholdMap {
+        data,
+        width,
+        height,
+    })
 }
 
 #[cfg(test)]
@@ -361,7 +362,11 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             ThresholdMapError::NotGrayscale { actual } => {
-                assert!(actual.contains("Rgb"), "Expected 'Rgb' in error, got: {}", actual);
+                assert!(
+                    actual.contains("Rgb"),
+                    "Expected 'Rgb' in error, got: {}",
+                    actual
+                );
             }
             other => panic!("Expected NotGrayscale error, got: {:?}", other),
         }

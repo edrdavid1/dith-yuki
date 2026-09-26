@@ -38,16 +38,7 @@ pub fn create_hbitmap_bgra_premul(width: i32, height: i32, bgra: &[u8]) -> WinRe
     let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
     // SAFETY: CreateDIBSection with a stack BITMAPINFO and null HDC is the documented
     // pattern for creating an HBITMAP we own until handed to the Shell.
-    let hbmp = unsafe {
-        CreateDIBSection(
-            None,
-            &bmi,
-            DIB_RGB_COLORS,
-            &mut bits,
-            None,
-            0,
-        )?
-    };
+    let hbmp = unsafe { CreateDIBSection(None, &bmi, DIB_RGB_COLORS, &mut bits, None, 0)? };
     if hbmp.is_invalid() || bits.is_null() {
         return Err(windows::core::Error::from(E_OUTOFMEMORY));
     }

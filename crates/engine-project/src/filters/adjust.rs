@@ -212,8 +212,8 @@ pub fn apply_adjust_into(
     }
 
     if noise > 1e-6 {
-        let origin_x = coord.x as u32 * TILE_SIZE;
-        let origin_y = coord.y as u32 * TILE_SIZE;
+        let origin_x = coord.x * TILE_SIZE;
+        let origin_y = coord.y * TILE_SIZE;
         for y in 0..TILE_FULL_SIZE {
             for x in 0..TILE_FULL_SIZE {
                 let gx = origin_x.wrapping_add(x);

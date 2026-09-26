@@ -60,74 +60,78 @@ export default function RampGeneratorSection({ onInsert, onError }: RampGenerato
   };
 
   return (
-    <div className={cn('color-lab-column', 'generator-section')}>
-      <div className={cn('color-lab-section-title')}>ramps generator</div>
-      <p className={cn('color-lab-hint')}>
-        Insert replaces draft colors. Document palette is created only on Apply.
-      </p>
+    <details className={cn('generator-section')}>
+      <summary className={cn('color-lab-section-title', 'generator-section-summary')}>
+        ramps generator
+      </summary>
+      <div className={cn('generator-section-body')}>
+        <p className={cn('color-lab-hint')}>
+          Insert replaces draft colors. Document palette is created only on Apply.
+        </p>
 
-      <div className={cn('generator-swatch-row')}>
-        <button
-          type="button"
-          className={cn('generator-swatch-btn')}
-          style={{ backgroundColor: `#${fromHex}` }}
-          onClick={(e) => openPicker('from', e)}
-          aria-label="Ramp from color"
-        />
-        <span className={cn('generator-swatch-label')}>→</span>
-        <button
-          type="button"
-          className={cn('generator-swatch-btn')}
-          style={{ backgroundColor: `#${toHex}` }}
-          onClick={(e) => openPicker('to', e)}
-          aria-label="Ramp to color"
-        />
-      </div>
-
-      <Slider
-        label="steps"
-        value={steps}
-        min={2}
-        max={32}
-        step={1}
-        decimals={0}
-        onChange={(v) => setSteps(Math.round(v))}
-      />
-
-      <div className={cn('generator-preview-strip')} aria-label="Ramp preview">
-        {preview.map((c, i) => (
-          <span
-            key={`${c.hex}-${i}`}
-            className={cn('generator-preview-cell')}
-            style={{ backgroundColor: c.hex }}
-            title={c.hex}
+        <div className={cn('generator-swatch-row')}>
+          <button
+            type="button"
+            className={cn('generator-swatch-btn')}
+            style={{ backgroundColor: `#${fromHex}` }}
+            onClick={(e) => openPicker('from', e)}
+            aria-label="Ramp from color"
           />
-        ))}
-      </div>
+          <span className={cn('generator-swatch-label')}>→</span>
+          <button
+            type="button"
+            className={cn('generator-swatch-btn')}
+            style={{ backgroundColor: `#${toHex}` }}
+            onClick={(e) => openPicker('to', e)}
+            aria-label="Ramp to color"
+          />
+        </div>
 
-      <button
-        type="button"
-        className={cn('color-lab-button')}
-        disabled={busy || preview.length === 0}
-        onClick={() => onInsert(preview.map((c) => c.hex))}
-      >
-        Insert into draft
-      </button>
-
-      {picker && (
-        <ColorPicker
-          initialColor={picker === 'from' ? fromHex : toHex}
-          onConfirm={(hex) => {
-            if (picker === 'from') setFromHex(hex);
-            else setToHex(hex);
-          }}
-          onCancel={() => {
-            setPicker(null);
-            setPickerAnchor(null);
-          }}
-          anchorRect={pickerAnchor}
+        <Slider
+          label="steps"
+          value={steps}
+          min={2}
+          max={32}
+          step={1}
+          decimals={0}
+          onChange={(v) => setSteps(Math.round(v))}
         />
-      )}
-    </div>
+
+        <div className={cn('generator-preview-strip')} aria-label="Ramp preview">
+          {preview.map((c, i) => (
+            <span
+              key={`${c.hex}-${i}`}
+              className={cn('generator-preview-cell')}
+              style={{ backgroundColor: c.hex }}
+              title={c.hex}
+            />
+          ))}
+        </div>
+
+        <button
+          type="button"
+          className={cn('color-lab-button')}
+          disabled={busy || preview.length === 0}
+          onClick={() => onInsert(preview.map((c) => c.hex))}
+        >
+          Insert into draft
+        </button>
+
+        {picker && (
+          <ColorPicker
+            initialColor={picker === 'from' ? fromHex : toHex}
+            onConfirm={(hex) => {
+              if (picker === 'from') setFromHex(hex);
+              else setToHex(hex);
+            }}
+            onCancel={() => {
+              setPicker(null);
+              setPickerAnchor(null);
+            }}
+            anchorRect={pickerAnchor}
+          />
+        )}
+      </div>
+    </details>
   );
 }

@@ -1,5 +1,5 @@
 /**
- * Collapsed sidebar icon strip — shared by legacy DockedSidebar and FlexLayout columns.
+ * Collapsed sidebar icon strip for FlexLayout columns.
  */
 
 import type { MutableRefObject } from 'react';

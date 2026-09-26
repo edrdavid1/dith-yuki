@@ -53,7 +53,13 @@ impl PaletteKdCache {
         let oklab_colors: Vec<_> = palette
             .colors
             .iter()
-            .map(|c| linear_to_oklab(LinRgb { r: c.r, g: c.g, b: c.b }))
+            .map(|c| {
+                linear_to_oklab(LinRgb {
+                    r: c.r,
+                    g: c.g,
+                    b: c.b,
+                })
+            })
             .collect();
 
         let tree = KdTree::build(&oklab_colors).ok_or(PaletteError::Empty)?;
@@ -116,11 +122,13 @@ mod tests {
         let tree_b = cache.get_or_build(2, &b).unwrap();
         assert!(!Arc::ptr_eq(&tree_a, &tree_b));
         // Doc 2 must not see doc 1's larger tree indices.
-        assert!(tree_b.nearest(linear_to_oklab(LinRgb {
-            r: 0.5,
-            g: 0.0,
-            b: 0.0
-        })) < 15);
+        assert!(
+            tree_b.nearest(linear_to_oklab(LinRgb {
+                r: 0.5,
+                g: 0.0,
+                b: 0.0
+            })) < 15
+        );
     }
 
     #[test]

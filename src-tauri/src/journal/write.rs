@@ -1,7 +1,6 @@
 //! Assemble and atomically write a recovery journal for one session.
 
 use std::path::Path;
-use std::sync::Arc;
 
 use engine_project::serialize::{read_png_file, save_project_to_bytes, ProjectError};
 use uuid::Uuid;
@@ -45,16 +44,8 @@ pub fn write_journal_for_doc(state: &AppState, doc_id: u32) -> Result<(), String
     std::fs::create_dir_all(&recovery_dir).map_err(|e| e.to_string())?;
 
     let snapshot = session.document_handle.snapshot();
-    let project_path = session
-        .project_path
-        .lock()
-        .ok()
-        .and_then(|g| g.clone());
-    let source_path = session
-        .source_path
-        .lock()
-        .ok()
-        .and_then(|g| g.clone());
+    let project_path = session.project_path.lock().ok().and_then(|g| g.clone());
+    let source_path = session.source_path.lock().ok().and_then(|g| g.clone());
 
     let display_name = project_path
         .as_ref()
@@ -62,15 +53,13 @@ pub fn write_journal_for_doc(state: &AppState, doc_id: u32) -> Result<(), String
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
         .unwrap_or_else(|| format!("Untitled {}", session.id.0));
 
-    let original_mtime_ms = project_path
-        .as_ref()
-        .and_then(|p| file_mtime_ms(p));
+    let original_mtime_ms = project_path.as_ref().and_then(|p| file_mtime_ms(p));
 
     let zip_result = save_project_to_bytes(
         snapshot.as_ref(),
         &state.tiles.tile_cache,
         env!("CARGO_PKG_VERSION"),
-        |p| read_png_file(p),
+        read_png_file,
     );
 
     let (content_kind, zip_bytes) = match zip_result {

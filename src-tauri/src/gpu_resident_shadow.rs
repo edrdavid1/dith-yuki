@@ -7,14 +7,16 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+#[cfg(test)]
+use engine_gpu::GraphNode;
 use engine_gpu::{
     cap_warmup_coords, decide_tile_dispatch, select_warmup_coords, slots_per_warmup_coord,
     viewport_vram_reserve, warmup_slot_budget, GpuCompositeFrameJob, GpuCompositeLayerOp,
-    GpuCompositeTileWork, GpuFrameJob, GpuTileWork, GraphNode, TileDispatch, TileDispatchInput,
+    GpuCompositeTileWork, GpuFrameJob, GpuTileWork, TileDispatch, TileDispatchInput,
 };
-use engine_project::filters::gpu_graph::{
-    compile_layer_graph, compile_layer_graph_with_palettes, PaletteGraphCtx,
-};
+#[cfg(test)]
+use engine_project::filters::gpu_graph::compile_layer_graph;
+use engine_project::filters::gpu_graph::{compile_layer_graph_with_palettes, PaletteGraphCtx};
 use engine_project::layer::{Layer, LayerNode};
 use engine_tiles::{CacheStage, TileCoord, TileKey};
 use tauri::Emitter;

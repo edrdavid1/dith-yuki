@@ -53,12 +53,7 @@ pub fn default_channel_levels(palette: &Palette) -> u8 {
 
 /// Per-channel ordered/ED quantize into a palette-derived range.
 /// Shared `threshold` (Bayer or 0.5 for ED) for R, G, and B.
-pub fn quantize_channel_guided(
-    value: f32,
-    range: ChannelRange,
-    levels: u8,
-    threshold: f32,
-) -> f32 {
+pub fn quantize_channel_guided(value: f32, range: ChannelRange, levels: u8, threshold: f32) -> f32 {
     let levels = levels.max(2) as f32;
     let span = (range.max - range.min).max(1e-6);
     let normalized = ((value - range.min) / span).clamp(0.0, 1.0);
@@ -70,9 +65,11 @@ pub fn quantize_channel_guided(
     range.min + (step / (levels - 1.0)) * span
 }
 
+type ChannelRangeEntry = (u64, Arc<[ChannelRange; 3]>);
+
 /// Revision-keyed cache of [`palette_channel_ranges`], scoped by document.
 pub struct PaletteChannelRangeCache {
-    entries: DashMap<(u32, PaletteId), (u64, Arc<[ChannelRange; 3]>)>,
+    entries: DashMap<(u32, PaletteId), ChannelRangeEntry>,
 }
 
 impl PaletteChannelRangeCache {

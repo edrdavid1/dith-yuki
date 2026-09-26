@@ -12,7 +12,6 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::commands::AppState;
-use crate::undo::UndoManager;
 
 /// One open document: tiles are keyed by `id`, undo/dirty/path are not shared.
 pub struct DocumentSession {
@@ -96,7 +95,7 @@ impl AppState {
                     std::sync::Arc::clone(cache),
                 )
                 .ok()
-                .map(|ex| std::sync::Mutex::new(ex))
+                .map(std::sync::Mutex::new)
             })
         });
 
@@ -214,6 +213,7 @@ impl AppState {
         self.session(id)
     }
 
+    #[allow(dead_code)] // test / diagnostic helper
     pub fn must_active(&self) -> Arc<DocumentSession> {
         self.active_session()
             .expect("AppState has no active document")

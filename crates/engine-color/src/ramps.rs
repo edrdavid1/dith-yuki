@@ -56,11 +56,7 @@ mod tests {
         assert_eq!(ramp.len(), 5);
         let ls: Vec<f32> = ramp.iter().map(|c| linear_to_oklab(*c).l).collect();
         for w in ls.windows(2) {
-            assert!(
-                w[1] + 1e-5 >= w[0],
-                "L not non-decreasing: {:?}",
-                ls
-            );
+            assert!(w[1] + 1e-5 >= w[0], "L not non-decreasing: {:?}", ls);
         }
         // Mid-ramp L should sit between endpoints
         assert!(ls[2] > ls[0] && ls[2] < ls[4], "mid L = {}", ls[2]);

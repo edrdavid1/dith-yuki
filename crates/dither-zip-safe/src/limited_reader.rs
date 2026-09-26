@@ -42,11 +42,7 @@ impl<R: Read> Read for LimitedReader<R> {
 
 /// Map [`io::Error`] from budget exhaustion into [`IoError`].
 pub fn map_limit_err(err: io::Error) -> IoError {
-    if err.kind() == io::ErrorKind::InvalidData {
-        IoError::Io(err)
-    } else {
-        IoError::Io(err)
-    }
+    IoError::Io(err)
 }
 
 #[cfg(test)]

@@ -19,13 +19,13 @@
 //! When the cache exceeds its memory budget, the least-recently-used tile is evicted.
 //! Dirty tiles remain in the cache (marked but not deleted) for instant feedback.
 
-use crate::{CacheStage, TileCoord, TileKey, PixelTile};
-use std::collections::HashSet;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::Instant;
-use dashmap::DashMap;
+use crate::{CacheStage, PixelTile, TileCoord, TileKey};
 use crossbeam::queue::SegQueue;
+use dashmap::DashMap;
+use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
 
 /// Context for doc-aware budget pressure eviction.
 ///
@@ -238,11 +238,7 @@ impl TileCache {
 
     /// Highest `generation` among cached entries, or 0 if empty.
     pub fn max_generation(&self) -> u64 {
-        self.entries
-            .iter()
-            .map(|e| e.generation)
-            .max()
-            .unwrap_or(0)
+        self.entries.iter().map(|e| e.generation).max().unwrap_or(0)
     }
 
     /// Remove every cached stage for `layer` on `doc`.
@@ -369,9 +365,7 @@ impl TileCache {
                         .active_doc
                         .map(|active| key.doc != active)
                         .unwrap_or(false);
-                    let stage_ok = stage_filter
-                        .map(|s| key.stage == s)
-                        .unwrap_or(true);
+                    let stage_ok = stage_filter.map(|s| key.stage == s).unwrap_or(true);
 
                     if pinned || !stage_ok {
                         skipped.push(key);
@@ -423,7 +417,7 @@ impl TileCache {
 
     /// Drop selected stages for one document (soft trim on deactivate).
     pub fn evict_stages(&self, doc: u32, stages: &[CacheStage]) {
-        self.retain_removed(|key| key.doc == doc && stages.iter().any(|s| *s == key.stage));
+        self.retain_removed(|key| key.doc == doc && stages.contains(&key.stage));
     }
 
     /// Get the current memory usage in bytes.
@@ -544,17 +538,13 @@ impl TileCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{TileCoord, CacheStage};
+    use crate::{CacheStage, TileCoord};
 
     fn make_key(layer: u32, x: u32, y: u32) -> TileKey {
         TileKey {
             doc: 1,
             layer,
-            coord: TileCoord {
-                level: 0,
-                x,
-                y,
-            },
+            coord: TileCoord { level: 0, x, y },
             stage: CacheStage::Raw,
         }
     }
@@ -714,7 +704,11 @@ mod tests {
         assert_eq!(cache.entry_count(), 2);
 
         let mut viewport = std::collections::HashSet::new();
-        viewport.insert(TileCoord { level: 0, x: 0, y: 0 });
+        viewport.insert(TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        });
 
         cache.evict_preserving_viewport(&viewport);
 
@@ -739,8 +733,16 @@ mod tests {
         cache.get_or_insert(key2, tile2);
 
         let mut viewport = std::collections::HashSet::new();
-        viewport.insert(TileCoord { level: 0, x: 0, y: 0 });
-        viewport.insert(TileCoord { level: 0, x: 1, y: 0 });
+        viewport.insert(TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        });
+        viewport.insert(TileCoord {
+            level: 0,
+            x: 1,
+            y: 0,
+        });
 
         cache.evict_preserving_viewport(&viewport);
 
@@ -755,14 +757,32 @@ mod tests {
     fn evict_preserving_viewport_preserves_all_stages_of_viewport_coord() {
         // Budget for 2 tiles, insert 3: two are different stages of the same viewport coord.
         let cache = TileCache::new(2 * TILE_BYTES);
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
 
-        let key_raw = TileKey { doc: 1, layer: 0, coord, stage: CacheStage::Raw };
-        let key_processed = TileKey { doc: 1, layer: 0, coord, stage: CacheStage::Processed };
+        let key_raw = TileKey {
+            doc: 1,
+            layer: 0,
+            coord,
+            stage: CacheStage::Raw,
+        };
+        let key_processed = TileKey {
+            doc: 1,
+            layer: 0,
+            coord,
+            stage: CacheStage::Processed,
+        };
         let key_other = TileKey {
             doc: 1,
             layer: 0,
-            coord: TileCoord { level: 0, x: 5, y: 5 },
+            coord: TileCoord {
+                level: 0,
+                x: 5,
+                y: 5,
+            },
             stage: CacheStage::Raw,
         };
 
@@ -805,7 +825,11 @@ mod tests {
             x: 0,
             y: 0,
         };
-        let stages = [CacheStage::Raw, CacheStage::Processed, CacheStage::Composite];
+        let stages = [
+            CacheStage::Raw,
+            CacheStage::Processed,
+            CacheStage::Composite,
+        ];
         for stage in stages {
             cache.get_or_insert(
                 TileKey {
@@ -958,7 +982,12 @@ mod tests {
         assert!(cache.insert_fresh_gen(key, marked_tile(0.2), 2));
         assert!(!cache.insert_fresh_gen(key, marked_tile(0.9), 1));
         assert!(!cache.mark_dirty_if_generation_behind(key, 2));
-        assert!(!cache.entries.get(&key).unwrap().dirty.load(Ordering::Acquire));
+        assert!(!cache
+            .entries
+            .get(&key)
+            .unwrap()
+            .dirty
+            .load(Ordering::Acquire));
         assert!(TileCache::tile_entry_is_ready(false, 2, 2));
         assert!(!TileCache::tile_entry_is_ready(false, 1, 2));
         assert!(!TileCache::tile_entry_is_ready(true, 2, 2));
@@ -1084,8 +1113,14 @@ mod tests {
     #[test]
     fn evict_for_pressure_allows_over_budget_when_only_pinned_raw_remain() {
         let cache = TileCache::new(TILE_BYTES);
-        cache.get_or_insert(key_doc(2, 0, 0, CacheStage::Raw), Arc::new(PixelTile::new()));
-        cache.get_or_insert(key_doc(2, 1, 0, CacheStage::Raw), Arc::new(PixelTile::new()));
+        cache.get_or_insert(
+            key_doc(2, 0, 0, CacheStage::Raw),
+            Arc::new(PixelTile::new()),
+        );
+        cache.get_or_insert(
+            key_doc(2, 1, 0, CacheStage::Raw),
+            Arc::new(PixelTile::new()),
+        );
         let mut viewport = HashSet::new();
         viewport.insert(TileCoord {
             level: 0,

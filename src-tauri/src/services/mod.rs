@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[allow(dead_code)] // reserved for richer IPC error mapping
 pub enum AppError {
     #[error("{0}")]
     Generic(String),
@@ -25,9 +26,6 @@ pub use filter_service::FilterService;
 
 pub mod layer_service;
 pub use layer_service::LayerService;
-
-pub mod panel_service;
-pub use panel_service::PanelService;
 
 pub mod undo_service;
 pub use undo_service::UndoService;

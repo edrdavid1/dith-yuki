@@ -1,16 +1,12 @@
 pub mod diagnostics;
 pub use diagnostics::*;
 pub mod flexlayout;
-pub use flexlayout::*;
 pub mod panels;
-pub use panels::*;
 pub mod selection;
 pub use selection::*;
-pub mod viewport;
-pub use viewport::*;
-pub mod undo;
-pub use undo::*;
 pub mod layers;
+pub mod undo;
+pub mod viewport;
 pub use layers::*;
 pub mod filters;
 pub use filters::*;
@@ -27,26 +23,15 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter};
 
-use engine_project::{
-    commands as engine_commands,
-    commands::{AddLayerArgs, LayerPropsPatch},
-    document::DocumentHandle,
-    dto::DocumentSnapshotDto,
-    types::{BlendMode, LayerId, LayerKind},
-};
 use engine_tiles::{CacheStage, Priority, RecomputeTask, TileKey};
-use engine_tiles::{PixelTile, Scheduler, TileCache};
 
-use crate::document_session::{emit_tabs_changed, OpenDocumentsPayload};
-use crate::panel_manager::PanelManager;
 use crate::worker::WorkerWake;
 
-pub use crate::commands::color_lab::{
-    oklab_points_from_hexes, oklab_points_from_linear, OklabPointDto,
-};
+/// Re-exports for `commands::tests` / diagnostics. Not all are used by the bin itself.
+#[allow(unused_imports)]
 pub use crate::services::document_service::{
     blank_rgba_f32, encode_rgba_to_png, f32_to_u8, import_raster_layer, install_raster_document,
     place_image_at_origin, validate_document_dimensions, AsciiClipboardRequest, BlankBackground,
@@ -54,10 +39,10 @@ pub use crate::services::document_service::{
     ImportPatternRequest, ImportPatternResponse, LoadImageResponse, OpenProjectResponse,
     SaveProjectResponse, ShareProjectCopyOptions, IMAGE_IMPORT_EXTENSIONS, MAX_DOCUMENT_DIMENSION,
 };
+#[allow(unused_imports)]
 pub use crate::services::palette_service::find_layers_referencing_palette;
+#[allow(unused_imports)]
 pub use crate::services::palette_service::{hex_to_linear, linear_to_hex};
-
-pub use crate::viewport::ViewportState;
 
 pub(crate) struct PendingPreviewRefresh {
     pub layer_id: u32,
@@ -82,12 +67,9 @@ pub struct AppState {
     pub ascii_preview: AtomicBool,
     /// Refcount of callers inside a full-document ensure (monolithic “Rendering…”).
     pub full_document_busy: AtomicUsize,
-    /// FlexLayout persistence layer (B3: Layers panel on FlexLayout).
-    /// During B3, effect/colorlab panels still use old PanelManager system.
-    /// This persistence handles the new v3 FlexLayout JSON format.
-    /// B4 will remove old PanelManager infrastructure entirely.
+    /// FlexLayout persistence (left / right / center models).
     pub flexlayout_persistence: Mutex<crate::flexlayout_persistence::FlexLayoutPersistence>,
-    /// B4a: per-side FlexLayout persistence.
+    /// Per-side FlexLayout persistence.
     pub flexlayout_left: Mutex<crate::flexlayout_persistence::FlexLayoutPersistence>,
     pub flexlayout_right: Mutex<crate::flexlayout_persistence::FlexLayoutPersistence>,
     pub flexlayout_center: Mutex<crate::flexlayout_persistence::FlexLayoutPersistence>,
@@ -155,6 +137,7 @@ fn emit_full_document_busy(state: &AppState, busy: bool, doc_id: u32) {
     let _ = app.emit_to(tauri::EventTarget::Any, "full-document-busy", payload);
 }
 
+#[allow(dead_code)] // reserved for explicit full-cache reset on new-doc paths
 pub(crate) fn reset_tiles_for_new_document(state: &AppState) {
     state.tiles.tile_cache.clear();
     state.tiles.scheduler.clear_all();
@@ -168,8 +151,6 @@ pub(crate) fn reset_tiles_for_new_document(state: &AppState) {
 }
 
 pub(crate) fn invalidate_after_document_replace(state: &AppState) {
-    use engine_tiles::CacheStage;
-
     let mut keys = Vec::new();
     for entry in state.tiles.tile_cache.entries.iter() {
         let key = *entry.key();
@@ -259,10 +240,10 @@ pub(crate) fn layer_needs_dither_cache_reset(
                         )
                 });
             }
-            engine_project::LayerNode::Group(group) => {
-                if layer_needs_dither_cache_reset(&group.children, layer_id) {
-                    return true;
-                }
+            engine_project::LayerNode::Group(group)
+                if layer_needs_dither_cache_reset(&group.children, layer_id) =>
+            {
+                return true;
             }
             _ => {}
         }

@@ -203,9 +203,10 @@ pub enum EffectCategory {
 /// Returned by [`FilterAlgorithm::param_schema`]. The frontend renders a
 /// control for each field based on its variant without any algorithm-specific code.
 ///
-/// Adding a new variant requires:
-/// 1. Adding it here (backend).
-/// 2. Adding a `case` in the frontend `AlgorithmSettingsPanel` switch.
+/// Adding a new variant requires both:
+/// - Adding it here (backend).
+/// - Adding a `case` in the frontend `AlgorithmSettingsPanel` switch.
+///
 /// Both changes are shared by all future algorithms that use the new control type.
 ///
 /// # Serde note
@@ -428,12 +429,12 @@ pub trait FilterAlgorithm: Send + Sync {
     /// Apply the algorithm to `tile` in-place.
     ///
     /// # Parameters
-    /// - `tile`   — the pixel tile to transform.
+    /// - `tile` — the pixel tile to transform.
     /// - `params` — the algorithm's parameters as a JSON value. Deserialise
-    ///              with `serde_json::from_value(params.clone())?` inside the
-    ///              implementation.
-    /// - `ctx`    — document-scoped dependencies. Recover
-    ///              `engine_project::FilterContext<'_>` via `FilterContext::from_ctx`.
+    ///   with `serde_json::from_value(params.clone())?` inside the
+    ///   implementation.
+    /// - `ctx` — document-scoped dependencies. Recover
+    ///   `engine_project::FilterContext<'_>` via `FilterContext::from_ctx`.
     ///
     /// # Errors
     /// Returns [`FilterError::Params`] if `params` cannot be deserialised, or

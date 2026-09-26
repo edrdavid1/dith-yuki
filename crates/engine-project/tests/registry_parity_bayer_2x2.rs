@@ -92,6 +92,7 @@ fn registry_parity_bayer_2x2() {
         &block_cache,
         None,
         layer_id,
+        0,
     );
     let params_json = serde_json::to_value(&params).expect("params json");
     let mut via_trait = PixelTile::new();

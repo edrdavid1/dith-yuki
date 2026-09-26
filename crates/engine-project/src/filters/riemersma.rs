@@ -223,7 +223,10 @@ mod tests {
         for i in 0..(w * h) as usize {
             let v = rgba[i * 4];
             let k = v * (levels - 1.0);
-            assert!((k - k.round()).abs() < 1e-4, "pixel {i} not on level grid: {v}");
+            assert!(
+                (k - k.round()).abs() < 1e-4,
+                "pixel {i} not on level grid: {v}"
+            );
         }
     }
 

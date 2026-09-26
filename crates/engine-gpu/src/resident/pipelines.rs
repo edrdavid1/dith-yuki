@@ -7,8 +7,8 @@ use wgpu::util::DeviceExt;
 
 use crate::dispatch::{TileUniforms, CORE_SIZE, WORKGROUP_SIZE};
 use crate::graph::{
-    BayerPassParams, CrtPassParams, HalftonePassParams, PaletteGuidedPassParams,
-    PaletteMixedPassParams, PaletteQuantizePassParams, GpuPipelineKey,
+    BayerPassParams, CrtPassParams, GpuPipelineKey, HalftonePassParams, PaletteGuidedPassParams,
+    PaletteMixedPassParams, PaletteQuantizePassParams,
 };
 use crate::resident::format::TILE_EXTENT;
 use crate::GpuError;
@@ -186,11 +186,7 @@ impl ResidentBayerPipelines {
         }
     }
 
-    fn layer_view<'a>(
-        texture: &'a wgpu::Texture,
-        layer: u32,
-        label: &'static str,
-    ) -> wgpu::TextureView {
+    fn layer_view(texture: &wgpu::Texture, layer: u32, label: &'static str) -> wgpu::TextureView {
         texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some(label),
             format: Some(wgpu::TextureFormat::Rgba32Float),
@@ -230,12 +226,7 @@ impl ResidentBayerPipelines {
         let (pattern_sin, pattern_cos) = Self::pattern_trig(params.pattern_angle);
         let uniforms = BayerUniforms {
             tile: TileUniforms::for_tile(tile_x, tile_y),
-            params: [
-                params.levels as f32,
-                params.threshold_scale,
-                0.0,
-                0.0,
-            ],
+            params: [params.levels as f32, params.threshold_scale, 0.0, 0.0],
         };
         let pattern = BayerPatternUniforms {
             packed: [
@@ -404,11 +395,7 @@ impl ResidentHalftonePipelines {
         Ok(Self { layout, pipeline })
     }
 
-    fn layer_view<'a>(
-        texture: &'a wgpu::Texture,
-        layer: u32,
-        label: &'static str,
-    ) -> wgpu::TextureView {
+    fn layer_view(texture: &wgpu::Texture, layer: u32, label: &'static str) -> wgpu::TextureView {
         texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some(label),
             format: Some(wgpu::TextureFormat::Rgba32Float),
@@ -556,11 +543,7 @@ impl ResidentCrtPipelines {
         Ok(Self { layout, pipeline })
     }
 
-    fn layer_view<'a>(
-        texture: &'a wgpu::Texture,
-        layer: u32,
-        label: &'static str,
-    ) -> wgpu::TextureView {
+    fn layer_view(texture: &wgpu::Texture, layer: u32, label: &'static str) -> wgpu::TextureView {
         texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some(label),
             format: Some(wgpu::TextureFormat::Rgba32Float),
@@ -729,11 +712,7 @@ impl ResidentPalettePipelines {
         Ok(Self { layout, pipeline })
     }
 
-    fn layer_view<'a>(
-        texture: &'a wgpu::Texture,
-        layer: u32,
-        label: &'static str,
-    ) -> wgpu::TextureView {
+    fn layer_view(texture: &wgpu::Texture, layer: u32, label: &'static str) -> wgpu::TextureView {
         texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some(label),
             format: Some(wgpu::TextureFormat::Rgba32Float),
@@ -993,11 +972,7 @@ impl ResidentPaletteGuidedPipelines {
         })
     }
 
-    fn layer_view<'a>(
-        texture: &'a wgpu::Texture,
-        layer: u32,
-        label: &'static str,
-    ) -> wgpu::TextureView {
+    fn layer_view(texture: &wgpu::Texture, layer: u32, label: &'static str) -> wgpu::TextureView {
         texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some(label),
             format: Some(wgpu::TextureFormat::Rgba32Float),
@@ -1138,12 +1113,7 @@ impl ResidentPaletteGuidedPipelines {
         let (sin_t, cos_t) = g.pattern_angle.sin_cos();
         let uniforms = GuidedUniforms {
             tile: TileUniforms::for_tile(tile_x, tile_y),
-            params: [
-                g.threshold_scale,
-                mixed.palette_rgb.len() as f32,
-                0.0,
-                0.0,
-            ],
+            params: [g.threshold_scale, mixed.palette_rgb.len() as f32, 0.0, 0.0],
         };
         let pat = BayerPatternUniforms {
             packed: [sin_t, cos_t, 0.0, g.threshold_bias],
@@ -1387,9 +1357,7 @@ impl ResidentCompositePipelines {
         let header = CompositeHeader {
             params: [src_layers.len() as f32, 0.0, 0.0, 0.0],
         };
-        let mut ops = [CompositeLayerOpGpu {
-            packed: [0.0; 4],
-        }; COMPOSITE_MAX_STACK];
+        let mut ops = [CompositeLayerOpGpu { packed: [0.0; 4] }; COMPOSITE_MAX_STACK];
         for (i, &(layer, mode, opacity)) in src_layers.iter().enumerate() {
             ops[i] = CompositeLayerOpGpu {
                 packed: [layer as f32, mode as f32, opacity, 0.0],
@@ -1399,9 +1367,7 @@ impl ResidentCompositePipelines {
         let header_buf = self
             .header_pool
             .write(device, queue, bytemuck::bytes_of(&header));
-        let ops_buf = self
-            .ops_pool
-            .write(device, queue, bytemuck::bytes_of(&ops));
+        let ops_buf = self.ops_pool.write(device, queue, bytemuck::bytes_of(&ops));
         let resident_view = Self::resident_array_view(resident);
         let out_view = Self::out_layer_view(out, out_layer);
 

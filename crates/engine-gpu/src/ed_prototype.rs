@@ -532,7 +532,7 @@ pub fn run_ed_parallel_prototype() -> Option<EdProtoResult> {
         );
         stagings.push(staging);
         let count = if d < N { d + 1 } else { 2 * N - 1 - d };
-        let groups = (count + 63) / 64;
+        let groups = count.div_ceil(64);
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("ed-par-diag"),

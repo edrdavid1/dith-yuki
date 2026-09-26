@@ -1,17 +1,16 @@
-//! Preservation property tests for the Scheduler.
+//! Property tests for scheduler invariants after the DashMap / lane-hint redesign.
 //!
-//! These tests verify behavior that MUST NOT change after the bugfix:
-//! 1. Cross-bucket priority ordering: Immediate > ViewportCenter > ViewportEdge > Prefetch
-//! 2. FIFO within same priority bucket: tasks enqueued in order are dequeued in same order
+//! The scheduler keeps **one pending task per [`TileKey`]**. Lane SegQueues hold
+//! key hints only; duplicate enqueues merge via `enqueue_or_bump`.
 //!
-//! **Validates: Requirements 3.4, 3.5**
-//!
-//! These tests MUST PASS on unfixed code (scheduler behavior is already correct).
+//! Preserved product invariants:
+//! 1. Cross-bucket priority: Immediate > ViewportCenter > ViewportEdge > Prefetch
+//! 2. FIFO among **distinct** keys in the same priority lane
 
 use engine_tiles::{CacheStage, Priority, RecomputeTask, Scheduler, TileCoord, TileKey};
 use proptest::prelude::*;
+use std::collections::HashSet;
 
-/// Strategy to generate a random Priority value.
 fn arb_priority() -> impl Strategy<Value = Priority> {
     prop_oneof![
         Just(Priority::Immediate),
@@ -21,29 +20,24 @@ fn arb_priority() -> impl Strategy<Value = Priority> {
     ]
 }
 
-/// Strategy to generate a random RecomputeTask with a given priority.
 fn arb_task_with_priority(priority: Priority) -> impl Strategy<Value = RecomputeTask> {
-    (0..100u32, 0..16u32, 0..16u32, 0..4u8).prop_map(move |(layer, x, y, level)| {
-        RecomputeTask {
-            key: TileKey {
-                doc: 1,
-                layer,
-                coord: TileCoord { level, x, y },
-                stage: CacheStage::Composite,
-            },
-            generation: 0,
-            layer_generation: 0,
-            priority,
-        }
+    (0..100u32, 0..16u32, 0..16u32, 0..4u8).prop_map(move |(layer, x, y, level)| RecomputeTask {
+        key: TileKey {
+            doc: 1,
+            layer,
+            coord: TileCoord { level, x, y },
+            stage: CacheStage::Composite,
+        },
+        generation: 0,
+        layer_generation: 0,
+        priority,
     })
 }
 
-/// Strategy to generate a random RecomputeTask with random priority.
 fn arb_task() -> impl Strategy<Value = RecomputeTask> {
-    arb_priority().prop_flat_map(|p| arb_task_with_priority(p))
+    arb_priority().prop_flat_map(arb_task_with_priority)
 }
 
-/// Helper: numeric priority value for ordering assertions.
 fn priority_value(p: Priority) -> u8 {
     match p {
         Priority::Prefetch => 0,
@@ -54,32 +48,23 @@ fn priority_value(p: Priority) -> u8 {
 }
 
 proptest! {
-    /// Property: Cross-bucket priority ordering is always respected.
-    ///
-    /// For any random mix of 1–50 tasks across the 4 priority buckets,
-    /// dequeue order always respects: Immediate > ViewportCenter > ViewportEdge > Prefetch.
-    ///
-    /// **Validates: Requirements 3.4**
+    /// Dequeue order respects priority buckets for the **deduped** pending set.
     #[test]
-    fn cross_bucket_priority_ordering(
-        tasks in prop::collection::vec(arb_task(), 1..50)
-    ) {
+    fn cross_bucket_priority_ordering(tasks in prop::collection::vec(arb_task(), 1..50)) {
         let scheduler = Scheduler::new();
-
+        let mut unique_keys = HashSet::new();
         for task in &tasks {
+            unique_keys.insert(task.key);
             scheduler.enqueue(*task);
         }
 
-        // Dequeue all tasks and verify priority ordering is non-increasing
         let mut dequeued: Vec<RecomputeTask> = Vec::new();
         while let Some(task) = scheduler.dequeue() {
             dequeued.push(task);
         }
 
-        // Verify all tasks were dequeued
-        prop_assert_eq!(dequeued.len(), tasks.len());
+        prop_assert_eq!(dequeued.len(), unique_keys.len());
 
-        // Verify priority ordering: each task's priority must be >= the next task's priority
         for i in 0..dequeued.len().saturating_sub(1) {
             let current_prio = priority_value(dequeued[i].priority);
             let next_prio = priority_value(dequeued[i + 1].priority);
@@ -95,69 +80,41 @@ proptest! {
         }
     }
 
-    /// Property: FIFO within same priority bucket.
-    ///
-    /// For any 3 tasks with the same priority, dequeue order matches enqueue order.
-    /// This verifies that intra-bucket ordering is preserved (SegQueue FIFO).
-    ///
-    /// **Validates: Requirements 3.4**
+    /// Distinct keys at the same priority dequeue in enqueue order (SegQueue FIFO).
     #[test]
     fn fifo_within_same_priority_bucket(
         priority in arb_priority(),
-        x1 in 0..16u32,
-        y1 in 0..16u32,
-        x2 in 0..16u32,
-        y2 in 0..16u32,
-        x3 in 0..16u32,
-        y3 in 0..16u32,
+        coords in prop::collection::vec((0..16u32, 0..16u32), 3..=3)
+            .prop_filter("distinct keys", |c| {
+                c[0] != c[1] && c[0] != c[2] && c[1] != c[2]
+            }),
     ) {
         let scheduler = Scheduler::new();
+        let mut expected_gens = Vec::new();
 
-        let task1 = RecomputeTask {
-            key: TileKey {
-                doc: 1,
-                layer: 0,
-                coord: TileCoord { level: 0, x: x1, y: y1 },
-                stage: CacheStage::Composite,
-            },
-            generation: 1,
-            layer_generation: 0,
-            priority,
-        };
-        let task2 = RecomputeTask {
-            key: TileKey {
-                doc: 1,
-                layer: 0,
-                coord: TileCoord { level: 0, x: x2, y: y2 },
-                stage: CacheStage::Composite,
-            },
-            generation: 2,
-            layer_generation: 0,
-            priority,
-        };
-        let task3 = RecomputeTask {
-            key: TileKey {
-                doc: 1,
-                layer: 0,
-                coord: TileCoord { level: 0, x: x3, y: y3 },
-                stage: CacheStage::Composite,
-            },
-            generation: 3,
-            layer_generation: 0,
-            priority,
-        };
+        for (i, (x, y)) in coords.iter().enumerate() {
+            let gen = (i as u64) + 1;
+            expected_gens.push(gen);
+            scheduler.enqueue(RecomputeTask {
+                key: TileKey {
+                    doc: 1,
+                    layer: 0,
+                    coord: TileCoord { level: 0, x: *x, y: *y },
+                    stage: CacheStage::Composite,
+                },
+                generation: gen,
+                layer_generation: 0,
+                priority,
+            });
+        }
 
-        scheduler.enqueue(task1);
-        scheduler.enqueue(task2);
-        scheduler.enqueue(task3);
+        let d1 = scheduler.dequeue().expect("first");
+        let d2 = scheduler.dequeue().expect("second");
+        let d3 = scheduler.dequeue().expect("third");
 
-        let d1 = scheduler.dequeue().unwrap();
-        let d2 = scheduler.dequeue().unwrap();
-        let d3 = scheduler.dequeue().unwrap();
-
-        // FIFO: dequeue order matches enqueue order (using generation as discriminator)
-        prop_assert_eq!(d1.generation, 1, "First dequeued should be generation 1");
-        prop_assert_eq!(d2.generation, 2, "Second dequeued should be generation 2");
-        prop_assert_eq!(d3.generation, 3, "Third dequeued should be generation 3");
+        prop_assert_eq!(d1.generation, expected_gens[0]);
+        prop_assert_eq!(d2.generation, expected_gens[1]);
+        prop_assert_eq!(d3.generation, expected_gens[2]);
+        prop_assert!(scheduler.dequeue().is_none());
     }
 }

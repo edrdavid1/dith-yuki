@@ -47,6 +47,12 @@ impl FilterInstanceId {
     pub fn new() -> Self {
         FilterInstanceId(Uuid::new_v4())
     }
+
+    /// Stable `u128` for residual / dithered-block side-channels (DashMap keys).
+    #[inline]
+    pub fn as_u128(self) -> u128 {
+        self.0.as_u128()
+    }
 }
 
 impl Default for FilterInstanceId {

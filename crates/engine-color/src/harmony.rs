@@ -189,11 +189,7 @@ mod tests {
                 dh = TAU - dh;
             }
             // adjacent triadic spacing should be 2π/3 ≈ 2.094
-            assert!(
-                (dh - TAU / 3.0).abs() < 1e-4,
-                "triadic spacing {}",
-                dh
-            );
+            assert!((dh - TAU / 3.0).abs() < 1e-4, "triadic spacing {}", dh);
         }
 
         let colors = generate_harmony(base_red(), HarmonyRule::Triadic, 3);

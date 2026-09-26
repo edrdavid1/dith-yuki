@@ -138,12 +138,11 @@ impl ShapeContrastDesc {
             return Self { shape };
         }
         let g = gamma_8_8 as f32 / 256.0;
-        let mut samples = [0u16; 6];
-        for i in 0..6 {
-            let t = shape.samples[i] as f32 / 65535.0;
+        let samples = shape.samples.map(|s| {
+            let t = s as f32 / 65535.0;
             let e = t.powf(g).clamp(0.0, 1.0);
-            samples[i] = (e * 65535.0).round() as u16;
-        }
+            (e * 65535.0).round() as u16
+        });
         Self {
             shape: ShapeDesc { samples },
         }

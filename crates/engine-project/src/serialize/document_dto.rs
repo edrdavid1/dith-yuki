@@ -113,8 +113,8 @@ impl<'de> Deserialize<'de> for LayerNodeFile {
                     .cloned()
                     .ok_or_else(|| serde::de::Error::custom("leaf node must be an object"))?;
                 obj.remove("node");
-                let leaf: LayerFile = serde_json::from_value(Value::Object(obj))
-                    .map_err(serde::de::Error::custom)?;
+                let leaf: LayerFile =
+                    serde_json::from_value(Value::Object(obj)).map_err(serde::de::Error::custom)?;
                 Ok(LayerNodeFile::Leaf(leaf))
             }
             "group" => {
@@ -123,8 +123,8 @@ impl<'de> Deserialize<'de> for LayerNodeFile {
                     .cloned()
                     .ok_or_else(|| serde::de::Error::custom("group node must be an object"))?;
                 obj.remove("node");
-                let group: LayerGroupFile = serde_json::from_value(Value::Object(obj))
-                    .map_err(serde::de::Error::custom)?;
+                let group: LayerGroupFile =
+                    serde_json::from_value(Value::Object(obj)).map_err(serde::de::Error::custom)?;
                 Ok(LayerNodeFile::Group(group))
             }
             _ => Ok(LayerNodeFile::Unknown(value)),
@@ -232,8 +232,7 @@ impl DocumentFile {
     /// Drop dither `palette_id`s that are not in `palettes` so Save cannot
     /// persist the Color Lab stale-binding hole (open used to panic on remap).
     pub fn sanitize_dangling_palette_refs(&mut self) {
-        let known: std::collections::HashSet<u32> =
-            self.palettes.iter().map(|p| p.id).collect();
+        let known: std::collections::HashSet<u32> = self.palettes.iter().map(|p| p.id).collect();
         fn walk(nodes: &mut [LayerNodeFile], known: &std::collections::HashSet<u32>) {
             for node in nodes {
                 match node {
@@ -245,7 +244,8 @@ impl DocumentFile {
                                 if let Some(pid) = p.palette_id {
                                     if !known.contains(&pid.0) {
                                         p.palette_id = None;
-                                        if let Ok(v) = serde_json::to_value(FilterParams::DitherV2(p))
+                                        if let Ok(v) =
+                                            serde_json::to_value(FilterParams::DitherV2(p))
                                         {
                                             f.params = v;
                                         }
@@ -501,7 +501,7 @@ mod tests {
     fn document_file_omits_requires_full_row_and_sets_raw_asset() {
         let mut doc = Document::new(DocumentId::new(1), 64, 64);
         let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, 64, 64);
-        let mut filt = FilterInstance::new(
+        let filt = FilterInstance::new(
             FilterKind::Dither,
             FilterParams::DitherV2(DitherParamsV2 {
                 mode: DitherModeV2::FloydSteinberg,

@@ -307,6 +307,7 @@ pub fn import_raster_layer(
     })
 }
 
+#[allow(dead_code)] // used by unit/diag tests; keep public for diagnostics
 pub fn f32_to_u8(val: f32) -> u8 {
     (val * 255.0).clamp(0.0, 255.0) as u8
 }
@@ -487,7 +488,7 @@ impl DocumentService {
             &rgba_f32,
             Some(app_handle),
         )
-        .map_err(|e| AppError::Generic(e))
+        .map_err(AppError::Generic)
     }
 
     pub async fn save_project(
@@ -544,7 +545,7 @@ impl DocumentService {
                 &doc,
                 &state_arc.tiles.tile_cache,
                 env!("CARGO_PKG_VERSION"),
-                |p| read_png_file(p),
+                read_png_file,
             )
         })
         .await
@@ -612,7 +613,7 @@ impl DocumentService {
                     &doc,
                     &state_arc.tiles.tile_cache,
                     env!("CARGO_PKG_VERSION"),
-                    |p| read_png_file(p),
+                    read_png_file,
                     &share_opts,
                 )
             })
@@ -759,7 +760,7 @@ impl DocumentService {
                 author: None,
             },
             env!("CARGO_PKG_VERSION"),
-            |p| read_png_file(p),
+            read_png_file,
         )
         .map_err(|e| e.to_string())?;
 
@@ -815,10 +816,10 @@ impl DocumentService {
                                                     matches!(f.params, FilterParams::DitherV2(_))
                                                 });
                                             }
-                                            engine_project::LayerNode::Group(g) => {
-                                                if has_dither(&g.children, layer_id) {
-                                                    return true;
-                                                }
+                                            engine_project::LayerNode::Group(g)
+                                                if has_dither(&g.children, layer_id) =>
+                                            {
+                                                return true;
                                             }
                                             _ => {}
                                         }
@@ -940,7 +941,7 @@ impl DocumentService {
 
                     let mut rgb_buffer: Vec<u8> =
                         Vec::with_capacity((img_width * img_height * 3) as usize);
-                    for pixel in rgba_buffer.chunks_exact(4) {
+                    for pixel in rgba_buffer.as_chunks::<4>().0 {
                         rgb_buffer.push(pixel[0]);
                         rgb_buffer.push(pixel[1]);
                         rgb_buffer.push(pixel[2]);
@@ -985,7 +986,7 @@ impl DocumentService {
                     use image::ImageEncoder;
 
                     let mut bmp_data: Vec<u8> = Vec::new();
-                    let mut encoder = BmpEncoder::new(&mut bmp_data);
+                    let encoder = BmpEncoder::new(&mut bmp_data);
                     encoder
                         .write_image(
                             &rgba_buffer,
@@ -1050,10 +1051,8 @@ impl DocumentService {
         use std::path::Path;
         use std::sync::atomic::AtomicBool;
 
-        let format = AsciiExportFormat::from_str(&req.format).ok_or_else(|| {
-            AppError::InvalidOperation(
-                "format must be txt, ansi, html, svg, png, or json".into(),
-            )
+        let format = AsciiExportFormat::parse(&req.format).ok_or_else(|| {
+            AppError::InvalidOperation("format must be txt, ansi, html, svg, png, or json".into())
         })?;
         let ext = format.extension();
         let path = sandbox::ensure_extension(&req.path, ext);
@@ -1084,13 +1083,8 @@ impl DocumentService {
         let state_clone = Arc::clone(&self.state);
         tauri::async_runtime::spawn_blocking(move || {
             let cancel = AtomicBool::new(false);
-            let result = compute_ascii_job(
-                &state_clone.tiles.tile_cache,
-                &layer,
-                &doc,
-                &cancel,
-            )
-            .map_err(|e| AppError::Generic(e.to_string()))?;
+            let result = compute_ascii_job(&state_clone.tiles.tile_cache, &layer, &doc, &cancel)
+                .map_err(|e| AppError::Generic(e.to_string()))?;
             let bytes = export_ascii_bytes(&result, format)
                 .map_err(|e| AppError::Generic(e.to_string()))?;
             engine_io::atomic_write(Path::new(&resolved), &bytes)
@@ -1144,13 +1138,8 @@ impl DocumentService {
         let state_clone = Arc::clone(&self.state);
         tauri::async_runtime::spawn_blocking(move || {
             let cancel = AtomicBool::new(false);
-            let result = compute_ascii_job(
-                &state_clone.tiles.tile_cache,
-                &layer,
-                &doc,
-                &cancel,
-            )
-            .map_err(|e| AppError::Generic(e.to_string()))?;
+            let result = compute_ascii_job(&state_clone.tiles.tile_cache, &layer, &doc, &cancel)
+                .map_err(|e| AppError::Generic(e.to_string()))?;
             let bytes = export_ascii_bytes(&result, format)
                 .map_err(|e| AppError::Generic(e.to_string()))?;
             String::from_utf8(bytes).map_err(|e| AppError::Generic(e.to_string()))

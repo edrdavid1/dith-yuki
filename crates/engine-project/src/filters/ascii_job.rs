@@ -8,10 +8,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use engine_ascii::{
-    convert, render_rgba, to_ansi, to_html, to_json, to_png, to_svg, to_txt, AnsiDepth,
-    AnsiOptions, Ansi16Palette, AtlasOptions, BundledFont, CellColor, CellDither, ColorTarget,
-    ConvertOptions, EdgeOverlay, FontFace, FontSize, GlyphAtlas, GridColorMode, HtmlOptions,
-    MatchMode, SvgOptions, SymbolSet, AsciiGrid, TXT_EXPORT_MAX_COLS,
+    convert, render_rgba, to_ansi, to_html, to_json, to_png, to_svg, to_txt, Ansi16Palette,
+    AnsiDepth, AnsiOptions, AsciiGrid, AtlasOptions, BundledFont, CellColor, CellDither,
+    ColorTarget, ConvertOptions, EdgeOverlay, FontFace, FontSize, GlyphAtlas, GridColorMode,
+    HtmlOptions, MatchMode, SvgOptions, SymbolSet, TXT_EXPORT_MAX_COLS,
 };
 
 use crate::error::EngineError;
@@ -154,7 +154,7 @@ pub enum AsciiExportFormat {
 }
 
 impl AsciiExportFormat {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
             "txt" | "text" => Some(Self::Txt),
             "ansi" | "ans" => Some(Self::Ansi),

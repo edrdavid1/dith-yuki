@@ -7,7 +7,7 @@
  * B3/B4a/B4b/B5:
  *   left   — Layers tab
  *   right  — Effect Settings + Color Lab (vertical stack via applyAppChromePolicy)
- *   center — Preview (canvas host; float = flex-popout, not PanelManager)
+ *   center — Preview (canvas host; float = flex-popout)
  */
 
 import type { IJsonModel } from 'flexlayout-react';

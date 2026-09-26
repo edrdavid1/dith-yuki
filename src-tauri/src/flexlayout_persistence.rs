@@ -12,7 +12,7 @@
 //! - v2 migration detection: if old `panel_state.json` exists, use default v3 (no translation)
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde_json::{json, Value};
 
@@ -24,6 +24,7 @@ pub enum LayoutPersistenceError {
     /// Failed to parse JSON from disk.
     InvalidJson(String),
     /// Layout JSON is missing required fields.
+    #[allow(dead_code)] // reserved for stricter schema validation
     InvalidSchema(String),
     /// Failed to write the layout file to disk.
     WriteError(String),
@@ -170,6 +171,7 @@ impl FlexLayoutPersistence {
     }
 
     /// Reset layout to default v3 (called on explicit "reset layout" action).
+    #[allow(dead_code)] // IPC may wire this later; keep for API symmetry with load/save
     pub fn reset_to_default(&self) -> Result<String, LayoutPersistenceError> {
         Ok(Self::default_layout_json())
     }
@@ -182,7 +184,10 @@ impl FlexLayoutPersistence {
     /// - One TabSetNode (left, for Layers)
     /// - TabNode for Layers panel
     pub fn default_layout_json() -> String {
-        // Default v3 layout: Layers docked left, no floating windows
+        // Legacy shared fallback (left-biased Layers tabset) for missing/corrupt
+        // files and `reset_layout_to_default`. B5 runtime defaults for left/right/
+        // center live in frontend `DefaultLayouts.ts` (center → Preview); center
+        // loads are also repaired by `ensurePreviewPresent` if Preview is absent.
         json!({
             "version": 3,
             "root": {
@@ -271,7 +276,7 @@ mod tests {
 
         // Load without saving anything
         let loaded = persistence.load().unwrap();
-        assert!(loaded.contains("\"version\": 3"));
+        assert!((loaded.contains("\"version\":3") || loaded.contains("\"version\": 3")));
         assert!(loaded.contains("Layers"));
 
         // Verify it's valid JSON
@@ -291,7 +296,7 @@ mod tests {
 
         // Load should fall back to default (logs warning, does NOT crash)
         let loaded = persistence.load().unwrap();
-        assert!(loaded.contains("\"version\": 3"));
+        assert!((loaded.contains("\"version\":3") || loaded.contains("\"version\": 3")));
         assert!(loaded.contains("Layers"));
 
         // Verify returned JSON is valid
@@ -308,7 +313,7 @@ mod tests {
         fs::write(&layout_path, "{}").unwrap();
 
         let loaded = persistence.load().unwrap();
-        assert!(loaded.contains("\"version\": 3"));
+        assert!((loaded.contains("\"version\":3") || loaded.contains("\"version\": 3")));
     }
 
     #[test]
@@ -326,7 +331,7 @@ mod tests {
 
         // Load should detect v2 and return default v3 (no translation)
         let loaded = persistence.load().unwrap();
-        assert!(loaded.contains("\"version\": 3"));
+        assert!((loaded.contains("\"version\":3") || loaded.contains("\"version\": 3")));
         assert!(!loaded.contains("\"version\": 2"));
 
         // v2 file should still exist (not deleted, migration is non-destructive)
@@ -471,7 +476,7 @@ mod tests {
         let persistence = FlexLayoutPersistence::new(temp_dir.path().to_path_buf());
 
         let result = persistence.reset_to_default().unwrap();
-        assert!(result.contains("\"version\": 3"));
+        assert!((result.contains("\"version\":3") || result.contains("\"version\": 3")));
 
         let value: Value = serde_json::from_str(&result).unwrap();
         assert_eq!(value["version"], 3);
@@ -508,14 +513,14 @@ mod tests {
         let persistence =
             FlexLayoutPersistence::new(temp_dir.path().join("scenario1").to_path_buf());
         let loaded = persistence.load().unwrap();
-        assert!(loaded.contains("\"version\": 3"));
+        assert!((loaded.contains("\"version\":3") || loaded.contains("\"version\": 3")));
 
         // Test 2: Directory exists but file missing
         fs::create_dir_all(temp_dir.path().join("scenario2")).unwrap();
         let persistence =
             FlexLayoutPersistence::new(temp_dir.path().join("scenario2").to_path_buf());
         let loaded = persistence.load().unwrap();
-        assert!(loaded.contains("\"version\": 3"));
+        assert!((loaded.contains("\"version\":3") || loaded.contains("\"version\": 3")));
 
         // Test 3: V2 migration scenario
         let scenario3 = temp_dir.path().join("scenario3");
@@ -523,7 +528,7 @@ mod tests {
         fs::write(scenario3.join("panel_state.json"), r#"{"version": 2}"#).unwrap();
         let persistence = FlexLayoutPersistence::new(scenario3);
         let loaded = persistence.load().unwrap();
-        assert!(loaded.contains("\"version\": 3"));
+        assert!((loaded.contains("\"version\":3") || loaded.contains("\"version\": 3")));
         assert!(!loaded.contains("\"version\": 2"));
     }
 }

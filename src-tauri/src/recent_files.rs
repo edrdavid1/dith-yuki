@@ -1,6 +1,6 @@
 //! Disk persistence for the Recent Files list.
 //!
-//! Same idiom as `panel_persistence.rs`: JSON in `{app_data_dir}/recent_files.json`.
+//! Same idiom as FlexLayout / recent_files: JSON in `{app_data_dir}/recent_files.json`.
 //! Missing or corrupt files are treated as an empty list. Write failures are logged
 //! and never fail the caller (open/save already succeeded).
 

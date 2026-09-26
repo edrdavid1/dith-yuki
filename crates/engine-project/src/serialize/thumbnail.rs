@@ -4,8 +4,9 @@
 //! go through new archive entries with different names.
 
 use crate::document::Document;
-use crate::filter::FilterInstance;
-use crate::filters::apply::apply_filter_to_tile;
+use crate::filter::{FilterInstance, FilterParams};
+use crate::filters::apply::apply_filter_to_tile_with_caches;
+use crate::filters::dither_residuals::ErrorResidualsStore;
 use crate::layer::{Layer, LayerNode};
 use crate::serialize::migrate::ProjectError;
 use crate::types::{DocumentId, LayerId, LayerKind};
@@ -13,6 +14,7 @@ use engine_color::palette::Palette;
 use engine_color::palette_cache::PaletteKdCache;
 use engine_color::palette_lut::PaletteLutCache;
 use engine_color::threshold_map::ThresholdMapCache;
+use engine_tiles::block_cache::BlockRepresentativeCache;
 use engine_tiles::decompose::decompose_image_to_tiles;
 use engine_tiles::{CacheStage, PixelTile, TileCache, TileCoord, TileKey, HALO, TILE_SIZE};
 use image::imageops::FilterType;
@@ -62,8 +64,8 @@ mod lru_thumb {
         }
 
         pub fn insert(&mut self, key: [u8; 32], value: Vec<u8>) {
-            if self.map.contains_key(&key) {
-                self.map.insert(key, value);
+            if let std::collections::hash_map::Entry::Occupied(mut e) = self.map.entry(key) {
+                e.insert(value);
                 return;
             }
             if self.order.len() >= CAP {
@@ -101,7 +103,9 @@ pub fn encode_thumbnail_png_deterministic(
         )));
     }
     if width == 0 || height == 0 {
-        return Err(ProjectError::Codec("thumbnail requires non-zero size".into()));
+        return Err(ProjectError::Codec(
+            "thumbnail requires non-zero size".into(),
+        ));
     }
 
     let mut buf = Vec::new();
@@ -137,7 +141,9 @@ pub fn build_thumbnail_png(
     max_side: u32,
 ) -> Result<Vec<u8>, ProjectError> {
     if width == 0 || height == 0 {
-        return Err(ProjectError::Codec("thumbnail requires non-zero size".into()));
+        return Err(ProjectError::Codec(
+            "thumbnail requires non-zero size".into(),
+        ));
     }
     let expected = (width as usize) * (height as usize) * 4;
     if rgba.len() != expected {
@@ -152,12 +158,8 @@ pub fn build_thumbnail_png(
     let img = RgbaImage::from_raw(width, height, rgba.to_vec())
         .ok_or_else(|| ProjectError::Codec("failed to wrap RGBA for thumbnail".into()))?;
 
-    let cap = max_side.min(THUMBNAIL_MAX_SIDE).max(1);
-    let mut sides: Vec<u32> = SIDE_STEPS
-        .iter()
-        .copied()
-        .filter(|&s| s <= cap)
-        .collect();
+    let cap = max_side.clamp(1, THUMBNAIL_MAX_SIDE);
+    let mut sides: Vec<u32> = SIDE_STEPS.iter().copied().filter(|&s| s <= cap).collect();
     if sides.is_empty() || sides[0] != cap {
         sides.insert(0, cap);
         sides.sort_by(|a, b| b.cmp(a));
@@ -256,10 +258,13 @@ pub fn pattern_preview_sample_rgba8() -> (u32, u32, Vec<u8>) {
                 0u8
             };
             // Cheap deterministic hash noise.
-            let n = ((x.wrapping_mul(374761393) ^ y.wrapping_mul(668265263)).wrapping_mul(1274126177)
+            let n = ((x.wrapping_mul(374761393) ^ y.wrapping_mul(668265263))
+                .wrapping_mul(1274126177)
                 >> 24) as u8
                 & 31;
-            let r = ((fx * 220.0) as u8).saturating_add(checker / 2).saturating_add(n / 4);
+            let r = ((fx * 220.0) as u8)
+                .saturating_add(checker / 2)
+                .saturating_add(n / 4);
             let g = ((fy * 200.0) as u8)
                 .saturating_add(40)
                 .saturating_add(checker / 3);
@@ -304,9 +309,29 @@ pub fn render_pattern_preview_rgba(
     let palette_cache = PaletteKdCache::new();
     let lut_cache = PaletteLutCache::new();
     let threshold_cache = ThresholdMapCache::new();
+    // Shared residuals across tiles — same as export / live preview. Isolated
+    // per-tile stores draw a 256px ED seam grid into pattern thumbnails.
+    let residuals_store = ErrorResidualsStore::new();
+    let block_cache = BlockRepresentativeCache::new();
+    if layer.dither_is_first_applied() {
+        for filter in &layer.filters {
+            if !filter.enabled {
+                continue;
+            }
+            let ps = match &filter.params {
+                FilterParams::DitherV2(p) => p.pixel_size,
+                FilterParams::Dither { .. } => 1,
+                _ => continue,
+            };
+            if ps > 1 {
+                block_cache
+                    .ensure_populated_from_tiles(&cache, doc_id.0, layer_id.0, ps as u32, w, h);
+            }
+        }
+    }
 
-    let cols = (w + TILE_SIZE - 1) / TILE_SIZE;
-    let rows = (h + TILE_SIZE - 1) / TILE_SIZE;
+    let cols = w.div_ceil(TILE_SIZE);
+    let rows = h.div_ceil(TILE_SIZE);
     let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
 
     for ty in 0..rows {
@@ -325,7 +350,7 @@ pub fn render_pattern_preview_rgba(
             let raw = cache
                 .get_entry(key)
                 .ok_or_else(|| ProjectError::Codec("pattern preview missing Raw tile".into()))?;
-            let processed = apply_filter_to_tile(
+            let processed = apply_filter_to_tile_with_caches(
                 raw.as_ref(),
                 &layer,
                 coord,
@@ -333,6 +358,9 @@ pub fn render_pattern_preview_rgba(
                 &lut_cache,
                 &threshold_cache,
                 &doc,
+                &residuals_store,
+                &block_cache,
+                None,
             )
             .map_err(|e| ProjectError::Codec(format!("pattern preview filter: {e}")))?;
             blit_tile_to_rgba8(&processed, tx, ty, w, h, &mut out);
@@ -378,10 +406,7 @@ fn blit_tile_to_rgba8(
 }
 
 /// Prefer a real pattern preview; fall back to sample, then neutral.
-pub fn build_pattern_thumbnail_png(
-    filters: &[FilterInstance],
-    palettes: &[Palette],
-) -> Vec<u8> {
+pub fn build_pattern_thumbnail_png(filters: &[FilterInstance], palettes: &[Palette]) -> Vec<u8> {
     let rgba_result = render_pattern_preview_rgba(filters, palettes).or_else(|e| {
         log::warn!("pattern preview render failed ({e}); using raw sample");
         let (w, h, sample) = pattern_preview_sample_rgba8();
@@ -392,7 +417,6 @@ pub fn build_pattern_thumbnail_png(
         Err(_) => neutral_thumbnail_png(),
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -428,10 +452,14 @@ mod tests {
 
     #[test]
     fn no_ancillary_chunks() {
-        let rgba = vec![10u8, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255];
+        let rgba = vec![
+            10u8, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255,
+        ];
         let png = encode_thumbnail_png_deterministic(&rgba, 2, 2).unwrap();
         // Scan for known ancillary type codes (lowercase second letter).
-        let forbidden = [b"tEXt", b"iTXt", b"zTXt", b"eXIf", b"iCCP", b"pHYs", b"gAMA", b"sRGB", b"cHRM"];
+        let forbidden = [
+            b"tEXt", b"iTXt", b"zTXt", b"eXIf", b"iCCP", b"pHYs", b"gAMA", b"sRGB", b"cHRM",
+        ];
         for tag in forbidden {
             let mut found = false;
             for w in png.windows(4) {
@@ -440,7 +468,11 @@ mod tests {
                     break;
                 }
             }
-            assert!(!found, "found forbidden chunk {:?}", std::str::from_utf8(tag));
+            assert!(
+                !found,
+                "found forbidden chunk {:?}",
+                std::str::from_utf8(tag)
+            );
         }
     }
 

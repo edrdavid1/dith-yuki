@@ -16,7 +16,11 @@ use crate::palette::{linear_to_srgb, LinearColor, PaletteError};
 /// Parse Microsoft RIFF Palette format bytes into sRGB color triples.
 pub fn parse(data: &[u8]) -> Result<Vec<(u8, u8, u8)>, PaletteError> {
     if data.len() < 24 {
-        return Err(parse_error("PAL", "byte 0", "file too short for RIFF PAL header"));
+        return Err(parse_error(
+            "PAL",
+            "byte 0",
+            "file too short for RIFF PAL header",
+        ));
     }
 
     // Check RIFF magic
@@ -55,7 +59,7 @@ pub fn parse(data: &[u8]) -> Result<Vec<(u8, u8, u8)>, PaletteError> {
 
         // Skip to next chunk (pad to even size)
         offset += 8 + chunk_size;
-        if chunk_size % 2 != 0 {
+        if !chunk_size.is_multiple_of(2) {
             offset += 1;
         }
     }
@@ -153,8 +157,16 @@ mod tests {
     #[test]
     fn export_basic() {
         let colors = vec![
-            LinearColor { r: 1.0, g: 0.0, b: 0.0 },
-            LinearColor { r: 0.0, g: 1.0, b: 0.0 },
+            LinearColor {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            LinearColor {
+                r: 0.0,
+                g: 1.0,
+                b: 0.0,
+            },
         ];
         let result = export(&colors, None).unwrap();
         assert_eq!(&result[0..4], b"RIFF");
@@ -170,10 +182,26 @@ mod tests {
     #[test]
     fn round_trip() {
         let colors = vec![
-            LinearColor { r: 1.0, g: 0.0, b: 0.0 },
-            LinearColor { r: 0.0, g: 1.0, b: 0.0 },
-            LinearColor { r: 0.0, g: 0.0, b: 1.0 },
-            LinearColor { r: 0.5, g: 0.5, b: 0.5 },
+            LinearColor {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            LinearColor {
+                r: 0.0,
+                g: 1.0,
+                b: 0.0,
+            },
+            LinearColor {
+                r: 0.0,
+                g: 0.0,
+                b: 1.0,
+            },
+            LinearColor {
+                r: 0.5,
+                g: 0.5,
+                b: 0.5,
+            },
         ];
         let exported = export(&colors, None).unwrap();
         let parsed = parse(&exported).unwrap();

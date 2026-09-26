@@ -64,6 +64,32 @@ fn extension_allowed(path: &Path, allowed_ext: &[&str]) -> bool {
         .any(|allowed| allowed.eq_ignore_ascii_case(ext))
 }
 
+/// Strip Windows verbatim (`\\?\`) / device (`\\.\`) prefixes so a
+/// `canonicalize()`d path can be compared with `dirs::home_dir()`.
+fn strip_verbatim_prefix(path: &Path) -> PathBuf {
+    let s = path.to_string_lossy();
+    for prefix in ["\\\\?\\", "//?/", "\\\\.\\"] {
+        if let Some(rest) = s.strip_prefix(prefix) {
+            return PathBuf::from(rest);
+        }
+    }
+    path.to_path_buf()
+}
+
+fn path_under_home(canonical: &Path) -> Result<(), SandboxError> {
+    let home = dirs::home_dir().ok_or(SandboxError::NoHome)?;
+    // Prefer canonicalized home when it exists so both sides share the same
+    // Windows verbatim-prefix form; fall back to the raw home path.
+    let home = home.canonicalize().unwrap_or(home);
+    let canonical = strip_verbatim_prefix(canonical);
+    let home = strip_verbatim_prefix(&home);
+    if canonical.starts_with(&home) {
+        Ok(())
+    } else {
+        Err(SandboxError::OutsideHome)
+    }
+}
+
 /// Validates and resolves a user-supplied path, ensuring it:
 /// - Has an extension present in `allowed_ext` (case-insensitive)
 /// - Resolves to a location within the user's home directory
@@ -77,12 +103,7 @@ pub fn resolve_user_path(raw: &str, allowed_ext: &[&str]) -> Result<PathBuf, San
     }
 
     let canonical = path.canonicalize().map_err(|_| SandboxError::NotFound)?;
-
-    let home = dirs::home_dir().ok_or(SandboxError::NoHome)?;
-    if !canonical.starts_with(&home) {
-        return Err(SandboxError::OutsideHome);
-    }
-
+    path_under_home(&canonical)?;
     Ok(canonical)
 }
 
@@ -103,11 +124,7 @@ pub fn resolve_export_path(raw: &str, allowed_ext: &[&str]) -> Result<PathBuf, S
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     let canonical_parent = parent.canonicalize().map_err(|_| SandboxError::NotFound)?;
-
-    let home = dirs::home_dir().ok_or(SandboxError::NoHome)?;
-    if !canonical_parent.starts_with(&home) {
-        return Err(SandboxError::OutsideHome);
-    }
+    path_under_home(&canonical_parent)?;
 
     let file_name = path.file_name().ok_or(SandboxError::BadExtension)?;
     Ok(canonical_parent.join(file_name))

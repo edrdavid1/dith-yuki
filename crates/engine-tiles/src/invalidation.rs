@@ -21,7 +21,7 @@
 //! The cascade is performed by iterating cache entries (may be approximate for large caches).
 //! Deleted tiles during cascading do not cause issues; only existing tiles are marked dirty.
 
-use crate::{TileCache, TileKey, CacheStage, LayerId, TileCoord};
+use crate::{CacheStage, LayerId, TileCache, TileCoord, TileKey};
 
 /// Describes a document change that may invalidate cached tiles.
 ///
@@ -33,8 +33,14 @@ pub enum InvalidationEvent {
         layer: LayerId,
         coords: Vec<TileCoord>,
     },
-    LayerFilterChanged { doc: u32, layer: LayerId },
-    LayerPropsChanged { doc: u32, layer: LayerId },
+    LayerFilterChanged {
+        doc: u32,
+        layer: LayerId,
+    },
+    LayerPropsChanged {
+        doc: u32,
+        layer: LayerId,
+    },
     MaskChanged {
         doc: u32,
         layer: LayerId,
@@ -161,28 +167,20 @@ fn cascade_composite_invalidation_all_coords(cache: &TileCache, doc: u32, _layer
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PixelTile};
+    use crate::PixelTile;
     use std::sync::Arc;
 
     fn make_key(layer: u32, x: u32, y: u32, stage: CacheStage) -> TileKey {
         TileKey {
             doc: 1,
             layer,
-            coord: TileCoord {
-                level: 0,
-                x,
-                y,
-            },
+            coord: TileCoord { level: 0, x, y },
             stage,
         }
     }
 
     fn make_coord(x: u32, y: u32) -> TileCoord {
-        TileCoord {
-            level: 0,
-            x,
-            y,
-        }
+        TileCoord { level: 0, x, y }
     }
 
     #[test]
@@ -195,13 +193,25 @@ mod tests {
         cache.get_or_insert(key_raw, tile.clone());
         cache.get_or_insert(key_processed, tile);
 
-        let event = InvalidationEvent::LayerRawChanged { doc: 1, layer: 0,
+        let event = InvalidationEvent::LayerRawChanged {
+            doc: 1,
+            layer: 0,
             coords: vec![make_coord(0, 0)],
         };
         invalidate(&cache, event);
 
-        assert!(cache.entries.get(&key_raw).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
-        assert!(cache.entries.get(&key_processed).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(cache
+            .entries
+            .get(&key_raw)
+            .unwrap()
+            .dirty
+            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(cache
+            .entries
+            .get(&key_processed)
+            .unwrap()
+            .dirty
+            .load(std::sync::atomic::Ordering::Relaxed));
     }
 
     #[test]
@@ -214,14 +224,26 @@ mod tests {
         cache.get_or_insert(key_composite_0, tile.clone());
         cache.get_or_insert(key_composite_1, tile);
 
-        let event = InvalidationEvent::LayerRawChanged { doc: 1, layer: 0,
+        let event = InvalidationEvent::LayerRawChanged {
+            doc: 1,
+            layer: 0,
             coords: vec![make_coord(0, 0)],
         };
         invalidate(&cache, event);
 
         // Both composite tiles (layer 0 and 1) should be marked dirty
-        assert!(cache.entries.get(&key_composite_0).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
-        assert!(cache.entries.get(&key_composite_1).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(cache
+            .entries
+            .get(&key_composite_0)
+            .unwrap()
+            .dirty
+            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(cache
+            .entries
+            .get(&key_composite_1)
+            .unwrap()
+            .dirty
+            .load(std::sync::atomic::Ordering::Relaxed));
     }
 
     #[test]
@@ -240,11 +262,26 @@ mod tests {
         invalidate(&cache, event);
 
         // Processed tiles should be dirty
-        assert!(cache.entries.get(&key_processed_1).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
-        assert!(cache.entries.get(&key_processed_2).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(cache
+            .entries
+            .get(&key_processed_1)
+            .unwrap()
+            .dirty
+            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(cache
+            .entries
+            .get(&key_processed_2)
+            .unwrap()
+            .dirty
+            .load(std::sync::atomic::Ordering::Relaxed));
 
         // Raw tiles should not be marked dirty by filter change
-        assert!(!cache.entries.get(&key_raw).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(!cache
+            .entries
+            .get(&key_raw)
+            .unwrap()
+            .dirty
+            .load(std::sync::atomic::Ordering::Relaxed));
     }
 
     #[test]
@@ -263,9 +300,24 @@ mod tests {
         invalidate(&cache, event);
 
         // Only Composite should be dirty
-        assert!(cache.entries.get(&key_composite).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
-        assert!(!cache.entries.get(&key_processed).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
-        assert!(!cache.entries.get(&key_raw).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(cache
+            .entries
+            .get(&key_composite)
+            .unwrap()
+            .dirty
+            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(!cache
+            .entries
+            .get(&key_processed)
+            .unwrap()
+            .dirty
+            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(!cache
+            .entries
+            .get(&key_raw)
+            .unwrap()
+            .dirty
+            .load(std::sync::atomic::Ordering::Relaxed));
     }
 
     #[test]
@@ -278,15 +330,27 @@ mod tests {
         cache.get_or_insert(key_processed, tile.clone());
         cache.get_or_insert(key_raw, tile);
 
-        let event = InvalidationEvent::MaskChanged { doc: 1, layer: 0,
+        let event = InvalidationEvent::MaskChanged {
+            doc: 1,
+            layer: 0,
             coords: vec![make_coord(0, 0)],
         };
         invalidate(&cache, event);
 
         // Processed should be dirty
-        assert!(cache.entries.get(&key_processed).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(cache
+            .entries
+            .get(&key_processed)
+            .unwrap()
+            .dirty
+            .load(std::sync::atomic::Ordering::Relaxed));
         // Raw should not be
-        assert!(!cache.entries.get(&key_raw).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(!cache
+            .entries
+            .get(&key_raw)
+            .unwrap()
+            .dirty
+            .load(std::sync::atomic::Ordering::Relaxed));
     }
 
     #[test]
@@ -303,15 +367,32 @@ mod tests {
 
         // Invalidate layer 1; should cascade to ALL composite tiles
         // because the global composite depends on all layers
-        let event = InvalidationEvent::LayerRawChanged { doc: 1, layer: 1,
+        let event = InvalidationEvent::LayerRawChanged {
+            doc: 1,
+            layer: 1,
             coords: vec![make_coord(0, 0)],
         };
         invalidate(&cache, event);
 
         // All Composite tiles should be dirty since composite depends on all layers
-        assert!(cache.entries.get(&key_composite_0).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
-        assert!(cache.entries.get(&key_composite_1).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
-        assert!(cache.entries.get(&key_composite_2).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(cache
+            .entries
+            .get(&key_composite_0)
+            .unwrap()
+            .dirty
+            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(cache
+            .entries
+            .get(&key_composite_1)
+            .unwrap()
+            .dirty
+            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(cache
+            .entries
+            .get(&key_composite_2)
+            .unwrap()
+            .dirty
+            .load(std::sync::atomic::Ordering::Relaxed));
     }
 
     #[test]
@@ -322,13 +403,20 @@ mod tests {
 
         cache.get_or_insert(key, tile);
 
-        let event = InvalidationEvent::LayerRawChanged { doc: 1, layer: 0,
+        let event = InvalidationEvent::LayerRawChanged {
+            doc: 1,
+            layer: 0,
             coords: vec![],
         };
         invalidate(&cache, event);
 
         // Should be unaffected
-        assert!(!cache.entries.get(&key).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(!cache
+            .entries
+            .get(&key)
+            .unwrap()
+            .dirty
+            .load(std::sync::atomic::Ordering::Relaxed));
     }
 
     #[test]
@@ -343,21 +431,40 @@ mod tests {
         cache.get_or_insert(key2, tile.clone());
         cache.get_or_insert(key3, tile);
 
-        let event = InvalidationEvent::LayerRawChanged { doc: 1, layer: 0,
+        let event = InvalidationEvent::LayerRawChanged {
+            doc: 1,
+            layer: 0,
             coords: vec![make_coord(0, 0), make_coord(1, 0), make_coord(2, 0)],
         };
         invalidate(&cache, event);
 
-        assert!(cache.entries.get(&key1).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
-        assert!(cache.entries.get(&key2).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
-        assert!(cache.entries.get(&key3).unwrap().dirty.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(cache
+            .entries
+            .get(&key1)
+            .unwrap()
+            .dirty
+            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(cache
+            .entries
+            .get(&key2)
+            .unwrap()
+            .dirty
+            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(cache
+            .entries
+            .get(&key3)
+            .unwrap()
+            .dirty
+            .load(std::sync::atomic::Ordering::Relaxed));
     }
 
     #[test]
     fn invalidate_nonexistent_key_is_safe() {
         let cache = TileCache::new(10_000_000);
 
-        let event = InvalidationEvent::LayerRawChanged { doc: 1, layer: 99,
+        let event = InvalidationEvent::LayerRawChanged {
+            doc: 1,
+            layer: 99,
             coords: vec![make_coord(99, 99)],
         };
 

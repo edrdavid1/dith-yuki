@@ -222,9 +222,8 @@ pub fn normalize_manifest_value(value: Value) -> Result<NormalizedManifest, Proj
         });
 
     let files = match obj.get("files") {
-        Some(v) => serde_json::from_value::<ManifestFiles>(v.clone()).map_err(|e| {
-            ProjectError::InvalidArchive(format!("manifest.files: {e}"))
-        })?,
+        Some(v) => serde_json::from_value::<ManifestFiles>(v.clone())
+            .map_err(|e| ProjectError::InvalidArchive(format!("manifest.files: {e}")))?,
         None => ManifestFiles::new(),
     };
 

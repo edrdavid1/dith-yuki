@@ -14,10 +14,10 @@ use crate::serialize::manifest::{
     check_open_gate, normalize_manifest_value, verify_manifest_files,
 };
 use crate::serialize::migrate::{migrate_dyproj, ArchiveKind, ProjectError};
+use crate::serialize::pixels::decode_png_to_f32;
 use crate::serialize::sanitize::sanitize_display_string_or;
 use crate::serialize::secure_json::{parse_value, MAX_JSON_DEPTH};
 use crate::serialize::secure_zip::{ExpectedKind, SecureZipArchive};
-use crate::serialize::pixels::decode_png_to_f32;
 use crate::types::{DocumentId, LayerId};
 use engine_tiles::decompose::decompose_image_to_tiles;
 use engine_tiles::TileCache;
@@ -43,10 +43,12 @@ pub struct OpenProjectResult {
 
 /// Collect CustomPng user/synthetic paths from a live document and return
 /// basename → PNG bytes to embed (deduped by content hash).
+type CustomPngEmbedMaps = (HashMap<String, Vec<u8>>, HashMap<String, String>);
+
 pub(crate) fn collect_custom_png_embeds(
     doc: &Document,
     read_png: &mut dyn FnMut(&str) -> Result<Vec<u8>, ProjectError>,
-) -> Result<(HashMap<String, Vec<u8>>, HashMap<String, String>), ProjectError> {
+) -> Result<CustomPngEmbedMaps, ProjectError> {
     // path_in_doc → basename
     let mut path_to_basename: HashMap<String, String> = HashMap::new();
     let mut embeds: HashMap<String, Vec<u8>> = HashMap::new();
@@ -191,7 +193,8 @@ pub fn save_project_to_path(
     read_threshold_png: impl FnMut(&str) -> Result<Vec<u8>, ProjectError>,
 ) -> Result<SaveProjectResult, ProjectError> {
     let result = save_project_to_bytes(doc, cache, app_version, read_threshold_png)?;
-    engine_io::atomic_write(path, &result.zip_bytes).map_err(|e| ProjectError::Io(e.to_string()))?;
+    engine_io::atomic_write(path, &result.zip_bytes)
+        .map_err(|e| ProjectError::Io(e.to_string()))?;
     Ok(result)
 }
 
@@ -233,14 +236,15 @@ pub fn open_project_from_bytes(
         })?;
     }
 
-    let read_cached = |reader: &mut SecureZipArchive, path: &str| -> Result<Vec<u8>, ProjectError> {
-        if let Some(b) = verified.get(path) {
-            return Ok(b.clone());
-        }
-        reader
-            .read_entry(path)
-            .map_err(|e| ProjectError::MissingEntry(format!("{path}: {e}")))
-    };
+    let read_cached =
+        |reader: &mut SecureZipArchive, path: &str| -> Result<Vec<u8>, ProjectError> {
+            if let Some(b) = verified.get(path) {
+                return Ok(b.clone());
+            }
+            reader
+                .read_entry(path)
+                .map_err(|e| ProjectError::MissingEntry(format!("{path}: {e}")))
+        };
 
     let doc_bytes = read_cached(&mut reader, "document.json")?;
     let doc_value = parse_value(&doc_bytes, MAX_JSON_DEPTH)?;

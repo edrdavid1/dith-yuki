@@ -49,6 +49,7 @@ export const EFFECT_DEFAULTS: Record<EffectType, Record<string, unknown>> = {
     pattern_angle: 0,
     serpentine: false,
     dither_alpha: true,
+    match_by_brightness: false,
   },
   Glitching: {
     glitch_type: 'RGBShift',

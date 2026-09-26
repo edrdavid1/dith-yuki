@@ -75,6 +75,7 @@ fn assert_parity(
         &block_cache,
         None,
         layer_id,
+        0,
     );
     let params_json = serde_json::json!({
         "palette_id": palette_id,

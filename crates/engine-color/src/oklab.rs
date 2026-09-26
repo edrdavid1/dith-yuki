@@ -4,6 +4,9 @@
 //! Inputs from non-sRGB working spaces require prior ICC-based
 //! conversion to linear sRGB before calling these functions.
 
+// Keep full published Ottosson digits — truncating for clippy changes color math.
+#![allow(clippy::excessive_precision)]
+
 /// Linear RGB color (f32, channels in [0.0, 1.0]).
 /// Matches the internal representation of PixelTile.
 ///
@@ -65,7 +68,11 @@ const M1_INV: [[f32; 3]; 3] = [
 /// Replace NaN or Inf with 0.0.
 #[inline]
 fn sanitize(v: f32) -> f32 {
-    if v.is_finite() { v } else { 0.0 }
+    if v.is_finite() {
+        v
+    } else {
+        0.0
+    }
 }
 
 /// Convert linear RGB to Oklab.
@@ -173,17 +180,23 @@ mod tests {
         assert!(
             (actual.r - expected.r).abs() < tol,
             "r: {} vs {} (diff {})",
-            actual.r, expected.r, (actual.r - expected.r).abs()
+            actual.r,
+            expected.r,
+            (actual.r - expected.r).abs()
         );
         assert!(
             (actual.g - expected.g).abs() < tol,
             "g: {} vs {} (diff {})",
-            actual.g, expected.g, (actual.g - expected.g).abs()
+            actual.g,
+            expected.g,
+            (actual.g - expected.g).abs()
         );
         assert!(
             (actual.b - expected.b).abs() < tol,
             "b: {} vs {} (diff {})",
-            actual.b, expected.b, (actual.b - expected.b).abs()
+            actual.b,
+            expected.b,
+            (actual.b - expected.b).abs()
         );
     }
 
@@ -192,25 +205,43 @@ mod tests {
         assert!(
             (actual.l - expected.l).abs() < tol,
             "L: {} vs {} (diff {})",
-            actual.l, expected.l, (actual.l - expected.l).abs()
+            actual.l,
+            expected.l,
+            (actual.l - expected.l).abs()
         );
         assert!(
             (actual.a - expected.a).abs() < tol,
             "a: {} vs {} (diff {})",
-            actual.a, expected.a, (actual.a - expected.a).abs()
+            actual.a,
+            expected.a,
+            (actual.a - expected.a).abs()
         );
         assert!(
             (actual.b - expected.b).abs() < tol,
             "b: {} vs {} (diff {})",
-            actual.b, expected.b, (actual.b - expected.b).abs()
+            actual.b,
+            expected.b,
+            (actual.b - expected.b).abs()
         );
     }
 
     #[test]
     fn test_black() {
-        let black = LinRgb { r: 0.0, g: 0.0, b: 0.0 };
+        let black = LinRgb {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+        };
         let lab = linear_to_oklab(black);
-        assert_oklab_approx(lab, Oklab { l: 0.0, a: 0.0, b: 0.0 }, 1e-6);
+        assert_oklab_approx(
+            lab,
+            Oklab {
+                l: 0.0,
+                a: 0.0,
+                b: 0.0,
+            },
+            1e-6,
+        );
 
         let back = oklab_to_linear(lab);
         assert_rgb_approx(back, black, 1e-6);
@@ -218,7 +249,11 @@ mod tests {
 
     #[test]
     fn test_white() {
-        let white = LinRgb { r: 1.0, g: 1.0, b: 1.0 };
+        let white = LinRgb {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+        };
         let lab = linear_to_oklab(white);
         // White should have L ≈ 1.0 and a ≈ 0, b ≈ 0
         assert!((lab.l - 1.0).abs() < 1e-5, "white L = {}", lab.l);
@@ -231,7 +266,11 @@ mod tests {
 
     #[test]
     fn test_pure_red() {
-        let red = LinRgb { r: 1.0, g: 0.0, b: 0.0 };
+        let red = LinRgb {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+        };
         let lab = linear_to_oklab(red);
         // Red should have positive L, positive a (red direction), positive b
         assert!(lab.l > 0.0, "red L should be positive: {}", lab.l);
@@ -244,7 +283,11 @@ mod tests {
 
     #[test]
     fn test_pure_green() {
-        let green = LinRgb { r: 0.0, g: 1.0, b: 0.0 };
+        let green = LinRgb {
+            r: 0.0,
+            g: 1.0,
+            b: 0.0,
+        };
         let lab = linear_to_oklab(green);
         // Green should have positive L, negative a (green direction)
         assert!(lab.l > 0.0, "green L should be positive: {}", lab.l);
@@ -256,7 +299,11 @@ mod tests {
 
     #[test]
     fn test_pure_blue() {
-        let blue = LinRgb { r: 0.0, g: 0.0, b: 1.0 };
+        let blue = LinRgb {
+            r: 0.0,
+            g: 0.0,
+            b: 1.0,
+        };
         let lab = linear_to_oklab(blue);
         // Blue should have positive L, negative b (blue direction)
         assert!(lab.l > 0.0, "blue L should be positive: {}", lab.l);
@@ -269,7 +316,11 @@ mod tests {
     #[test]
     fn test_mid_gray() {
         // Mid-gray in linear space (0.5, 0.5, 0.5)
-        let gray = LinRgb { r: 0.5, g: 0.5, b: 0.5 };
+        let gray = LinRgb {
+            r: 0.5,
+            g: 0.5,
+            b: 0.5,
+        };
         let lab = linear_to_oklab(gray);
         // Gray should be achromatic: a ≈ 0, b ≈ 0
         assert!(lab.a.abs() < 1e-5, "gray a = {}", lab.a);
@@ -284,12 +335,36 @@ mod tests {
     #[test]
     fn test_round_trip_various_colors() {
         let colors = [
-            LinRgb { r: 0.2, g: 0.4, b: 0.6 },
-            LinRgb { r: 0.8, g: 0.1, b: 0.3 },
-            LinRgb { r: 0.0, g: 0.5, b: 1.0 },
-            LinRgb { r: 1.0, g: 1.0, b: 0.0 },
-            LinRgb { r: 0.0, g: 1.0, b: 1.0 },
-            LinRgb { r: 1.0, g: 0.0, b: 1.0 },
+            LinRgb {
+                r: 0.2,
+                g: 0.4,
+                b: 0.6,
+            },
+            LinRgb {
+                r: 0.8,
+                g: 0.1,
+                b: 0.3,
+            },
+            LinRgb {
+                r: 0.0,
+                g: 0.5,
+                b: 1.0,
+            },
+            LinRgb {
+                r: 1.0,
+                g: 1.0,
+                b: 0.0,
+            },
+            LinRgb {
+                r: 0.0,
+                g: 1.0,
+                b: 1.0,
+            },
+            LinRgb {
+                r: 1.0,
+                g: 0.0,
+                b: 1.0,
+            },
         ];
 
         for &color in &colors {
@@ -301,61 +376,117 @@ mod tests {
 
     #[test]
     fn test_nan_handling_forward() {
-        let nan_rgb = LinRgb { r: f32::NAN, g: 0.5, b: f32::NAN };
+        let nan_rgb = LinRgb {
+            r: f32::NAN,
+            g: 0.5,
+            b: f32::NAN,
+        };
         let lab = linear_to_oklab(nan_rgb);
         // NaN channels treated as 0.0, so this is like (0.0, 0.5, 0.0)
-        let expected = linear_to_oklab(LinRgb { r: 0.0, g: 0.5, b: 0.0 });
+        let expected = linear_to_oklab(LinRgb {
+            r: 0.0,
+            g: 0.5,
+            b: 0.0,
+        });
         assert_oklab_approx(lab, expected, 1e-6);
     }
 
     #[test]
     fn test_inf_handling_forward() {
-        let inf_rgb = LinRgb { r: f32::INFINITY, g: f32::NEG_INFINITY, b: 0.5 };
+        let inf_rgb = LinRgb {
+            r: f32::INFINITY,
+            g: f32::NEG_INFINITY,
+            b: 0.5,
+        };
         let lab = linear_to_oklab(inf_rgb);
         // Inf → 0.0, so this is like (0.0, 0.0, 0.5)
-        let expected = linear_to_oklab(LinRgb { r: 0.0, g: 0.0, b: 0.5 });
+        let expected = linear_to_oklab(LinRgb {
+            r: 0.0,
+            g: 0.0,
+            b: 0.5,
+        });
         assert_oklab_approx(lab, expected, 1e-6);
     }
 
     #[test]
     fn test_nan_handling_inverse() {
-        let nan_lab = Oklab { l: f32::NAN, a: 0.0, b: 0.0 };
+        let nan_lab = Oklab {
+            l: f32::NAN,
+            a: 0.0,
+            b: 0.0,
+        };
         let rgb = oklab_to_linear(nan_lab);
         // NaN → 0.0, so this is like Oklab(0, 0, 0) → black
-        let expected = oklab_to_linear(Oklab { l: 0.0, a: 0.0, b: 0.0 });
+        let expected = oklab_to_linear(Oklab {
+            l: 0.0,
+            a: 0.0,
+            b: 0.0,
+        });
         assert_rgb_approx(rgb, expected, 1e-6);
     }
 
     #[test]
     fn test_inf_handling_inverse() {
-        let inf_lab = Oklab { l: f32::INFINITY, a: f32::NEG_INFINITY, b: f32::NAN };
+        let inf_lab = Oklab {
+            l: f32::INFINITY,
+            a: f32::NEG_INFINITY,
+            b: f32::NAN,
+        };
         let rgb = oklab_to_linear(inf_lab);
         // All non-finite → 0.0, same as black
-        let expected = oklab_to_linear(Oklab { l: 0.0, a: 0.0, b: 0.0 });
+        let expected = oklab_to_linear(Oklab {
+            l: 0.0,
+            a: 0.0,
+            b: 0.0,
+        });
         assert_rgb_approx(rgb, expected, 1e-6);
     }
 
     #[test]
     fn test_oklab_dist_sq_identical() {
-        let a = Oklab { l: 0.5, a: 0.1, b: -0.2 };
+        let a = Oklab {
+            l: 0.5,
+            a: 0.1,
+            b: -0.2,
+        };
         assert_eq!(oklab_dist_sq(a, a), 0.0);
     }
 
     #[test]
     fn test_oklab_dist_sq_known() {
-        let a = Oklab { l: 0.0, a: 0.0, b: 0.0 };
-        let b = Oklab { l: 1.0, a: 0.0, b: 0.0 };
+        let a = Oklab {
+            l: 0.0,
+            a: 0.0,
+            b: 0.0,
+        };
+        let b = Oklab {
+            l: 1.0,
+            a: 0.0,
+            b: 0.0,
+        };
         assert!((oklab_dist_sq(a, b) - 1.0).abs() < 1e-10);
 
-        let c = Oklab { l: 0.0, a: 3.0, b: 4.0 };
+        let c = Oklab {
+            l: 0.0,
+            a: 3.0,
+            b: 4.0,
+        };
         // dist_sq = 0 + 9 + 16 = 25
         assert!((oklab_dist_sq(a, c) - 25.0).abs() < 1e-6);
     }
 
     #[test]
     fn test_oklab_dist_sq_symmetry() {
-        let a = Oklab { l: 0.3, a: 0.1, b: -0.2 };
-        let b = Oklab { l: 0.7, a: -0.1, b: 0.3 };
+        let a = Oklab {
+            l: 0.3,
+            a: 0.1,
+            b: -0.2,
+        };
+        let b = Oklab {
+            l: 0.7,
+            a: -0.1,
+            b: 0.3,
+        };
         assert!((oklab_dist_sq(a, b) - oklab_dist_sq(b, a)).abs() < 1e-10);
     }
 }

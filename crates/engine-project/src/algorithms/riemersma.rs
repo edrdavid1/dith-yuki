@@ -76,7 +76,8 @@ impl FilterAlgorithm for Riemersma {
         }
 
         let cancel = std::sync::atomic::AtomicBool::new(false);
-        apply_riemersma_rgba(&mut rgba, w, h, &params, &cancel).map_err(FilterError::from_engine)?;
+        apply_riemersma_rgba(&mut rgba, w, h, &params, &cancel)
+            .map_err(FilterError::from_engine)?;
 
         for y in 0..h {
             for x in 0..w {

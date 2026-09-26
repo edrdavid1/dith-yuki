@@ -415,11 +415,11 @@ loop {
 
 **Inline Processed:** если при композитинге Processed тайл отсутствует — вычисляется inline.
 
-### 3.7 Layout (FlexLayout) + leftover PanelManager
+### 3.7 Layout (FlexLayout)
 
-**Dockable panels** (`layers`, `effect`, `colorlab`) живут в двух FlexLayout `Model` (left / right). Persist: `flexlayout_left.json` / `flexlayout_right.json`. Float: `flex-popout-*` + JS `setPosition` (B4c). Подробно: [FLEXLAYOUT_DOCKING.md](./FLEXLAYOUT_DOCKING.md).
+**Dockable panels** (`layers`, `effect`, `colorlab`) живут в двух FlexLayout `Model` (left / right). Persist: `flexlayout_left.json` / `flexlayout_right.json`. Float: `flex-popout-*` + JS `setPosition` (B4c). Preview — center FlexLayout Model (`flexlayout_center.json`). Preferences и Help — main-window dialogs (не FlexLayout). Affinity hit-test (`dock_affinity.rs` + `update_dock_zone`) — тонкий мост для redock Flex popout. Подробно: [FLEXLAYOUT_DOCKING.md](./FLEXLAYOUT_DOCKING.md).
 
-`PanelManager` остаётся для **Preferences leftover** и старых `panel-*` окон. Preview — center FlexLayout Model (`flexlayout_center.json`). Affinity hit-test (`dock_affinity.rs` + `update_dock_zone`) — тонкий мост для redock Flex popout (Preview affinity не армится). `global_mouseup.rs` **удалён**.
+Старый `PanelManager` / `panel_state.json` / `panel-*` окна **удалены**.
 
 ### 3.8 IPC-команды (сводка)
 

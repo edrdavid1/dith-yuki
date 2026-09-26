@@ -43,7 +43,7 @@ impl TileBufferPark {
 
     /// Take one owned buffer (allocate if the park is empty).
     pub fn take(&mut self) -> PixelTile {
-        self.free.pop().unwrap_or_else(PixelTile::new)
+        self.free.pop().unwrap_or_default()
     }
 
     /// Return a spare buffer to the park. Excess beyond capacity is dropped.
@@ -97,7 +97,7 @@ mod tests {
             p.give(t);
         });
         with_tile_buffer_park(|p| {
-            assert!(p.len() >= 1, "spare should remain after give");
+            assert!(!p.is_empty(), "spare should remain after give");
         });
     }
 }

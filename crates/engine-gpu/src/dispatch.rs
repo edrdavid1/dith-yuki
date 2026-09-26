@@ -202,5 +202,12 @@ pub fn dispatch_rgba32_arc(
     input: &[f32],
     timeout: Duration,
 ) -> Result<Vec<f32>, GpuError> {
-    dispatch_rgba32(ctx, pipeline, bind_group_layout, uniform_bytes, input, timeout)
+    dispatch_rgba32(
+        ctx,
+        pipeline,
+        bind_group_layout,
+        uniform_bytes,
+        input,
+        timeout,
+    )
 }

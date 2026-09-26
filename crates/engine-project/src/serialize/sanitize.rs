@@ -58,9 +58,7 @@ pub fn sanitize_filename(input: &str, max_len: usize) -> String {
             break;
         }
     }
-    let trimmed: String = out
-        .trim_end_matches(|c: char| c == '.' || c == ' ')
-        .to_string();
+    let trimmed: String = out.trim_end_matches(['.', ' ']).to_string();
     let stem = if trimmed.is_empty() {
         "untitled".to_string()
     } else {

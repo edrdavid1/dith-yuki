@@ -22,9 +22,9 @@ impl Default for EdgeOverlay {
 
 /// Four orientation bins → preferred codepoints (tried in order).
 const ORIENT_CHARS: [[char; 3]; 4] = [
-    ['—', '─', '-'], // 0° horizontal
-    ['/', '/', '/'], // 45°
-    ['|', '│', '|'], // 90° vertical
+    ['—', '─', '-'],    // 0° horizontal
+    ['/', '/', '/'],    // 45°
+    ['|', '│', '|'],    // 90° vertical
     ['\\', '\\', '\\'], // 135°
 ];
 
@@ -74,10 +74,10 @@ impl EdgeField {
                     let yy = (y as i32 + dy) as u32;
                     dog[(yy * width + xx) as usize] as i32
                 };
-                let gx = -at(-1, -1) + at(1, -1) - 2 * at(-1, 0) + 2 * at(1, 0) - at(-1, 1)
-                    + at(1, 1);
-                let gy = -at(-1, -1) - 2 * at(0, -1) - at(1, -1) + at(-1, 1) + 2 * at(0, 1)
-                    + at(1, 1);
+                let gx =
+                    -at(-1, -1) + at(1, -1) - 2 * at(-1, 0) + 2 * at(1, 0) - at(-1, 1) + at(1, 1);
+                let gy =
+                    -at(-1, -1) - 2 * at(0, -1) - at(1, -1) + at(-1, 1) + 2 * at(0, 1) + at(1, 1);
                 let m = ((gx * gx + gy * gy) as f32).sqrt().min(255.0) as u8;
                 // Angle of the gradient normal; edge direction is perpendicular.
                 let angle = (gy as f32).atan2(gx as f32); // −π..=π

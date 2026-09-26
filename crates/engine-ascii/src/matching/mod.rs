@@ -4,8 +4,7 @@ mod edge_overlay;
 mod mask_two_color;
 
 pub use edge_overlay::{orient_glyph, EdgeField, EdgeOrient, EdgeOverlay};
-pub use mask_two_color::{TwoColorMatch, match_mask_two_color, sample_cell_rgb};
-
+pub use mask_two_color::{match_mask_two_color, sample_cell_rgb, TwoColorMatch};
 
 use crate::atlas::GlyphAtlas;
 use crate::descriptor::{ShapeContrastDesc, ShapeDesc, ToneDesc};

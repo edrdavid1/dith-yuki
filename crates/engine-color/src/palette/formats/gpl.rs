@@ -12,16 +12,15 @@ use crate::palette::{linear_to_srgb, LinearColor, PaletteError};
 
 /// Parse a GPL file from raw bytes into sRGB (u8, u8, u8) triples.
 pub fn parse(data: &[u8]) -> Result<Vec<(u8, u8, u8)>, PaletteError> {
-    let text = std::str::from_utf8(data).map_err(|e| {
-        parse_error("GPL", "byte 0", &format!("invalid UTF-8: {}", e))
-    })?;
+    let text = std::str::from_utf8(data)
+        .map_err(|e| parse_error("GPL", "byte 0", &format!("invalid UTF-8: {}", e)))?;
 
     let mut lines = text.lines();
 
     // First line must be "GIMP Palette"
-    let first_line = lines.next().ok_or_else(|| {
-        parse_error("GPL", "line 1", "empty file")
-    })?;
+    let first_line = lines
+        .next()
+        .ok_or_else(|| parse_error("GPL", "line 1", "empty file"))?;
 
     if first_line.trim() != "GIMP Palette" {
         return Err(parse_error(
@@ -57,11 +56,7 @@ pub fn parse(data: &[u8]) -> Result<Vec<(u8, u8, u8)>, PaletteError> {
         match parse_color_line(trimmed) {
             Ok(color) => colors.push(color),
             Err(reason) => {
-                return Err(parse_error(
-                    "GPL",
-                    &format!("line {}", line_num),
-                    &reason,
-                ));
+                return Err(parse_error("GPL", &format!("line {}", line_num), &reason));
             }
         }
     }

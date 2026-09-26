@@ -1,7 +1,7 @@
 //! Filter stack → compute graph (pure).
 
 use super::types::{
-    hash_graph_nodes, ComputeGraph, GraphLayerFilter, GraphNode, GpuPass, GpuPipelineKey,
+    hash_graph_nodes, ComputeGraph, GpuPass, GpuPipelineKey, GraphLayerFilter, GraphNode,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -95,10 +95,7 @@ mod tests {
 
     #[test]
     fn empty_stack_errors() {
-        assert!(matches!(
-            compile_graph(&[]),
-            Err(GraphCompileError::Empty)
-        ));
+        assert!(matches!(compile_graph(&[]), Err(GraphCompileError::Empty)));
     }
 
     #[test]

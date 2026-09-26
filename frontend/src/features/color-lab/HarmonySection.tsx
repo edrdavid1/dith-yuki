@@ -67,85 +67,89 @@ export default function HarmonySection({ onInsert, onError }: HarmonySectionProp
   }, [refreshPreview]);
 
   return (
-    <div className={cn('color-lab-column', 'generator-section')}>
-      <div className={cn('color-lab-section-title')}>harmonization</div>
-      <p className={cn('color-lab-hint')}>
-        Insert replaces draft colors. Document palette is created only on Apply.
-      </p>
+    <details className={cn('generator-section')}>
+      <summary className={cn('color-lab-section-title', 'generator-section-summary')}>
+        harmonization
+      </summary>
+      <div className={cn('generator-section-body')}>
+        <p className={cn('color-lab-hint')}>
+          Insert replaces draft colors. Document palette is created only on Apply.
+        </p>
 
-      <div className={cn('generator-swatch-row')}>
-        <button
-          type="button"
-          className={cn('generator-swatch-btn')}
-          style={{ backgroundColor: `#${baseHex}` }}
-          onClick={(e) => {
-            setPickerOpen(true);
-            setPickerAnchor((e.currentTarget as HTMLElement).getBoundingClientRect());
-          }}
-          aria-label="Harmony base color"
+        <div className={cn('generator-swatch-row')}>
+          <button
+            type="button"
+            className={cn('generator-swatch-btn')}
+            style={{ backgroundColor: `#${baseHex}` }}
+            onClick={(e) => {
+              setPickerOpen(true);
+              setPickerAnchor((e.currentTarget as HTMLElement).getBoundingClientRect());
+            }}
+            aria-label="Harmony base color"
+          />
+          <span className={cn('generator-swatch-label')}>base</span>
+        </div>
+
+        <DropdownMenu
+          value={rule}
+          options={RULE_OPTIONS}
+          onSelect={(v) => setRule(v as HarmonyRuleName)}
         />
-        <span className={cn('generator-swatch-label')}>base</span>
-      </div>
 
-      <DropdownMenu
-        value={rule}
-        options={RULE_OPTIONS}
-        onSelect={(v) => setRule(v as HarmonyRuleName)}
-      />
-
-      <Slider
-        label="count"
-        value={count}
-        min={2}
-        max={16}
-        step={1}
-        decimals={0}
-        onChange={(v) => setCount(Math.round(v))}
-      />
-
-      {rule === 'Analogous' && (
         <Slider
-          label="spread (°)"
-          value={spreadDeg}
-          min={5}
-          max={90}
+          label="count"
+          value={count}
+          min={2}
+          max={16}
           step={1}
           decimals={0}
-          onChange={(v) => setSpreadDeg(Math.round(v))}
+          onChange={(v) => setCount(Math.round(v))}
         />
-      )}
 
-      <div className={cn('generator-preview-strip')} aria-label="Harmony preview">
-        {preview.map((c, i) => (
-          <span
-            key={`${c.hex}-${i}`}
-            className={cn('generator-preview-cell')}
-            style={{ backgroundColor: c.hex }}
-            title={c.hex}
+        {rule === 'Analogous' && (
+          <Slider
+            label="spread (°)"
+            value={spreadDeg}
+            min={5}
+            max={90}
+            step={1}
+            decimals={0}
+            onChange={(v) => setSpreadDeg(Math.round(v))}
           />
-        ))}
+        )}
+
+        <div className={cn('generator-preview-strip')} aria-label="Harmony preview">
+          {preview.map((c, i) => (
+            <span
+              key={`${c.hex}-${i}`}
+              className={cn('generator-preview-cell')}
+              style={{ backgroundColor: c.hex }}
+              title={c.hex}
+            />
+          ))}
+        </div>
+
+        <button
+          type="button"
+          className={cn('color-lab-button')}
+          disabled={busy || preview.length === 0}
+          onClick={() => onInsert(preview.map((c) => c.hex))}
+        >
+          Insert into draft
+        </button>
+
+        {pickerOpen && (
+          <ColorPicker
+            initialColor={baseHex}
+            onConfirm={(hex) => setBaseHex(hex)}
+            onCancel={() => {
+              setPickerOpen(false);
+              setPickerAnchor(null);
+            }}
+            anchorRect={pickerAnchor}
+          />
+        )}
       </div>
-
-      <button
-        type="button"
-        className={cn('color-lab-button')}
-        disabled={busy || preview.length === 0}
-        onClick={() => onInsert(preview.map((c) => c.hex))}
-      >
-        Insert into draft
-      </button>
-
-      {pickerOpen && (
-        <ColorPicker
-          initialColor={baseHex}
-          onConfirm={(hex) => setBaseHex(hex)}
-          onCancel={() => {
-            setPickerOpen(false);
-            setPickerAnchor(null);
-          }}
-          anchorRect={pickerAnchor}
-        />
-      )}
-    </div>
+    </details>
   );
 }

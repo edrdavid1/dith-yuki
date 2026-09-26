@@ -67,11 +67,7 @@ pub enum SecureZipError {
     UnsupportedEntry { name: String, reason: String },
 
     #[error("entry {name} exceeds uncompressed limit ({read} > {limit})")]
-    EntryTooLarge {
-        name: String,
-        read: u64,
-        limit: u64,
-    },
+    EntryTooLarge { name: String, read: u64, limit: u64 },
 
     #[error("archive uncompressed total exceeds limit ({read} > {limit})")]
     TotalUncompressedTooLarge { read: u64, limit: u64 },
@@ -261,12 +257,15 @@ impl SecureZipArchive {
         let mut limited = LimitedReader::new(&mut file, budget);
         let mut buf = Vec::new();
         // Do not pre-reserve from untrusted declared size beyond budget.
-        let reserve = (declared as usize).min(budget as usize).min(16 * 1024 * 1024);
-        buf.try_reserve_exact(reserve).map_err(|_| SecureZipError::EntryTooLarge {
-            name: canonical.clone(),
-            read: declared,
-            limit: budget,
-        })?;
+        let reserve = (declared as usize)
+            .min(budget as usize)
+            .min(16 * 1024 * 1024);
+        buf.try_reserve_exact(reserve)
+            .map_err(|_| SecureZipError::EntryTooLarge {
+                name: canonical.clone(),
+                read: declared,
+                limit: budget,
+            })?;
 
         match limited.read_to_end(&mut buf) {
             Ok(_) => {}
@@ -384,11 +383,7 @@ pub fn validate_entry_syntax(name: &str, limits: &ArchiveLimits) -> Result<(), S
         return Err(SecureZipError::UnsafeEntryName(name.into()));
     }
 
-    if name.contains('\\')
-        || name.starts_with('/')
-        || name.contains(':')
-        || name.contains("//")
-    {
+    if name.contains('\\') || name.starts_with('/') || name.contains(':') || name.contains("//") {
         return Err(SecureZipError::UnsafeEntryName(name.into()));
     }
 
@@ -476,7 +471,9 @@ fn is_ext_entry(name: &str) -> bool {
 
 fn is_id_token(s: &str) -> bool {
     let len = s.len();
-    (1..=64).contains(&len) && s.bytes().all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-'))
+    (1..=64).contains(&len)
+        && s.bytes()
+            .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-'))
 }
 
 fn is_ext_token(s: &str) -> bool {
@@ -583,11 +580,7 @@ mod tests {
 
     #[test]
     fn ignores_unknown_safe_entry() {
-        let zip = create_zip(&[
-            ("manifest.json", b"{}"),
-            ("readme.txt", b"hi"),
-        ])
-        .unwrap();
+        let zip = create_zip(&[("manifest.json", b"{}"), ("readme.txt", b"hi")]).unwrap();
         let ar = open_ok(&zip);
         assert!(ar.warnings.iter().any(|w| w.contains("readme.txt")));
         assert!(!ar.contains("readme.txt"));
@@ -601,8 +594,6 @@ mod tests {
         assert!(is_threshold_map(
             "assets/threshold_maps/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.png"
         ));
-        assert!(!is_threshold_map(
-            "assets/threshold_maps/xyz.png"
-        ));
+        assert!(!is_threshold_map("assets/threshold_maps/xyz.png"));
     }
 }

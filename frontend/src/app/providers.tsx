@@ -14,8 +14,8 @@ function ShortcutEngine() {
 }
 
 /**
- * Root providers for main App and floating PanelWindow.
- * RTK store + App Shell Context (layout prefs, not persisted).
+ * Root providers for the main App window.
+ * RTK store + App Shell Context (layout prefs) + FlexLayout.
  */
 export function Providers({ children }: { children: ReactNode }) {
   useEffect(() => {

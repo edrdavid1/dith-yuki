@@ -73,6 +73,7 @@ fn apply_ed(
         &params,
         ctx.residuals,
         ctx.layer_id,
+        ctx.filter_key,
         ctx.palette_cache,
         ctx.lut_cache,
         ctx.document,

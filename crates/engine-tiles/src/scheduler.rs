@@ -6,8 +6,8 @@
 
 use crate::TileKey;
 use crossbeam::queue::SegQueue;
-use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
+use dashmap::DashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Priority level for tile recomputation tasks.
@@ -186,11 +186,7 @@ mod tests {
             key: TileKey {
                 doc: 1,
                 layer,
-                coord: TileCoord {
-                    level: 0,
-                    x,
-                    y,
-                },
+                coord: TileCoord { level: 0, x, y },
                 stage: CacheStage::Raw,
             },
             generation: 0,
@@ -233,10 +229,7 @@ mod tests {
         scheduler.enqueue(make_task(Priority::ViewportEdge, 0, 2, 0));
         scheduler.enqueue(make_task(Priority::ViewportCenter, 0, 3, 0));
 
-        assert_eq!(
-            scheduler.dequeue().unwrap().priority,
-            Priority::Immediate
-        );
+        assert_eq!(scheduler.dequeue().unwrap().priority, Priority::Immediate);
         assert_eq!(
             scheduler.dequeue().unwrap().priority,
             Priority::ViewportCenter

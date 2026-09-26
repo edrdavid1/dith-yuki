@@ -250,10 +250,8 @@ fn collect_custom_png_paths(filters: &[FilterInstance]) -> Vec<String> {
             FilterParams::Dither {
                 mode: crate::filter::DitherMode::ThresholdMap { path },
                 ..
-            } => {
-                if seen.insert(path.clone()) {
-                    order.push(path.clone());
-                }
+            } if seen.insert(path.clone()) => {
+                order.push(path.clone());
             }
             _ => {}
         }
@@ -425,7 +423,7 @@ fn rewrite_value_import(
                     .to_string();
                 let id = key_to_palette
                     .get(&key)
-                    .ok_or_else(|| ProjectError::MissingPalettePlaceholder(key))?;
+                    .ok_or(ProjectError::MissingPalettePlaceholder(key))?;
                 map.insert("palette_id".into(), serde_json::json!(id.0));
             }
             if let Some(custom) = map.get_mut("custom_png") {
@@ -486,13 +484,13 @@ fn lookup_layer(nodes: &[LayerNode], id: LayerId) -> LayerLookup {
     LayerLookup::Missing
 }
 
-fn find_leaf<'a>(nodes: &'a [LayerNode], id: LayerId) -> Result<&'a Layer, ProjectError> {
+fn find_leaf(nodes: &[LayerNode], id: LayerId) -> Result<&Layer, ProjectError> {
     match lookup_layer(nodes, id) {
         LayerLookup::Leaf => {}
         LayerLookup::Group => return Err(ProjectError::TargetIsGroup),
         LayerLookup::Missing => return Err(ProjectError::LayerNotFound(id.0)),
     }
-    fn walk<'a>(nodes: &'a [LayerNode], id: LayerId) -> Option<&'a Layer> {
+    fn walk(nodes: &[LayerNode], id: LayerId) -> Option<&Layer> {
         for node in nodes {
             match node {
                 LayerNode::Leaf(l) if l.id == id => return Some(l),
@@ -509,16 +507,13 @@ fn find_leaf<'a>(nodes: &'a [LayerNode], id: LayerId) -> Result<&'a Layer, Proje
     walk(nodes, id).ok_or(ProjectError::LayerNotFound(id.0))
 }
 
-fn find_leaf_mut<'a>(
-    nodes: &'a mut [LayerNode],
-    id: LayerId,
-) -> Result<&'a mut Layer, ProjectError> {
+fn find_leaf_mut(nodes: &mut [LayerNode], id: LayerId) -> Result<&mut Layer, ProjectError> {
     match lookup_layer(nodes, id) {
         LayerLookup::Leaf => {}
         LayerLookup::Group => return Err(ProjectError::TargetIsGroup),
         LayerLookup::Missing => return Err(ProjectError::LayerNotFound(id.0)),
     }
-    fn walk<'a>(nodes: &'a mut [LayerNode], id: LayerId) -> Option<&'a mut Layer> {
+    fn walk(nodes: &mut [LayerNode], id: LayerId) -> Option<&mut Layer> {
         for node in nodes {
             match node {
                 LayerNode::Leaf(l) if l.id == id => return Some(l),
@@ -540,8 +535,7 @@ fn select_filters(
     filter_instance_ids: Option<&[FilterInstanceId]>,
 ) -> Result<Vec<FilterInstance>, ProjectError> {
     match filter_instance_ids {
-        None => Ok(layer.filters.clone()),
-        Some(ids) if ids.is_empty() => Ok(layer.filters.clone()),
+        None | Some([]) => Ok(layer.filters.clone()),
         Some(ids) => {
             let wanted: HashSet<FilterInstanceId> = ids.iter().copied().collect();
             for id in ids {
@@ -726,14 +720,15 @@ pub fn unpack_pattern_from_bytes(
         created_at: normalized.created_at,
     };
 
-    let read_cached = |reader: &mut SecureZipArchive, path: &str| -> Result<Vec<u8>, ProjectError> {
-        if let Some(b) = verified.get(path) {
-            return Ok(b.clone());
-        }
-        reader
-            .read_entry(path)
-            .map_err(|e| ProjectError::MissingEntry(format!("{path}: {e}")))
-    };
+    let read_cached =
+        |reader: &mut SecureZipArchive, path: &str| -> Result<Vec<u8>, ProjectError> {
+            if let Some(b) = verified.get(path) {
+                return Ok(b.clone());
+            }
+            reader
+                .read_entry(path)
+                .map_err(|e| ProjectError::MissingEntry(format!("{path}: {e}")))
+        };
 
     let filters_bytes = read_cached(&mut reader, "filters.json")?;
     let palettes_bytes = read_cached(&mut reader, "palettes.json")?;
@@ -877,10 +872,10 @@ pub fn import_pattern_into_document(
     })
 }
 
-        /// Write packed bytes to a filesystem path.
-        pub fn write_pattern_to_path(path: &Path, zip_bytes: &[u8]) -> Result<(), ProjectError> {
-            engine_io::atomic_write(path, zip_bytes).map_err(|e| ProjectError::Io(e.to_string()))
-        }
+/// Write packed bytes to a filesystem path.
+pub fn write_pattern_to_path(path: &Path, zip_bytes: &[u8]) -> Result<(), ProjectError> {
+    engine_io::atomic_write(path, zip_bytes).map_err(|e| ProjectError::Io(e.to_string()))
+}
 
 #[cfg(test)]
 mod tests {
@@ -1189,8 +1184,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                ProjectError::NeedsNewerApp { .. }
-                    | ProjectError::UnsupportedVersion { .. }
+                ProjectError::NeedsNewerApp { .. } | ProjectError::UnsupportedVersion { .. }
             ),
             "{err:?}"
         );

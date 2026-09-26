@@ -1,0 +1,86 @@
+name: CI
+
+# Gate every PR (and pushes to main) so regressions cannot accumulate until a release tag.
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust (fmt + clippy + test)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        # Gate engine crates + the `dither` shell bin with -D warnings.
+        run: >
+          cargo clippy
+          -p engine-core -p engine-tiles -p engine-color -p engine-io
+          -p engine-project -p engine-gpu -p engine-registry -p engine-ascii
+          -p dither-zip-safe -p dither-thumb -p dither-thumb-ffi
+          -p dither --bins
+          -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace
+
+  frontend:
+    name: Frontend (vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Vitest
+        run: npm test --prefix frontend
+
+  windows-engines:
+    name: Windows (engine build + test)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+
+      - name: cargo build (engines)
+        run: >
+          cargo build
+          -p engine-core -p engine-tiles -p engine-color -p engine-io
+          -p engine-project -p engine-gpu -p engine-registry -p engine-ascii
+          -p dither-zip-safe
+
+      - name: cargo test (engines)
+        run: >
+          cargo test
+          -p engine-project -p engine-tiles -p engine-color

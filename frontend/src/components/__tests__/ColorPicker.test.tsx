@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import ColorPicker from '../ColorPicker';
 
 function renderPicker(overrides?: Partial<React.ComponentProps<typeof ColorPicker>>) {
@@ -30,16 +30,11 @@ describe('ColorPicker', () => {
     expect(input.value).toBe('FF0000');
   });
 
-  it('calls onConfirm with uppercase hex when Confirm is clicked', () => {
-    const { props } = renderPicker({ initialColor: 'aabbcc' });
-    fireEvent.click(screen.getByText('Confirm'));
+  it('emits live onConfirm when hex reaches 6 chars', () => {
+    const { props } = renderPicker({ initialColor: 'FFFFFF' });
+    const input = screen.getByLabelText('Hex color value');
+    fireEvent.change(input, { target: { value: 'aabbcc' } });
     expect(props.onConfirm).toHaveBeenCalledWith('AABBCC');
-  });
-
-  it('calls onCancel when Cancel is clicked', () => {
-    const { props } = renderPicker();
-    fireEvent.click(screen.getByText('Cancel'));
-    expect(props.onCancel).toHaveBeenCalledTimes(1);
   });
 
   it('calls onCancel when Escape is pressed', () => {
@@ -48,17 +43,20 @@ describe('ColorPicker', () => {
     expect(props.onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it('calls onCancel when clicking the overlay', () => {
+  it('calls onCancel when mousedown is outside the popup', async () => {
     const { props } = renderPicker();
-    const overlay = screen.getByTestId('color-picker-overlay');
-    fireEvent.click(overlay);
-    expect(props.onCancel).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      fireEvent.mouseDown(document.body);
+      expect(props.onCancel).toHaveBeenCalled();
+    });
   });
 
-  it('does not call onCancel when clicking inside the modal', () => {
+  it('does not call onCancel when clicking inside the modal', async () => {
     const { props } = renderPicker();
-    const dialog = screen.getByRole('dialog');
-    fireEvent.click(dialog);
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+    fireEvent.mouseDown(screen.getByRole('dialog'));
     expect(props.onCancel).not.toHaveBeenCalled();
   });
 
@@ -66,7 +64,6 @@ describe('ColorPicker', () => {
     renderPicker();
     const input = screen.getByLabelText('Hex color value') as HTMLInputElement;
     fireEvent.change(input, { target: { value: 'gg12zz' } });
-    // Only valid hex chars kept, uppercased
     expect(input.value).toBe('12');
   });
 
@@ -77,11 +74,10 @@ describe('ColorPicker', () => {
     expect(input.value).toBe('00FF88');
   });
 
-  it('emits the edited hex value on confirm', () => {
+  it('emits the edited hex value live (no Confirm button)', () => {
     const { props } = renderPicker({ initialColor: 'FFFFFF' });
     const input = screen.getByLabelText('Hex color value');
     fireEvent.change(input, { target: { value: '123abc' } });
-    fireEvent.click(screen.getByText('Confirm'));
     expect(props.onConfirm).toHaveBeenCalledWith('123ABC');
   });
 
@@ -92,10 +88,10 @@ describe('ColorPicker', () => {
     expect(input.value).toBe('AABBCC');
   });
 
-  it('renders Confirm and Cancel buttons', () => {
+  it('has no Confirm/Cancel buttons (live popup)', () => {
     renderPicker();
-    expect(screen.getByText('Confirm')).toBeInTheDocument();
-    expect(screen.getByText('Cancel')).toBeInTheDocument();
+    expect(screen.queryByText('Confirm')).not.toBeInTheDocument();
+    expect(screen.queryByText('Cancel')).not.toBeInTheDocument();
   });
 
   it('renders color preview swatch', () => {

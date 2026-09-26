@@ -325,11 +325,17 @@ mod tests {
     fn eighth_blocks_have_exact_extent() {
         // 8×16 cell: one eighth is 1 px wide / 2 px tall.
         let lower_three_eighths = filled(procedural_for('▃').unwrap(), 8, 16);
-        assert_eq!(lower_three_eighths.iter().filter(|&&v| v == 255).count(), 8 * 6);
+        assert_eq!(
+            lower_three_eighths.iter().filter(|&&v| v == 255).count(),
+            8 * 6
+        );
         assert!(lower_three_eighths[..8 * 10].iter().all(|&v| v == 0));
         let left_quarter = filled(procedural_for('▎').unwrap(), 8, 16);
         for y in 0..16 {
-            assert_eq!(&left_quarter[y * 8..y * 8 + 8], &[255, 255, 0, 0, 0, 0, 0, 0]);
+            assert_eq!(
+                &left_quarter[y * 8..y * 8 + 8],
+                &[255, 255, 0, 0, 0, 0, 0, 0]
+            );
         }
     }
 
@@ -337,16 +343,40 @@ mod tests {
     fn complementary_patterns_tile_the_cell() {
         for (w, h) in [(7, 14), (10, 20), (9, 17)] {
             for p in 0..=255u8 {
-                let a = filled(Procedural::SubCells { cols: 2, rows: 4, mask: p }, w, h);
-                let b = filled(Procedural::SubCells { cols: 2, rows: 4, mask: !p }, w, h);
-                assert!(a.iter().zip(&b).all(|(x, y)| (*x as u32 + *y as u32) == 255));
+                let a = filled(
+                    Procedural::SubCells {
+                        cols: 2,
+                        rows: 4,
+                        mask: p,
+                    },
+                    w,
+                    h,
+                );
+                let b = filled(
+                    Procedural::SubCells {
+                        cols: 2,
+                        rows: 4,
+                        mask: !p,
+                    },
+                    w,
+                    h,
+                );
+                assert!(a
+                    .iter()
+                    .zip(&b)
+                    .all(|(x, y)| (*x as u32 + *y as u32) == 255));
             }
         }
     }
 
     #[test]
     fn braille_ink_grows_with_dot_count() {
-        let ink = |d: u8| filled(Procedural::Braille(d), 10, 20).iter().map(|&v| v as u32).sum::<u32>();
+        let ink = |d: u8| {
+            filled(Procedural::Braille(d), 10, 20)
+                .iter()
+                .map(|&v| v as u32)
+                .sum::<u32>()
+        };
         assert_eq!(ink(0), 0);
         assert!(ink(0b1) < ink(0b11));
         assert!(ink(0b1111) < ink(0xFF));
@@ -368,13 +398,19 @@ mod tests {
         assert_eq!(bourke.len(), 70);
         let custom = SymbolSet::Custom("aab\n█".into()).symbols();
         assert_eq!(custom.len(), 3);
-        assert_eq!(custom[2].source, GlyphSource::Procedural(procedural_for('█').unwrap()));
+        assert_eq!(
+            custom[2].source,
+            GlyphSource::Procedural(procedural_for('█').unwrap())
+        );
         assert_eq!(custom[0].source, GlyphSource::Font);
     }
 
     #[test]
     fn cache_keys_distinguish_sets() {
-        assert_ne!(SymbolSet::Bourke10.cache_key(), SymbolSet::Bourke70.cache_key());
+        assert_ne!(
+            SymbolSet::Bourke10.cache_key(),
+            SymbolSet::Bourke70.cache_key()
+        );
         assert_eq!(
             SymbolSet::Custom(" .:-=+*#%@".into()).cache_key(),
             SymbolSet::Bourke10.cache_key()

@@ -3,7 +3,7 @@ use tauri::AppHandle;
 
 use serde::{Deserialize, Serialize};
 
-use crate::commands::{emit_document_changed, schedule_dirty_viewport_tiles, AppState};
+use crate::commands::{schedule_dirty_viewport_tiles, AppState};
 use crate::services::AppError;
 
 #[derive(Debug, Clone, Serialize)]
@@ -210,7 +210,7 @@ pub fn palette_to_dto(palette: &engine_color::palette::Palette) -> PaletteDto {
             ]
         })
         .collect();
-    let hex_colors: Vec<String> = palette.colors.iter().map(|c| linear_to_hex(c)).collect();
+    let hex_colors: Vec<String> = palette.colors.iter().map(linear_to_hex).collect();
     let color_count = colors.len();
     PaletteDto {
         id: palette.id,
@@ -947,7 +947,7 @@ impl PaletteService {
 
             self.state.require_session(doc_id)?.document_handle.mutate(|doc| {
                 fn clear_palette_refs(
-                    nodes: &mut Vec<engine_project::layer::LayerNode>,
+                    nodes: &mut [engine_project::layer::LayerNode],
                     palette_id: engine_project::types::PaletteId,
                     affected_filter_ids: &mut Vec<String>,
                     affected_layer_ids: &mut Vec<u32>,
@@ -967,13 +967,12 @@ impl PaletteService {
                                                 layer_affected = true;
                                             }
                                         }
-                                        engine_project::filter::FilterParams::PaletteQuantize { palette_id: pid, .. } => {
-                                            if *pid == palette_id {
+                                        engine_project::filter::FilterParams::PaletteQuantize { palette_id: pid, .. }
+                                            if *pid == palette_id => {
                                                 affected_filter_ids.push(filter.id.to_string());
                                                 filters_to_remove.push(idx);
                                                 layer_affected = true;
                                             }
-                                        }
                                         _ => {}
                                     }
                                 }
@@ -1065,11 +1064,12 @@ impl PaletteService {
         drop(snapshot);
 
         let total_pixels = (doc_width as u64).saturating_mul(doc_height as u64).max(1);
-        let stride =
-            ((total_pixels as usize + MAX_GENERATION_SAMPLES - 1) / MAX_GENERATION_SAMPLES).max(1);
+        let stride = (total_pixels as usize)
+            .div_ceil(MAX_GENERATION_SAMPLES)
+            .max(1);
 
-        let cols = (doc_width + TILE_SIZE - 1) / TILE_SIZE;
-        let rows = (doc_height + TILE_SIZE - 1) / TILE_SIZE;
+        let cols = doc_width.div_ceil(TILE_SIZE);
+        let rows = doc_height.div_ceil(TILE_SIZE);
 
         let mut pixels: Vec<(LinearColor, f32)> =
             Vec::with_capacity((total_pixels as usize / stride).min(MAX_GENERATION_SAMPLES + 1024));
@@ -1094,7 +1094,7 @@ impl PaletteService {
                         std::cmp::min(TILE_SIZE, doc_height.saturating_sub(row * TILE_SIZE));
                     for ty in 0..tile_max_y {
                         for tx in 0..tile_max_x {
-                            let take = sample_index % stride as u64 == 0;
+                            let take = sample_index.is_multiple_of(stride as u64);
                             sample_index += 1;
                             if !take {
                                 continue;
@@ -1131,19 +1131,18 @@ impl PaletteService {
                 .require_session(doc_id)?
                 .document_handle
                 .mutate(|doc| {
-                    match engine_project::palette_gen::generate_palette_from_layer_weighted(
-                        doc,
-                        engine_project::types::LayerId::new(req.layer_id),
-                        pixels.into_iter(),
-                        req.target_count,
-                        method,
-                        weights,
-                    ) {
-                        Ok(pid) => {
-                            palette_id_raw = pid.0;
-                            doc.increment_generation();
-                        }
-                        Err(_) => {}
+                    if let Ok(pid) =
+                        engine_project::palette_gen::generate_palette_from_layer_weighted(
+                            doc,
+                            engine_project::types::LayerId::new(req.layer_id),
+                            pixels.into_iter(),
+                            req.target_count,
+                            method,
+                            weights,
+                        )
+                    {
+                        palette_id_raw = pid.0;
+                        doc.increment_generation();
                     }
                 });
 

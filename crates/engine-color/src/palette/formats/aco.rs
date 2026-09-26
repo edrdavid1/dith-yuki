@@ -13,7 +13,11 @@ const COLOR_SPACE_RGB: u16 = 0;
 /// Parse ACO format bytes into sRGB color triples.
 pub fn parse(data: &[u8]) -> Result<Vec<(u8, u8, u8)>, PaletteError> {
     if data.len() < 4 {
-        return Err(parse_error("ACO", "byte 0", "file too short for ACO header"));
+        return Err(parse_error(
+            "ACO",
+            "byte 0",
+            "file too short for ACO header",
+        ));
     }
 
     let version = u16::from_be_bytes([data[0], data[1]]);
@@ -134,8 +138,16 @@ mod tests {
     #[test]
     fn export_basic() {
         let colors = vec![
-            LinearColor { r: 1.0, g: 0.0, b: 0.0 },
-            LinearColor { r: 0.0, g: 1.0, b: 0.0 },
+            LinearColor {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            LinearColor {
+                r: 0.0,
+                g: 1.0,
+                b: 0.0,
+            },
         ];
         let result = export(&colors, None).unwrap();
         // Check version
@@ -155,9 +167,21 @@ mod tests {
     #[test]
     fn round_trip() {
         let colors = vec![
-            LinearColor { r: 1.0, g: 0.0, b: 0.0 },
-            LinearColor { r: 0.0, g: 1.0, b: 0.0 },
-            LinearColor { r: 0.0, g: 0.0, b: 1.0 },
+            LinearColor {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            LinearColor {
+                r: 0.0,
+                g: 1.0,
+                b: 0.0,
+            },
+            LinearColor {
+                r: 0.0,
+                g: 0.0,
+                b: 1.0,
+            },
         ];
         let exported = export(&colors, None).unwrap();
         let parsed = parse(&exported).unwrap();

@@ -8,7 +8,11 @@ pub enum IoError {
     #[error("io: {0}")]
     Io(#[from] io::Error),
     #[error("short read at offset {offset}: got {got}, wanted {wanted}")]
-    ShortRead { offset: u64, got: usize, wanted: usize },
+    ShortRead {
+        offset: u64,
+        got: usize,
+        wanted: usize,
+    },
     #[error("offset {offset} beyond size {size}")]
     OutOfRange { offset: u64, size: u64 },
     #[error("read_at operation budget exceeded")]

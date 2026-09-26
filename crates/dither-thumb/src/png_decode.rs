@@ -48,7 +48,9 @@ pub fn decode_thumbnail_png(bytes: &[u8], limits: &ThumbLimits) -> Result<ThumbB
     }
     let mut buf = vec![0u8; reader.output_buffer_size()];
     // Row-by-row with deadline checks would go here; for now one frame.
-    let frame = reader.next_frame(&mut buf).map_err(|_| ThumbError::Corrupt)?;
+    let frame = reader
+        .next_frame(&mut buf)
+        .map_err(|_| ThumbError::Corrupt)?;
     let rgba = match frame.color_type {
         png::ColorType::Rgba => buf[..frame.buffer_size()].to_vec(),
         other => {

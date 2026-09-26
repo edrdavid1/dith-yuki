@@ -17,7 +17,6 @@ fn is_empty_extra(m: &Map<String, Value>) -> bool {
 /// Key in [`Layer::extra`] holding an opaque unknown layer-node JSON blob (SPEC §9.1).
 pub const FORWARD_COMPAT_NODE_KEY: &str = "__forward_compat_node";
 
-
 /// A reference to a layer during tree traversal.
 #[derive(Debug, Clone)]
 pub enum LayerRef<'a> {

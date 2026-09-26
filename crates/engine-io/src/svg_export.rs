@@ -114,9 +114,7 @@ fn color_at(rgba: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
 
 #[inline]
 fn colors_match(a: [u8; 4], b: [u8; 4], tol: u8) -> bool {
-    a.iter()
-        .zip(b.iter())
-        .all(|(x, y)| x.abs_diff(*y) <= tol)
+    a.iter().zip(b.iter()).all(|(x, y)| x.abs_diff(*y) <= tol)
 }
 
 fn hex_rgb(c: [u8; 4]) -> String {
@@ -423,12 +421,7 @@ fn moore_external_path(
 
     // Single-pixel or solid with no exterior walk via 8-neigh: emit unit square
     let Some(mut dir) = start_dir else {
-        return vec![
-            (cx, cy),
-            (cx + 1, cy),
-            (cx + 1, cy + 1),
-            (cx, cy + 1),
-        ];
+        return vec![(cx, cy), (cx + 1, cy), (cx + 1, cy + 1), (cx, cy + 1)];
     };
 
     path.push((cx, cy));

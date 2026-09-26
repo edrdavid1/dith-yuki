@@ -13,9 +13,7 @@ use engine_project::filters::dither_residuals::ErrorResidualsStore;
 use engine_project::filters::void_and_cluster;
 use engine_project::types::{DocumentId, LayerId, LayerKind};
 use engine_project::{Document, FilterContext, Layer};
-use engine_registry::{
-    AlgorithmId, AlgorithmRegistry, CpuCheckpointKind, GpuEligibility,
-};
+use engine_registry::{AlgorithmId, AlgorithmRegistry, CpuCheckpointKind, GpuEligibility};
 use engine_tiles::block_cache::BlockRepresentativeCache;
 use engine_tiles::{PixelTile, TileCoord, HALO, TILE_SIZE};
 
@@ -100,11 +98,16 @@ fn registry_parity_void_and_cluster() {
         &block_cache,
         None,
         layer_id,
+        0,
     );
     let mut via_trait = PixelTile::new();
     via_trait.copy_from(&src);
-    algo.apply(&mut via_trait, &serde_json::to_value(&params).unwrap(), &ctx)
-        .expect("registry apply");
+    algo.apply(
+        &mut via_trait,
+        &serde_json::to_value(&params).unwrap(),
+        &ctx,
+    )
+    .expect("registry apply");
     assert_eq!(expected.data.as_ref(), via_trait.data.as_ref());
 
     let mut layer = Layer::new(layer_id, LayerKind::Raster, 512, 512);
@@ -130,7 +133,12 @@ fn void_and_cluster_matrix_is_blue_noise_permutation() {
     let r = void_and_cluster::ranks();
     assert_eq!(r.len(), void_and_cluster::SIZE * void_and_cluster::SIZE);
     // Not identical to a Bayer-style recursive grid (spot-check corner ranks).
-    let corner = [r[0], r[1], r[void_and_cluster::SIZE], r[void_and_cluster::SIZE + 1]];
+    let corner = [
+        r[0],
+        r[1],
+        r[void_and_cluster::SIZE],
+        r[void_and_cluster::SIZE + 1],
+    ];
     // Blue-noise corners are not the low sequential Bayer-like {0,1,2,3}.
     let mut sorted = corner;
     sorted.sort_unstable();

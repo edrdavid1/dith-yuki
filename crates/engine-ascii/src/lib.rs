@@ -27,8 +27,8 @@ pub use color::{
     mean_cell_srgb8, mean_cell_srgb8_alpha, quantize_pair, quantize_rgb, resolve_rgb,
     xterm256_colour, Ansi16Palette, ColorTarget, VGA_16, WINDOWS10_16, XTERM_16,
 };
-pub use convert::{convert, convert_mono, MatchMode, ConvertOptions};
-pub use descriptor::{ShapeContrastDesc, ShapeDesc, ToneDesc, mean_coverage};
+pub use convert::{convert, convert_mono, ConvertOptions, MatchMode};
+pub use descriptor::{mean_coverage, ShapeContrastDesc, ShapeDesc, ToneDesc};
 pub use dither::CellDither;
 pub use export::{
     parse_ansi_indices, to_ansi, to_html, to_json, to_png, to_png_scaled, to_svg, to_txt,
@@ -37,8 +37,8 @@ pub use export::{
 pub use font::{BundledFont, CellMetrics, FontError, FontFace, FontId};
 pub use grid::{AsciiGrid, Cell, CellColor, GridColorMode};
 pub use matching::{
-    MatcherTables, TwoColorMatch, EdgeField, EdgeOrient, EdgeOverlay, match_mask_two_color,
-    match_shape, match_shape_contrast, match_tone, orient_glyph, sample_cell_rgb,
+    match_mask_two_color, match_shape, match_shape_contrast, match_tone, orient_glyph,
+    sample_cell_rgb, EdgeField, EdgeOrient, EdgeOverlay, MatcherTables, TwoColorMatch,
 };
 pub use render::{render_rgba, render_rgba8};
 pub use symbols::{GlyphSource, Procedural, Symbol, SymbolSet};

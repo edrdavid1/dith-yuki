@@ -40,7 +40,6 @@ pub struct RemappedDocument {
 pub fn remap_document_file(file: &DocumentFile, runtime_doc_id: DocumentId) -> RemappedDocument {
     let mut tables = IdRemapTables::default();
     let mut next_layer: u32 = 1;
-    let mut next_palette: u32 = 1;
     let mut raw_assets = HashMap::new();
 
     // Pass 1: allocate layer + palette ids (filters allocated while rewriting).
@@ -50,10 +49,9 @@ pub fn remap_document_file(file: &DocumentFile, runtime_doc_id: DocumentId) -> R
         tables.layers.insert(old, new_id);
     });
 
-    for p in &file.palettes {
+    for (next_palette, p) in (1_u32..).zip(file.palettes.iter()) {
         let old = PaletteId::new(p.id);
         let new_id = PaletteId::new(next_palette);
-        next_palette += 1;
         tables.palettes.insert(old, new_id);
     }
 

@@ -1,37 +1,35 @@
-//! Tauri command handlers for panel docking/undocking operations.
+//! FlexLayout float-drag / dock-affinity commands + monitor bounds helpers.
 //!
-//! # IMPORTANT: B4c — Flex redock without global_mouseup
-//!
-//! Layers / Effect / Color Lab float as OS `flex-popout-*` windows. Titlebar drag
-//! is JS `setPosition` + in-WebView `mouseup` → `complete_float_drag` (no OS
-//! `startDragging`, no platform mouseup hook). Affinity hit-test stays in
+//! Layers / Effect / Color Lab / Preview float as OS `flex-popout-*` windows.
+//! Titlebar drag is JS `setPosition` + in-WebView `mouseup` → `complete_float_drag`
+//! (no OS `startDragging`, no platform mouseup hook). Affinity hit-test stays in
 //! `dock_affinity` (zones from the main window; positions via `WindowEvent::Moved`).
 //!
-//! Preview still uses PanelManager state only as a leftover stub. Float/redock for
-//! Preview is FlexLayout center model + JS `setPosition` (same path as Layers /
-//! Effect / Color Lab). Affinity arms for Preview and completes → center canvas.
+//! Preferences and Help are main-window dialogs — not dock panels and not float windows.
 //!
-//! Preferences is a dialog, not a docked panel.
-//!
-//! ## Commands still used
-//! DO NOT remove leftover Preview PanelManager dock stubs until PanelManager is retired.
-//!
-//! Float-drag (Flex): `begin_float_drag` / `cancel_float_drag` / `complete_float_drag`
-//! + `update_dock_zone`. Hit-test: `dock_affinity.rs` (no `global_mouseup`).
+//! Float-drag: `begin_float_drag` / `cancel_float_drag` / `complete_float_drag`
+//! + `update_dock_zone`. Hit-test: `dock_affinity.rs`.
 
 use std::sync::Arc;
 
-use tauri::webview::WebviewWindowBuilder;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::AppState;
 use crate::dock_affinity::{DockAffinityEvent, DockZone, SidebarSide};
-use crate::panel_manager::{DockSide, PanelInfo, SavedBounds, SerializedPanelState};
-use crate::services::PanelService;
 
 // ============================================================================
-// Monitor bounds correction
+// Monitor bounds correction (Flex popout placement)
 // ============================================================================
+
+/// Logical window bounds used when placing / correcting Flex popouts.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SavedBounds {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
 
 /// Abstracted monitor rectangle for bounds correction logic.
 #[derive(Debug, Clone)]
@@ -108,7 +106,6 @@ pub fn get_monitor_rects(app_handle: &AppHandle) -> (Vec<MonitorRect>, Option<Mo
 
 fn panel_default_size(id: &str) -> (u32, u32) {
     match id {
-        "preferences" => (420, 360),
         "colorlab" => (560, 640),
         "preview" => (800, 600),
         "layers" => (350, 500),
@@ -120,17 +117,11 @@ fn panel_default_size(id: &str) -> (u32, u32) {
 fn panel_max_size(id: &str) -> (u32, u32) {
     match id {
         "colorlab" => (640, 760),
-        "preferences" => (560, 520),
         "layers" => (480, 800),
         "effect" => (520, 800),
         "preview" => (1600, 1200),
         _ => (900, 900),
     }
-}
-
-pub fn panel_max_inner_size(id: &str) -> (f64, f64) {
-    let (w, h) = panel_max_size(id);
-    (w as f64, h as f64)
 }
 
 fn centered_bounds(
@@ -180,41 +171,6 @@ fn clamp_bounds_to_monitor(
     }
 }
 
-fn focus_floating_panel(app_handle: &AppHandle, panel_id: &str, window_label: &str) {
-    let Some(win) = app_handle.get_webview_window(window_label) else {
-        return;
-    };
-    let (monitors, primary) = get_monitor_rects(app_handle);
-    if let (Ok(pos), Ok(size), Ok(scale)) =
-        (win.outer_position(), win.outer_size(), win.scale_factor())
-    {
-        let logical = SavedBounds {
-            x: (pos.x as f64 / scale).round() as i32,
-            y: (pos.y as f64 / scale).round() as i32,
-            width: (size.width as f64 / scale).round().max(1.0) as u32,
-            height: (size.height as f64 / scale).round().max(1.0) as u32,
-        };
-        let fixed =
-            resolve_undock_bounds(panel_id, Some(logical.clone()), &monitors, primary.as_ref());
-        if fixed.x != logical.x
-            || fixed.y != logical.y
-            || fixed.width != logical.width
-            || fixed.height != logical.height
-        {
-            let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
-                fixed.width as f64,
-                fixed.height as f64,
-            )));
-            let _ = win.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
-                fixed.x as f64,
-                fixed.y as f64,
-            )));
-        }
-    }
-    let _ = win.unminimize();
-    let _ = win.set_focus();
-}
-
 pub fn resolve_undock_bounds(
     panel_id: &str,
     saved: Option<SavedBounds>,
@@ -244,335 +200,19 @@ pub fn resolve_undock_bounds(
 }
 
 // ============================================================================
-// Helpers
-// ============================================================================
-
-fn panel_display_name(id: &str) -> &str {
-    match id {
-        "effect" => "Effect Settings",
-        "layers" => "Layers",
-        "colorlab" => "Color Lab",
-        "preview" => "Preview",
-        "preferences" => "Preferences",
-        _ => "Panel",
-    }
-}
-
-fn emit_panel_state(
-    app_handle: &AppHandle,
-    panels: Vec<PanelInfo>,
-    left_order: Vec<String>,
-    right_order: Vec<String>,
-) {
-    let payload = SerializedPanelState {
-        panels,
-        left_order,
-        right_order,
-    };
-    let _ = app_handle.emit("panel-state-changed", payload);
-}
-
-fn parse_dock_side(side: &str) -> Result<DockSide, String> {
-    match side {
-        "left" => Ok(DockSide::Left),
-        "right" => Ok(DockSide::Right),
-        other => Err(format!("Invalid dock side: {other}")),
-    }
-}
-
-// ============================================================================
-// Commands
-// ============================================================================
-
-#[tauri::command]
-pub fn get_panels_state(state: State<Arc<AppState>>) -> Result<SerializedPanelState, String> {
-    PanelService::new(state.inner().clone())
-        .get_panels_state()
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn undock_panel(
-    panel_id: String,
-    app_handle: AppHandle,
-    state: State<Arc<AppState>>,
-) -> Result<(), String> {
-    let service = PanelService::new(state.inner().clone());
-    let (result, panels_snapshot, left_order, right_order) =
-        service.undock(&panel_id).map_err(|e| e.to_string())?;
-
-    if result.already_floating {
-        focus_floating_panel(&app_handle, &panel_id, &result.window_label);
-        return Ok(());
-    }
-
-    let (monitors, primary) = get_monitor_rects(&app_handle);
-    let bounds = resolve_undock_bounds(&panel_id, result.bounds, &monitors, primary.as_ref());
-
-    let title = format!("Dither – {}", panel_display_name(&panel_id));
-    let url = tauri::WebviewUrl::App(result.url.into());
-
-    let builder = crate::webview_debug::apply(
-        WebviewWindowBuilder::new(&app_handle, &result.window_label, url)
-            .title(&title)
-            .inner_size(bounds.width as f64, bounds.height as f64)
-            .position(bounds.x as f64, bounds.y as f64)
-            .resizable(true)
-            .decorations(false)
-            .min_inner_size(280.0, 200.0),
-    );
-    #[cfg(target_os = "macos")]
-    let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay);
-    let (max_w, max_h) = panel_max_inner_size(&panel_id);
-    let builder = builder.max_inner_size(max_w, max_h);
-
-    let revert_side = result.previous_dock_side.unwrap_or(DockSide::Right);
-    builder.build().map_err(|e| {
-        let _ = service.dock_at(&panel_id, revert_side, usize::MAX);
-        format!("Window creation failed: {}", e)
-    })?;
-
-    emit_panel_state(&app_handle, panels_snapshot, left_order, right_order);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn dock_panel(
-    panel_id: String,
-    app_handle: AppHandle,
-    state: State<Arc<AppState>>,
-) -> Result<(), String> {
-    let service = PanelService::new(state.inner().clone());
-    let (old_label, panels_snapshot, left_order, right_order) =
-        service.dock(&panel_id).map_err(|e| e.to_string())?;
-
-    if let Some(label) = old_label {
-        if let Some(win) = app_handle.get_webview_window(&label) {
-            let _ = win.close();
-        }
-        emit_panel_state(&app_handle, panels_snapshot, left_order, right_order);
-    }
-
-    Ok(())
-}
-
-#[tauri::command]
-pub fn hide_panel(
-    panel_id: String,
-    app_handle: AppHandle,
-    state: State<Arc<AppState>>,
-) -> Result<(), String> {
-    let service = PanelService::new(state.inner().clone());
-    let (changed, window_label, panels_snapshot, left_order, right_order) =
-        service.hide(&panel_id).map_err(|e| e.to_string())?;
-
-    if changed {
-        if let Some(label) = window_label {
-            if let Some(win) = app_handle.get_webview_window(&label) {
-                let _ = win.hide();
-            }
-        }
-        emit_panel_state(&app_handle, panels_snapshot, left_order, right_order);
-    }
-
-    Ok(())
-}
-
-#[tauri::command]
-pub fn show_panel(
-    panel_id: String,
-    app_handle: AppHandle,
-    state: State<Arc<AppState>>,
-) -> Result<(), String> {
-    let service = PanelService::new(state.inner().clone());
-    let (changed, window_label, panels_snapshot, left_order, right_order) =
-        service.show(&panel_id).map_err(|e| e.to_string())?;
-
-    if changed {
-        if let Some(label) = window_label {
-            if let Some(win) = app_handle.get_webview_window(&label) {
-                let _ = win.show();
-            }
-        }
-        emit_panel_state(&app_handle, panels_snapshot, left_order, right_order);
-    }
-
-    Ok(())
-}
-
-#[tauri::command]
-pub fn reorder_sidebar(
-    side: String,
-    order: Vec<String>,
-    app_handle: AppHandle,
-    state: State<Arc<AppState>>,
-) -> Result<(), String> {
-    let dock_side = parse_dock_side(&side)?;
-    let service = PanelService::new(state.inner().clone());
-    let (panels_snapshot, left_order, right_order) = service
-        .reorder_side(dock_side, order)
-        .map_err(|e| e.to_string())?;
-
-    emit_panel_state(&app_handle, panels_snapshot, left_order, right_order);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn move_panel_to_side(
-    panel_id: String,
-    side: String,
-    insert_index: Option<usize>,
-    app_handle: AppHandle,
-    state: State<Arc<AppState>>,
-) -> Result<(), String> {
-    let dock_side = parse_dock_side(&side)?;
-    let index = insert_index.unwrap_or(usize::MAX);
-    let service = PanelService::new(state.inner().clone());
-    let (panels_snapshot, left_order, right_order) = service
-        .move_to_side(&panel_id, dock_side, index)
-        .map_err(|e| e.to_string())?;
-
-    emit_panel_state(&app_handle, panels_snapshot, left_order, right_order);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn move_all_panels_to_side(
-    side: String,
-    app_handle: AppHandle,
-    state: State<Arc<AppState>>,
-) -> Result<(), String> {
-    let dock_side = parse_dock_side(&side)?;
-    let service = PanelService::new(state.inner().clone());
-    let (panels_snapshot, left_order, right_order) = service
-        .move_all_to_side(dock_side)
-        .map_err(|e| e.to_string())?;
-
-    emit_panel_state(&app_handle, panels_snapshot, left_order, right_order);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn swap_sidebars(app_handle: AppHandle, state: State<Arc<AppState>>) -> Result<(), String> {
-    let service = PanelService::new(state.inner().clone());
-    let (panels_snapshot, left_order, right_order) =
-        service.swap_sidebars().map_err(|e| e.to_string())?;
-
-    emit_panel_state(&app_handle, panels_snapshot, left_order, right_order);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn undock_panel_with_size(
-    panel_id: String,
-    width: u32,
-    height: u32,
-    x: i32,
-    y: i32,
-    app_handle: AppHandle,
-    state: State<Arc<AppState>>,
-) -> Result<(), String> {
-    let service = PanelService::new(state.inner().clone());
-    let (result, panels_snapshot, left_order, right_order) =
-        service.undock(&panel_id).map_err(|e| e.to_string())?;
-
-    if result.already_floating {
-        focus_floating_panel(&app_handle, &panel_id, &result.window_label);
-        return Ok(());
-    }
-
-    let provided_bounds = SavedBounds {
-        x,
-        y,
-        width,
-        height,
-    };
-    let (monitors, primary) = get_monitor_rects(&app_handle);
-    let corrected_bounds = resolve_undock_bounds(
-        &panel_id,
-        Some(provided_bounds),
-        &monitors,
-        primary.as_ref(),
-    );
-
-    let title = format!("Dither – {}", panel_display_name(&panel_id));
-    let url = tauri::WebviewUrl::App(result.url.into());
-
-    let builder = crate::webview_debug::apply(
-        WebviewWindowBuilder::new(&app_handle, &result.window_label, url)
-            .title(&title)
-            .inner_size(
-                corrected_bounds.width as f64,
-                corrected_bounds.height as f64,
-            )
-            .position(corrected_bounds.x as f64, corrected_bounds.y as f64)
-            .resizable(true)
-            .decorations(false)
-            .min_inner_size(280.0, 200.0),
-    );
-    #[cfg(target_os = "macos")]
-    let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay);
-    let (max_w, max_h) = panel_max_inner_size(&panel_id);
-    let builder = builder.max_inner_size(max_w, max_h);
-
-    let revert_side = result.previous_dock_side.unwrap_or(DockSide::Right);
-    builder.build().map_err(|e| {
-        let _ = service.dock_at(&panel_id, revert_side, usize::MAX);
-        format!("Window creation failed: {}", e)
-    })?;
-
-    emit_panel_state(&app_handle, panels_snapshot, left_order, right_order);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn save_panel_bounds(
-    panel_id: String,
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-    state: State<Arc<AppState>>,
-) -> Result<(), String> {
-    PanelService::new(state.inner().clone())
-        .save_bounds(
-            &panel_id,
-            SavedBounds {
-                x,
-                y,
-                width,
-                height,
-            },
-        )
-        .map_err(|e| e.to_string())
-}
-
-// ============================================================================
-// Dock Affinity
+// Dock Affinity / float-drag
 // ============================================================================
 
 fn emit_dock_affinity(app_handle: &AppHandle, event: &DockAffinityEvent) {
     let _ = app_handle.emit("dock-affinity", event);
 }
 
-fn sidebar_side_to_dock(side: SidebarSide) -> DockSide {
-    match side {
-        SidebarSide::Left => DockSide::Left,
-        SidebarSide::Right => DockSide::Right,
-    }
-}
-
-/// Layers + Effect + Color Lab + Preview live in FlexLayout — redock must not go through PanelManager.
 fn is_flex_layout_panel(panel_id: &str) -> bool {
     matches!(panel_id, "layers" | "effect" | "colorlab" | "preview")
 }
 
-/// Color Lab uses `panel-{id}`; FlexLayout popouts use `flex-popout-N`.
-fn resolve_float_window(app_handle: &AppHandle, panel_id: &str) -> Option<tauri::WebviewWindow> {
-    let panel_label = format!("panel-{}", panel_id);
-    if let Some(win) = app_handle.get_webview_window(&panel_label) {
-        return Some(win);
-    }
+/// FlexLayout popouts use `flex-popout-N`.
+fn resolve_float_window(app_handle: &AppHandle, _panel_id: &str) -> Option<tauri::WebviewWindow> {
     let windows = app_handle.webview_windows();
     let mut flex: Vec<_> = windows
         .into_iter()
@@ -631,51 +271,11 @@ pub fn update_dock_zone(
 }
 
 #[tauri::command]
-pub fn dock_panel_at(
-    panel_id: String,
-    side: String,
-    insert_index: usize,
-    app_handle: AppHandle,
-    state: State<Arc<AppState>>,
-) -> Result<(), String> {
-    let dock_side = parse_dock_side(&side)?;
-    dock_panel_at_inner(
-        &panel_id,
-        dock_side,
-        insert_index,
-        &app_handle,
-        state.inner(),
-    )
-}
-
-fn dock_panel_at_inner(
-    panel_id: &str,
-    side: DockSide,
-    index: usize,
-    app_handle: &AppHandle,
-    state: &Arc<AppState>,
-) -> Result<(), String> {
-    let service = PanelService::new(state.clone());
-    let (old_label, panels_snapshot, left_order, right_order) = service
-        .dock_at(panel_id, side, index)
-        .map_err(|e| e.to_string())?;
-
-    if let Some(label) = old_label {
-        if let Some(win) = app_handle.get_webview_window(&label) {
-            let _ = win.close();
-        }
-    }
-    emit_panel_state(app_handle, panels_snapshot, left_order, right_order);
-    Ok(())
-}
-
-#[tauri::command]
 pub fn begin_float_drag(
     panel_id: String,
     app_handle: AppHandle,
     state: State<Arc<AppState>>,
 ) -> Result<(), String> {
-    // Cancel any prior session (JS drag restart / Escape).
     {
         let mut ctrl = state.dock_affinity.lock().map_err(|e| e.to_string())?;
         if let Some(ev) = ctrl.cancel() {
@@ -765,7 +365,7 @@ pub fn cancel_float_drag(app_handle: AppHandle, state: State<Arc<AppState>>) -> 
     Ok(())
 }
 
-/// Finish JS-driven float drag: poll last rect, then dock if armed.
+/// Finish JS-driven float drag: poll last rect, then request Flex redock if armed.
 #[tauri::command]
 pub fn complete_float_drag(
     app_handle: AppHandle,
@@ -792,31 +392,22 @@ pub fn finish_float_drag(app_handle: &AppHandle, state: &Arc<AppState>) {
         ctrl.session_snapshot()
     };
 
-    let Some((panel_id, armed, insert_index, armed_side)) = snapshot else {
+    let Some((panel_id, armed, _insert_index, armed_side)) = snapshot else {
         return;
     };
 
-    if armed {
-        let side = armed_side
-            .map(sidebar_side_to_dock)
-            .unwrap_or(DockSide::Right);
-        if is_flex_layout_panel(&panel_id) {
-            // Frontend LayoutContext unfloats / cross-moves; do not touch PanelManager.
-            let side_str = match side {
-                DockSide::Left => "left",
-                DockSide::Right => "right",
-            };
-            let _ = app_handle.emit(
-                "flex-panel-dock-request",
-                serde_json::json!({
-                    "panelId": panel_id,
-                    "side": side_str,
-                }),
-            );
-        } else if let Err(e) = dock_panel_at_inner(&panel_id, side, insert_index, app_handle, state)
-        {
-            let _ = app_handle.emit("panel-error", format!("Failed to dock panel: {}", e));
-        }
+    if armed && is_flex_layout_panel(&panel_id) {
+        let side_str = match armed_side.unwrap_or(SidebarSide::Right) {
+            SidebarSide::Left => "left",
+            SidebarSide::Right => "right",
+        };
+        let _ = app_handle.emit(
+            "flex-panel-dock-request",
+            serde_json::json!({
+                "panelId": panel_id,
+                "side": side_str,
+            }),
+        );
     }
 
     let end_ev = {

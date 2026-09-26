@@ -24,9 +24,7 @@ pub fn apply<'a, R: Runtime, M: Manager<R>>(
 
     // WebView2 only; harmless no-op elsewhere if args are ignored.
     if std::env::var_os("DITHER_REMOTE_DEVTOOLS").is_some() {
-        eprintln!(
-            "[webview-debug] DITHER_REMOTE_DEVTOOLS set — remote debugging on port 9222"
-        );
+        eprintln!("[webview-debug] DITHER_REMOTE_DEVTOOLS set — remote debugging on port 9222");
         log::info!("webview-debug: remote debugging enabled on port 9222");
         builder.additional_browser_args("--remote-debugging-port=9222")
     } else {

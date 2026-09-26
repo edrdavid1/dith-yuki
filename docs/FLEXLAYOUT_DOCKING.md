@@ -30,7 +30,7 @@
 | `effect` | **FlexLayout** | `EffectsFeature` | то же |
 | `colorlab` | **FlexLayout** | `ColorLabFeature` | то же |
 | `preview` | **FlexLayout center** | Canvas preview | `flex-popout-*` + `FlexPopoutChrome` (close → canvas) |
-| `preferences` | диалог | — | не FL |
+| `preferences` / Help | диалог | — | не FL |
 
 Признак миграции на фронте:
 
@@ -38,8 +38,7 @@
 isPanelOnFlexLayout(id) === (id === 'layers' || id === 'effect' || id === 'colorlab' || id === 'preview')
 ```
 
-Фабрика: `frontend/src/factories/layoutPanelFactory.tsx`.  
-В `DockedSidebar` flex-панели **фильтруются** — даже если Rust ещё знает про них в старых ордерах `panel_state.json`.
+Фабрика: `frontend/src/factories/layoutPanelFactory.tsx`.
 
 Дефолт при пустом/битом layout:
 
@@ -51,7 +50,7 @@ isPanelOnFlexLayout(id) === (id === 'layers' || id === 'effect' || id === 'color
 
 **B4b persistence:** если у пользователя уже есть `flexlayout_right.json` без `colorlab`, при загрузке таб Color Lab **добавляется** справа (не затирая Layers/Effect); toast: `LAYOUT_TOAST_MESSAGES.COLORLAB_ADDED`.
 
-**B5:** Preview на center FlexLayout Model (`flexlayout_center.json`). Float = тот же JS popout path, что у Layers/Effect/Color Lab. Affinity для Preview не армится (close возвращает на canvas). PanelManager `panel-preview` больше не используется для undock.
+**B5:** Preview на center FlexLayout Model (`flexlayout_center.json`). Float = тот же JS popout path, что у Layers/Effect/Color Lab. Affinity для Preview не армится (close возвращает на canvas). Legacy `panel-*` / PanelManager удалены.
 ---
 
 ## 3. Кто чем владеет
@@ -60,7 +59,7 @@ isPanelOnFlexLayout(id) === (id === 'layers' || id === 'effect' || id === 'color
 |--------|----------|
 | Дерево табов, same-side drag/split, float-геометрия | FlexLayout `Model` (**два** инстанса: left + right) |
 | Ширина колонки, collapse, split ratio | `ShellContext` (`dither.shellPrefs` в localStorage) |
-| Preview (center) / Preferences dialog | Preview = center Flex Model; Preferences = dialog (не FL) |
+| Preview (center) / Preferences + Help dialogs | Preview = center Flex Model; Preferences/Help = dialogs (не FL) |
 | Persist JSON FlexLayout | Tauri `save_layout_{left,right,center}` / `load_layout_{left,right,center}` |
 | Drag-to-redock (hit-test зон) | Rust `dock_affinity` + zone IPC; **complete** = JS mouseup in popout → `complete_float_drag` (B4c). `global_mouseup` удалён. |
 
@@ -309,7 +308,7 @@ ADR — целевое состояние после **полной** мигра
 |------------|----------------|
 | **Dual SoT layout** (FL + PanelManager для colorlab) | **Закрыто в B4b.** |
 | **`global_mouseup` + OS `startDragging` для Flex redock** | **Закрыто в B4c (path A):** JS `setPosition` + in-WebView mouseup; `global_mouseup.rs` удалён. Linux drag-redock больше не зависит от NSEvent/GetAsyncKeyState. Hit-test зон (`dock_affinity` + `update_dock_zone`) оставлен как тонкий мост — не platform mouse sync. |
-| **Полная замена PanelManager / урезание panel commands** | Preferences leftover + presets ещё на PanelManager. Preview на center FlexLayout (B5). |
+| **Полная замена PanelManager / урезание panel commands** | **Закрыто.** PanelManager / `panel_state.json` / `panel-*` удалены. Preferences + Help остаются dialogs. Workspace presets → Flex + shell. |
 | **flexlayout-react 0.7.15 вместо ~0.10.x из ADR** | Пин с B3/spike: «0.7.15 integrates cleanly», **без** сравнения с 0.10.x и без записи «0.10 сломался → откат». После B4c путь OS `startDragging` / `global_mouseup` для Flex **снят** — bump больше не упирается в тот риск. Остаётся совместимость **патча FloatingWindow** (occlusion / named window / portal) с 0.10.x. **Вердикт по-прежнему открыт:** либо bump + полный перегон патча, либо явная запись «сознательный пин 0.7.15». Не закрывать карточку молчанием. Делать после B4c manual QA. |
 | **Снимок MIT LICENSE** | Закрыто: [`docs/legal/flexlayout-license-snapshot.md`](./legal/flexlayout-license-snapshot.md) (+ сырой [`flexlayout-LICENSE.MIT.txt`](./legal/flexlayout-LICENSE.MIT.txt)). npm metadata 0.7.15 пишет ISC; текст `LICENSE` — MIT (SoT = файл). |
 
@@ -334,7 +333,8 @@ ADR — целевое состояние после **полной** мигра
 - **B4b:** ✅ Color Lab на FlexLayout.
 - **B4c:** ✅ JS popout drag; `global_mouseup` удалён.
 - **B5:** ✅ Preview на center FlexLayout (float = flex-popout; close → canvas).
-- **Опционально:** дальше сузить PanelManager (Preferences leftover) / workspace presets → Flex; bump `flexlayout-react` 0.7.15 → 0.10.x или явно зафиксировать пин.
+- **PanelManager retirement:** ✅ leftover SoT удалён; Preferences/Help остаются dialogs; workspace presets → Flex + shell.
+- **Опционально:** bump `flexlayout-react` 0.7.15 → 0.10.x или явно зафиксировать пин.
 
 ---
 

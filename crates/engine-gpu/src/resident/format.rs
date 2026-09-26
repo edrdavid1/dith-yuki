@@ -54,15 +54,10 @@ pub fn tile_array_bytes(layers: u32) -> u64 {
 }
 
 /// D1 formula: reserve `2 × frame_batch_cap` scratch layers, then resident slots.
-pub fn compute_vram_layout(
-    config: &VramBudgetConfig,
-    max_texture_array_layers: u32,
-) -> VramLayout {
+pub fn compute_vram_layout(config: &VramBudgetConfig, max_texture_array_layers: u32) -> VramLayout {
     let scratch_layers = config.frame_batch_cap;
     let scratch_bytes = 2 * tile_array_bytes(scratch_layers);
-    let overhead = scratch_bytes
-        + config.viewport_tex_bytes
-        + config.fixed_headroom_bytes;
+    let overhead = scratch_bytes + config.viewport_tex_bytes + config.fixed_headroom_bytes;
 
     let resident_bytes = config.vram_budget_bytes.saturating_sub(overhead);
     let mut max_resident_slots =
@@ -121,7 +116,10 @@ pub fn unpack_tile_download(bytes: &[u8]) -> engine_tiles::PixelTile {
 }
 
 /// wgpu texture descriptor for one tile array (260×260 × N layers, Rgba32Float).
-pub fn create_tile_array_desc(label: &'static str, layers: u32) -> wgpu::TextureDescriptor<'static> {
+pub fn create_tile_array_desc(
+    label: &'static str,
+    layers: u32,
+) -> wgpu::TextureDescriptor<'static> {
     wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {
@@ -149,7 +147,10 @@ mod tests {
     fn tile_extent_matches_engine_tiles() {
         let side = engine_tiles::TILE_SIZE + 2 * engine_tiles::HALO;
         assert_eq!(TILE_EXTENT, side);
-        assert_eq!(TILE_BYTES, (TILE_EXTENT as usize) * (TILE_EXTENT as usize) * 4 * 4);
+        assert_eq!(
+            TILE_BYTES,
+            (TILE_EXTENT as usize) * (TILE_EXTENT as usize) * 4 * 4
+        );
     }
 
     #[test]

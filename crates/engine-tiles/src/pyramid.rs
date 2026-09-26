@@ -41,8 +41,8 @@ pub fn max_pyramid_level(doc_width: u32, doc_height: u32) -> u8 {
 pub fn tile_grid_at_level(doc_width: u32, doc_height: u32, level: u8) -> (u32, u32) {
     let scale = 1u32 << level;
     let tile_px = TILE_SIZE * scale;
-    let cols = (doc_width + tile_px - 1) / tile_px;
-    let rows = (doc_height + tile_px - 1) / tile_px;
+    let cols = doc_width.div_ceil(tile_px);
+    let rows = doc_height.div_ceil(tile_px);
     (cols, rows)
 }
 
@@ -57,7 +57,8 @@ pub fn build_raw_pyramid(doc: u32, layer_id: u32, width: u32, height: u32, cache
         for y in 0..rows {
             for x in 0..cols {
                 let coord = TileCoord { level, x, y };
-                if let Some(tile) = generate_pyramid_tile(level, coord, doc, layer_id, CacheStage::Raw, cache)
+                if let Some(tile) =
+                    generate_pyramid_tile(level, coord, doc, layer_id, CacheStage::Raw, cache)
                 {
                     cache.insert_fresh(
                         TileKey {
@@ -237,17 +238,41 @@ pub fn generate_pyramid_tile(
     // A tile at (level, x, y) is generated from 4 tiles at (level-1, 2x, 2y), etc.
     let child_level = level - 1;
     let children = [
-        TileCoord { level: child_level, x: coord.x * 2,     y: coord.y * 2 },
-        TileCoord { level: child_level, x: coord.x * 2 + 1, y: coord.y * 2 },
-        TileCoord { level: child_level, x: coord.x * 2,     y: coord.y * 2 + 1 },
-        TileCoord { level: child_level, x: coord.x * 2 + 1, y: coord.y * 2 + 1 },
+        TileCoord {
+            level: child_level,
+            x: coord.x * 2,
+            y: coord.y * 2,
+        },
+        TileCoord {
+            level: child_level,
+            x: coord.x * 2 + 1,
+            y: coord.y * 2,
+        },
+        TileCoord {
+            level: child_level,
+            x: coord.x * 2,
+            y: coord.y * 2 + 1,
+        },
+        TileCoord {
+            level: child_level,
+            x: coord.x * 2 + 1,
+            y: coord.y * 2 + 1,
+        },
     ];
 
     // Fetch all 4 child tiles from cache
-    let child_tiles: Vec<_> = children.iter().map(|c| {
-        let key = TileKey { doc, layer, coord: *c, stage };
-        cache.get_entry(key)
-    }).collect();
+    let child_tiles: Vec<_> = children
+        .iter()
+        .map(|c| {
+            let key = TileKey {
+                doc,
+                layer,
+                coord: *c,
+                stage,
+            };
+            cache.get_entry(key)
+        })
+        .collect();
 
     // At least one child must be present to produce a meaningful result.
     // If no children are cached yet, return None so the caller can fall through
@@ -340,7 +365,12 @@ mod tests {
                 for c in 0..4 {
                     let val = child.at(x, y, c);
                     // Average of same values is the same value
-                    assert!((val - color).abs() < 1e-6, "Expected {}, got {}", color, val);
+                    assert!(
+                        (val - color).abs() < 1e-6,
+                        "Expected {}, got {}",
+                        color,
+                        val
+                    );
                 }
             }
         }
@@ -354,7 +384,11 @@ mod tests {
         // Fill parent main region with pattern
         for y in HALO..(HALO + TILE_SIZE) {
             for x in HALO..(HALO + TILE_SIZE) {
-                let val = if ((x - HALO) + (y - HALO)) % 2 == 0 { 1.0 } else { 2.0 };
+                let val = if ((x - HALO) + (y - HALO)).is_multiple_of(2) {
+                    1.0
+                } else {
+                    2.0
+                };
                 for c in 0..4 {
                     parent.set(x, y, c, val);
                 }
@@ -409,9 +443,9 @@ mod tests {
 
         // Set specific 2×2 blocks in parent and verify downsampling
         // Block at (HALO, HALO) in parent should downsample to (HALO, HALO) in child
-        parent.set(HALO, HALO, 0, 0.0);     // p00
-        parent.set(HALO + 1, HALO, 0, 1.0);     // p10
-        parent.set(HALO, HALO + 1, 0, 2.0);     // p01
+        parent.set(HALO, HALO, 0, 0.0); // p00
+        parent.set(HALO + 1, HALO, 0, 1.0); // p10
+        parent.set(HALO, HALO + 1, 0, 2.0); // p01
         parent.set(HALO + 1, HALO + 1, 0, 3.0); // p11
 
         let child = downsample_tile(&parent);
@@ -425,7 +459,11 @@ mod tests {
     #[test]
     fn generate_pyramid_tile_returns_none_for_level_0() {
         let cache = TileCache::new(100_000_000);
-        let coord = TileCoord { level: 0, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
         let result = generate_pyramid_tile(0, coord, 1, 0, CacheStage::Composite, &cache);
         assert!(result.is_none());
     }
@@ -452,7 +490,11 @@ mod tests {
                 let key = TileKey {
                     doc: 1,
                     layer: 0,
-                    coord: TileCoord { level: child_level, x: cx, y: cy },
+                    coord: TileCoord {
+                        level: child_level,
+                        x: cx,
+                        y: cy,
+                    },
                     stage: CacheStage::Composite,
                 };
                 cache.insert_fresh(key, Arc::new(tile));
@@ -460,7 +502,11 @@ mod tests {
         }
 
         // Generate pyramid tile at level 1, coord (0,0)
-        let coord = TileCoord { level: 1, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 1,
+            x: 0,
+            y: 0,
+        };
         let result = generate_pyramid_tile(1, coord, 1, 0, CacheStage::Composite, &cache);
         assert!(result.is_some());
 
@@ -473,7 +519,11 @@ mod tests {
                     assert!(
                         (val - color).abs() < 1e-6,
                         "At ({}, {}, {}): expected {}, got {}",
-                        x, y, c, color, val
+                        x,
+                        y,
+                        c,
+                        color,
+                        val
                     );
                 }
             }
@@ -500,14 +550,22 @@ mod tests {
             let key = TileKey {
                 doc: 1,
                 layer: 0,
-                coord: TileCoord { level: 0, x: cx, y: 0 },
+                coord: TileCoord {
+                    level: 0,
+                    x: cx,
+                    y: 0,
+                },
                 stage: CacheStage::Composite,
             };
             cache.insert_fresh(key, Arc::new(tile));
         }
 
         // Generate pyramid tile — missing bottom children
-        let coord = TileCoord { level: 1, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 1,
+            x: 0,
+            y: 0,
+        };
         let result = generate_pyramid_tile(1, coord, 1, 0, CacheStage::Composite, &cache);
 
         // Should still return Some since we handle missing children gracefully
@@ -524,10 +582,26 @@ mod tests {
         // Create 4 child tiles with distinct uniform values
         let values = [0.1f32, 0.2, 0.3, 0.4];
         let coords = [
-            TileCoord { level: 0, x: 0, y: 0 }, // TL
-            TileCoord { level: 0, x: 1, y: 0 }, // TR
-            TileCoord { level: 0, x: 0, y: 1 }, // BL
-            TileCoord { level: 0, x: 1, y: 1 }, // BR
+            TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            }, // TL
+            TileCoord {
+                level: 0,
+                x: 1,
+                y: 0,
+            }, // TR
+            TileCoord {
+                level: 0,
+                x: 0,
+                y: 1,
+            }, // BL
+            TileCoord {
+                level: 0,
+                x: 1,
+                y: 1,
+            }, // BR
         ];
 
         for (i, coord) in coords.iter().enumerate() {
@@ -539,12 +613,21 @@ mod tests {
                     }
                 }
             }
-            let key = TileKey { doc: 1, layer: 0, coord: *coord, stage: CacheStage::Composite };
+            let key = TileKey {
+                doc: 1,
+                layer: 0,
+                coord: *coord,
+                stage: CacheStage::Composite,
+            };
             cache.insert_fresh(key, Arc::new(tile));
         }
 
         // Generate level 1 tile at (0,0)
-        let coord = TileCoord { level: 1, x: 0, y: 0 };
+        let coord = TileCoord {
+            level: 1,
+            x: 0,
+            y: 0,
+        };
         let result = generate_pyramid_tile(1, coord, 1, 0, CacheStage::Composite, &cache);
         assert!(result.is_some());
         let tile = result.unwrap();
@@ -599,7 +682,11 @@ mod tests {
         let l1 = cache.get_entry(TileKey {
             doc: 1,
             layer: 7,
-            coord: TileCoord { level: 1, x: 0, y: 0 },
+            coord: TileCoord {
+                level: 1,
+                x: 0,
+                y: 0,
+            },
             stage: CacheStage::Raw,
         });
         assert!(l1.is_some(), "level-1 raw must exist after decompose");
@@ -610,9 +697,27 @@ mod tests {
 
     #[test]
     fn ancestor_coord_walks_up() {
-        let c = TileCoord { level: 0, x: 5, y: 7 };
-        assert_eq!(ancestor_coord(c, 1), TileCoord { level: 1, x: 2, y: 3 });
-        assert_eq!(ancestor_coord(c, 2), TileCoord { level: 2, x: 1, y: 1 });
+        let c = TileCoord {
+            level: 0,
+            x: 5,
+            y: 7,
+        };
+        assert_eq!(
+            ancestor_coord(c, 1),
+            TileCoord {
+                level: 1,
+                x: 2,
+                y: 3
+            }
+        );
+        assert_eq!(
+            ancestor_coord(c, 2),
+            TileCoord {
+                level: 2,
+                x: 1,
+                y: 1
+            }
+        );
     }
 
     #[test]
@@ -625,8 +730,16 @@ mod tests {
                 parent.set(x + HALO, y + HALO, 0, q);
             }
         }
-        let child = TileCoord { level: 0, x: 1, y: 1 };
-        let ancestor = TileCoord { level: 1, x: 0, y: 0 };
+        let child = TileCoord {
+            level: 0,
+            x: 1,
+            y: 1,
+        };
+        let ancestor = TileCoord {
+            level: 1,
+            x: 0,
+            y: 0,
+        };
         let up = upsample_from_ancestor(&parent, child, ancestor);
         // BR quadrant of L1 is value 3.0
         assert!((up.at(HALO, HALO, 0) - 3.0).abs() < 1e-5);
@@ -643,7 +756,11 @@ mod tests {
             TileKey {
                 doc: 1,
                 layer: 0,
-                coord: TileCoord { level: 2, x: 0, y: 0 },
+                coord: TileCoord {
+                    level: 2,
+                    x: 0,
+                    y: 0,
+                },
                 stage: CacheStage::Composite,
             },
             Arc::new(l2),
@@ -651,7 +768,11 @@ mod tests {
         let key = TileKey {
             doc: 1,
             layer: 0,
-            coord: TileCoord { level: 0, x: 1, y: 0 },
+            coord: TileCoord {
+                level: 0,
+                x: 1,
+                y: 0,
+            },
             stage: CacheStage::Composite,
         };
         let (coord, tile) = find_cached_ancestor(&cache, key).expect("L2");
@@ -659,4 +780,3 @@ mod tests {
         assert!((tile.at(HALO, HALO, 0) - 0.25).abs() < 1e-5);
     }
 }
-

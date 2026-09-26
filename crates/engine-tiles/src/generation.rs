@@ -15,9 +15,9 @@
 //! This enables selective invalidation: only affected layers re-trigger recomputation,
 //! while unaffected layers continue to use cached data.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use dashmap::DashMap;
 use crate::LayerId;
+use dashmap::DashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Per-layer versioning system for selective cache invalidation.
 ///

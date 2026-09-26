@@ -23,7 +23,9 @@ fn registry_riemersma_scope_and_gpu() {
         &FilterParams::DitherV2(params),
         GpuEligibility::Cpu(CpuCheckpointKind::SequentialGlobalDependency),
     );
-    let algo = builtin_registry().get_by_str("riemersma").expect("registered");
+    let algo = builtin_registry()
+        .get_by_str("riemersma")
+        .expect("registered");
     assert_eq!(algo.execution_scope(), ExecutionScope::FullDocument);
     assert!(!algo.requires_full_row());
 }

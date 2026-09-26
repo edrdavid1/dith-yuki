@@ -151,6 +151,7 @@ export default function EffectsFeature({
           pattern_angle,
           serpentine,
           dither_alpha,
+          match_by_brightness,
         } = params;
         effectLayer.updateParams({
           mode,
@@ -170,6 +171,7 @@ export default function EffectsFeature({
           pattern_angle: pattern_angle ?? 0,
           serpentine: serpentine ?? false,
           dither_alpha: dither_alpha !== false,
+          match_by_brightness: Boolean(match_by_brightness),
         });
       })
       .catch(() => {

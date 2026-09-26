@@ -33,8 +33,8 @@ pub mod pixel_tile_live {
     use super::*;
 
     thread_local! {
-        static LIVE: Cell<usize> = Cell::new(0);
-        static PEAK: Cell<usize> = Cell::new(0);
+        static LIVE: Cell<usize> = const { Cell::new(0) };
+        static PEAK: Cell<usize> = const { Cell::new(0) };
     }
 
     fn on_alloc() {
@@ -96,7 +96,7 @@ pub mod pixel_tile_live {
 /// ```ignore
 /// let tile = PixelTile::new();
 /// let red_channel_value = tile.at(128, 128, 0);  // Red channel at center
-/// 
+///
 /// let mut tile = PixelTile::new();
 /// tile.set(10, 10, 0, 1.0);  // Set red to 1.0 at (10, 10)
 /// ```
@@ -321,7 +321,7 @@ mod tests {
     #[test]
     fn halo_region_is_accessible() {
         let mut tile = PixelTile::new();
-        let size = (TILE_SIZE + 2 * HALO) as u32;
+        let size = TILE_SIZE + 2 * HALO;
 
         // Test halo left/top (0..2, 0..2)
         tile.set(0, 0, 0, 0.1);

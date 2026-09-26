@@ -5,7 +5,6 @@ import documentReducer from '../slices/documentSlice';
 import layersReducer from '../slices/layersSlice';
 import filtersReducer from '../slices/filtersSlice';
 import selectionReducer from '../slices/selectionSlice';
-import panelsReducer from '../slices/panelsSlice';
 import palettesReducer from '../slices/palettesSlice';
 import colorLabReducer from '../slices/colorLabSlice';
 import undoReducer from '../slices/undoSlice';
@@ -20,7 +19,6 @@ export function createTestStore(preloadedState?: Partial<RootState>) {
       layers: layersReducer,
       filters: filtersReducer,
       selection: selectionReducer,
-      panels: panelsReducer,
       palettes: palettesReducer,
       colorLab: colorLabReducer,
       undo: undoReducer,

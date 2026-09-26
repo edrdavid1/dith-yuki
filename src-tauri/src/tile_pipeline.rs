@@ -587,10 +587,8 @@ pub(crate) fn layer_has_error_diffusion(nodes: &[LayerNode], layer_id: u32) -> b
                     .iter()
                     .any(|f| f.enabled && f.requires_full_row);
             }
-            LayerNode::Group(group) => {
-                if layer_has_error_diffusion(&group.children, layer_id) {
-                    return true;
-                }
+            LayerNode::Group(group) if layer_has_error_diffusion(&group.children, layer_id) => {
+                return true;
             }
             _ => {}
         }
@@ -788,6 +786,7 @@ fn find_layer_by_id(nodes: &[LayerNode], layer_id: u32) -> Option<&engine_projec
 }
 
 /// Copy a PixelTile's data into a new PixelTile (full 260×260 region including halo).
+#[allow(dead_code)] // exercised in tile_pipeline tests
 fn copy_tile(src: &PixelTile) -> PixelTile {
     let mut dst = PixelTile::new();
     dst.copy_from(src);

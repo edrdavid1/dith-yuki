@@ -11,6 +11,7 @@ use crate::document::Document;
 use crate::error::EngineError;
 use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2, PaletteDitherMode};
 use crate::types::LayerId;
+use engine_color::brightness_sorted::BrightnessSortedPalette;
 use engine_color::oklab::{linear_to_oklab, oklab_dist_sq, LinRgb, Oklab};
 use engine_color::palette::{linear_to_srgb, Palette};
 use engine_color::palette_cache::PaletteKdCache;
@@ -54,9 +55,7 @@ const BAYER_8X8: [[f32; 8]; 8] = [
 
 /// Classic Bayer recursive expansion of integer ranks:
 /// `bayer_2n = [[4*Bn, 4*Bn+2], [4*Bn+3, 4*Bn+1]]` from `bayer_2 = [[0,2],[3,1]]`.
-const fn bayer_expand_ranks<const N: usize, const M: usize>(
-    base: &[[u16; N]; N],
-) -> [[u16; M]; M] {
+const fn bayer_expand_ranks<const N: usize, const M: usize>(base: &[[u16; N]; N]) -> [[u16; M]; M] {
     let mut out = [[0u16; M]; M];
     let mut y = 0;
     while y < N {
@@ -392,8 +391,7 @@ fn get_threshold_i32(
 #[inline]
 fn quantize_uniform(value: f32, levels: f32, offset: f32) -> f32 {
     let scaled = value * (levels - 1.0) + offset;
-    let quantized = scaled.round().clamp(0.0, levels - 1.0) / (levels - 1.0);
-    quantized
+    scaled.round().clamp(0.0, levels - 1.0) / (levels - 1.0)
 }
 
 /// Convert RGB to luminance using Rec. 709 coefficients.
@@ -407,13 +405,24 @@ fn to_luminance(r: f32, g: f32, b: f32) -> f32 {
 /// Offsetting linear RGB by ±0.5 then snapping via the LUT jumps toward
 /// black/white and underuses mid-palette hues. Mixing the two closest Oklab
 /// neighbors uses the colors that actually belong to the source pixel.
+///
+/// When `match_by_brightness` is set, neighbors are chosen by Oklab `L` only
+/// (via [`BrightnessSortedPalette`]); Bayer/mix logic is unchanged.
 pub(crate) struct OrderedPalettePicker<'a> {
     palette: &'a Palette,
     labs: Vec<Oklab>,
+    brightness: Option<BrightnessSortedPalette>,
 }
 
 impl<'a> OrderedPalettePicker<'a> {
     pub(crate) fn new(palette: &'a Palette) -> Self {
+        Self::with_match_by_brightness(palette, false)
+    }
+
+    pub(crate) fn with_match_by_brightness(
+        palette: &'a Palette,
+        match_by_brightness: bool,
+    ) -> Self {
         let labs = palette
             .colors
             .iter()
@@ -425,7 +434,16 @@ impl<'a> OrderedPalettePicker<'a> {
                 })
             })
             .collect();
-        Self { palette, labs }
+        let brightness = if match_by_brightness {
+            BrightnessSortedPalette::build(palette).ok()
+        } else {
+            None
+        };
+        Self {
+            palette,
+            labs,
+            brightness,
+        }
     }
 
     pub(crate) fn pick(
@@ -443,35 +461,42 @@ impl<'a> OrderedPalettePicker<'a> {
             return (c0.r, c0.g, c0.b);
         }
 
-        let query = linear_to_oklab(LinRgb { r, g, b });
-        let mut i1 = 0usize;
-        let mut i2 = 1usize;
-        let mut d1 = oklab_dist_sq(query, self.labs[0]);
-        let mut d2 = oklab_dist_sq(query, self.labs[1]);
-        if d2 < d1 {
-            std::mem::swap(&mut i1, &mut i2);
-            std::mem::swap(&mut d1, &mut d2);
-        }
-        for (i, &lab) in self.labs.iter().enumerate().skip(2) {
-            let d = oklab_dist_sq(query, lab);
-            if d < d1 {
-                d2 = d1;
-                i2 = i1;
-                d1 = d;
-                i1 = i;
-            } else if d < d2 {
-                d2 = d;
-                i2 = i;
-            }
-        }
-
-        let mix = if d1 + d2 <= f32::EPSILON {
-            0.0
+        let (i1, i2, mix) = if let Some(ref sorted) = self.brightness {
+            let query_l = linear_to_oklab(LinRgb { r, g, b }).l;
+            sorted.two_nearest(query_l)
         } else {
-            let sd1 = d1.sqrt();
-            let sd2 = d2.sqrt();
-            sd1 / (sd1 + sd2)
+            let query = linear_to_oklab(LinRgb { r, g, b });
+            let mut i1 = 0usize;
+            let mut i2 = 1usize;
+            let mut d1 = oklab_dist_sq(query, self.labs[0]);
+            let mut d2 = oklab_dist_sq(query, self.labs[1]);
+            if d2 < d1 {
+                std::mem::swap(&mut i1, &mut i2);
+                std::mem::swap(&mut d1, &mut d2);
+            }
+            for (i, &lab) in self.labs.iter().enumerate().skip(2) {
+                let d = oklab_dist_sq(query, lab);
+                if d < d1 {
+                    d2 = d1;
+                    i2 = i1;
+                    d1 = d;
+                    i1 = i;
+                } else if d < d2 {
+                    d2 = d;
+                    i2 = i;
+                }
+            }
+
+            let mix = if d1 + d2 <= f32::EPSILON {
+                0.0
+            } else {
+                let sd1 = d1.sqrt();
+                let sd2 = d2.sqrt();
+                sd1 / (sd1 + sd2)
+            };
+            (i1, i2, mix)
         };
+
         let t = 0.5 + (threshold - 0.5) * threshold_scale;
         let idx = if t < mix { i2 } else { i1 };
         let c = &self.palette.colors[idx];
@@ -739,10 +764,20 @@ pub fn apply_ordered_with_cache_into(
             PalettePath::Mixed {
                 ranges: lut_cache.channel_ranges(document.id.0, p),
                 levels: lv,
-                picker: OrderedPalettePicker::new(p),
+                picker: if params.match_by_brightness {
+                    OrderedPalettePicker::with_match_by_brightness(p, true)
+                } else {
+                    OrderedPalettePicker::new(p)
+                },
             }
         }
-        (Some(p), PaletteDitherMode::Strict) => PalettePath::Strict(OrderedPalettePicker::new(p)),
+        (Some(p), PaletteDitherMode::Strict) => {
+            PalettePath::Strict(if params.match_by_brightness {
+                OrderedPalettePicker::with_match_by_brightness(p, true)
+            } else {
+                OrderedPalettePicker::new(p)
+            })
+        }
         (Some(p), PaletteDitherMode::Simple) => PalettePath::Simple(SimpleRgbPicker::new(p)),
     };
 
@@ -769,6 +804,8 @@ pub fn apply_ordered_with_cache_into(
                     document.id.0,
                     layer_id,
                     ps,
+                    x,
+                    y,
                 )
             } else {
                 (
@@ -936,6 +973,10 @@ pub fn apply_ordered_with_cache_into(
 
 /// Read RGBA for a block representative: prefer [`BlockRepresentativeCache`], else
 /// local tile sample with clamp (legacy fallback when cache is empty).
+///
+/// When the clamped sample lands in a fully cleared halo cell (stacked ED used
+/// to zero the halo), fall back to the current pixel so mega-pixel edges do not
+/// become transparent / black strips.
 fn read_block_source(
     tile: &PixelTile,
     coord: TileCoord,
@@ -945,6 +986,8 @@ fn read_block_source(
     doc: u32,
     layer_id: LayerId,
     ps: u32,
+    fallback_x: u32,
+    fallback_y: u32,
 ) -> (f32, f32, f32, f32) {
     if block_gx >= 0 && block_gy >= 0 {
         let key = BlockCoord::from_global(doc, layer_id.0, block_gx as u32, block_gy as u32, ps);
@@ -957,12 +1000,23 @@ fn read_block_source(
     let rep_local_y = block_gy - coord.y as i32 * TILE_SIZE as i32 + HALO as i32;
     let clamped_x = rep_local_x.max(0).min(TILE_FULL_SIZE as i32 - 1) as u32;
     let clamped_y = rep_local_y.max(0).min(TILE_FULL_SIZE as i32 - 1) as u32;
-    (
-        tile.at(clamped_x, clamped_y, 0),
-        tile.at(clamped_x, clamped_y, 1),
-        tile.at(clamped_x, clamped_y, 2),
-        tile.at(clamped_x, clamped_y, 3),
-    )
+    let r = tile.at(clamped_x, clamped_y, 0);
+    let g = tile.at(clamped_x, clamped_y, 1);
+    let b = tile.at(clamped_x, clamped_y, 2);
+    let a = tile.at(clamped_x, clamped_y, 3);
+    let in_halo = clamped_x < HALO
+        || clamped_y < HALO
+        || clamped_x >= HALO + TILE_SIZE
+        || clamped_y >= HALO + TILE_SIZE;
+    if in_halo && a <= 0.0 && r == 0.0 && g == 0.0 && b == 0.0 {
+        return (
+            tile.at(fallback_x, fallback_y, 0),
+            tile.at(fallback_x, fallback_y, 1),
+            tile.at(fallback_x, fallback_y, 2),
+            tile.at(fallback_x, fallback_y, 3),
+        );
+    }
+    (r, g, b, a)
 }
 
 /// CMYK angled-screen halftone on the ordered dither path.
@@ -1043,6 +1097,8 @@ fn apply_cmyk_halftone_into(
                     document.id.0,
                     layer_id,
                     ps,
+                    x,
+                    y,
                 )
             } else {
                 (
@@ -1177,10 +1233,7 @@ mod tests {
                     BAYER_16_RANK[y][x], ranks[y][x],
                     "BAYER_16_RANK[{y}][{x}] diverges from recursive formula"
                 );
-                assert_eq!(
-                    bayer_16x16_threshold(x, y),
-                    ranks[y][x] as f32 / 256.0
-                );
+                assert_eq!(bayer_16x16_threshold(x, y), ranks[y][x] as f32 / 256.0);
                 assert!(seen.insert(ranks[y][x]));
             }
         }
@@ -2912,6 +2965,121 @@ mod tests {
     }
 
     #[test]
+    fn match_by_brightness_false_matches_default_picker() {
+        use engine_color::palette::{LinearColor, Palette};
+
+        let pal = Palette {
+            id: 1,
+            name: "rgb".into(),
+            colors: vec![
+                LinearColor {
+                    r: 1.0,
+                    g: 0.0,
+                    b: 0.0,
+                },
+                LinearColor {
+                    r: 0.0,
+                    g: 1.0,
+                    b: 0.0,
+                },
+                LinearColor {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 1.0,
+                },
+            ],
+            revision: 1,
+        };
+        let a = OrderedPalettePicker::new(&pal);
+        let b = OrderedPalettePicker::with_match_by_brightness(&pal, false);
+        for (r, g, bl) in [(0.2, 0.3, 0.4), (0.8, 0.1, 0.1), (0.5, 0.5, 0.5)] {
+            for t in [0.1, 0.5, 0.9] {
+                assert_eq!(a.pick(r, g, bl, t, 1.0), b.pick(r, g, bl, t, 1.0));
+            }
+        }
+    }
+
+    #[test]
+    fn match_by_brightness_gradient_uses_full_palette_span() {
+        use engine_color::palette::LinearColor;
+        use std::collections::BTreeSet;
+
+        // Distinct hues at distinct luminances: dark blue, mid red, light green.
+        // A gray L→R gradient has no hue match for red/green/blue under full Oklab,
+        // but Match-by-Brightness must still travel the full L span of the palette.
+        let mut tile = PixelTile::new();
+        for y in 0..TILE_FULL_SIZE {
+            for x in 0..TILE_FULL_SIZE {
+                let t = x as f32 / (TILE_FULL_SIZE - 1) as f32;
+                tile.set(x, y, 0, t);
+                tile.set(x, y, 1, t);
+                tile.set(x, y, 2, t);
+                tile.set(x, y, 3, 1.0);
+            }
+        }
+
+        let mut params = make_params(DitherModeV2::Bayer8x8, 4, 1.0);
+        params.dither_alpha = false;
+        params.palette_dither_mode = PaletteDitherMode::Strict;
+        params.match_by_brightness = true;
+        let threshold_cache = ThresholdMapCache::new();
+        let palette_cache = PaletteKdCache::new();
+        let lut_cache = PaletteLutCache::new();
+        let mut doc = Document::new(crate::types::DocumentId::new(1), 256, 256);
+        let palette_id = doc.add_palette(
+            "L-span".into(),
+            vec![
+                LinearColor {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.15,
+                }, // dark blue
+                LinearColor {
+                    r: 0.7,
+                    g: 0.05,
+                    b: 0.05,
+                }, // mid red
+                LinearColor {
+                    r: 0.05,
+                    g: 0.95,
+                    b: 0.05,
+                }, // light green
+            ],
+        );
+        params.palette_id = Some(palette_id);
+
+        let result = apply_ordered(
+            &tile,
+            tc(0, 0),
+            &params,
+            &threshold_cache,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+        )
+        .unwrap();
+
+        let palette = doc.get_palette(palette_id).unwrap();
+        let mut used = BTreeSet::new();
+        for y in (HALO..HALO + TILE_SIZE).step_by(8) {
+            for x in HALO..HALO + TILE_SIZE {
+                let out = (result.at(x, y, 0), result.at(x, y, 1), result.at(x, y, 2));
+                let idx = palette
+                    .colors
+                    .iter()
+                    .position(|c| (c.r, c.g, c.b) == out)
+                    .expect("output must be a palette color");
+                used.insert(idx);
+            }
+        }
+        assert_eq!(
+            used.len(),
+            3,
+            "brightness match on a gray gradient must use every palette color by L, got {used:?}"
+        );
+    }
+
+    #[test]
     fn builtin_apple2_exact_orange_stays_solid() {
         use engine_color::palette::{srgb_to_linear, LinearColor, BUILTIN_PRESETS};
         use std::collections::BTreeSet;
@@ -3390,8 +3558,7 @@ mod tests {
         ] {
             let cells = bayer_matrix_cells(&mode);
             // One tile must span ≥ matrix-side blocks so rem_euclid hits every cell.
-            let max_ps = (TILE_FULL_SIZE / bayer_matrix_side(&mode))
-                .clamp(1, 32) as u8;
+            let max_ps = (TILE_FULL_SIZE / bayer_matrix_side(&mode)).clamp(1, 32) as u8;
             for ps in 1u8..=max_ps {
                 let unique = unique_thresholds_on_tile(mode.clone(), ps);
                 assert!(
@@ -3404,8 +3571,10 @@ mod tests {
 
     #[test]
     fn custom_png_block_index_walks_map_when_pixel_size_divides_dims() {
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let path = dir.join("target/test_threshold_map_4x4.png");
+        let home = dirs::home_dir().expect("home");
+        let path = home
+            .join(".dither_yuki_test_threshold")
+            .join("test_threshold_map_4x4.png");
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }

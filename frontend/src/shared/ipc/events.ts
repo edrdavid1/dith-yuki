@@ -1,6 +1,5 @@
-import { listen, emit, emitTo, type UnlistenFn, type Event } from '@tauri-apps/api/event';
+import { listen, emitTo, type UnlistenFn, type Event } from '@tauri-apps/api/event';
 import type { SelectionDto } from './selection';
-import type { PanelInfo, PanelStateSnapshot } from '../../types/panels';
 import type { ColorLabDraftSnapshot } from '../../features/color-lab/types';
 import type { OpenDocumentsPayload } from './document';
 
@@ -12,8 +11,6 @@ export interface DocumentChangedPayload {
 }
 
 export type SelectionChangedPayload = SelectionDto;
-
-export type PanelStateChangedPayload = PanelStateSnapshot | PanelInfo[];
 
 export type ColorLabDraftChangedPayload = ColorLabDraftSnapshot;
 
@@ -33,16 +30,6 @@ export async function onSelectionChanged(
   handler: (event: Event<SelectionChangedPayload>) => void
 ): Promise<UnlistenFn> {
   return listen<SelectionChangedPayload>('selection-changed', handler);
-}
-
-export async function onPanelStateChanged(
-  handler: (event: Event<PanelStateChangedPayload>) => void
-): Promise<UnlistenFn> {
-  return listen<PanelStateChangedPayload>('panel-state-changed', handler);
-}
-
-export async function emitPanelStateChanged(): Promise<void> {
-  return emit('panel-state-changed');
 }
 
 export async function onColorLabDraftChanged(

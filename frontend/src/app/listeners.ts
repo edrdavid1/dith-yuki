@@ -3,7 +3,6 @@ import { refreshDocument, setDirty, bumpDocumentEpoch } from './slices/documentS
 import { refreshLayers } from './slices/layersSlice';
 import { refreshFilters } from './slices/filtersSlice';
 import { applyRemote, fetchSelection } from './slices/selectionSlice';
-import { applyPanelEvent, fetchPanels } from './slices/panelsSlice';
 import { applyRemoteDraft, hydrateFromStorage } from './slices/colorLabSlice';
 import { applyUndoState } from './slices/undoSlice';
 import { bumpVersion, applyRemoteBinding, loadPersistedLastCreatedId } from './slices/palettesSlice';
@@ -13,12 +12,10 @@ import {
   onPaletteBindingChanged,
   onDirtyChanged,
   onDocumentChanged,
-  onPanelStateChanged,
   onSelectionChanged,
   onUndoStateChanged,
   isDocumentDirty,
 } from '../shared/ipc';
-import type { PanelInfo, PanelStateSnapshot } from '../types/panels';
 
 export type EngineBridgeCleanup = () => void;
 
@@ -32,7 +29,6 @@ export function startEngineEventBridge(store: AppStore): EngineBridgeCleanup {
   let cancelled = false;
 
   // Initial hydrations
-  void dispatch(fetchPanels());
   void dispatch(fetchSelection());
   dispatch(hydrateFromStorage());
   const persistedPalette = loadPersistedLastCreatedId();
@@ -156,13 +152,6 @@ export function startEngineEventBridge(store: AppStore): EngineBridgeCleanup {
     else unsubscribers.push(fn);
   });
 
-  onPanelStateChanged((event) => {
-    if (cancelled) return;
-    dispatch(applyPanelEvent(event.payload as PanelStateSnapshot | PanelInfo[]));
-  }).then((fn) => {
-    if (cancelled) fn();
-    else unsubscribers.push(fn);
-  });
 
   onColorLabDraftChanged((event) => {
     if (cancelled) return;

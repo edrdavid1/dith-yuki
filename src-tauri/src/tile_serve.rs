@@ -39,6 +39,7 @@ pub fn resolve_preview_tile(cache: &TileCache, key: TileKey, doc_gen: u64) -> Pr
     PreviewServe::Pending
 }
 
+#[allow(dead_code)] // used by tile_serve tests
 pub fn rgba8_len() -> usize {
     (TILE_SIZE * TILE_SIZE * 4) as usize
 }

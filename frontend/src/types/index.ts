@@ -126,6 +126,11 @@ export interface DitherParamsV2 {
   serpentine?: boolean;
   /** Pixelate transparency: dither alpha to 0/1 with pixel_size blocks. Default true. */
   dither_alpha?: boolean;
+  /**
+   * Strict/Mixed only: pick palette neighbors by Oklab lightness alone.
+   * Default false. Ignored for Guided/Simple.
+   */
+  match_by_brightness?: boolean;
 }
 
 export interface CurvesParams {

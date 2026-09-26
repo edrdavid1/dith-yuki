@@ -72,13 +72,18 @@ impl Default for ErrorResiduals {
     }
 }
 
-/// Concurrent store for error residuals, keyed by `(LayerId, TileCoord)`.
+/// Concurrent store for error residuals, keyed by
+/// `(doc, LayerId, filter_key, TileCoord)`.
+///
+/// `filter_key` is [`crate::types::FilterInstanceId::as_u128`] so stacked ED
+/// filters on one layer keep independent wavefront streams (last-write-wins
+/// on a layer-only key baked 256px seams into intermediate stages).
 ///
 /// Uses `DashMap` for lock-free concurrent access from multiple worker threads.
 /// Tiles store their edge residuals after processing; neighbor tiles read them
 /// to seed error propagation at boundaries.
 pub struct ErrorResidualsStore {
-    entries: DashMap<(u32, LayerId, TileCoord), ErrorResiduals>,
+    entries: DashMap<(u32, LayerId, u128, TileCoord), ErrorResiduals>,
     clear_count: AtomicU64,
 }
 
@@ -99,6 +104,7 @@ impl ErrorResidualsStore {
         &self,
         doc: u32,
         layer_id: LayerId,
+        filter_key: u128,
         coord: TileCoord,
     ) -> Option<ErrorResiduals> {
         if coord.x == 0 {
@@ -110,11 +116,17 @@ impl ErrorResidualsStore {
             y: coord.y,
         };
         self.entries
-            .get(&(doc, layer_id, left_coord))
+            .get(&(doc, layer_id, filter_key, left_coord))
             .map(|r| r.clone())
     }
 
-    pub fn get_top(&self, doc: u32, layer_id: LayerId, coord: TileCoord) -> Option<ErrorResiduals> {
+    pub fn get_top(
+        &self,
+        doc: u32,
+        layer_id: LayerId,
+        filter_key: u128,
+        coord: TileCoord,
+    ) -> Option<ErrorResiduals> {
         if coord.y == 0 {
             return None;
         }
@@ -124,7 +136,7 @@ impl ErrorResidualsStore {
             y: coord.y - 1,
         };
         self.entries
-            .get(&(doc, layer_id, top_coord))
+            .get(&(doc, layer_id, filter_key, top_coord))
             .map(|r| r.clone())
     }
 
@@ -132,6 +144,7 @@ impl ErrorResidualsStore {
         &self,
         doc: u32,
         layer_id: LayerId,
+        filter_key: u128,
         coord: TileCoord,
     ) -> Option<ErrorResiduals> {
         if coord.x == 0 || coord.y == 0 {
@@ -143,12 +156,20 @@ impl ErrorResidualsStore {
             y: coord.y - 1,
         };
         self.entries
-            .get(&(doc, layer_id, diag_coord))
+            .get(&(doc, layer_id, filter_key, diag_coord))
             .map(|r| r.clone())
     }
 
-    pub fn store(&self, doc: u32, layer_id: LayerId, coord: TileCoord, residuals: ErrorResiduals) {
-        self.entries.insert((doc, layer_id, coord), residuals);
+    pub fn store(
+        &self,
+        doc: u32,
+        layer_id: LayerId,
+        filter_key: u128,
+        coord: TileCoord,
+        residuals: ErrorResiduals,
+    ) {
+        self.entries
+            .insert((doc, layer_id, filter_key, coord), residuals);
     }
 
     pub fn cached_layer_ids(&self) -> std::collections::HashSet<u32> {
@@ -157,7 +178,7 @@ impl ErrorResidualsStore {
 
     pub fn evict_layer(&self, doc: u32, layer: LayerId) {
         self.entries
-            .retain(|(d, l, _), _| *d != doc || l.0 != layer.0);
+            .retain(|(d, l, _, _), _| *d != doc || l.0 != layer.0);
         self.clear_count.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -171,14 +192,14 @@ impl ErrorResidualsStore {
         origin_x: u32,
         origin_y: u32,
     ) {
-        self.entries.retain(|(d, l, c), _| {
+        self.entries.retain(|(d, l, _, c), _| {
             !(*d == doc && l.0 == layer.0 && c.level == level && c.x >= origin_x && c.y >= origin_y)
         });
         self.clear_count.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn evict_document(&self, doc: u32) {
-        self.entries.retain(|(d, _, _), _| *d != doc);
+        self.entries.retain(|(d, _, _, _), _| *d != doc);
     }
 
     /// Clear all stored residuals (full document replace / welcome).
@@ -243,9 +264,9 @@ mod tests {
         let mut residuals = ErrorResiduals::new();
         residuals.corner[0] = 0.25;
 
-        store.store(1, layer, tc(1, 1), residuals);
+        store.store(1, layer, 0, tc(1, 1), residuals);
 
-        let got = store.get_diag(1, layer, tc(2, 2));
+        let got = store.get_diag(1, layer, 0, tc(2, 2));
         assert!(got.is_some());
         assert_eq!(got.unwrap().corner[0], 0.25);
     }
@@ -254,8 +275,8 @@ mod tests {
     fn get_diag_returns_none_at_edge() {
         let store = ErrorResidualsStore::new();
         let layer = LayerId::new(1);
-        assert!(store.get_diag(1, layer, tc(0, 1)).is_none());
-        assert!(store.get_diag(1, layer, tc(1, 0)).is_none());
+        assert!(store.get_diag(1, layer, 0, tc(0, 1)).is_none());
+        assert!(store.get_diag(1, layer, 0, tc(1, 0)).is_none());
     }
 
     #[test]
@@ -266,10 +287,10 @@ mod tests {
         residuals.right[0] = 0.5;
 
         // Store residuals for tile (2, 3)
-        store.store(1, layer, tc(2, 3), residuals);
+        store.store(1, layer, 0, tc(2, 3), residuals);
 
         // Get from the right neighbor's perspective (tile 3, 3 looking left)
-        let got = store.get_left(1, layer, tc(3, 3));
+        let got = store.get_left(1, layer, 0, tc(3, 3));
         assert!(got.is_some());
         assert_eq!(got.unwrap().right[0], 0.5);
     }
@@ -280,7 +301,7 @@ mod tests {
         let layer = LayerId::new(1);
 
         // x == 0 means no left neighbor
-        let got = store.get_left(1, layer, tc(0, 5));
+        let got = store.get_left(1, layer, 0, tc(0, 5));
         assert!(got.is_none());
     }
 
@@ -290,7 +311,7 @@ mod tests {
         let layer = LayerId::new(1);
 
         // Left neighbor (4, 3) not stored
-        let got = store.get_left(1, layer, tc(5, 3));
+        let got = store.get_left(1, layer, 0, tc(5, 3));
         assert!(got.is_none());
     }
 
@@ -302,10 +323,10 @@ mod tests {
         residuals.bottom[0] = 0.75;
 
         // Store residuals for tile (4, 1)
-        store.store(1, layer, tc(4, 1), residuals);
+        store.store(1, layer, 0, tc(4, 1), residuals);
 
         // Get from the bottom neighbor's perspective (tile 4, 2 looking up)
-        let got = store.get_top(1, layer, tc(4, 2));
+        let got = store.get_top(1, layer, 0, tc(4, 2));
         assert!(got.is_some());
         assert_eq!(got.unwrap().bottom[0], 0.75);
     }
@@ -316,7 +337,7 @@ mod tests {
         let layer = LayerId::new(1);
 
         // y == 0 means no top neighbor
-        let got = store.get_top(1, layer, tc(5, 0));
+        let got = store.get_top(1, layer, 0, tc(5, 0));
         assert!(got.is_none());
     }
 
@@ -326,7 +347,7 @@ mod tests {
         let layer = LayerId::new(1);
 
         // Top neighbor (3, 4) not stored
-        let got = store.get_top(1, layer, tc(3, 5));
+        let got = store.get_top(1, layer, 0, tc(3, 5));
         assert!(got.is_none());
     }
 
@@ -334,21 +355,21 @@ mod tests {
     fn evict_downstream_cone_keeps_upstream_tiles() {
         let store = ErrorResidualsStore::new();
         let layer = LayerId::new(1);
-        store.store(1, layer, tc(0, 0), ErrorResiduals::new());
-        store.store(1, layer, tc(2, 0), ErrorResiduals::new());
-        store.store(1, layer, tc(0, 2), ErrorResiduals::new());
-        store.store(1, layer, tc(2, 2), ErrorResiduals::new());
+        store.store(1, layer, 0, tc(0, 0), ErrorResiduals::new());
+        store.store(1, layer, 0, tc(2, 0), ErrorResiduals::new());
+        store.store(1, layer, 0, tc(0, 2), ErrorResiduals::new());
+        store.store(1, layer, 0, tc(2, 2), ErrorResiduals::new());
 
         store.evict_downstream_cone(1, layer, 0, 1, 1);
 
-        assert!(store.get_left(1, layer, tc(1, 0)).is_some()); // (0,0) kept
-        assert!(store.get_top(1, layer, tc(0, 1)).is_some()); // (0,0)
-                                                              // (2,2) in cone — gone (get_left of (3,2) would need (2,2))
-        assert!(store.get_left(1, layer, tc(3, 2)).is_none());
+        assert!(store.get_left(1, layer, 0, tc(1, 0)).is_some()); // (0,0) kept
+        assert!(store.get_top(1, layer, 0, tc(0, 1)).is_some()); // (0,0)
+                                                                 // (2,2) in cone — gone (get_left of (3,2) would need (2,2))
+        assert!(store.get_left(1, layer, 0, tc(3, 2)).is_none());
         // (2,0): x>=1 but y=0 < 1 — kept
-        assert!(store.get_left(1, layer, tc(3, 0)).is_some());
+        assert!(store.get_left(1, layer, 0, tc(3, 0)).is_some());
         // (0,2): y>=1 but x=0 < 1 — kept
-        assert!(store.get_top(1, layer, tc(0, 3)).is_some());
+        assert!(store.get_top(1, layer, 0, tc(0, 3)).is_some());
     }
 
     #[test]
@@ -356,14 +377,14 @@ mod tests {
         let store = ErrorResidualsStore::new();
         let layer = LayerId::new(1);
 
-        store.store(1, layer, tc(0, 0), ErrorResiduals::new());
-        store.store(1, layer, tc(1, 0), ErrorResiduals::new());
-        store.store(1, layer, tc(0, 1), ErrorResiduals::new());
+        store.store(1, layer, 0, tc(0, 0), ErrorResiduals::new());
+        store.store(1, layer, 0, tc(1, 0), ErrorResiduals::new());
+        store.store(1, layer, 0, tc(0, 1), ErrorResiduals::new());
 
         store.clear();
 
-        assert!(store.get_left(1, layer, tc(1, 0)).is_none());
-        assert!(store.get_top(1, layer, tc(0, 1)).is_none());
+        assert!(store.get_left(1, layer, 0, tc(1, 0)).is_none());
+        assert!(store.get_top(1, layer, 0, tc(0, 1)).is_none());
     }
 
     #[test]
@@ -374,31 +395,34 @@ mod tests {
 
         let mut a = ErrorResiduals::new();
         a.right[0] = 1.0;
-        store.store(1, layer_a, tc(3, 3), a);
-        store.store(1, layer_b, tc(3, 3), ErrorResiduals::new());
+        store.store(1, layer_a, 0, tc(3, 3), a);
+        store.store(1, layer_b, 0, tc(3, 3), ErrorResiduals::new());
 
         store.evict_layer(1, layer_a);
 
-        assert!(store.get_left(1, layer_a, tc(4, 3)).is_none());
-        assert!(store.get_left(1, layer_b, tc(4, 3)).is_some());
+        assert!(store.get_left(1, layer_a, 0, tc(4, 3)).is_none());
+        assert!(store.get_left(1, layer_b, 0, tc(4, 3)).is_some());
     }
 
     #[test]
-    fn different_layers_are_independent() {
+    fn different_filter_keys_are_independent() {
         let store = ErrorResidualsStore::new();
-        let layer_a = LayerId::new(1);
-        let layer_b = LayerId::new(2);
+        let layer = LayerId::new(1);
 
-        let mut residuals = ErrorResiduals::new();
-        residuals.right[0] = 1.0;
-        store.store(1, layer_a, tc(3, 3), residuals);
+        let mut a = ErrorResiduals::new();
+        a.right[0] = 0.25;
+        let mut b = ErrorResiduals::new();
+        b.right[0] = 0.75;
+        store.store(1, layer, 11, tc(0, 0), a);
+        store.store(1, layer, 22, tc(0, 0), b);
 
-        // Layer B has no data at that coord
-        assert!(store.get_left(1, layer_b, tc(4, 3)).is_none());
-
-        // Layer A does
-        let got = store.get_left(1, layer_a, tc(4, 3));
-        assert!(got.is_some());
-        assert_eq!(got.unwrap().right[0], 1.0);
+        assert_eq!(
+            store.get_left(1, layer, 11, tc(1, 0)).unwrap().right[0],
+            0.25
+        );
+        assert_eq!(
+            store.get_left(1, layer, 22, tc(1, 0)).unwrap().right[0],
+            0.75
+        );
     }
 }

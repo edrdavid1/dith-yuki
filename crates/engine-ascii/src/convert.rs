@@ -4,9 +4,7 @@ use crate::analyze::{analyse_cell, mean_cell_alpha};
 use crate::atlas::GlyphAtlas;
 use crate::color::{mean_cell_srgb8_alpha, quantize_pair, quantize_rgb, ColorTarget};
 use crate::descriptor::ShapeDesc;
-use crate::dither::{
-    dither_shape, dither_tone, CellDither, ShapeErrorBuf, ToneErrorBuf,
-};
+use crate::dither::{dither_shape, dither_tone, CellDither, ShapeErrorBuf, ToneErrorBuf};
 use crate::grid::{AsciiGrid, Cell, CellColor, GridColorMode};
 use crate::matching::{
     match_mask_two_color, orient_glyph, sample_cell_rgb, EdgeField, EdgeOverlay, MatcherTables,
@@ -21,7 +19,9 @@ pub enum MatchMode {
     Tone,
     Shape,
     /// Shape with Harri contrast; `gamma_8_8` (`256` = 1.0).
-    ShapeContrast { gamma_8_8: u16 },
+    ShapeContrast {
+        gamma_8_8: u16,
+    },
     /// chafa-style mask + two-colour fit (implies [`GridColorMode::FgBg`] colours).
     MaskTwoColor,
 }
@@ -80,10 +80,7 @@ pub fn convert(
     };
 
     let use_fs = matches!(opts.dither, CellDither::FloydSteinberg { .. });
-    let serpentine = matches!(
-        opts.dither,
-        CellDither::FloydSteinberg { serpentine: true }
-    );
+    let serpentine = matches!(opts.dither, CellDither::FloydSteinberg { serpentine: true });
     let mut tone_err = if use_fs {
         Some(ToneErrorBuf::new(cols, rows))
     } else {
@@ -113,8 +110,7 @@ pub fn convert(
             Box::new((0..cols).rev())
         };
         for col in col_range {
-            let cell_alpha =
-                mean_cell_alpha(rgba, width, height, col * cw, row * ch, cw, ch);
+            let cell_alpha = mean_cell_alpha(rgba, width, height, col * cw, row * ch, cw, ch);
             if cell_alpha == 0 {
                 cells[(row * cols + col) as usize] = Cell {
                     glyph: 0,
@@ -127,8 +123,7 @@ pub fn convert(
             let (tone, shape) = analyse_cell(rgba, width, height, col * cw, row * ch, cw, ch);
             let (glyph, fg, bg) = match opts.match_mode {
                 MatchMode::MaskTwoColor => {
-                    let samples =
-                        sample_cell_rgb(rgba, width, height, col * cw, row * ch, cw, ch);
+                    let samples = sample_cell_rgb(rgba, width, height, col * cw, row * ch, cw, ch);
                     let m = match_mask_two_color(atlas, &samples);
                     let (CellColor::Rgb(fg8), CellColor::Rgb(bg8)) = (m.fg, m.bg) else {
                         unreachable!("mask_two_color always returns Rgb");
@@ -146,17 +141,8 @@ pub fn convert(
                         let chosen = tables.tone[glyph as usize];
                         buf.diffuse(t, chosen, col, row, cols, rows, serpentine, ltr);
                     }
-                    let (fg, bg) = colours_for_cell(
-                        rgba,
-                        width,
-                        height,
-                        col,
-                        row,
-                        cw,
-                        ch,
-                        color_mode,
-                        opts,
-                    );
+                    let (fg, bg) =
+                        colours_for_cell(rgba, width, height, col, row, cw, ch, color_mode, opts);
                     (glyph, fg, bg)
                 }
                 MatchMode::Shape | MatchMode::ShapeContrast { .. } => {
@@ -174,23 +160,13 @@ pub fn convert(
                         let chosen = tables.shape[glyph as usize];
                         buf.diffuse(s, chosen, col, row, cols, rows, serpentine, ltr);
                     }
-                    let (fg, bg) = colours_for_cell(
-                        rgba,
-                        width,
-                        height,
-                        col,
-                        row,
-                        cw,
-                        ch,
-                        color_mode,
-                        opts,
-                    );
+                    let (fg, bg) =
+                        colours_for_cell(rgba, width, height, col, row, cw, ch, color_mode, opts);
                     (glyph, fg, bg)
                 }
             };
             let glyph = if let Some(field) = edge_field.as_ref() {
-                if let Some(orient) = field.cell_orient(col * cw, row * ch, cw, ch, opts.edge.tau)
-                {
+                if let Some(orient) = field.cell_orient(col * cw, row * ch, cw, ch, opts.edge.tau) {
                     orient_glyph(atlas, orient).unwrap_or(glyph)
                 } else {
                     glyph

@@ -100,10 +100,7 @@ pub async fn recover_journal(
     for entry in staging.entries.iter() {
         let key = *entry.key();
         let tile = entry.value().tile.clone();
-        let _ = state
-            .tiles
-            .tile_cache
-            .insert_fresh_gen(key, tile, live_gen);
+        let _ = state.tiles.tile_cache.insert_fresh_gen(key, tile, live_gen);
     }
 
     let width = opened.document.width;
@@ -192,16 +189,8 @@ pub fn prepare_soft_discard(
     let session = state.require_session(doc_id)?;
     let recovery_id = session.recovery_id;
     let display_name = {
-        let project = session
-            .project_path
-            .lock()
-            .ok()
-            .and_then(|g| g.clone());
-        let source = session
-            .source_path
-            .lock()
-            .ok()
-            .and_then(|g| g.clone());
+        let project = session.project_path.lock().ok().and_then(|g| g.clone());
+        let source = session.source_path.lock().ok().and_then(|g| g.clone());
         project
             .as_ref()
             .or(source.as_ref())
@@ -243,4 +232,3 @@ pub fn flush_all_dirty_journals(state: &AppState) {
         }
     }
 }
-

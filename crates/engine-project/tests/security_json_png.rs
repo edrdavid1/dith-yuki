@@ -34,7 +34,8 @@ fn dyproj_with_duplicate_manifest_key_rejected() {
     )])
     .unwrap();
     // Secure zip opens; project open fails on strict JSON.
-    let mut ar = SecureZipArchive::open(&zip, ExpectedKind::Dyproj, ArchiveLimits::dyproj()).unwrap();
+    let mut ar =
+        SecureZipArchive::open(&zip, ExpectedKind::Dyproj, ArchiveLimits::dyproj()).unwrap();
     let bytes = ar.read_entry("manifest.json").unwrap();
     assert!(parse_json_value(&bytes, MAX_JSON_DEPTH).is_err());
 }
@@ -46,13 +47,13 @@ fn png_oversized_dimensions_rejected_before_huge_alloc() {
     // or our pixel cap without allocating width*height*4 floats.
     let mut png = Vec::new();
     png.extend_from_slice(&[137, 80, 78, 71, 13, 10, 26, 10]); // signature
-    // IHDR length=13
+                                                               // IHDR length=13
     png.extend_from_slice(&13u32.to_be_bytes());
     png.extend_from_slice(b"IHDR");
     png.extend_from_slice(&65535u32.to_be_bytes()); // width
     png.extend_from_slice(&65535u32.to_be_bytes()); // height
-    png.extend_from_slice(&[8, 2, 0, 0, 0]); // bit depth, RGB, … 
-    // Wrong CRC is fine — we only need failure without panic / huge alloc.
+    png.extend_from_slice(&[8, 2, 0, 0, 0]); // bit depth, RGB, …
+                                             // Wrong CRC is fine — we only need failure without panic / huge alloc.
     png.extend_from_slice(&[0, 0, 0, 0]);
 
     let limits = PngDecodeLimits {

@@ -100,7 +100,7 @@ fn encode_rgba8(w: u32, h: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::convert::{MatchMode, convert_mono};
+    use crate::convert::{convert_mono, MatchMode};
     use crate::font::BundledFont;
     use crate::symbols::SymbolSet;
 

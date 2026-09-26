@@ -41,13 +41,7 @@ pub fn hash01(x: i32, y: i32) -> f32 {
 /// When `pixel_size > 1`, the hash is evaluated once per block so dots become
 /// chunky pixel-art spots.
 #[inline]
-pub fn random_dot_ink(
-    gx: i32,
-    gy: i32,
-    darkness: f32,
-    density_scale: f32,
-    pixel_size: u8,
-) -> bool {
+pub fn random_dot_ink(gx: i32, gy: i32, darkness: f32, density_scale: f32, pixel_size: u8) -> bool {
     let darkness = darkness.clamp(0.0, 1.0);
     if darkness <= 0.0 {
         return false;
