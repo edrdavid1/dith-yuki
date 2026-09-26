@@ -27,9 +27,16 @@
       </p>
       <div class="cta">
         <a
-          class="btn primary"
+          id="dl-mac"
+          class="btn primary is-loading"
           href="https://github.com/edrdavid1/dith-yuki/releases/latest"
-          >Download latest</a
+          >Download for macOS</a
+        >
+        <a
+          id="dl-win"
+          class="btn primary is-loading"
+          href="https://github.com/edrdavid1/dith-yuki/releases/latest"
+          >Download for Windows</a
         >
         <a
           class="btn ghost"
@@ -38,7 +45,8 @@
         >
       </div>
       <p class="meta">
-        macOS DMG · Windows NSIS · Fair Core License 1.0 (source available)
+        Latest: <span id="version">…</span> · macOS DMG · Windows NSIS · Fair Core
+        License 1.0 (source available)
       </p>
     </main>
 
@@ -75,5 +83,6 @@
       <span>L'eco non di Bergamo</span>
       <a href="https://github.com/edrdavid1/dith-yuki">Source</a>
     </footer>
+    <script src="./download.js" defer></script>
   </body>
 </html>
