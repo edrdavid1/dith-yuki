@@ -25,13 +25,14 @@ interface MenuBarProps {
   onExportPattern: () => void;
   onImportPattern: () => void;
   onApplyCrossStitch?: () => void;
+  onOpenPatterns: () => void;
   onOpenPreferences: () => void;
   onOpenHelp: () => void;
   onUndo?: () => void;
   onRedo?: () => void;
 }
 
-type MenuId = 'file' | 'edit' | 'presets' | 'preferences' | 'help';
+type MenuId = 'file' | 'edit' | 'patterns' | 'preferences' | 'help';
 
 interface MenuItem {
   id: MenuId;
@@ -41,13 +42,13 @@ interface MenuItem {
 const MENU_ITEMS: MenuItem[] = [
   { id: 'file', label: 'File' },
   { id: 'edit', label: 'Edit' },
-  { id: 'presets', label: 'Presets' },
+  { id: 'patterns', label: 'Patterns' },
   { id: 'preferences', label: 'Preferences' },
   { id: 'help', label: 'Help' },
 ];
 
 /** Top-level items that open a window directly (no dropdown). */
-const DIRECT_OPEN_MENUS: ReadonlySet<MenuId> = new Set(['preferences', 'help']);
+const DIRECT_OPEN_MENUS: ReadonlySet<MenuId> = new Set(['patterns', 'preferences', 'help']);
 
 function MenuBar({
   hasDocument,
@@ -68,6 +69,7 @@ function MenuBar({
   onExportPattern,
   onImportPattern,
   onApplyCrossStitch,
+  onOpenPatterns,
   onOpenPreferences,
   onOpenHelp,
   onUndo,
@@ -102,6 +104,11 @@ function MenuBar({
   }, [openMenu]);
 
   const handleMenuClick = useCallback((id: MenuId) => {
+    if (id === 'patterns') {
+      onOpenPatterns();
+      setOpenMenu(null);
+      return;
+    }
     if (id === 'preferences') {
       onOpenPreferences();
       setOpenMenu(null);
@@ -113,7 +120,7 @@ function MenuBar({
       return;
     }
     setOpenMenu(prev => (prev === id ? null : id));
-  }, [onOpenPreferences, onOpenHelp]);
+  }, [onOpenPatterns, onOpenPreferences, onOpenHelp]);
 
   const handleMenuHover = useCallback((id: MenuId) => {
     // Only switch on hover if a dropdown is already open
@@ -229,6 +236,30 @@ function MenuBar({
             >
               Export ASCII…
             </button>
+            <button
+              className={cn('menubar-dropdown-item')}
+              role="menuitem"
+              onClick={() => onApplyCrossStitch && handleAction(onApplyCrossStitch)}
+              disabled={!hasDocument || !onApplyCrossStitch}
+            >
+              Apply Cross Stitch
+            </button>
+            <button
+              className={cn("menubar-dropdown-item")}
+              role="menuitem"
+              onClick={() => handleAction(onExportPattern)}
+              disabled={!hasDocument}
+            >
+              Export Pattern…
+            </button>
+            <button
+              className={cn("menubar-dropdown-item")}
+              role="menuitem"
+              onClick={() => handleAction(onImportPattern)}
+              disabled={!hasDocument}
+            >
+              Import Pattern…
+            </button>
           </div>
         );
       case 'edit': {
@@ -271,35 +302,6 @@ function MenuBar({
           </div>
         );
       }
-      case 'presets':
-        return (
-          <div className={cn("menubar-dropdown")} role="menu">
-            <button
-              className={cn('menubar-dropdown-item')}
-              role="menuitem"
-              onClick={() => onApplyCrossStitch && handleAction(onApplyCrossStitch)}
-              disabled={!hasDocument || !onApplyCrossStitch}
-            >
-              Cross Stitch
-            </button>
-            <button
-              className={cn("menubar-dropdown-item")}
-              role="menuitem"
-              onClick={() => handleAction(onExportPattern)}
-              disabled={!hasDocument}
-            >
-              Export Pattern…
-            </button>
-            <button
-              className={cn("menubar-dropdown-item")}
-              role="menuitem"
-              onClick={() => handleAction(onImportPattern)}
-              disabled={!hasDocument}
-            >
-              Import Pattern…
-            </button>
-          </div>
-        );
       default:
         return null;
     }

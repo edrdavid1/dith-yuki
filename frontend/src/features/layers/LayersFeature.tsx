@@ -1,9 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect } from 'react';
 import LayersPanel from '../../components/LayersPanel';
-import EffectChooserDialog from '../../components/EffectChooserDialog';
 import { useAppDispatch, useAppSelector } from '../../app/hooks';
 import {
-  addLayerWithEffect,
   patchLayerProps,
   refreshLayers,
   toggleLayerVisibility,
@@ -18,11 +16,11 @@ import { setSelection } from '../../app/slices/selectionSlice';
 import { registerLayersCommands } from '../shortcuts/commandRegistry';
 import { useEffectLayer } from '../../hooks/useEffectLayer';
 import { logIpcError } from '../../shared/ipc';
-import type { EffectType } from '../../types/effects';
 import type { PanelChromeProps } from '../panels/PanelChrome';
 
 /**
  * Connected Layers feature — reads/writes RTK; layout only passes chrome props.
+ * "+" clears selection so Effect Settings shows its inline chooser (no modal).
  */
 export default function LayersFeature({
   onTitleBarMouseDown,
@@ -38,17 +36,19 @@ export default function LayersFeature({
   const selectedFilterId = useAppSelector((s) => s.selection.filterId);
   const filters = useAppSelector(selectFiltersList);
   const docId = useAppSelector((s) => s.document.docId);
-  const [chooserOpen, setChooserOpen] = useState(false);
-  const addingRef = useRef(false);
 
   const imageSourceLayer = layers.length > 0 ? layers[0] : null;
   const effectLayer = useEffectLayer(imageSourceLayer?.id ?? null, selectedFilterId);
 
+  const handleAddLayer = useCallback(() => {
+    void dispatch(setSelection({ layerId: null, filterId: null }));
+  }, [dispatch]);
+
   useEffect(() => {
     return registerLayersCommands({
-      openEffectChooser: () => setChooserOpen(true),
+      openEffectChooser: handleAddLayer,
     });
-  }, []);
+  }, [handleAddLayer]);
 
   const handleSelect = useCallback(
     (layerId: number) => {
@@ -74,33 +74,6 @@ export default function LayersFeature({
       }
     },
     [dispatch, imageSourceLayer, selectedFilterId]
-  );
-
-  const handleAddLayer = useCallback(() => {
-    setChooserOpen(true);
-  }, []);
-
-  const handleChooserSelect = useCallback(
-    (effectType: EffectType) => {
-      if (addingRef.current || docId == null) return;
-      addingRef.current = true;
-      setChooserOpen(false);
-      void dispatch(addLayerWithEffect({ docId, layers, effectType }))
-        .then((result) => {
-          if (addLayerWithEffect.fulfilled.match(result) && result.payload != null) {
-            void dispatch(
-              setSelection({
-                layerId: result.payload.layerId,
-                filterId: result.payload.filterId,
-              })
-            );
-          }
-        })
-        .finally(() => {
-          addingRef.current = false;
-        });
-    },
-    [dispatch, docId, layers]
   );
 
   const handleRemoveFilter = useCallback(
@@ -172,34 +145,27 @@ export default function LayersFeature({
   );
 
   return (
-    <>
-      <LayersPanel
-        layers={layers}
-        selectedLayerId={selectedLayerId}
-        filters={filters}
-        selectedFilterId={selectedFilterId}
-        onSelect={handleSelect}
-        onSelectFilter={handleSelectFilter}
-        onAddLayer={handleAddLayer}
-        onRemoveFilter={handleRemoveFilter}
-        onReorderFilter={handleReorderFilter}
-        onToggleVisibility={handleToggleVisibility}
-        onToggleFilterEnabled={handleToggleFilterEnabled}
-        onBlendModeChange={handleBlendModeChange}
-        onOpacityChange={handleOpacityChange}
-        onFilterBlendChange={handleFilterBlendChange}
-        onTitleBarMouseDown={onTitleBarMouseDown}
-        dockSide={dockSide}
-        onMoveToSide={onMoveToSide}
-        hideChrome={hideChrome}
-        onPopOut={onPopOut}
-        onDockBack={onDockBack}
-      />
-      <EffectChooserDialog
-        isOpen={chooserOpen}
-        onSelect={handleChooserSelect}
-        onClose={() => setChooserOpen(false)}
-      />
-    </>
+    <LayersPanel
+      layers={layers}
+      selectedLayerId={selectedLayerId}
+      filters={filters}
+      selectedFilterId={selectedFilterId}
+      onSelect={handleSelect}
+      onSelectFilter={handleSelectFilter}
+      onAddLayer={handleAddLayer}
+      onRemoveFilter={handleRemoveFilter}
+      onReorderFilter={handleReorderFilter}
+      onToggleVisibility={handleToggleVisibility}
+      onToggleFilterEnabled={handleToggleFilterEnabled}
+      onBlendModeChange={handleBlendModeChange}
+      onOpacityChange={handleOpacityChange}
+      onFilterBlendChange={handleFilterBlendChange}
+      onTitleBarMouseDown={onTitleBarMouseDown}
+      dockSide={dockSide}
+      onMoveToSide={onMoveToSide}
+      hideChrome={hideChrome}
+      onPopOut={onPopOut}
+      onDockBack={onDockBack}
+    />
   );
 }

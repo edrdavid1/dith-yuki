@@ -25,6 +25,12 @@ const saved: PaletteDto[] = [
   },
 ];
 
+const extraProps = {
+  onDeleteSaved: vi.fn(),
+  onExportSaved: vi.fn(),
+  onImport: vi.fn(),
+};
+
 describe('PaletteManagerSection', () => {
   it('lists New, built-in, and saved palettes in one menu', async () => {
     render(
@@ -35,6 +41,7 @@ describe('PaletteManagerSection', () => {
         onSelectNew={vi.fn()}
         onSelectSaved={vi.fn()}
         onSelectBuiltin={vi.fn()}
+        {...extraProps}
       />
     );
     expect(screen.getByText('New palette')).toBeInTheDocument();
@@ -55,6 +62,7 @@ describe('PaletteManagerSection', () => {
         onSelectNew={vi.fn()}
         onSelectSaved={vi.fn()}
         onSelectBuiltin={onBuiltin}
+        {...extraProps}
       />
     );
     fireEvent.click(screen.getByLabelText('Open dropdown'));
@@ -72,6 +80,7 @@ describe('PaletteManagerSection', () => {
         onSelectNew={vi.fn()}
         onSelectSaved={onSaved}
         onSelectBuiltin={vi.fn()}
+        {...extraProps}
       />
     );
     fireEvent.click(screen.getByLabelText('Open dropdown'));
@@ -89,10 +98,50 @@ describe('PaletteManagerSection', () => {
         onSelectNew={onNew}
         onSelectSaved={vi.fn()}
         onSelectBuiltin={vi.fn()}
+        {...extraProps}
       />
     );
     fireEvent.click(screen.getByLabelText('Open dropdown'));
     fireEvent.click(screen.getByRole('option', { name: 'New palette' }));
     expect(onNew).toHaveBeenCalled();
+  });
+
+  it('steps next/prev through the browsable list and opens manager', () => {
+    const onBuiltin = vi.fn();
+    render(
+      <PaletteManagerSection
+        builtins={builtins}
+        saved={saved}
+        selectedPaletteId={null}
+        onSelectNew={vi.fn()}
+        onSelectSaved={vi.fn()}
+        onSelectBuiltin={onBuiltin}
+        {...extraProps}
+      />
+    );
+
+    fireEvent.click(screen.getByLabelText('Next palette'));
+    expect(onBuiltin).toHaveBeenCalledWith('gameboy');
+
+    fireEvent.click(screen.getByLabelText('Open palette manager'));
+    expect(screen.getByRole('dialog', { name: 'Palette Manager' })).toBeInTheDocument();
+  });
+
+  it('steps from a saved palette to the next browsable entry', () => {
+    const onBuiltin = vi.fn();
+    render(
+      <PaletteManagerSection
+        builtins={builtins}
+        saved={saved}
+        selectedPaletteId={7}
+        onSelectNew={vi.fn()}
+        onSelectSaved={vi.fn()}
+        onSelectBuiltin={onBuiltin}
+        {...extraProps}
+      />
+    );
+    // saved Extracted is last → next wraps to first builtin
+    fireEvent.click(screen.getByLabelText('Next palette'));
+    expect(onBuiltin).toHaveBeenCalledWith('gameboy');
   });
 });

@@ -53,6 +53,8 @@ export interface ColorLabBodyProps {
   onApply: () => void;
   onImport: () => void;
   onExport: (format?: string) => void;
+  onDeleteSaved: (id: number) => void;
+  onExportSaved: (id: number) => void;
   onInsertGeneratedColors: (hexColors: string[]) => void;
   onGeneratorError: (message: string | null) => void;
 }
@@ -72,6 +74,9 @@ export default function ColorLabBody(props: ColorLabBodyProps) {
         onSelectNew={props.onSelectNew}
         onSelectSaved={props.onSelectPalette}
         onSelectBuiltin={props.onSelectBuiltin}
+        onDeleteSaved={props.onDeleteSaved}
+        onExportSaved={props.onExportSaved}
+        onImport={props.onImport}
         previewColors={props.colors
           .filter((c) => c.valid)
           .map((c) => [c.r, c.g, c.b] as [number, number, number])}

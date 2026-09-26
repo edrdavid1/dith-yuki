@@ -8,9 +8,12 @@ import { setSelection } from '../../app/slices/selectionSlice';
 import { useEffectLayer } from '../../hooks/useEffectLayer';
 import { useDocument } from '../../hooks/useDocument';
 import { listPalettes } from '../../shared/ipc/palettes';
+import { formatIpcError, importPatternToLibrary, logIpcError } from '../../shared/ipc';
+import { setDocumentMeta } from '../../app/slices/documentSlice';
 import type { EffectType } from '../../types/effects';
 import type { FilterInfo } from '../../types';
 import type { PanelChromeProps } from '../panels/PanelChrome';
+import { usePatternsUi } from '../patterns/PatternsUiContext';
 
 function findLayerById(
   layers: { id: number; name: string; children?: unknown[] }[],
@@ -46,6 +49,7 @@ export default function EffectsFeature({
   const lastCreatedId = useAppSelector((s) => s.palettes.lastCreatedId);
   const docId = useAppSelector((s) => s.document.docId);
   const doc = useDocument();
+  const { openPatternManager } = usePatternsUi();
   const addingRef = useRef(false);
 
   const imageSourceLayer = layers.length > 0 ? layers[0] : null;
@@ -269,12 +273,28 @@ export default function EffectsFeature({
       onPopOut={onPopOut}
       onDockBack={onDockBack}
       targetLayerId={currentLayerForEffect ?? selectedLayerId}
-      onExportPattern={() =>
-        void doc.exportPattern(currentLayerForEffect ?? selectedLayerId)
-      }
+      onExportPattern={() => {
+        const layerId = currentLayerForEffect ?? selectedLayerId;
+        void (async () => {
+          const path = await doc.exportPattern(layerId);
+          if (!path) return;
+          try {
+            await importPatternToLibrary(path);
+          } catch (err) {
+            logIpcError('EffectsFeature.exportPatternLibrary', err);
+            dispatch(
+              setDocumentMeta({
+                error: formatIpcError(err),
+              })
+            );
+          }
+        })();
+      }}
       onImportPattern={() =>
         void doc.importPattern(currentLayerForEffect ?? selectedLayerId)
       }
+      onSavePattern={() => openPatternManager('save')}
+      onLoadPattern={() => openPatternManager('browse')}
     />
   );
 }

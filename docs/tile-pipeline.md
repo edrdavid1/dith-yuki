@@ -105,6 +105,15 @@ SVG export (document composite → greedy meshing / contour paths) lives in
 `margin = pixel_size × kernel_max_offset` (FS: offset 1; Atkinson/JJN/Stucki/Burkes/Sierra: 2).
 Фиксированные «2 колонки / 2 ряда» обрезают hop `dx × pixel_size` при `pixel_size > 1`.
 
+**Row-interleaved strips (required for FS-family correctness):** tile-at-a-time
+finishes all rows of `(tx,ty)` before `(tx+1,ty)`, so kernel taps with `dx < 0`
+(FS/Atkinson below-left `(-1,+1)`) never reach the previous tile’s next row — a
+**256 px pattern seam** (worst with small palettes; also at `pixel_size=1`).
+Whenever `layer_needs_ed_strip`, preview/export run
+`apply_filter_stack_tile_row_strip` → `apply_error_diffusion_tile_row_strip`
+(scan `for y { for x across the whole tile-row }`). Vertical strip boundaries
+still use `ErrorResidualsStore`. See `.local-doc/TILE_FIX`.
+
 ---
 
 ## 4. Cross-Tile Error Diffusion Pipeline

@@ -179,6 +179,118 @@ pub fn compute_processed_tile(
             }
         }
 
+        // Any ED in the stack: process the full horizontal tile-row as one strip
+        // so FS below-left taps work even when Glow/Glitch/ordered wrap the ED.
+        if engine_project::filters::layer_needs_ed_strip(layer) {
+            use engine_project::filters::apply_filter_stack_tile_row_strip;
+
+            let bounds = layer.bounds_l0;
+            let ty = key.coord.y;
+            let level = key.coord.level;
+
+            // Previous strip must be finalized so top residuals exist.
+            if ty > 0 {
+                for tx in bounds.min_x..=bounds.max_x {
+                    let prev = TileKey {
+                        doc: key.doc,
+                        layer: key.layer,
+                        coord: engine_tiles::TileCoord {
+                            level,
+                            x: tx,
+                            y: ty - 1,
+                        },
+                        stage: CacheStage::Processed,
+                    };
+                    if !engine_tiles::tile_fresh(&state.tiles.tile_cache, prev) {
+                        let _ = compute_processed_tile(prev, state)?;
+                    }
+                }
+            }
+
+            let mut coords = Vec::new();
+            let mut raw_arcs = Vec::new();
+            for tx in bounds.min_x..=bounds.max_x {
+                let coord = engine_tiles::TileCoord { level, x: tx, y: ty };
+                let raw_key = TileKey {
+                    doc: key.doc,
+                    layer: key.layer,
+                    coord,
+                    stage: CacheStage::Raw,
+                };
+                let raw = state.tiles.tile_cache.get_entry(raw_key).ok_or_else(|| {
+                    EngineError::invalid_state(format!(
+                        "Raw tile missing for ED strip layer={} ({tx},{ty})",
+                        key.layer
+                    ))
+                })?;
+                coords.push(coord);
+                raw_arcs.push(raw);
+            }
+            let strip: Vec<(engine_tiles::TileCoord, &PixelTile)> = coords
+                .iter()
+                .zip(raw_arcs.iter())
+                .map(|(c, t)| (*c, t.as_ref()))
+                .collect();
+            let mut outputs: Vec<PixelTile> =
+                (0..strip.len()).map(|_| PixelTile::new()).collect();
+            apply_filter_stack_tile_row_strip(
+                &strip,
+                layer,
+                &state.tiles.palette_cache,
+                &state.tiles.palette_lut_cache,
+                &state.tiles.threshold_cache,
+                &snapshot,
+                &state.tiles.error_residuals,
+                &state.tiles.block_representatives,
+                state.gpu.as_deref(),
+                &mut outputs,
+            )?;
+
+            let compute_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
+            let now_gen = snapshot_for_key(state, key)?
+                .generations
+                .document_gen
+                .load(Ordering::Acquire);
+            let mut requested = None;
+            if now_gen == compute_gen {
+                for (i, coord) in coords.iter().enumerate() {
+                    let pkey = TileKey {
+                        doc: key.doc,
+                        layer: key.layer,
+                        coord: *coord,
+                        stage: CacheStage::Processed,
+                    };
+                    let arc = Arc::new(std::mem::replace(&mut outputs[i], PixelTile::new()));
+                    let inserted =
+                        state
+                            .tiles
+                            .tile_cache
+                            .insert_fresh_gen(pkey, Arc::clone(&arc), compute_gen);
+                    if inserted {
+                        state.evict_for_pressure_if_needed();
+                        wake_ed_frontier_after_insert(state, pkey);
+                    }
+                    reschedule_if_insert_rejected(state, pkey, inserted);
+                    if coord.x == key.coord.x && coord.y == key.coord.y {
+                        requested = Some(arc);
+                    }
+                }
+            } else {
+                for (i, coord) in coords.iter().enumerate() {
+                    if coord.x == key.coord.x && coord.y == key.coord.y {
+                        requested = Some(Arc::new(std::mem::replace(
+                            &mut outputs[i],
+                            PixelTile::new(),
+                        )));
+                        break;
+                    }
+                }
+            }
+            return Ok(requested.ok_or_else(|| {
+                EngineError::invalid_state("ED strip missing requested tile")
+            })?);
+        }
+
         apply_filter_to_tile_with_caches(
             &raw_tile,
             layer,

@@ -103,7 +103,7 @@ export function useAppShortcuts() {
         case 'newLayer':
           if (!hasDocument) return;
           steal();
-          void dispatch(setSelection({ layerId: null, filterId: null }));
+          // Clears selection → Effect Settings shows its inline chooser.
           getLayersCommands()?.openEffectChooser?.();
           return;
         case 'duplicateLayer': {

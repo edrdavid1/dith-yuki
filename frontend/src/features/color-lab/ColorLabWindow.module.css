@@ -219,6 +219,23 @@
   gap: 6px;
 }
 
+.palette-nav-row {
+  display: grid;
+  grid-template-columns: 32px 1fr 32px;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.palette-nav-btn {
+  min-width: 0;
+  height: 28px;
+}
+
+.palette-nav-manager {
+  height: 28px;
+  font-size: 11px;
+}
+
 /* Content inside lp-dropdown-field-text / menu items */
 .builtin-preset-field {
   display: flex;

@@ -6,7 +6,9 @@
 //! Registry resolves algorithm identity upstream; this module still applies
 //! the resulting `FilterParams` per tile.
 
-use super::dither_diffusion::apply_error_diffusion_with_cache_into;
+use super::dither_diffusion::{
+    apply_error_diffusion_tile_row_strip, apply_error_diffusion_with_cache_into,
+};
 use super::dither_ordered::apply_ordered_with_cache_into;
 use super::dither_residuals::ErrorResidualsStore;
 use super::levels::LevelsFilter;
@@ -229,6 +231,169 @@ pub fn apply_filter_to_tile_with_park(
     // Result leaves in `front`; spare returns to the park for the next tile.
     park.give(back);
     Ok(front)
+}
+
+/// Whether any enabled filter on the layer needs row-interleaved ED strips.
+pub fn layer_needs_ed_strip(layer: &Layer) -> bool {
+    layer
+        .filters
+        .iter()
+        .any(|f| f.enabled && f.requires_full_row)
+}
+
+fn dither_params_for_ed(filter: &FilterInstance) -> Result<DitherParamsV2, EngineError> {
+    match &filter.params {
+        FilterParams::DitherV2(p) => Ok(p.clone()),
+        FilterParams::Dither { mode, color_depth } => {
+            Ok(DitherParamsV2::from((mode.clone(), *color_depth)))
+        }
+        _ => Err(EngineError::invalid_filter_params(
+            "requires_full_row filter without dither params",
+        )),
+    }
+}
+
+/// Apply a layer's full filter stack across one horizontal tile strip.
+///
+/// Non-ED filters run per-tile. Each error-diffusion stage runs via
+/// [`apply_error_diffusion_tile_row_strip`] so below-left kernel taps reach the
+/// previous tile's next row (FS/Atkinson/… seams when stacked with Glow/Glitch).
+///
+/// `tiles` must be contiguous ascending `tx` at one `ty`. `outputs` matches.
+pub fn apply_filter_stack_tile_row_strip(
+    tiles: &[(TileCoord, &PixelTile)],
+    layer: &Layer,
+    palette_cache: &PaletteKdCache,
+    lut_cache: &PaletteLutCache,
+    threshold_cache: &ThresholdMapCache,
+    document: &Document,
+    residuals_store: &ErrorResidualsStore,
+    block_cache: &BlockRepresentativeCache,
+    gpu: Option<&GpuContext>,
+    outputs: &mut [PixelTile],
+) -> Result<(), EngineError> {
+    if tiles.is_empty() {
+        return Ok(());
+    }
+    if outputs.len() != tiles.len() {
+        return Err(EngineError::invalid_filter_params(
+            "filter strip: outputs length must match tiles",
+        ));
+    }
+
+    let enabled: Vec<&FilterInstance> = layer.filters.iter().rev().filter(|f| f.enabled).collect();
+    if enabled.is_empty() {
+        for (i, (_, src)) in tiles.iter().enumerate() {
+            outputs[i].copy_from(src);
+        }
+        return Ok(());
+    }
+
+    // Fast path: only one ED filter and nothing else — strip ED directly.
+    if enabled.len() == 1 && enabled[0].requires_full_row {
+        let params = dither_params_for_ed(enabled[0])?;
+        return apply_error_diffusion_tile_row_strip(
+            tiles,
+            &params,
+            residuals_store,
+            layer.id,
+            enabled[0].id.as_u128(),
+            palette_cache,
+            lut_cache,
+            document,
+            block_cache,
+            outputs,
+        );
+    }
+
+    let n = tiles.len();
+    // Ping-pong buffers for the strip (owned tiles).
+    let mut front: Vec<PixelTile> = tiles
+        .iter()
+        .map(|(_, src)| {
+            let mut t = PixelTile::new();
+            t.copy_from(src);
+            t
+        })
+        .collect();
+    let mut back: Vec<PixelTile> = (0..n).map(|_| PixelTile::new()).collect();
+
+    let mut applied_any = false;
+    for filter in &enabled {
+        if filter.requires_full_row {
+            let params = dither_params_for_ed(filter)?;
+            let strip: Vec<(TileCoord, &PixelTile)> = tiles
+                .iter()
+                .zip(front.iter())
+                .map(|((c, _), src)| (*c, src))
+                .collect();
+            engine_tiles::with_raw_block_sampling(!applied_any, || {
+                apply_error_diffusion_tile_row_strip(
+                    &strip,
+                    &params,
+                    residuals_store,
+                    layer.id,
+                    filter.id.as_u128(),
+                    palette_cache,
+                    lut_cache,
+                    document,
+                    block_cache,
+                    &mut back,
+                )
+            })?;
+        } else if filter.opacity >= 1.0 && filter.blend_mode == BlendMode::Normal {
+            for i in 0..n {
+                let coord = tiles[i].0;
+                engine_tiles::with_raw_block_sampling(!applied_any, || {
+                    apply_single_filter_into(
+                        &front[i],
+                        &mut back[i],
+                        filter,
+                        coord,
+                        palette_cache,
+                        lut_cache,
+                        threshold_cache,
+                        document,
+                        residuals_store,
+                        block_cache,
+                        layer.id,
+                        gpu,
+                    )
+                })?;
+            }
+        } else {
+            for i in 0..n {
+                let coord = tiles[i].0;
+                let mut scratch = PixelTile::new();
+                let apply_result = engine_tiles::with_raw_block_sampling(!applied_any, || {
+                    apply_single_filter_into(
+                        &front[i],
+                        &mut scratch,
+                        filter,
+                        coord,
+                        palette_cache,
+                        lut_cache,
+                        threshold_cache,
+                        document,
+                        residuals_store,
+                        block_cache,
+                        layer.id,
+                        gpu,
+                    )
+                });
+                apply_result?;
+                back[i].copy_from(&front[i]);
+                blend_tile(&mut back[i], &scratch, filter.blend_mode, filter.opacity);
+            }
+        }
+        std::mem::swap(&mut front, &mut back);
+        applied_any = true;
+    }
+
+    for i in 0..n {
+        outputs[i].copy_from(&front[i]);
+    }
+    Ok(())
 }
 
 /// Full_Then_Blend helper for unit tests. Production stack uses ping-pong in

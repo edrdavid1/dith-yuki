@@ -1,0 +1,144 @@
+.pm-dialog {
+  width: 440px;
+  max-height: min(80vh, 620px);
+  display: flex;
+  flex-direction: column;
+}
+
+.pm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.pm-list-scroll {
+  border: var(--border);
+  background: var(--color-white);
+  max-height: min(48vh, 340px);
+  min-height: 200px;
+}
+
+/* Keep Built-in / Saved labels clear of the SimpleBar track. */
+.pm-list-scroll :global(.simplebar-scrollable-y .simplebar-content-wrapper) {
+  padding-right: 28px !important;
+}
+
+.pm-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 4px 4px 4px;
+}
+
+.pm-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 5px 18px 5px 8px;
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-color);
+  font-family: var(--font-family);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.pm-row:hover {
+  background: var(--bg-hover);
+}
+
+.pm-row-focused {
+  outline: 1px solid var(--color-black);
+  outline-offset: -1px;
+}
+
+.pm-row-selected {
+  background: var(--bg-hover);
+  font-weight: bold;
+}
+
+.pm-swatches {
+  display: flex;
+  flex: 0 0 88px;
+  width: 88px;
+  height: 14px;
+  border: 1px solid var(--color-black);
+  overflow: hidden;
+  box-sizing: border-box;
+  background: var(--color-white);
+}
+
+.pm-swatches-empty {
+  background: repeating-linear-gradient(
+    -45deg,
+    #eee,
+    #eee 3px,
+    #ddd 3px,
+    #ddd 6px
+  );
+}
+
+.pm-swatch {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.pm-row-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pm-row-meta {
+  flex: 0 0 auto;
+  margin-right: 6px;
+  color: var(--color-dark-gray);
+  font-size: 10px;
+}
+
+.pm-actions {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.pm-action {
+  height: 30px;
+  margin: 0;
+  padding: 0 6px;
+  border: none;
+  background: var(--bg-window);
+  color: var(--text-color);
+  font-family: var(--font-family);
+  font-size: 12px;
+  font-weight: bold;
+  cursor: pointer;
+  box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+}
+
+.pm-action:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.pm-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pm-hint {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--color-dark-gray);
+}

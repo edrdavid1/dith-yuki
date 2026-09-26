@@ -508,3 +508,308 @@ fn atkinson_cross_tile_propagation() {
         "Atkinson: first pixels of tile (1,0) should differ with cross-tile propagation"
     );
 }
+
+/// Gold standard: strip ED must match a monolithic FS pass on the same buffer.
+/// Tile-at-a-time wavefront drops FS below-left taps into the previous tile.
+#[test]
+fn tiled_fs_palette_matches_monolithic_at_seam() {
+    use engine_color::palette::LinearColor;
+    use engine_color::palette_cache::PaletteKdCache;
+    use engine_color::palette_lut::{PaletteLutCache, DEFAULT_LUT_SIZE};
+    use engine_project::filter::PaletteDitherMode;
+    use engine_project::filters::dither_diffusion::apply_error_diffusion_tile_row_strip;
+    use engine_tiles::block_cache::BlockRepresentativeCache;
+    use engine_tiles::{HALO, TILE_SIZE};
+
+    const W: u32 = 512;
+    const H: u32 = 256;
+
+    let mut rgba = vec![0.0f32; (W * H * 4) as usize];
+    for y in 0..H {
+        for x in 0..W {
+            let t = x as f32 / (W - 1) as f32;
+            let v = 0.25 + 0.5 * t;
+            let i = ((y * W + x) * 4) as usize;
+            rgba[i] = v;
+            rgba[i + 1] = v;
+            rgba[i + 2] = v;
+            rgba[i + 3] = 1.0;
+        }
+    }
+
+    let mut doc = Document::new(DocumentId::new(1), W, H);
+    let palette_id = doc.add_palette(
+        "BW".into(),
+        vec![
+            LinearColor { r: 0.0, g: 0.0, b: 0.0 },
+            LinearColor { r: 1.0, g: 1.0, b: 1.0 },
+        ],
+    );
+    let palette = doc.get_palette(palette_id).unwrap().clone();
+    let params = DitherParamsV2 {
+        mode: DitherModeV2::FloydSteinberg,
+        levels: 2,
+        threshold_scale: 1.0,
+        pixel_size: 1,
+        color_mode: DitherColorMode::Rgb,
+        palette_id: Some(palette_id),
+        palette_dither_mode: PaletteDitherMode::Strict,
+        ..Default::default()
+    };
+
+    let palette_cache = PaletteKdCache::new();
+    let lut_cache = PaletteLutCache::new();
+    let lut = lut_cache
+        .get_or_build(doc.id.0, &palette, &palette_cache, DEFAULT_LUT_SIZE)
+        .unwrap();
+
+    let mut mono = vec![0.0f32; (W * H * 3) as usize];
+    let mut err = vec![0.0f32; (W * H * 3) as usize];
+    let offsets = [
+        (1i32, 0i32, 7.0 / 16.0),
+        (-1, 1, 3.0 / 16.0),
+        (0, 1, 5.0 / 16.0),
+        (1, 1, 1.0 / 16.0),
+    ];
+    for y in 0..H as i32 {
+        for x in 0..W as i32 {
+            let i = ((y as u32 * W + x as u32) * 4) as usize;
+            let ei = ((y as u32 * W + x as u32) * 3) as usize;
+            let adj_r = (rgba[i] + err[ei]).clamp(0.0, 1.0);
+            let adj_g = (rgba[i + 1] + err[ei + 1]).clamp(0.0, 1.0);
+            let adj_b = (rgba[i + 2] + err[ei + 2]).clamp(0.0, 1.0);
+            let oklab = engine_color::oklab::linear_to_oklab(engine_color::oklab::LinRgb {
+                r: adj_r,
+                g: adj_g,
+                b: adj_b,
+            });
+            let idx = lut.nearest_index(oklab) as usize;
+            let c = &palette.colors[idx];
+            mono[ei] = c.r;
+            mono[ei + 1] = c.g;
+            mono[ei + 2] = c.b;
+            let qe = [adj_r - c.r, adj_g - c.g, adj_b - c.b];
+            for &(dx, dy, wgt) in &offsets {
+                let nx = x + dx;
+                let ny = y + dy;
+                if nx >= 0 && ny >= 0 && (nx as u32) < W && (ny as u32) < H {
+                    let ni = ((ny as u32 * W + nx as u32) * 3) as usize;
+                    err[ni] += qe[0] * wgt;
+                    err[ni + 1] += qe[1] * wgt;
+                    err[ni + 2] += qe[2] * wgt;
+                }
+            }
+        }
+    }
+
+    fn tile_from(rgba: &[f32], w: u32, h: u32, coord: TileCoord) -> PixelTile {
+        let full = TILE_SIZE + 2 * HALO;
+        let mut tile = PixelTile::new();
+        for y in 0..full {
+            for x in 0..full {
+                let gx = coord.x as i32 * TILE_SIZE as i32 + x as i32 - HALO as i32;
+                let gy = coord.y as i32 * TILE_SIZE as i32 + y as i32 - HALO as i32;
+                if gx >= 0 && gy >= 0 && (gx as u32) < w && (gy as u32) < h {
+                    let i = ((gy as u32 * w + gx as u32) * 4) as usize;
+                    tile.set(x, y, 0, rgba[i]);
+                    tile.set(x, y, 1, rgba[i + 1]);
+                    tile.set(x, y, 2, rgba[i + 2]);
+                    tile.set(x, y, 3, rgba[i + 3]);
+                }
+            }
+        }
+        tile
+    }
+
+    let store = ErrorResidualsStore::new();
+    let blocks = BlockRepresentativeCache::new();
+    let layer_id = LayerId::new(1);
+    let left_c = tc(0, 0);
+    let right_c = tc(1, 0);
+    let left_src = tile_from(&rgba, W, H, left_c);
+    let right_src = tile_from(&rgba, W, H, right_c);
+    let strip = [(left_c, &left_src), (right_c, &right_src)];
+    let mut outs = [PixelTile::new(), PixelTile::new()];
+    apply_error_diffusion_tile_row_strip(
+        &strip,
+        &params,
+        &store,
+        layer_id,
+        0,
+        &palette_cache,
+        &lut_cache,
+        &doc,
+        &blocks,
+        &mut outs,
+    )
+    .unwrap();
+    let left = &outs[0];
+    let right = &outs[1];
+
+    let mut mismatches = 0usize;
+    let mut checked = 0usize;
+    for gy in 0..H {
+        for gx in 248u32..264 {
+            let mv = mono[((gy * W + gx) * 3) as usize];
+            let tv = if gx < TILE_SIZE {
+                left.at(HALO + gx, HALO + gy, 0)
+            } else {
+                right.at(HALO + (gx - TILE_SIZE), HALO + gy, 0)
+            };
+            checked += 1;
+            if (mv - tv).abs() > 1e-4 {
+                mismatches += 1;
+            }
+        }
+    }
+    assert_eq!(
+        mismatches, 0,
+        "strip FS+palette must match monolithic at seam ({mismatches}/{checked})"
+    );
+}
+
+/// Mega-pixel blocks that straddle a vertical strip boundary (`y = TILE_SIZE`)
+/// must stay uniform. Without BRC lookup in the strip path, the next strip
+/// re-quantizes non-reps and draws a hard cut / tile line when `pixel_size > 1`.
+#[test]
+fn tiled_fs_strip_megapixel_uniform_across_vertical_seam() {
+    use engine_project::filters::dither_diffusion::apply_error_diffusion_tile_row_strip;
+    use engine_tiles::block_cache::BlockRepresentativeCache;
+
+    const W: u32 = 512;
+    const H: u32 = 512;
+    const PS: u32 = 3;
+
+    let mut rgba = vec![0.0f32; (W * H * 4) as usize];
+    for y in 0..H {
+        for x in 0..W {
+            let t = (x as f32 + y as f32) / ((W + H - 2) as f32);
+            let v = 0.2 + 0.6 * t;
+            let i = ((y * W + x) * 4) as usize;
+            rgba[i] = v;
+            rgba[i + 1] = v * 0.95;
+            rgba[i + 2] = v * 0.9;
+            rgba[i + 3] = 1.0;
+        }
+    }
+
+    let doc = Document::new(DocumentId::new(2), W, H);
+    let params = DitherParamsV2 {
+        mode: DitherModeV2::FloydSteinberg,
+        levels: 2,
+        threshold_scale: 1.0,
+        pixel_size: PS as u8,
+        color_mode: DitherColorMode::Rgb,
+        palette_id: None,
+        ..Default::default()
+    };
+
+    fn tile_from(rgba: &[f32], w: u32, h: u32, coord: TileCoord) -> PixelTile {
+        let full = TILE_SIZE + 2 * HALO;
+        let mut tile = PixelTile::new();
+        for y in 0..full {
+            for x in 0..full {
+                let gx = coord.x as i32 * TILE_SIZE as i32 + x as i32 - HALO as i32;
+                let gy = coord.y as i32 * TILE_SIZE as i32 + y as i32 - HALO as i32;
+                if gx >= 0 && gy >= 0 && (gx as u32) < w && (gy as u32) < h {
+                    let i = ((gy as u32 * w + gx as u32) * 4) as usize;
+                    tile.set(x, y, 0, rgba[i]);
+                    tile.set(x, y, 1, rgba[i + 1]);
+                    tile.set(x, y, 2, rgba[i + 2]);
+                    tile.set(x, y, 3, rgba[i + 3]);
+                }
+            }
+        }
+        tile
+    }
+
+    let palette_cache = PaletteKdCache::new();
+    let lut_cache = PaletteLutCache::new();
+    let store = ErrorResidualsStore::new();
+    let blocks = BlockRepresentativeCache::new();
+    blocks.populate_from_buffer(&rgba, W, H, doc.id.0, 1, PS);
+    let layer_id = LayerId::new(1);
+
+    // Process ty=0 then ty=1 strips (2 tiles wide), sharing residuals + BRC.
+    let mut processed: Vec<(TileCoord, PixelTile)> = Vec::new();
+    for ty in 0..2u32 {
+        let c0 = tc(0, ty);
+        let c1 = tc(1, ty);
+        let t0 = tile_from(&rgba, W, H, c0);
+        let t1 = tile_from(&rgba, W, H, c1);
+        let strip = [(c0, &t0), (c1, &t1)];
+        let mut outs = [PixelTile::new(), PixelTile::new()];
+        apply_error_diffusion_tile_row_strip(
+            &strip,
+            &params,
+            &store,
+            layer_id,
+            0,
+            &palette_cache,
+            &lut_cache,
+            &doc,
+            &blocks,
+            &mut outs,
+        )
+        .unwrap();
+        let mut keep0 = PixelTile::new();
+        let mut keep1 = PixelTile::new();
+        keep0.copy_from(&outs[0]);
+        keep1.copy_from(&outs[1]);
+        processed.push((c0, keep0));
+        processed.push((c1, keep1));
+    }
+
+    let sample = |gx: u32, gy: u32| -> [f32; 3] {
+        let tx = gx / TILE_SIZE;
+        let ty = gy / TILE_SIZE;
+        let tile = processed
+            .iter()
+            .find(|(c, _)| c.x == tx && c.y == ty)
+            .map(|(_, t)| t)
+            .expect("tile");
+        let lx = HALO + (gx % TILE_SIZE);
+        let ly = HALO + (gy % TILE_SIZE);
+        [tile.at(lx, ly, 0), tile.at(lx, ly, 1), tile.at(lx, ly, 2)]
+    };
+
+    // Block origin at y=255 with ps=3 covers global rows 255,256,257 — straddles strips.
+    let block_gy = (TILE_SIZE as i32 - 1).div_euclid(PS as i32) * PS as i32;
+    assert_eq!(block_gy, 255, "expected straddling block origin for ps=3");
+    let gx = 100u32;
+    let block_gx = (gx as i32).div_euclid(PS as i32) * PS as i32;
+    let rep = sample(block_gx as u32, block_gy as u32);
+    for dy in 0..PS {
+        for dx in 0..PS {
+            let px = sample((block_gx as u32) + dx, (block_gy as u32) + dy);
+            assert!(
+                (px[0] - rep[0]).abs() < 1e-4
+                    && (px[1] - rep[1]).abs() < 1e-4
+                    && (px[2] - rep[2]).abs() < 1e-4,
+                "mega-pixel block must be uniform across vertical strip seam; \
+                 rep={rep:?} at +({dx},{dy})={px:?} (global {},{})",
+                block_gx as u32 + dx,
+                block_gy as u32 + dy
+            );
+        }
+    }
+
+    // Same check for a block straddling the horizontal tile seam (x=256).
+    let block_gx_h = (TILE_SIZE as i32 - 1).div_euclid(PS as i32) * PS as i32;
+    assert_eq!(block_gx_h, 255);
+    let gy = 100u32;
+    let block_gy_h = (gy as i32).div_euclid(PS as i32) * PS as i32;
+    let rep_h = sample(block_gx_h as u32, block_gy_h as u32);
+    for dy in 0..PS {
+        for dx in 0..PS {
+            let px = sample((block_gx_h as u32) + dx, (block_gy_h as u32) + dy);
+            assert!(
+                (px[0] - rep_h[0]).abs() < 1e-4
+                    && (px[1] - rep_h[1]).abs() < 1e-4
+                    && (px[2] - rep_h[2]).abs() < 1e-4,
+                "mega-pixel block must be uniform across horizontal tile seam; \
+                 rep={rep_h:?} at +({dx},{dy})={px:?}"
+            );
+        }
+    }
+}

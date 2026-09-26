@@ -806,6 +806,46 @@ pub fn unpack_pattern_from_bytes(
     })
 }
 
+/// Lightweight library listing: read `manifest.json` only (no filter unpack).
+pub fn peek_pattern_manifest(zip_bytes: &[u8]) -> Result<PatternManifest, ProjectError> {
+    let mut reader =
+        SecureZipArchive::open(zip_bytes, ExpectedKind::Dyuki, ArchiveLimits::dyuki())?;
+    let manifest_bytes = reader.read_entry("manifest.json")?;
+    let manifest_value = parse_value(&manifest_bytes, MAX_JSON_DEPTH)?;
+    let mut normalized = normalize_manifest_value(manifest_value)?;
+    if normalized.kind != ArchiveKind::Dyuki {
+        return Err(ProjectError::KindMismatch {
+            expected: "dyuki".into(),
+            found: normalized.kind.as_str().to_string(),
+        });
+    }
+    let name = sanitize_display_string_or(
+        normalized.name.as_deref().unwrap_or(""),
+        256,
+        false,
+        "Pattern",
+    );
+    let description = normalized
+        .description
+        .take()
+        .map(|d| sanitize_display_string(&d, 4096, true))
+        .filter(|d| !d.is_empty());
+    let author = normalized
+        .author
+        .take()
+        .map(|a| sanitize_display_string(&a, 256, false))
+        .filter(|a| !a.is_empty());
+    Ok(PatternManifest {
+        format_version: normalized.format_version,
+        kind: ArchiveKind::Dyuki,
+        app_version_min: normalized.app_version_min.unwrap_or_default(),
+        name,
+        description,
+        author,
+        created_at: normalized.created_at,
+    })
+}
+
 /// Export selected (or all) filters on a leaf layer.
 pub fn export_pattern_from_document(
     doc: &Document,

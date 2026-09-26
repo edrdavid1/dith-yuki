@@ -140,8 +140,8 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
         MenuItem::with_id(app, "export-pattern", "Export Pattern…", true, None::<&str>)?;
     let import_pattern =
         MenuItem::with_id(app, "import-pattern", "Import Pattern…", true, None::<&str>)?;
-    let presets_menu =
-        Submenu::with_items(app, "Presets", true, &[&export_pattern, &import_pattern])?;
+    let patterns_menu =
+        Submenu::with_items(app, "Patterns", true, &[&export_pattern, &import_pattern])?;
 
     let help_item = MenuItem::with_id(app, "help", "Dither Yuki Help", true, None::<&str>)?;
     let help_updates = MenuItem::with_id(
@@ -155,7 +155,7 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
 
     Menu::with_items(
         app,
-        &[&app_menu, &file_menu, &edit_menu, &presets_menu, &help_menu],
+        &[&app_menu, &file_menu, &edit_menu, &patterns_menu, &help_menu],
     )
 }
 

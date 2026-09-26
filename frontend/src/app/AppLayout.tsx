@@ -8,6 +8,8 @@ import Notification from '../components/common/Notification';
 import NewProjectDialog from '../components/NewProjectDialog';
 import HelpDialog from '../components/HelpDialog';
 import PreferencesDialog from '../features/preferences/PreferencesDialog';
+import PatternManagerDialog from '../features/patterns/PatternManagerDialog';
+import { usePatternsUi } from '../features/patterns/PatternsUiContext';
 import { useWelcomeScreen } from '../hooks/useWelcomeScreen';
 import { registerDocumentCommands, registerLayoutCommands } from '../features/shortcuts/commandRegistry';
 import { useAppUpdates } from '../hooks/useAppUpdates';
@@ -232,6 +234,13 @@ export default function AppLayout() {
   const [dismissedError, setDismissedError] = useState<string | null>(null);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const {
+    isOpen: patternsOpen,
+    intent: patternsIntent,
+    intentNonce: patternsIntentNonce,
+    openPatternManager,
+    closePatternManager,
+  } = usePatternsUi();
   const [focusMode, setFocusMode] = useState(false);
   const [affinity, setAffinity] = useState<DockAffinityEvent | null>(null);
   const leftHitRef = useRef<HTMLElement | null>(null);
@@ -347,13 +356,21 @@ export default function AppLayout() {
 
   const handleOpenPreferences = useCallback(() => {
     setHelpOpen(false);
+    closePatternManager();
     setPreferencesOpen(true);
-  }, []);
+  }, [closePatternManager]);
+
+  const handleOpenPatterns = useCallback(() => {
+    setHelpOpen(false);
+    setPreferencesOpen(false);
+    openPatternManager('browse');
+  }, [openPatternManager]);
 
   const handleOpenHelp = useCallback(() => {
     setPreferencesOpen(false);
+    closePatternManager();
     setHelpOpen(true);
-  }, []);
+  }, [closePatternManager]);
 
   useEffect(() => {
     let cancelled = false;
@@ -507,6 +524,7 @@ export default function AppLayout() {
               onExportPattern={() => void doc.exportPattern()}
               onImportPattern={() => void doc.importPattern()}
               onApplyCrossStitch={applyCrossStitchPreset}
+              onOpenPatterns={handleOpenPatterns}
               onOpenPreferences={handleOpenPreferences}
               onOpenHelp={handleOpenHelp}
               onUndo={() => {
@@ -751,6 +769,12 @@ export default function AppLayout() {
         onCreate={handleCreate}
       />
       <PreferencesDialog isOpen={preferencesOpen} onClose={() => setPreferencesOpen(false)} />
+      <PatternManagerDialog
+        isOpen={patternsOpen}
+        intent={patternsIntent}
+        intentNonce={patternsIntentNonce}
+        onClose={closePatternManager}
+      />
       <HelpDialog
         isOpen={helpOpen}
         version={updates.version}

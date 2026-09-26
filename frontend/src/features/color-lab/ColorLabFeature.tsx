@@ -26,6 +26,7 @@ import {
   addPalette,
   autoInterpolatePalette,
   autoInterpolateWouldChange,
+  deletePalette,
   emitPaletteChanged,
   exportPalette,
   formatIpcError,
@@ -303,6 +304,58 @@ export default function ColorLabFeature({
     publishPaletteBinding(null);
   }, [dispatch]);
 
+  const handleDeleteSaved = useCallback(
+    async (paletteId: number) => {
+      if (docId == null) return;
+      try {
+        await deletePalette(docId, paletteId);
+        if (selectedPaletteId === paletteId) {
+          dispatch(resetDraft());
+          dispatch(clearLastCreatedId());
+          publishPaletteBinding(null);
+        }
+        dispatch(bumpVersion({}));
+        void emitPaletteChanged();
+        dispatch(setError(null));
+      } catch (err: unknown) {
+        dispatch(setError(formatIpcError(err)));
+        logIpcError('ColorLabFeature.deleteSaved', err);
+      }
+    },
+    [dispatch, docId, selectedPaletteId]
+  );
+
+  const handleExportSaved = useCallback(
+    async (paletteId: number) => {
+      if (docId == null) return;
+      const palette = palettes.find((p) => p.id === paletteId);
+      if (!palette) return;
+      try {
+        const savePath = await saveDialog({
+          filters: [
+            { name: 'GIMP Palette', extensions: ['gpl'] },
+            { name: 'Adobe Swatch Exchange', extensions: ['ase'] },
+            { name: 'JSON', extensions: ['json'] },
+            { name: 'Adobe Color', extensions: ['aco'] },
+            { name: 'Microsoft RIFF', extensions: ['pal'] },
+            { name: 'CSV', extensions: ['csv'] },
+          ],
+        });
+        if (!savePath) return;
+        const ext = savePath.split('.').pop()?.toLowerCase() ?? 'gpl';
+        const format = ['ase', 'gpl', 'json', 'aco', 'pal', 'csv'].includes(ext) ? ext : 'gpl';
+        await exportPalette(docId, paletteId, savePath, format);
+        dispatch(setError(null));
+        dispatch(setSuccessMessage('Palette exported successfully.'));
+        window.setTimeout(() => dispatch(setSuccessMessage(null)), 3000);
+      } catch (err: unknown) {
+        dispatch(setError(formatIpcError(err)));
+        logIpcError('ColorLabFeature.exportSaved', err);
+      }
+    },
+    [dispatch, docId, palettes]
+  );
+
   const handleInsertGeneratedColors = useCallback(
     (hexColors: string[]) => {
       // Replace draft colors with generated ramp/harmony (document only on Apply)
@@ -489,6 +542,8 @@ export default function ColorLabFeature({
       onInsertGeneratedColors={handleInsertGeneratedColors}
       onGeneratorError={handleGeneratorError}
       onExport={handleExport}
+      onDeleteSaved={handleDeleteSaved}
+      onExportSaved={handleExportSaved}
     />
   );
 

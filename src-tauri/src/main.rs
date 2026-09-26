@@ -19,6 +19,7 @@ mod macos_first_mouse;
 mod macos_title;
 mod memory_budget;
 mod native_menu;
+mod pattern_library;
 #[cfg(test)]
 mod preview_latency_diag;
 mod recent_files;
@@ -435,6 +436,13 @@ fn main() {
             commands::open_project,
             commands::export_pattern,
             commands::import_pattern,
+            commands::list_pattern_library,
+            commands::save_pattern_to_library,
+            commands::apply_pattern_from_library,
+            commands::delete_pattern_from_library,
+            commands::rename_pattern_in_library,
+            commands::import_pattern_to_library,
+            commands::export_pattern_from_library,
             recent_files::get_recent_files,
             recent_files::clear_recent_files,
             commands::undo::undo,

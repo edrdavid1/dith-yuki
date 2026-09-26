@@ -7,6 +7,7 @@ import { ShellProvider } from './shell/ShellContext';
 import { ShortcutsProvider } from '../features/shortcuts/ShortcutsContext';
 import { useAppShortcuts } from '../features/shortcuts/useAppShortcuts';
 import { LayoutProvider } from '../contexts/LayoutContext';
+import { PatternsUiProvider } from '../features/patterns/PatternsUiContext';
 
 function ShortcutEngine() {
   useAppShortcuts();
@@ -29,12 +30,14 @@ export function Providers({ children }: { children: ReactNode }) {
   return (
     <Provider store={store}>
       <ShellProvider>
-        <ShortcutsProvider>
-          <ShortcutEngine />
-          <LayoutProvider>
-            {children}
-          </LayoutProvider>
-        </ShortcutsProvider>
+        <PatternsUiProvider>
+          <ShortcutsProvider>
+            <ShortcutEngine />
+            <LayoutProvider>
+              {children}
+            </LayoutProvider>
+          </ShortcutsProvider>
+        </PatternsUiProvider>
       </ShellProvider>
     </Provider>
   );

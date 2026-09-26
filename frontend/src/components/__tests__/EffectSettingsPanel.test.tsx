@@ -610,13 +610,17 @@ describe('EffectSettingsPanel', () => {
   describe('pattern export/import', () => {
     it('disables pattern actions when no target layer', () => {
       render(<EffectSettingsPanel selectedLayer={null} onUpdateParams={onUpdateParams} />);
-      expect(screen.getByRole('button', { name: 'Export as pattern' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Export pattern' })).toBeDisabled();
       expect(screen.getByRole('button', { name: 'Import pattern' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Save pattern' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Load pattern' })).toBeDisabled();
     });
 
     it('enables pattern actions when a layer is targeted', () => {
       const onExportPattern = vi.fn();
       const onImportPattern = vi.fn();
+      const onSavePattern = vi.fn();
+      const onLoadPattern = vi.fn();
       render(
         <EffectSettingsPanel
           selectedLayer={{
@@ -637,16 +641,26 @@ describe('EffectSettingsPanel', () => {
           targetLayerId={1}
           onExportPattern={onExportPattern}
           onImportPattern={onImportPattern}
+          onSavePattern={onSavePattern}
+          onLoadPattern={onLoadPattern}
         />
       );
-      const exp = screen.getByRole('button', { name: 'Export as pattern' });
+      const exp = screen.getByRole('button', { name: 'Export pattern' });
       const imp = screen.getByRole('button', { name: 'Import pattern' });
+      const save = screen.getByRole('button', { name: 'Save pattern' });
+      const load = screen.getByRole('button', { name: 'Load pattern' });
       expect(exp).not.toBeDisabled();
       expect(imp).not.toBeDisabled();
+      expect(save).not.toBeDisabled();
+      expect(load).not.toBeDisabled();
       fireEvent.click(exp);
       fireEvent.click(imp);
+      fireEvent.click(save);
+      fireEvent.click(load);
       expect(onExportPattern).toHaveBeenCalledTimes(1);
       expect(onImportPattern).toHaveBeenCalledTimes(1);
+      expect(onSavePattern).toHaveBeenCalledTimes(1);
+      expect(onLoadPattern).toHaveBeenCalledTimes(1);
     });
   });
 

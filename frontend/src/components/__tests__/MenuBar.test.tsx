@@ -14,6 +14,7 @@ function renderMenuBar(overrides?: Partial<React.ComponentProps<typeof MenuBar>>
     onSaveProjectAs: vi.fn(),
     onExportPattern: vi.fn(),
     onImportPattern: vi.fn(),
+    onOpenPatterns: vi.fn(),
     onOpenPreferences: vi.fn(),
     onOpenHelp: vi.fn(),
   };
@@ -29,7 +30,7 @@ describe('MenuBar', () => {
     const labels = buttons.map((b) => b.textContent);
     expect(labels).toContain('File');
     expect(labels).toContain('Edit');
-    expect(labels).toContain('Presets');
+    expect(labels).toContain('Patterns');
     expect(labels).not.toContain('Color Lab');
     expect(labels).toContain('Preferences');
     expect(labels).toContain('Help');
@@ -46,11 +47,11 @@ describe('MenuBar', () => {
     expect(screen.getByText('Save/Export')).toBeInTheDocument();
   });
 
-  it('opens Presets dropdown with pattern export/import', () => {
-    renderMenuBar();
-    fireEvent.click(screen.getByText('Presets'));
-    expect(screen.getByText('Export Pattern…')).toBeInTheDocument();
-    expect(screen.getByText('Import Pattern…')).toBeInTheDocument();
+  it('Patterns click calls onOpenPatterns directly (no dropdown)', () => {
+    const { props } = renderMenuBar();
+    fireEvent.click(screen.getByText('Patterns'));
+    expect(props.onOpenPatterns).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 
   it('opens Edit dropdown with disabled Undo/Redo by default', () => {
@@ -133,16 +134,16 @@ describe('MenuBar', () => {
     expect(props.onOpenImage).toHaveBeenCalledTimes(1);
   });
 
-  it('calls onExportPattern when Presets > Export Pattern is clicked', () => {
+  it('calls onExportPattern when File > Export Pattern is clicked', () => {
     const { props } = renderMenuBar();
-    fireEvent.click(screen.getByText('Presets'));
+    fireEvent.click(screen.getByText('File'));
     fireEvent.click(screen.getByText('Export Pattern…'));
     expect(props.onExportPattern).toHaveBeenCalledTimes(1);
   });
 
-  it('calls onImportPattern when Presets > Import Pattern is clicked', () => {
+  it('calls onImportPattern when File > Import Pattern is clicked', () => {
     const { props } = renderMenuBar();
-    fireEvent.click(screen.getByText('Presets'));
+    fireEvent.click(screen.getByText('File'));
     fireEvent.click(screen.getByText('Import Pattern…'));
     expect(props.onImportPattern).toHaveBeenCalledTimes(1);
   });
@@ -155,9 +156,9 @@ describe('MenuBar', () => {
     expect(screen.getByRole('menuitem', { name: /Save Project As/ })).toBeDisabled();
   });
 
-  it('disables pattern actions in Presets when hasDocument is false', () => {
+  it('disables pattern actions in File when hasDocument is false', () => {
     renderMenuBar({ hasDocument: false });
-    fireEvent.click(screen.getByText('Presets'));
+    fireEvent.click(screen.getByText('File'));
     expect(screen.getByText('Export Pattern…')).toBeDisabled();
     expect(screen.getByText('Import Pattern…')).toBeDisabled();
   });
