@@ -5,4 +5,3 @@ export const APP_TAGLINE =
   'A tile-based studio for dithering, palettes, and layered pixel-art images.';
 export const APP_HOMEPAGE = 'https://github.com/edrdavid1/dith-yuki';
 export const APP_COPYRIGHT = `Copyright © 2026 ${APP_DEVELOPER}`;
-export const APP_LICENSE_ID = 'FCL 1.0';

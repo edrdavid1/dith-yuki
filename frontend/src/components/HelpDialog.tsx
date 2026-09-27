@@ -9,9 +9,12 @@ import BugReportDialog from './BugReportDialog';
 import {
   APP_COPYRIGHT,
   APP_DEVELOPER,
-  APP_LICENSE_ID,
   APP_NAME,
 } from '../shared/appMeta';
+import {
+  USER_AGREEMENT_BODY,
+  USER_AGREEMENT_TITLE,
+} from '../shared/userAgreement';
 
 const cn = bind({ ...overlayStyles, ...styles });
 
@@ -82,49 +85,9 @@ export default function HelpDialog({
                   </p>
                   <SimpleBar className={cn('help-license')} style={{ height: '280px' }}>
                     <div className={cn('help-license-inner')}>
-                      <p className={cn('help-license-title')}>License ({APP_LICENSE_ID})</p>
+                      <p className={cn('help-license-title')}>{USER_AGREEMENT_TITLE}</p>
                       <p className={cn('help-license-copy')}>{APP_COPYRIGHT}</p>
-
-                      <section className={cn('help-license-section')}>
-                        <h3>1. Permission</h3>
-                        <p>
-                          This software is provided free of charge for artists, designers,
-                          illustrators, indie developers, non-profit organizations, and small
-                          businesses (with fewer than 50 employees or annual revenue under
-                          €1,000,000). These users are granted permission to use, copy, modify,
-                          and distribute this software, including for commercial purposes, under
-                          the following conditions.
-                        </p>
-                      </section>
-
-                      <section className={cn('help-license-section')}>
-                        <h3>2. Corporate Restriction</h3>
-                        <p>
-                          Large corporations, defined as entities with more than 50 employees or
-                          annual revenue exceeding €1,000,000, are not permitted to use, modify,
-                          integrate, or distribute this software without the explicit written
-                          consent of the author.
-                        </p>
-                      </section>
-
-                      <section className={cn('help-license-section')}>
-                        <h3>3. Attribution</h3>
-                        <p>
-                          All copies or substantial portions of the software must include this
-                          copyright notice and a link to the original project.
-                        </p>
-                      </section>
-
-                      <section className={cn('help-license-section')}>
-                        <h3>4. Warranty Disclaimer</h3>
-                        <p className={cn('help-license-warranty')}>
-                          THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-                          OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-                          MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-                          IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
-                          LIABILITY ARISING FROM THE USE OR DISTRIBUTION OF THE SOFTWARE.
-                        </p>
-                      </section>
+                      <pre className={cn('help-agreement-body')}>{USER_AGREEMENT_BODY}</pre>
                     </div>
                   </SimpleBar>
                   <div className={cn('help-actions')}>

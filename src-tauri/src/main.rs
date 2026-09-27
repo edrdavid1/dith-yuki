@@ -295,7 +295,18 @@ fn main() {
                             }
                         }
                     })
+                    // Stay hidden until the frontend paints boot artwork, then show().
+                    .visible(false)
                     .build()?;
+
+            // Failsafe: never leave the main window invisible if JS never calls show().
+            {
+                let win = main_window.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(4));
+                    let _ = win.show();
+                });
+            }
 
             native_menu::install(app)?;
             let app_handle = app.handle().clone();

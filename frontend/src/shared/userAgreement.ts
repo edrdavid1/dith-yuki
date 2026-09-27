@@ -1,6 +1,11 @@
-DITHER YUKI — END USER LICENSE AGREEMENT
+/**
+ * In-app User Agreement (Help dialog).
+ * Keep in sync with the EULA portion of `docs/legal/INSTALLER_ACCEPTANCE.txt`
+ * (and `docs/legal/USER_AGREEMENT.txt` — text before the `====` appendix).
+ */
+export const USER_AGREEMENT_TITLE = 'User Agreement';
 
-Last updated: September 28, 2026
+export const USER_AGREEMENT_BODY = `Last updated: September 28, 2026
 
 This End User License Agreement ("Agreement") is between you and David Murashka, an independent developer operating under the name "L'eco non di Bergamo" ("we", "us"), and governs your use of the Dither Yuki application ("the Software"), including beta versions.
 
@@ -50,4 +55,4 @@ We may update this Agreement from time to time. Continued use of the Software af
 
 10. GOVERNING LAW
 
-This Agreement is governed by the laws of the Republic of Lithuania, without regard to its conflict of law principles, unless overriding mandatory consumer protection laws in your country of residence dictate otherwise.
+This Agreement is governed by the laws of the Republic of Lithuania, without regard to its conflict of law principles, unless overriding mandatory consumer protection laws in your country of residence dictate otherwise.`;

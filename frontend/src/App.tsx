@@ -9,9 +9,12 @@ import {
   type RosterEntry,
 } from './shared/ipc/recovery';
 import { openProject } from './shared/ipc/project';
-import { useAppDispatch } from './app/hooks';
+import { useAppDispatch, useAppSelector } from './app/hooks';
 import { refreshTabs } from './app/slices/tabsSlice';
 import { refreshDocument } from './app/slices/documentSlice';
+import { finishBoot } from './lib/boot';
+import { useLayoutContext } from './contexts/LayoutContext';
+import { welcomeBackgroundStyle } from './features/preview/welcomeBackground';
 
 type RecoveryGate =
   | { kind: 'scanning' }
@@ -22,6 +25,8 @@ type RecoveryGate =
 /** Thin app root — providers live in main.tsx; layout owns the shell. */
 function App() {
   const dispatch = useAppDispatch();
+  const { center } = useLayoutContext();
+  const documentHydrated = useAppSelector((s) => s.document.hydrated);
   const [gate, setGate] = useState<RecoveryGate>({ kind: 'scanning' });
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
@@ -48,6 +53,24 @@ function App() {
       cancelled = true;
     };
   }, []);
+
+  // Reveal window (and fade splash only if the slow path actually showed it).
+  useEffect(() => {
+    if (gate.kind === 'scanning') return;
+    // Welcome/shell needs FlexLayout + document hydrate; recovery dialog does not.
+    if (gate.kind === 'none' && (center.isLoading || !documentHydrated)) return;
+
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        finishBoot();
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2) cancelAnimationFrame(raf2);
+    };
+  }, [gate.kind, center.isLoading, documentHydrated]);
 
   const finish = useCallback(async () => {
     setGate({ kind: 'none' });
@@ -158,20 +181,32 @@ function App() {
     <>
       {gate.kind === 'none' ? <AppLayout /> : null}
       {showRecovery ? (
-        <RecoveryDialog
-          journals={gate.kind === 'journals' ? gate.journals : []}
-          rosterDocs={
-            gate.kind === 'journals' || gate.kind === 'roster' ? gate.rosterDocs : []
-          }
-          busy={busy}
-          onRecoverAll={() => void onRecoverAll()}
-          onDiscardAll={() => void onDiscardAll()}
-          onReopenRoster={gate.kind === 'roster' ? () => void onReopenRoster() : undefined}
-          onOpenOriginalsOnly={
-            gate.kind === 'journals' ? () => void onOpenOriginalsOnly() : undefined
-          }
-          onSkip={onSkip}
-        />
+        <>
+          {/* Same artwork as boot so crossfade never lands on empty black. */}
+          <div
+            aria-hidden
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 499,
+              ...welcomeBackgroundStyle('artwork'),
+            }}
+          />
+          <RecoveryDialog
+            journals={gate.kind === 'journals' ? gate.journals : []}
+            rosterDocs={
+              gate.kind === 'journals' || gate.kind === 'roster' ? gate.rosterDocs : []
+            }
+            busy={busy}
+            onRecoverAll={() => void onRecoverAll()}
+            onDiscardAll={() => void onDiscardAll()}
+            onReopenRoster={gate.kind === 'roster' ? () => void onReopenRoster() : undefined}
+            onOpenOriginalsOnly={
+              gate.kind === 'journals' ? () => void onOpenOriginalsOnly() : undefined
+            }
+            onSkip={onSkip}
+          />
+        </>
       ) : null}
     </>
   );
