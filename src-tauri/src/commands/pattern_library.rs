@@ -2,9 +2,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, State};
 
 use crate::commands::AppState;
-use crate::pattern_library::{
-    self, PatternLibraryEntry,
-};
+use crate::pattern_library::{self, PatternLibraryEntry};
 use crate::services::document_service::{
     DocumentService, ExportPatternRequest, ImportPatternRequest, ImportPatternResponse,
 };
@@ -80,7 +78,10 @@ pub fn rename_pattern_in_library(
 }
 
 #[tauri::command]
-pub fn import_pattern_to_library(path: String, app: AppHandle) -> Result<PatternLibraryEntry, String> {
+pub fn import_pattern_to_library(
+    path: String,
+    app: AppHandle,
+) -> Result<PatternLibraryEntry, String> {
     let data = pattern_library::app_data_dir(&app)?;
     pattern_library::import_file_to_library(&data, std::path::Path::new(&path))
 }

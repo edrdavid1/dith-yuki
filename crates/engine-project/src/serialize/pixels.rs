@@ -302,8 +302,9 @@ fn assemble_layer_processed_rgba8(
                 .zip(raws.iter())
                 .map(|(c, t)| (*c, t.as_ref()))
                 .collect();
-            let mut outputs: Vec<engine_tiles::PixelTile> =
-                (0..strip.len()).map(|_| engine_tiles::PixelTile::new()).collect();
+            let mut outputs: Vec<engine_tiles::PixelTile> = (0..strip.len())
+                .map(|_| engine_tiles::PixelTile::new())
+                .collect();
             apply_filter_stack_tile_row_strip(
                 &strip,
                 layer,
@@ -325,8 +326,7 @@ fn assemble_layer_processed_rgba8(
                     for lx in 0..TILE_SIZE {
                         let gx = off_x + (tx * TILE_SIZE + lx) as i32;
                         let gy = off_y + (ty * TILE_SIZE + ly) as i32;
-                        if gx < 0 || gy < 0 || gx >= doc_width as i32 || gy >= doc_height as i32
-                        {
+                        if gx < 0 || gy < 0 || gx >= doc_width as i32 || gy >= doc_height as i32 {
                             continue;
                         }
                         let dst = ((gy as usize) * (doc_width as usize) + (gx as usize)) * 4;
@@ -929,8 +929,8 @@ mod tests {
     fn processed_export_propagates_ed_residuals_with_palette() {
         use crate::document::Document;
         use crate::filter::{
-            DitherColorMode, DitherModeV2, DitherParamsV2, FilterInstance, FilterKind, FilterParams,
-            PaletteDitherMode,
+            DitherColorMode, DitherModeV2, DitherParamsV2, FilterInstance, FilterKind,
+            FilterParams, PaletteDitherMode,
         };
         use crate::filters::apply::apply_filter_to_tile;
         use crate::types::DocumentId;
@@ -949,8 +949,16 @@ mod tests {
         let palette_id = doc.add_palette(
             "BW".into(),
             vec![
-                LinearColor { r: 0.0, g: 0.0, b: 0.0 },
-                LinearColor { r: 1.0, g: 1.0, b: 1.0 },
+                LinearColor {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                },
+                LinearColor {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 1.0,
+                },
             ],
         );
         let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, w, h);
@@ -976,7 +984,11 @@ mod tests {
             .get_entry(TileKey {
                 doc: 1,
                 layer: 1,
-                coord: TileCoord { level: 0, x: 1, y: 0 },
+                coord: TileCoord {
+                    level: 0,
+                    x: 1,
+                    y: 0,
+                },
                 stage: CacheStage::Raw,
             })
             .unwrap();
@@ -986,7 +998,11 @@ mod tests {
         let isolated = apply_filter_to_tile(
             raw_10.as_ref(),
             &layer,
-            TileCoord { level: 0, x: 1, y: 0 },
+            TileCoord {
+                level: 0,
+                x: 1,
+                y: 0,
+            },
             &pc,
             &lc,
             &tc,
@@ -1004,7 +1020,10 @@ mod tests {
                 }
             }
         }
-        assert!(differs, "palette export must differ from isolated per-tile ED at the seam");
+        assert!(
+            differs,
+            "palette export must differ from isolated per-tile ED at the seam"
+        );
     }
 
     /// FS under Glitch must still use strip ED (stacked path, not single-filter-only).

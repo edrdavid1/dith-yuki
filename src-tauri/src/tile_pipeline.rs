@@ -210,7 +210,11 @@ pub fn compute_processed_tile(
             let mut coords = Vec::new();
             let mut raw_arcs = Vec::new();
             for tx in bounds.min_x..=bounds.max_x {
-                let coord = engine_tiles::TileCoord { level, x: tx, y: ty };
+                let coord = engine_tiles::TileCoord {
+                    level,
+                    x: tx,
+                    y: ty,
+                };
                 let raw_key = TileKey {
                     doc: key.doc,
                     layer: key.layer,
@@ -231,8 +235,7 @@ pub fn compute_processed_tile(
                 .zip(raw_arcs.iter())
                 .map(|(c, t)| (*c, t.as_ref()))
                 .collect();
-            let mut outputs: Vec<PixelTile> =
-                (0..strip.len()).map(|_| PixelTile::new()).collect();
+            let mut outputs: Vec<PixelTile> = (0..strip.len()).map(|_| PixelTile::new()).collect();
             apply_filter_stack_tile_row_strip(
                 &strip,
                 layer,
@@ -261,11 +264,11 @@ pub fn compute_processed_tile(
                         stage: CacheStage::Processed,
                     };
                     let arc = Arc::new(std::mem::replace(&mut outputs[i], PixelTile::new()));
-                    let inserted =
-                        state
-                            .tiles
-                            .tile_cache
-                            .insert_fresh_gen(pkey, Arc::clone(&arc), compute_gen);
+                    let inserted = state.tiles.tile_cache.insert_fresh_gen(
+                        pkey,
+                        Arc::clone(&arc),
+                        compute_gen,
+                    );
                     if inserted {
                         state.evict_for_pressure_if_needed();
                         wake_ed_frontier_after_insert(state, pkey);
@@ -286,9 +289,8 @@ pub fn compute_processed_tile(
                     }
                 }
             }
-            return Ok(requested.ok_or_else(|| {
-                EngineError::invalid_state("ED strip missing requested tile")
-            })?);
+            return Ok(requested
+                .ok_or_else(|| EngineError::invalid_state("ED strip missing requested tile"))?);
         }
 
         apply_filter_to_tile_with_caches(

@@ -181,7 +181,10 @@ pub fn rename_in_library(
 }
 
 /// Copy an external `.dyuki` into the library.
-pub fn import_file_to_library(app_data: &Path, source: &Path) -> Result<PatternLibraryEntry, String> {
+pub fn import_file_to_library(
+    app_data: &Path,
+    source: &Path,
+) -> Result<PatternLibraryEntry, String> {
     let bytes = fs::read(source).map_err(|e| format!("read pattern: {e}"))?;
     let manifest = peek_pattern_manifest(&bytes).map_err(|e| e.to_string())?;
     let (id, dest) = allocate_save_path(app_data, &manifest.name)?;
