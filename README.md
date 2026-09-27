@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./git-hub/git-hub-cover-1.png" alt="Dither Yuki — dithered Yuki over a classical painting" width="720" />
+  <img src="./git-hub/git-hub-cover.png" alt="Dither Yuki — dithered Yuki over a classical painting" width="720" />
 </p>
 
 <h1 align="center">Dither Yuki</h1>
