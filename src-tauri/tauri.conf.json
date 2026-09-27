@@ -1,6 +1,6 @@
 {
   "productName": "Dither Yuki",
-  "version": "4.0.2-beta",
+  "version": "1.0.3-beta",
   "identifier": "com.dither.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -25,7 +25,8 @@
           "x": 12,
           "y": 17
         },
-        "backgroundColor": "#CDCDCD"
+        "visible": false,
+        "backgroundColor": "#000000"
       }
     ],
     "security": {

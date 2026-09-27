@@ -1,8 +1,8 @@
 DITHER YUKI — END USER LICENSE AGREEMENT
 
-Last updated: September 22, 2026
+Last updated: September 28, 2026
 
-This End User License Agreement ("Agreement") is between you and David Murashka, an independent developer operating under the name "L'eco non di Bergamo" ("we", "us"), and governs your use of the Dither Yuki application ("the Software"), including alpha and beta versions.
+This End User License Agreement ("Agreement") is between you and David Murashka, an independent developer operating under the name "L'eco non di Bergamo" ("we", "us"), and governs your use of the Dither Yuki application ("the Software"), including beta versions.
 
 1. ACCEPTANCE
 
@@ -16,9 +16,9 @@ The source code of the Software, where made available, is licensed separately un
 
 You are fully authorized to use the Software to create commercial products. However, you are strictly prohibited from selling, renting, repackaging, or monetizing the Software itself or its underlying source code.
 
-3. ALPHA / PRE-RELEASE SOFTWARE
+3. BETA SOFTWARE
 
-The Software is provided as an early, pre-release version for testing purposes. It may contain bugs, incomplete features, and may crash, lose data, or behave unpredictably. You should not rely on the Software for critical or production work, and you are strongly encouraged to save your work frequently and keep independent backups of any files you create or edit with the Software. Features, file formats, and this Agreement may change significantly between the alpha/beta version and any future release, without obligation to maintain compatibility.
+The Software is provided as a beta version for evaluation and testing. It may still contain bugs, incomplete features, and may crash, lose data, or behave unpredictably. You should not rely on the Software for critical or production work without independent backups, and you are strongly encouraged to save your work frequently. Features, file formats, and this Agreement may change between this beta and any future release, without obligation to maintain compatibility.
 
 4. NO WARRANTY
 
@@ -42,7 +42,7 @@ If you provide feedback, bug reports, or suggestions about the Software, you gra
 
 8. TERMINATION
 
-This Agreement is effective until terminated. We may terminate your license if you violate this Agreement. Upon termination, you must stop using the Software. As this includes alpha/beta builds, we may also discontinue access to these pre-release versions at any time, with or without notice, as they are provided for testing purposes only.
+This Agreement is effective until terminated. We may terminate your license if you violate this Agreement. Upon termination, you must stop using the Software. As this includes beta builds, we may also discontinue access to these beta versions at any time, with or without notice, as they are provided for testing purposes only.
 
 9. CHANGES TO THIS AGREEMENT
 

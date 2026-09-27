@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import App from './App'
 import { Providers } from './app/providers'
 import { initPlatform } from './lib/platform'
+import { startBootGate } from './lib/boot'
 import './shared/styles/tokens.css'
 import './shared/styles/reset.css'
 import './shared/styles/dockCorners.css'
@@ -10,14 +11,10 @@ import 'simplebar-react/dist/simplebar.min.css'
 import './shared/styles/vendor/simplebar.css'
 import './shared/styles/chrome/titlebar.css'
 
-function dismissBootScreen() {
-  const boot = document.getElementById('boot-screen')
-  if (!boot) return
-  boot.classList.add('boot-screen-done')
-  window.setTimeout(() => boot.remove(), 240)
-}
-
 ;(async () => {
+  // Hidden window + delayed splash gate. App calls finishBoot() when ready.
+  startBootGate()
+
   await initPlatform()
 
   ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -27,8 +24,4 @@ function dismissBootScreen() {
       </Providers>
     </React.StrictMode>,
   )
-
-  requestAnimationFrame(() => {
-    requestAnimationFrame(dismissBootScreen)
-  })
 })()
