@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./git-hub/git-hub-cover-1.png" alt="Dither Yuki — dithered Yuki over a classical painting" width="720" />
+  <img src="./git-hub/git-hub-cover.png" alt="Dither Yuki — dithered Yuki over a classical painting" width="720" />
 </p>
 
 <h1 align="center">Dither Yuki</h1>
@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/edrdavid1/dith-yuki/releases/latest"><strong>Download</strong></a>
   ·
-  <a href="https://edrdavid1.github.io/dith-yuki/">Download page</a>
+  <a href="https://ditheryuki.com/">Website</a>
   ·
   <a href="https://github.com/edrdavid1/dith-yuki/issues/new?template=bug_report.yml">Report a bug</a>
 </p>
@@ -48,7 +48,7 @@ No paint tools, ICC / print pipeline, or video / batch export. Linux is not a su
 
 ### Install
 
-1. Get the latest build from [Releases](https://github.com/edrdavid1/dith-yuki/releases/latest) (macOS DMG, Windows NSIS) or the [download page](https://edrdavid1.github.io/dith-yuki/).
+1. Get the latest build from [Releases](https://github.com/edrdavid1/dith-yuki/releases/latest) (macOS DMG, Windows NSIS) or the [website](https://ditheryuki.com/).
 2. After **0.2.0**, use **Help → Check for Updates** (Minisign-verified).
 
 #### macOS Gatekeeper
