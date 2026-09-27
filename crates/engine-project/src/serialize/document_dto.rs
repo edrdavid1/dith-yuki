@@ -64,7 +64,9 @@ pub enum LayerNodeFile {
     Unknown(Value),
     /// DRILL-ONLY canary layer (`node: "canary-drill"`). Gated forever.
     #[cfg(feature = "version-drill")]
-    CanaryDrill { id: LayerId },
+    CanaryDrill {
+        id: LayerId,
+    },
 }
 
 impl Serialize for LayerNodeFile {
@@ -147,17 +149,18 @@ impl<'de> Deserialize<'de> for LayerNodeFile {
             // DRILL-ONLY, remove or keep gated forever
             #[cfg(feature = "version-drill")]
             "canary-drill" => {
-                let mut obj = value
-                    .as_object()
-                    .cloned()
-                    .ok_or_else(|| serde::de::Error::custom("canary-drill node must be an object"))?;
+                let mut obj = value.as_object().cloned().ok_or_else(|| {
+                    serde::de::Error::custom("canary-drill node must be an object")
+                })?;
                 obj.remove("node");
                 let id = obj
                     .get("id")
                     .and_then(|v| v.as_u64())
                     .ok_or_else(|| serde::de::Error::custom("canary-drill missing id"))?
                     as u32;
-                Ok(LayerNodeFile::CanaryDrill { id: LayerId::new(id) })
+                Ok(LayerNodeFile::CanaryDrill {
+                    id: LayerId::new(id),
+                })
             }
             _ => Ok(LayerNodeFile::Unknown(value)),
         }

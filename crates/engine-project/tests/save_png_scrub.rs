@@ -7,8 +7,8 @@ use engine_project::filter::{
 use engine_project::layer::{Layer, LayerNode};
 use engine_project::serialize::archive::ZipArchiveReader;
 use engine_project::serialize::{
-    find_forbidden_png_chunk, inject_png_text_chunk, open_project_from_bytes, save_project_to_bytes,
-    ProjectError,
+    find_forbidden_png_chunk, inject_png_text_chunk, open_project_from_bytes,
+    save_project_to_bytes, ProjectError,
 };
 use engine_project::types::{DocumentId, LayerId, LayerKind};
 use engine_tiles::decompose::decompose_image_to_tiles;
@@ -66,10 +66,7 @@ fn write_dirty_threshold_png() -> PathBuf {
         find_forbidden_png_chunk(&dirty).is_some(),
         "fixture must contain ancillary chunk before Save"
     );
-    let path = std::env::temp_dir().join(format!(
-        "dither_dirty_thresh_{}.png",
-        std::process::id()
-    ));
+    let path = std::env::temp_dir().join(format!("dither_dirty_thresh_{}.png", std::process::id()));
     std::fs::write(&path, &dirty).unwrap();
     path
 }
@@ -128,7 +125,11 @@ fn ordinary_save_keeps_real_preview_not_neutral() {
     let composite = reader.read_entry("composite.png").unwrap();
     assert_png_clean("composite.png", &composite);
     let (cw, ch) = png_size(&composite);
-    assert_eq!((cw, ch), (w, h), "composite must stay full document resolution");
+    assert_eq!(
+        (cw, ch),
+        (w, h),
+        "composite must stay full document resolution"
+    );
 
     let thumb = reader.read_entry("thumbnail.png").unwrap();
     assert_png_clean("thumbnail.png", &thumb);
@@ -213,12 +214,9 @@ fn ordinary_save_open_round_trip_preserves_pixels() {
 
 #[test]
 fn reencode_png_clean_drops_text_chunk() {
-    let clean = engine_project::serialize::encode_thumbnail_png_deterministic(
-        &[1, 2, 3, 255],
-        1,
-        1,
-    )
-    .unwrap();
+    let clean =
+        engine_project::serialize::encode_thumbnail_png_deterministic(&[1, 2, 3, 255], 1, 1)
+            .unwrap();
     let dirty = inject_png_text_chunk(&clean, "Author", "spy").unwrap();
     assert!(find_forbidden_png_chunk(&dirty).is_some());
     let scrubbed = engine_project::serialize::reencode_png_clean(&dirty).unwrap();
@@ -241,5 +239,8 @@ fn strip_png_ancillary_preserves_grayscale() {
     // IHDR color type byte at offset 8+8+9 = 25 (sig + len+type + width/height/bitdepth)
     // Color type is the 10th byte of IHDR data (after w,h,bit depth).
     let color_type = clean[8 + 8 + 9];
-    assert_eq!(color_type, 0, "must stay grayscale (color type 0), got {color_type}");
+    assert_eq!(
+        color_type, 0,
+        "must stay grayscale (color type 0), got {color_type}"
+    );
 }

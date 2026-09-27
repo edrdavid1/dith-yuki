@@ -283,7 +283,10 @@ pub async fn prepare_soft_discard(
         .map_err(|e| format!("prepare_soft_discard join: {e}"))?
 }
 
-pub(crate) fn prepare_soft_discard_sync(state: &AppState, doc_id: u32) -> Result<SoftDiscardDto, String> {
+pub(crate) fn prepare_soft_discard_sync(
+    state: &AppState,
+    doc_id: u32,
+) -> Result<SoftDiscardDto, String> {
     let session = state.require_session(doc_id)?;
     let recovery_id = session.recovery_id;
     let snapshot = session.document_handle.snapshot();
@@ -298,8 +301,7 @@ pub(crate) fn prepare_soft_discard_sync(state: &AppState, doc_id: u32) -> Result
             .unwrap_or_else(|| format!("Untitled {}", session.id.0))
     };
 
-    let reuse_existing =
-        can_reuse_journal_for_soft_discard(state, doc_id, recovery_id, revision);
+    let reuse_existing = can_reuse_journal_for_soft_discard(state, doc_id, recovery_id, revision);
     if !reuse_existing {
         write_journal_for_doc(state, doc_id)?;
     }
@@ -341,9 +343,7 @@ fn journal_meta_is_discarded(state: &AppState, recovery_id: Uuid) -> bool {
         return false;
     };
     let meta_path = crate::journal::meta::journal_meta_path(dir, recovery_id);
-    read_meta(&meta_path)
-        .map(|m| m.discarded)
-        .unwrap_or(false)
+    read_meta(&meta_path).map(|m| m.discarded).unwrap_or(false)
 }
 
 fn can_reuse_journal_for_soft_discard(

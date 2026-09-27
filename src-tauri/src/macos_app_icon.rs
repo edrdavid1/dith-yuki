@@ -98,9 +98,7 @@ pub fn load_stored_id(app_data: &Path) -> String {
 
 fn save_stored_id(app_data: &Path, id: &str) -> Result<(), String> {
     std::fs::create_dir_all(app_data).map_err(|e| format!("create app_data: {e}"))?;
-    let payload = StoredAppIcon {
-        id: id.to_string(),
-    };
+    let payload = StoredAppIcon { id: id.to_string() };
     let json = serde_json::to_vec_pretty(&payload).map_err(|e| e.to_string())?;
     let path = store_path(app_data);
     std::fs::write(&path, json).map_err(|e| format!("write {}: {e}", path.display()))
@@ -185,9 +183,7 @@ mod native {
         }
 
         if !can_persist {
-            log::info!(
-                "app icon: skipping NSWorkspace.setIcon (not a .app bundle: {bundle_path})"
-            );
+            log::info!("app icon: skipping NSWorkspace.setIcon (not a .app bundle: {bundle_path})");
             // Session Dock updated; Persistent is N/A outside a packaged .app —
             // treat as success so Preferences doesn't show a false "no permission" warning.
             return Ok(true);

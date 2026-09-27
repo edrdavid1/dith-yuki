@@ -4,9 +4,7 @@
 //! Fixtures under `tests/fixtures/dyproj/drill/` are produced by the
 //! `version-drill` generate test and committed permanently.
 
-use engine_project::serialize::{
-    open_project_from_bytes, ProjectError, SUPPORTED_FORMAT,
-};
+use engine_project::serialize::{open_project_from_bytes, ProjectError, SUPPORTED_FORMAT};
 use engine_project::types::DocumentId;
 use engine_tiles::TileCache;
 use std::fs;

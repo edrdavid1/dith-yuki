@@ -568,7 +568,11 @@ pub fn find_forbidden_png_chunk(png: &[u8]) -> Option<[u8; 4]> {
 }
 
 /// Insert a `tEXt` chunk before `IEND` (test / fuzz helper).
-pub fn inject_png_text_chunk(png: &[u8], keyword: &str, text: &str) -> Result<Vec<u8>, ProjectError> {
+pub fn inject_png_text_chunk(
+    png: &[u8],
+    keyword: &str,
+    text: &str,
+) -> Result<Vec<u8>, ProjectError> {
     if png.len() < 12 || &png[0..8] != b"\x89PNG\r\n\x1a\n" {
         return Err(ProjectError::Codec("not a PNG".into()));
     }

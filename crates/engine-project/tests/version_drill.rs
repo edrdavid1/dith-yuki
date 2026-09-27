@@ -11,8 +11,8 @@ use engine_project::serialize::features::{
     CANARY_DRILL_EXTRA_KEY, CANARY_NOTE_KEY, SUPPORTED_FORMAT,
 };
 use engine_project::serialize::{
-    open_project_from_bytes, save_project_to_bytes, FormatVersion, ProjectError,
-    ProjectWriteOptions, write_project_to_bytes,
+    open_project_from_bytes, save_project_to_bytes, write_project_to_bytes, FormatVersion,
+    ProjectError, ProjectWriteOptions,
 };
 use engine_project::types::{DocumentId, LayerId, LayerKind};
 use engine_tiles::decompose::decompose_image_to_tiles;
@@ -96,8 +96,7 @@ fn generate_drill_fixtures() {
     // optional-used
     {
         let (mut doc, cache) = tiny_doc();
-        doc.extra
-            .insert(CANARY_NOTE_KEY.into(), json!("drill"));
+        doc.extra.insert(CANARY_NOTE_KEY.into(), json!("drill"));
         let bytes = save_fixed(&doc, &cache);
         fs::write(drill_dir().join("optional-used.dyproj"), &bytes).unwrap();
     }
@@ -155,8 +154,7 @@ fn matrix_4_neither_used_resave_stays_v1_0() {
 #[test]
 fn matrix_5_optional_used_preserves_note_and_format_1_1() {
     let (mut doc, cache) = tiny_doc();
-    doc.extra
-        .insert(CANARY_NOTE_KEY.into(), json!("drill"));
+    doc.extra.insert(CANARY_NOTE_KEY.into(), json!("drill"));
     let bytes = save_fixed(&doc, &cache);
     let (format, min_reader, req, opt) = manifest_format(&bytes);
     assert_eq!(format, FormatVersion::new(1, 1));
@@ -167,7 +165,11 @@ fn matrix_5_optional_used_preserves_note_and_format_1_1() {
     let staging = TileCache::new(32 * 1024 * 1024);
     let opened = open_project_from_bytes(&bytes, &staging, DocumentId::new(1)).unwrap();
     assert_eq!(
-        opened.document.extra.get(CANARY_NOTE_KEY).and_then(|v| v.as_str()),
+        opened
+            .document
+            .extra
+            .get(CANARY_NOTE_KEY)
+            .and_then(|v| v.as_str()),
         Some("drill")
     );
 
@@ -206,9 +208,15 @@ fn matrix_6_required_used_recognized_as_real_type() {
     let opened = open_project_from_bytes(&bytes, &staging, DocumentId::new(1)).unwrap();
     let has_marker = opened.document.root.iter().any(|n| match n {
         LayerNode::Leaf(l) => {
-            l.extra.get(CANARY_DRILL_EXTRA_KEY).and_then(|v| v.as_bool()) == Some(true)
+            l.extra
+                .get(CANARY_DRILL_EXTRA_KEY)
+                .and_then(|v| v.as_bool())
+                == Some(true)
         }
         _ => false,
     });
-    assert!(has_marker, "canary must load as recognized type, not Unknown");
+    assert!(
+        has_marker,
+        "canary must load as recognized type, not Unknown"
+    );
 }
