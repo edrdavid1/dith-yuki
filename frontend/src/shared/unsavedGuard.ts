@@ -12,6 +12,37 @@ export function projectBasename(path: string | null | undefined): string {
   return name && name.length > 0 ? name : 'Untitled';
 }
 
+/** Filename without the last extension (`photo.png` → `photo`). */
+export function fileStem(path: string | null | undefined): string | null {
+  if (!path) return null;
+  const base = path.split(/[/\\]/).pop();
+  if (!base || base.length === 0) return null;
+  const dot = base.lastIndexOf('.');
+  if (dot <= 0) return base;
+  return base.slice(0, dot) || base;
+}
+
+/**
+ * Suggested `defaultPath` for native save dialogs: prefer project basename,
+ * else opened image stem + new extension.
+ */
+export function suggestedSaveDefaultPath(opts: {
+  projectPath?: string | null;
+  sourcePath?: string | null;
+  extension: string;
+}): string | undefined {
+  const ext = opts.extension.replace(/^\./, '');
+  if (opts.projectPath) {
+    const base = projectBasename(opts.projectPath);
+    if (base.toLowerCase().endsWith(`.${ext.toLowerCase()}`)) return base;
+    const stem = fileStem(opts.projectPath);
+    if (stem) return `${stem}.${ext}`;
+  }
+  const fromSource = fileStem(opts.sourcePath);
+  if (fromSource) return `${fromSource}.${ext}`;
+  return undefined;
+}
+
 /** One open document that may need Save / Don’t Save / Cancel (VS Code / Photoshop). */
 export interface UnsavedDocumentRef {
   id: number;

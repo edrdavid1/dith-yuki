@@ -13,7 +13,8 @@
     },
     "macOS": {
       "files": {
-        "PlugIns/DitherQuickLookPreview.appex": "../platform/macos/DitherQuickLook/dist/DitherQuickLookPreview.appex"
+        "PlugIns/DitherQuickLookPreview.appex": "../platform/macos/DitherQuickLook/dist/DitherQuickLookPreview.appex",
+        "PlugIns/DitherQuickLookThumbnail.appex": "../platform/macos/DitherQuickLook/dist/DitherQuickLookThumbnail.appex"
       }
     }
   }

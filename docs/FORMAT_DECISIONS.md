@@ -5,6 +5,20 @@ Journal of findings and choices while implementing
 
 ---
 
+## 2026-09-27 — Ship macOS Finder content thumbnails
+
+Product feedback: Space (Quick Look Preview) worked, but Finder icons stayed
+type-only `.icns` with no content preview. Reverses the earlier Preview-only
+shipping choice:
+
+- `scripts/ci-prepare-macos-previews.sh` now builds with `--with-thumbnail`
+- `tauri.macos.conf.json` embeds `DitherQuickLookThumbnail.appex`
+- Docs (`PREVIEWS.md`, `ALPHA_PREVIEWS_MACOS.md`, Release notes) updated
+
+Type icons remain as fallback when the Thumbnail extension is disabled.
+
+---
+
 ## 2026-09-27 — Custom app icon (macOS Preferences gallery)
 
 Source: `.local-doc/SPEC_dither_custom_app_icon.md`.

@@ -143,7 +143,7 @@ jobs:
             GPU is warm-viewport only; cold compute is opt-in (`DITHER_GPU_PREVIEW=1`).
 
             ### System previews
-            macOS: Finder shows type icons; **Space** opens Quick Look content preview.
+            macOS: Finder content thumbnails + **Space** Quick Look preview.
             Windows: Explorer content thumbnails for `.dyproj` / `.dyuki`.
             See [ALPHA_PREVIEWS_MACOS.md](https://github.com/edrdavid1/dith-yuki/blob/main/docs/ALPHA_PREVIEWS_MACOS.md)
             / [ALPHA_PREVIEWS_WINDOWS.md](https://github.com/edrdavid1/dith-yuki/blob/main/docs/ALPHA_PREVIEWS_WINDOWS.md).
@@ -190,7 +190,7 @@ jobs:
             GPU is warm-viewport only; cold compute is opt-in (`DITHER_GPU_PREVIEW=1`).
 
             ### System previews
-            macOS: Finder shows type icons; **Space** opens Quick Look content preview.
+            macOS: Finder content thumbnails + **Space** Quick Look preview.
             Windows: Explorer content thumbnails for `.dyproj` / `.dyuki`.
             See [ALPHA_PREVIEWS_MACOS.md](https://github.com/edrdavid1/dith-yuki/blob/main/docs/ALPHA_PREVIEWS_MACOS.md)
             / [ALPHA_PREVIEWS_WINDOWS.md](https://github.com/edrdavid1/dith-yuki/blob/main/docs/ALPHA_PREVIEWS_WINDOWS.md).

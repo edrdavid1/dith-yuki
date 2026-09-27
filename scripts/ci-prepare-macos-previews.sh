@@ -41,10 +41,9 @@ if [[ -n "${APPLE_SIGNING_IDENTITY:-}" && "${APPLE_SIGNING_IDENTITY}" != "-" ]];
 fi
 
 echo "Preparing macOS Quick Look plugins (tier=$TIER)…"
-bash "$ROOT/scripts/build-quicklook.sh" --tier "$TIER"
+bash "$ROOT/scripts/build-quicklook.sh" --tier "$TIER" --with-thumbnail
 
 test -d "$OUT/DitherQuickLookPreview.appex"
-# Thumbnail appex is intentionally not shipped: Finder keeps type icons;
-# Space uses Preview only.
-echo "Quick Look Preview ready:"
+test -d "$OUT/DitherQuickLookThumbnail.appex"
+echo "Quick Look Preview + Thumbnail ready:"
 ls -la "$OUT"

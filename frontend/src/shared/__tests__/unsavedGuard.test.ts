@@ -2,7 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   confirmUnsavedDocuments,
   confirmUnsavedIfNeeded,
+  fileStem,
   projectBasename,
+  suggestedSaveDefaultPath,
   type UnsavedDocumentRef,
 } from '../unsavedGuard';
 
@@ -15,6 +17,34 @@ describe('projectBasename', () => {
   it('strips directories', () => {
     expect(projectBasename('/tmp/foo.dyproj')).toBe('foo.dyproj');
     expect(projectBasename('C:\\proj\\bar.dyproj')).toBe('bar.dyproj');
+  });
+});
+
+describe('fileStem / suggestedSaveDefaultPath', () => {
+  it('strips the last extension', () => {
+    expect(fileStem('/tmp/photo.png')).toBe('photo');
+    expect(fileStem('C:\\a\\b.dyproj')).toBe('b');
+    expect(fileStem(null)).toBeNull();
+  });
+
+  it('prefers project basename for save defaults', () => {
+    expect(
+      suggestedSaveDefaultPath({
+        projectPath: '/Users/me/Art.dyproj',
+        sourcePath: '/Users/me/photo.png',
+        extension: 'dyproj',
+      })
+    ).toBe('Art.dyproj');
+  });
+
+  it('falls back to opened image stem for export', () => {
+    expect(
+      suggestedSaveDefaultPath({
+        projectPath: null,
+        sourcePath: '/Users/me/photo.png',
+        extension: 'png',
+      })
+    ).toBe('photo.png');
   });
 });
 

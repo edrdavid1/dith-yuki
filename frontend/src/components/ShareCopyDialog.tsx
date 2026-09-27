@@ -124,7 +124,6 @@ export default function ShareCopyDialog({ isOpen, onExport, onCancel }: ShareCop
             />
             Compact JSON
           </label>
-        </div>
         <div className={cn('new-project-footer')}>
           <button type="button" className={cn('new-project-btn')} onClick={onCancel}>
             Cancel
@@ -137,6 +136,7 @@ export default function ShareCopyDialog({ isOpen, onExport, onCancel }: ShareCop
           >
             Export…
           </button>
+        </div>
         </div>
       </div>
     </div>,

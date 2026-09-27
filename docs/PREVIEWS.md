@@ -18,8 +18,7 @@ Implements `.local-doc/SPEC_dither_previews_full.md`. Decisions:
 
 Release embedding:
 
-- macOS: Preview `.appex` only → Finder shows **type icons**; Space shows content.
-  Thumbnail `.appex` stays in-tree (`--with-thumbnail`) but is not shipped.
+- macOS: Preview + Thumbnail `.appex` → Finder content thumbnails; Space uses Preview.
 - Windows: `dither_shell.dll` + NSIS ShellEx → Explorer content thumbnails.
 
 ## ABI
