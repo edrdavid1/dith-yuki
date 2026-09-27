@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Build dither-thumb staticlib + Quick Look Preview appex, optionally embed into an .app.
 #
-# Product choice (macOS): ship Preview only (Space / gallery). Finder icons stay
-# the document-type .icns — do not embed Thumbnail unless --with-thumbnail.
+# Product choice (macOS): ship Preview (Space) and Thumbnail (Finder icons).
+# Pass --with-thumbnail from CI (`ci-prepare-macos-previews.sh`); local builds
+# without the flag still produce Preview-only for faster iteration.
 #
 # Usage:
 #   scripts/build-quicklook.sh [--tier dev|alpha|public] [--app /path/to/Dither.app] [--spike] [--with-thumbnail]

@@ -38,6 +38,7 @@ import {
   exportAscii,
   type AsciiExportFormat,
 } from '../shared/ipc/ascii';
+import { suggestedSaveDefaultPath } from '../shared/unsavedGuard';
 
 /**
  * Document open/save flows backed by RTK `document` slice.
@@ -106,8 +107,14 @@ export function useDocument() {
       if (!options) return;
 
       const ext = extensionForFormat(options.format);
+      const defaultPath = suggestedSaveDefaultPath({
+        projectPath: state.projectPath,
+        sourcePath: state.sourcePath,
+        extension: ext,
+      });
       const filePath = await saveDialog({
         filters: [{ name: options.format, extensions: [ext] }],
+        ...(defaultPath ? { defaultPath } : {}),
       });
 
       if (!filePath) return;
@@ -139,7 +146,7 @@ export function useDocument() {
     } catch {
       // Dialog cancel / IPC errors handled in thunk
     }
-  }, [dispatch, state.docId]);
+  }, [dispatch, state.docId, state.projectPath, state.sourcePath]);
 
   const exportAsciiFn = useCallback(async () => {
     if (!state.docId) return;
@@ -154,8 +161,14 @@ export function useDocument() {
 
       const ext =
         format === 'ansi' ? 'ans' : format === 'txt' ? 'txt' : format;
+      const defaultPath = suggestedSaveDefaultPath({
+        projectPath: state.projectPath,
+        sourcePath: state.sourcePath,
+        extension: ext,
+      });
       const filePath = await saveDialog({
         filters: [{ name: format.toUpperCase(), extensions: [ext] }],
+        ...(defaultPath ? { defaultPath } : {}),
       });
       if (!filePath) return;
       const lower = filePath.toLowerCase();
@@ -173,7 +186,7 @@ export function useDocument() {
         })
       );
     }
-  }, [dispatch, selectedLayerId, state.docId]);
+  }, [dispatch, selectedLayerId, state.docId, state.projectPath, state.sourcePath]);
 
   const copyAsciiTextFn = useCallback(
     async (format: 'txt' | 'ansi') => {
@@ -230,8 +243,14 @@ export function useDocument() {
         const result = await dispatch(saveProject({ docId, path: null }));
         return saveProject.fulfilled.match(result);
       }
+      const defaultPath = suggestedSaveDefaultPath({
+        projectPath: state.projectPath,
+        sourcePath: state.sourcePath,
+        extension: 'dyproj',
+      });
       const filePath = await saveDialog({
         filters: [{ name: 'Dither Project', extensions: ['dyproj'] }],
+        ...(defaultPath ? { defaultPath } : {}),
       });
       if (!filePath) return false;
       const path = filePath.toLowerCase().endsWith('.dyproj')
@@ -242,14 +261,20 @@ export function useDocument() {
     } catch {
       return false;
     }
-  }, [dispatch, state.docId, state.hasDocument, state.projectPath]);
+  }, [dispatch, state.docId, state.hasDocument, state.projectPath, state.sourcePath]);
 
   const saveProjectAsFn = useCallback(async () => {
     if (!state.hasDocument || state.docId == null) return;
     const docId = state.docId;
     try {
+      const defaultPath = suggestedSaveDefaultPath({
+        projectPath: state.projectPath,
+        sourcePath: state.sourcePath,
+        extension: 'dyproj',
+      });
       const filePath = await saveDialog({
         filters: [{ name: 'Dither Project', extensions: ['dyproj'] }],
+        ...(defaultPath ? { defaultPath } : {}),
       });
       if (!filePath) return;
       const path = filePath.toLowerCase().endsWith('.dyproj')
@@ -259,7 +284,7 @@ export function useDocument() {
     } catch {
       // Dialog cancel / IPC errors handled in thunk
     }
-  }, [dispatch, state.docId, state.hasDocument]);
+  }, [dispatch, state.docId, state.hasDocument, state.projectPath, state.sourcePath]);
 
   const shareProjectCopyFn = useCallback(async () => {
     if (!state.hasDocument || state.docId == null) return;
@@ -272,8 +297,14 @@ export function useDocument() {
       if (!state.hasDocument || state.docId == null) return;
       const docId = state.docId;
       try {
+        const defaultPath = suggestedSaveDefaultPath({
+          projectPath: state.projectPath,
+          sourcePath: state.sourcePath,
+          extension: 'dyproj',
+        });
         const filePath = await saveDialog({
           filters: [{ name: 'Dither Project (Share Copy)', extensions: ['dyproj'] }],
+          ...(defaultPath ? { defaultPath } : {}),
         });
         if (!filePath) return;
         const path = filePath.toLowerCase().endsWith('.dyproj')
@@ -304,7 +335,7 @@ export function useDocument() {
         );
       }
     },
-    [dispatch, state.docId, state.hasDocument]
+    [dispatch, state.docId, state.hasDocument, state.projectPath, state.sourcePath]
   );
 
   const exportPatternFn = useCallback(
