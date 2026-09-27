@@ -13,6 +13,7 @@ mod flexlayout_persistence;
 mod gpu_resident_shadow;
 mod ipc_guard;
 mod journal;
+mod macos_app_icon;
 #[cfg(target_os = "macos")]
 mod macos_first_mouse;
 #[cfg(target_os = "macos")]
@@ -110,6 +111,7 @@ fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(state.clone())
@@ -165,6 +167,9 @@ fn main() {
             // See `macos_first_mouse.rs` for the full explanation.
             #[cfg(target_os = "macos")]
             macos_first_mouse::install_accepts_first_mouse_override();
+
+            // Custom Dock/Finder icon before the main window appears (no flash).
+            macos_app_icon::reapply_on_startup(app.handle());
 
             // Main window is create:false in tauri.conf — build here so we can
             // allow FlexLayout's window.open() popouts (denied by default in Tauri).
@@ -445,6 +450,9 @@ fn main() {
             commands::export_pattern_from_library,
             recent_files::get_recent_files,
             recent_files::clear_recent_files,
+            macos_app_icon::list_app_icons,
+            macos_app_icon::get_app_icon,
+            macos_app_icon::set_app_icon,
             commands::undo::undo,
             commands::undo::redo,
             commands::undo::is_document_dirty,

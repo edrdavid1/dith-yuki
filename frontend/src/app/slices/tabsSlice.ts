@@ -8,8 +8,8 @@ import {
 } from '../../shared/ipc/document';
 import { logIpcError } from '../../shared/ipc';
 import { refreshDocument } from './documentSlice';
-import { refreshLayers } from './layersSlice';
-import { refreshFilters } from './filtersSlice';
+import { clearLayers, refreshLayers } from './layersSlice';
+import { clearFilters, refreshFilters } from './filtersSlice';
 
 export interface TabsState {
   tabs: OpenDocumentTab[];
@@ -30,7 +30,10 @@ export const activateTab = createAsyncThunk(
   async (docId: number, { dispatch }) => {
     await setActiveDocument(docId);
     const tabs = await listOpenDocuments();
-    // Await document identity first — layers/filters must not refresh under the old docId.
+    // Clear before identity refresh — otherwise LayersPanel briefly sees the
+    // new docId with the previous tab's filters and steals #1, #2, …
+    dispatch(clearFilters());
+    dispatch(clearLayers());
     await dispatch(refreshDocument());
     void dispatch(refreshLayers(docId));
     void dispatch(refreshFilters());
@@ -42,6 +45,8 @@ export const closeTab = createAsyncThunk(
   'tabs/close',
   async (docId: number, { dispatch }) => {
     const tabs = await closeDocument(docId);
+    dispatch(clearFilters());
+    dispatch(clearLayers());
     await dispatch(refreshDocument());
     const nextId = tabs.active_id;
     void dispatch(refreshLayers(nextId));

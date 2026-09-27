@@ -47,7 +47,10 @@ jobs:
         id: meta
         run: |
           TAG="${{ github.ref_name }}"
-          if echo "$TAG" | grep -Eqi '(alpha|beta|rc)(\.|-|$)'; then
+          if echo "$TAG" | grep -Eqi 'beta(\.|-|$)'; then
+            echo "channel=beta" >> "$GITHUB_OUTPUT"
+            echo "title_suffix= (beta)" >> "$GITHUB_OUTPUT"
+          elif echo "$TAG" | grep -Eqi '(alpha|rc)(\.|-|$)'; then
             echo "channel=alpha" >> "$GITHUB_OUTPUT"
             echo "title_suffix= (alpha)" >> "$GITHUB_OUTPUT"
           else
@@ -135,7 +138,7 @@ jobs:
             ### Updates
             From **0.2.0** onward: Help → Check for Updates (Minisign-verified via `latest.json`).
 
-            ### Alpha scope
+            ### Beta scope
             Dither / palette studio — not paint, not print/ICC, not video/batch.
             GPU is warm-viewport only; cold compute is opt-in (`DITHER_GPU_PREVIEW=1`).
 
@@ -182,7 +185,7 @@ jobs:
             ### Updates
             From **0.2.0** onward: Help → Check for Updates (Minisign-verified via `latest.json`).
 
-            ### Alpha scope
+            ### Beta scope
             Dither / palette studio — not paint, not print/ICC, not video/batch.
             GPU is warm-viewport only; cold compute is opt-in (`DITHER_GPU_PREVIEW=1`).
 

@@ -9,6 +9,11 @@ import {
   updateFilter as updateFilterIPC,
 } from '../../shared/ipc';
 import { unwrapFilterParams } from '../../shared/unwrapFilterParams';
+import {
+  createDocument,
+  openImage,
+  openProject,
+} from './documentSlice';
 
 export type FiltersStatus = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -174,9 +179,21 @@ const filtersSlice = createSlice({
       })
       .addCase(toggleFilterEnabled.rejected, (state, action) => {
         state.error = (action.payload as string) ?? state.error;
-      });
+      })
+      // Drop previous project's filters as soon as identity changes so the
+      // Layers panel cannot number them under the new docId.
+      .addCase(openImage.fulfilled, clearFiltersState)
+      .addCase(createDocument.fulfilled, clearFiltersState)
+      .addCase(openProject.fulfilled, clearFiltersState);
   },
 });
+
+function clearFiltersState(state: FiltersState) {
+  state.byId = {};
+  state.orderOnImageSource = [];
+  state.status = 'idle';
+  state.error = null;
+}
 
 export const { clearFilters, setFiltersError, patchFilter } = filtersSlice.actions;
 

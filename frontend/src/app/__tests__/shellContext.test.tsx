@@ -47,6 +47,7 @@ describe('ShellContext', () => {
     expect(result.current.previewBackground).toBe('gray');
     expect(result.current.welcomeBackground).toBe('artwork');
     expect(result.current.hideRecentList).toBe(false);
+    expect(result.current.appIconId).toBe('default');
   });
 
   it('updates split ratios independently per side', () => {
@@ -106,6 +107,7 @@ describe('ShellContext', () => {
       result.current.setPreviewBackground('black');
       result.current.setWelcomeBackground('artwork');
       result.current.setHideRecentList(true);
+      result.current.setAppIconId('alt2');
     });
     act(() => {
       vi.advanceTimersByTime(150);
@@ -120,6 +122,7 @@ describe('ShellContext', () => {
     expect(parsed.previewBackground).toBe('black');
     expect(parsed.welcomeBackground).toBe('artwork');
     expect(parsed.hideRecentList).toBe(true);
+    expect(parsed.appIconId).toBe('alt2');
     expect(parsed.sidebarSide).toBeUndefined();
     vi.useRealTimers();
   });
@@ -179,6 +182,9 @@ describe('ShellContext', () => {
     expect(migrateShellPrefs({ version: 2, welcomeBackground: 'gradient' }).welcomeBackground).toBe(
       'gradient'
     );
+    expect(migrateShellPrefs({ version: 2, welcomeBackground: 'texture' }).welcomeBackground).toBe(
+      'texture'
+    );
     expect(migrateShellPrefs({ version: 2, welcomeBackground: 'none' }).welcomeBackground).toBe(
       'artwork'
     );
@@ -194,6 +200,12 @@ describe('ShellContext', () => {
   it('parses hideRecentList and defaults to false', () => {
     expect(migrateShellPrefs({ version: 2, hideRecentList: true }).hideRecentList).toBe(true);
     expect(migrateShellPrefs({ version: 2 }).hideRecentList).toBe(false);
+  });
+
+  it('parses appIconId and defaults to default', () => {
+    expect(migrateShellPrefs({ version: 2, appIconId: 'alt2' }).appIconId).toBe('alt2');
+    expect(migrateShellPrefs({ version: 2 }).appIconId).toBe('default');
+    expect(migrateShellPrefs({ version: 2, appIconId: '' }).appIconId).toBe('default');
   });
 
   it('migrates v1 exclusive sidebarSide=right by default', () => {

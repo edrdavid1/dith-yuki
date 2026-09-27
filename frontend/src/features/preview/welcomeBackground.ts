@@ -1,16 +1,17 @@
 import type { CSSProperties } from 'react';
 
-export type WelcomeBackground = 'artwork' | 'gradient';
+export type WelcomeBackground = 'artwork' | 'gradient' | 'texture';
 
 export const DEFAULT_WELCOME_BACKGROUND: WelcomeBackground = 'artwork';
 
 export const WELCOME_BACKGROUNDS: { id: WelcomeBackground; label: string }[] = [
   { id: 'artwork', label: 'Artwork' },
   { id: 'gradient', label: 'Gradient' },
+  { id: 'texture', label: 'Texture' },
 ];
 
 export function parseWelcomeBackground(value: unknown): WelcomeBackground {
-  if (value === 'artwork' || value === 'gradient') return value;
+  if (value === 'artwork' || value === 'gradient' || value === 'texture') return value;
   // Former ids collapse to the default option.
   return DEFAULT_WELCOME_BACKGROUND;
 }
@@ -30,6 +31,9 @@ function coverImageStyle(src: string): CSSProperties {
 export function welcomeBackgroundStyle(kind: WelcomeBackground = DEFAULT_WELCOME_BACKGROUND): CSSProperties {
   if (kind === 'gradient') {
     return coverImageStyle('/img/background-img-2.png');
+  }
+  if (kind === 'texture') {
+    return coverImageStyle('/img/background-img-3.png');
   }
   return coverImageStyle('/img/background-img-1.png');
 }

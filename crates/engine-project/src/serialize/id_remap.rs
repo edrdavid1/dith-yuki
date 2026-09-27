@@ -112,6 +112,8 @@ fn collect_layer_ids(nodes: &[LayerNodeFile], alloc: &mut impl FnMut(LayerId)) {
                     alloc(LayerId::new(id as u32));
                 }
             }
+            #[cfg(feature = "version-drill")]
+            LayerNodeFile::CanaryDrill { id } => alloc(*id),
         }
     }
 }
@@ -126,6 +128,8 @@ fn collect_raw_assets(nodes: &[LayerNodeFile], out: &mut HashMap<LayerId, String
             }
             LayerNodeFile::Group(group) => collect_raw_assets(&group.children, out),
             LayerNodeFile::Unknown(_) => {}
+            #[cfg(feature = "version-drill")]
+            LayerNodeFile::CanaryDrill { .. } => {}
         }
     }
 }
@@ -186,6 +190,11 @@ fn remap_layer_node(node: &LayerNodeFile, tables: &mut IdRemapTables) -> LayerNo
                 }
             }
             LayerNodeFile::Unknown(v)
+        }
+        #[cfg(feature = "version-drill")]
+        LayerNodeFile::CanaryDrill { id } => {
+            let new_id = *tables.layers.get(id).expect("canary layer mapped");
+            LayerNodeFile::CanaryDrill { id: new_id }
         }
     }
 }

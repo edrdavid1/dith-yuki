@@ -355,6 +355,8 @@ fn collect_custom_png_basenames_from_file(
                 }
                 LayerNodeFile::Group(g) => walk(&g.children, visit)?,
                 LayerNodeFile::Unknown(_) => {}
+                #[cfg(feature = "version-drill")]
+                LayerNodeFile::CanaryDrill { .. } => {}
             }
         }
         Ok(())
@@ -378,6 +380,8 @@ fn sanitize_document_file_strings(file: &mut DocumentFile) {
                     walk(&mut g.children);
                 }
                 LayerNodeFile::Unknown(_) => {}
+                #[cfg(feature = "version-drill")]
+                LayerNodeFile::CanaryDrill { .. } => {}
             }
         }
     }

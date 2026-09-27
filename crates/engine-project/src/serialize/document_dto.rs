@@ -62,6 +62,9 @@ pub enum LayerNodeFile {
     Group(LayerGroupFile),
     /// Opaque JSON object with an unrecognized `node` tag (SPEC §9.1).
     Unknown(Value),
+    /// DRILL-ONLY canary layer (`node: "canary-drill"`). Gated forever.
+    #[cfg(feature = "version-drill")]
+    CanaryDrill { id: LayerId },
 }
 
 impl Serialize for LayerNodeFile {
@@ -94,6 +97,20 @@ impl Serialize for LayerNodeFile {
                 .serialize(serializer)
             }
             LayerNodeFile::Unknown(v) => v.serialize(serializer),
+            #[cfg(feature = "version-drill")]
+            LayerNodeFile::CanaryDrill { id } => {
+                #[derive(Serialize)]
+                struct Tagged {
+                    node: &'static str,
+                    id: u32,
+                }
+                Tagged {
+                    // DRILL-ONLY-CANARY-MARKER
+                    node: crate::serialize::features::CANARY_DRILL_NODE,
+                    id: id.0,
+                }
+                .serialize(serializer)
+            }
         }
     }
 }
@@ -126,6 +143,21 @@ impl<'de> Deserialize<'de> for LayerNodeFile {
                 let group: LayerGroupFile =
                     serde_json::from_value(Value::Object(obj)).map_err(serde::de::Error::custom)?;
                 Ok(LayerNodeFile::Group(group))
+            }
+            // DRILL-ONLY, remove or keep gated forever
+            #[cfg(feature = "version-drill")]
+            "canary-drill" => {
+                let mut obj = value
+                    .as_object()
+                    .cloned()
+                    .ok_or_else(|| serde::de::Error::custom("canary-drill node must be an object"))?;
+                obj.remove("node");
+                let id = obj
+                    .get("id")
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(|| serde::de::Error::custom("canary-drill missing id"))?
+                    as u32;
+                Ok(LayerNodeFile::CanaryDrill { id: LayerId::new(id) })
             }
             _ => Ok(LayerNodeFile::Unknown(value)),
         }
@@ -256,6 +288,8 @@ impl DocumentFile {
                     }
                     LayerNodeFile::Group(group) => walk(&mut group.children, known),
                     LayerNodeFile::Unknown(_) => {}
+                    #[cfg(feature = "version-drill")]
+                    LayerNodeFile::CanaryDrill { .. } => {}
                 }
             }
         }
@@ -271,6 +305,15 @@ fn layer_node_to_file(
         LayerNode::Leaf(layer) => {
             if let Some(blob) = layer.extra.get(FORWARD_COMPAT_NODE_KEY) {
                 return LayerNodeFile::Unknown(blob.clone());
+            }
+            #[cfg(feature = "version-drill")]
+            if layer
+                .extra
+                .get(crate::serialize::features::CANARY_DRILL_EXTRA_KEY)
+                .and_then(|v| v.as_bool())
+                == Some(true)
+            {
+                return LayerNodeFile::CanaryDrill { id: layer.id };
             }
             LayerNodeFile::Leaf(layer_to_file(layer, raw_asset_for))
         }
@@ -453,6 +496,33 @@ pub fn layer_node_from_file(node: &LayerNodeFile) -> LayerNode {
             LayerNode::Leaf(Layer {
                 id,
                 name: format!("Unknown ({tag})"),
+                kind: LayerKind::Adjustment,
+                blend_mode: BlendMode::Normal,
+                opacity: 1.0,
+                visible: false,
+                offset: (0, 0),
+                mask: None,
+                filters: Vec::new(),
+                bounds_l0: TileBounds {
+                    min_x: 0,
+                    min_y: 0,
+                    max_x: 0,
+                    max_y: 0,
+                },
+                extra,
+            })
+        }
+        #[cfg(feature = "version-drill")]
+        LayerNodeFile::CanaryDrill { id } => {
+            // DRILL-ONLY-CANARY-MARKER — recognized type, not Unknown.
+            let mut extra = Map::new();
+            extra.insert(
+                crate::serialize::features::CANARY_DRILL_EXTRA_KEY.to_string(),
+                Value::Bool(true),
+            );
+            LayerNode::Leaf(Layer {
+                id: *id,
+                name: "Canary Drill".into(),
                 kind: LayerKind::Adjustment,
                 blend_mode: BlendMode::Normal,
                 opacity: 1.0,

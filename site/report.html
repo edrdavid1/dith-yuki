@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Report a bug — Dither Yuki</title>
+    <meta
+      name="description"
+      content="Send a bug report for Dither Yuki. No GitHub account required."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="atmosphere" aria-hidden="true"></div>
+    <main class="report">
+      <p class="brand brand-compact">Dither Yuki</p>
+      <h1>Report a bug</h1>
+      <p class="lede report-lede">
+        No account needed. Version and OS below are filled from the app when you
+        open this page from Help — they are sent with your message so we can
+        reproduce without a follow-up round-trip.
+      </p>
+
+      <p class="prefilled" id="prefilled-block">
+        <span class="prefilled-label">Will send:</span>
+        <span id="prefilled-info">…</span>
+      </p>
+
+      <form class="report-form" id="report-form" novalidate>
+        <input type="hidden" name="access_key" value="5040e9f8-75b7-4a81-9838-a5de345bab04" />
+        <input type="hidden" name="subject" value="Dither Yuki Bug Report" />
+        <input type="hidden" name="app_version" id="app_version" value="" />
+        <input type="hidden" name="os_info" id="os_info" value="" />
+        <input type="checkbox" name="botcheck" class="botcheck" tabindex="-1" autocomplete="off" />
+
+        <label for="description">What happened?</label>
+        <textarea id="description" name="description" rows="5" required></textarea>
+
+        <label for="steps">Steps to reproduce <span class="optional">(optional)</span></label>
+        <textarea id="steps" name="steps" rows="4"></textarea>
+
+        <label for="email">Your email <span class="optional">(optional, if you want a reply)</span></label>
+        <input id="email" type="email" name="email" autocomplete="email" />
+
+        <button type="submit" class="btn primary" id="submit-btn">Send Report</button>
+        <p class="form-status" id="form-status" role="status" aria-live="polite"></p>
+      </form>
+
+      <p class="github-alt">
+        Prefer GitHub?
+        <a
+          id="github-issue"
+          href="https://github.com/edrdavid1/dith-yuki/issues/new?template=bug_report.yml"
+          >Open an issue instead →</a
+        >
+      </p>
+
+      <p class="back">
+        <a href="./">← Download page</a>
+      </p>
+    </main>
+
+    <footer>
+      <span>L'eco non di Bergamo</span>
+      <a href="https://github.com/edrdavid1/dith-yuki">Source</a>
+    </footer>
+
+    <script>
+      (function () {
+        var params = new URLSearchParams(location.search);
+        var v = params.get("v") || "";
+        var os = params.get("os") || "";
+        var osver = params.get("osver") || "";
+        var arch = params.get("arch") || "";
+        var info =
+          (os || "unknown") +
+          (osver ? " " + osver : "") +
+          (arch ? " (" + arch + ")" : "") +
+          (v ? ", v" + v : "");
+        if (!v && !os) {
+          info = "not prefilled — open from Help → Report a bug in the app, or type version/OS in the description";
+        }
+        document.getElementById("prefilled-info").textContent = info;
+        document.getElementById("app_version").value = v;
+        document.getElementById("os_info").value = info;
+
+        var gh = document.getElementById("github-issue");
+        if (v) {
+          gh.href =
+            "https://github.com/edrdavid1/dith-yuki/issues/new?template=bug_report.yml&version=" +
+            encodeURIComponent(v);
+        }
+
+        var form = document.getElementById("report-form");
+        var statusEl = document.getElementById("form-status");
+        var submitBtn = document.getElementById("submit-btn");
+
+        form.addEventListener("submit", async function (event) {
+          event.preventDefault();
+          statusEl.textContent = "Sending…";
+          statusEl.className = "form-status";
+          submitBtn.disabled = true;
+
+          try {
+            var response = await fetch("https://api.web3forms.com/submit", {
+              method: "POST",
+              body: new FormData(form),
+            });
+            var data = await response.json();
+            if (data.success) {
+              statusEl.textContent = "Sent — thank you.";
+              statusEl.className = "form-status is-ok";
+              form.reset();
+              document.getElementById("app_version").value = v;
+              document.getElementById("os_info").value = info;
+            } else {
+              statusEl.textContent = data.message || "Could not send. Try again or use GitHub.";
+              statusEl.className = "form-status is-err";
+            }
+          } catch (err) {
+            statusEl.textContent = "Network error. Try again or use GitHub.";
+            statusEl.className = "form-status is-err";
+          } finally {
+            submitBtn.disabled = false;
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>

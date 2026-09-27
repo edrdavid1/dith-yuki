@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 description = "Document model, layers, filters, masks"
 
+[features]
+default = []
+# DRILL-ONLY: synthetic canary format features for version-compat rehearsal.
+# MUST NOT be enabled in release / alpha product builds (CI asserts absence).
+version-drill = []
+
 [dependencies]
 engine-core = { path = "../engine-core" }
 engine-registry = { path = "../engine-registry" }
@@ -34,6 +40,10 @@ tokio = { version = "1.0", features = ["full"] }
 proptest = "1"
 criterion = { version = "0.5", features = ["html_reports"] }
 tempfile = "3"
+
+[[bin]]
+name = "dyproj-cli"
+path = "src/bin/dyproj-cli.rs"
 
 [[bench]]
 name = "compositor_bench"

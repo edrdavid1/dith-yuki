@@ -28,6 +28,14 @@
     "dialog:default",
     "os:default",
     "updater:default",
-    "process:allow-restart"
+    "process:allow-restart",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "https://edrdavid1.github.io/dith-yuki/*" },
+        { "url": "https://github.com/edrdavid1/*" },
+        { "url": "https://ditheryuki.com/*" }
+      ]
+    }
   ]
 }

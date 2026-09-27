@@ -105,4 +105,73 @@ describe('LayersPanel blend/opacity', () => {
     expect(names[1]).toContain('Adjust');
     expect(names[names.length - 1]).toContain('Image Source');
   });
+
+  it('isolates effect # numbering per open document', () => {
+    const filterB: FilterInfo = {
+      ...filter,
+      id: 'filter-b',
+    };
+    const { rerender, props } = renderLayers({
+      docId: 1,
+      filters: [filter],
+      selectedFilterId: null,
+    });
+
+    expect(screen.getByRole('treeitem', { name: /#1 Dithering/ })).toBeInTheDocument();
+
+    rerender(
+      <LayersPanel
+        {...props}
+        docId={2}
+        filters={[filterB]}
+        selectedFilterId={null}
+      />
+    );
+    expect(screen.getByRole('treeitem', { name: /#1 Dithering/ })).toBeInTheDocument();
+    expect(screen.queryByRole('treeitem', { name: /#2 / })).not.toBeInTheDocument();
+
+    rerender(
+      <LayersPanel
+        {...props}
+        docId={1}
+        filters={[filter]}
+        selectedFilterId={null}
+      />
+    );
+    expect(screen.getByRole('treeitem', { name: /#1 Dithering/ })).toBeInTheDocument();
+  });
+
+  it('does not let stale filters from the previous doc consume the new doc counter', () => {
+    const filterB: FilterInfo = {
+      ...filter,
+      id: 'filter-b',
+    };
+    const { rerender, props } = renderLayers({
+      docId: 1,
+      filters: [filter],
+      selectedFilterId: null,
+    });
+    expect(screen.getByRole('treeitem', { name: /#1 Dithering/ })).toBeInTheDocument();
+
+    // Race: docId already advanced, Redux still holds the previous project's filters.
+    rerender(
+      <LayersPanel
+        {...props}
+        docId={2}
+        filters={[filter]}
+        selectedFilterId={null}
+      />
+    );
+
+    rerender(
+      <LayersPanel
+        {...props}
+        docId={2}
+        filters={[filterB]}
+        selectedFilterId={null}
+      />
+    );
+    expect(screen.getByRole('treeitem', { name: /#1 Dithering/ })).toBeInTheDocument();
+    expect(screen.queryByRole('treeitem', { name: /#2 / })).not.toBeInTheDocument();
+  });
 });

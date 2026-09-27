@@ -260,12 +260,16 @@ pub fn normalize_manifest_value(value: Value) -> Result<NormalizedManifest, Proj
 
 /// SPEC §5.4 steps 3–5 (kind already checked by caller when expected is known).
 pub fn check_open_gate(manifest: &NormalizedManifest) -> Result<(), ProjectError> {
-    if manifest.min_reader.major > SUPPORTED_FORMAT_MAJOR {
+    use crate::serialize::features::SUPPORTED_FORMAT;
+
+    // Full {major,minor} compare — a file with min_reader 1.1 must be refused by
+    // a 1.0-only build even when format major is still 1.
+    if manifest.min_reader > SUPPORTED_FORMAT {
         return Err(ProjectError::NeedsNewerApp {
             required_format: manifest.min_reader.to_string(),
             hint: format!(
-                "This file needs format reader {}.{}+; this app supports format major ≤ {}. See docs/FORMAT.md.",
-                manifest.min_reader.major, manifest.min_reader.minor, SUPPORTED_FORMAT_MAJOR
+                "This file needs format reader {}+; this app supports up to {}. See docs/FORMAT.md.",
+                manifest.min_reader, SUPPORTED_FORMAT
             ),
         });
     }
@@ -427,6 +431,29 @@ mod tests {
         let n = normalize_manifest_value(v).unwrap();
         let err = check_open_gate(&n).unwrap_err();
         assert!(matches!(err, ProjectError::NeedsNewerApp { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn min_reader_minor_too_new_errors_on_v1_0_build() {
+        let v = json!({
+            "format_version": 1,
+            "kind": "dyproj",
+            "app_version": "0.2.0",
+            "created_at": "t",
+            "modified_at": "t",
+            "format": { "major": 1, "minor": 1 },
+            "min_reader": { "major": 1, "minor": 1 }
+        });
+        let n = normalize_manifest_value(v).unwrap();
+        #[cfg(not(feature = "version-drill"))]
+        {
+            let err = check_open_gate(&n).unwrap_err();
+            assert!(matches!(err, ProjectError::NeedsNewerApp { .. }), "{err:?}");
+        }
+        #[cfg(feature = "version-drill")]
+        {
+            check_open_gate(&n).unwrap();
+        }
     }
 
     #[test]

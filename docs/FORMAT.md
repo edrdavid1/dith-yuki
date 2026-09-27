@@ -83,8 +83,12 @@ features → migrate → verify `files` hashes if present → load payload.
 | id | since | required | description |
 |---|---|---|---|
 | `tiled-layers` | 2.0 | yes | Reserved; not written yet |
+| `canary-optional` | 1.1 | no | **DRILL-ONLY** (`--features version-drill`); not in release builds |
+| `canary-required` | 1.1 | yes | **DRILL-ONLY** (`--features version-drill`); not in release builds |
 
-Writers emit the **minimum** `format` required by used features (today always `1.0`).
+Writers emit the **minimum** `format` / `min_reader` required by features
+actually used in the document (not the app maximum). Resaving a v1.0 file
+without new features keeps `{1, 0}` (§2.6 «минимальная версия»).
 
 ## Limits (from `ArchiveLimits`)
 
@@ -105,14 +109,45 @@ JSON depth default: `MAX_JSON_DEPTH` in `secure_json.rs`.
 ## Privacy / Share Copy
 
 Ordinary Save never writes absolute paths (CustomPng → content-hash basename),
-machine names, or undo history.
+machine names, or undo history. **Ordinary Save also scrubs every embedded
+PNG** (`composite.png`, `thumbnail.png`, `layers/*`, `assets/threshold_maps/*`)
+— dropping `tEXt` / `iTXt` / `zTXt` / `eXIf` / `iCCP` / `pHYs` and other
+ancillary metadata — via chunk-stripping that does **not** re-encode pixels.
+Preview content stays real (filter-aware full-res `composite.png`, thumbnail
+≤1024 long side). Neutral thumbnail is Share Copy only.
 
-Explicit **Share Copy** (`share_project_to_bytes`): strip PNG metadata (default
-on), omit author (default), no originals (none stored), optional compact JSON,
-`include_preview` (default on; off → neutral `thumbnail.png` placeholder).
+Explicit **Share Copy** (`share_project_to_bytes`) remains the stricter mode:
+omit author (default), optional compact JSON, optional neutral `thumbnail.png`.
+PNG scrubbing is no longer Share-only.
 
 Explicit **Export for older version** (`downgrade_project_to_bytes`): never
 runs on normal Save; today only format `1.x` with empty loss reports.
+
+## How to do the next real version bump
+
+Template rehearsed by the `version-drill` canary (see
+`docs/FORMAT_DECISIONS.md` «Beta readiness»). Steps:
+
+1. **Freeze the old reader.** Tag the commit before the schema change
+   (`pre-<feature>-bump`). CI builds `dyproj-cli` **without** new feature
+   flags and uploads it as `reference-reader-vX.Y` (same pattern as
+   `reference-reader-v1.0`).
+2. **Register the feature** in `serialize/features.rs` with `since`,
+   `required`, and a short description. Optional features bump `format`
+   only; required features also bump `min_reader` and go in
+   `features_required`.
+3. **Detect usage** in `collect_used_format_features` so Save writes the
+   minimum version that covers used features (never always-max).
+4. **Add golden fixtures** under `tests/fixtures/dyproj/` for:
+   feature-used, feature-unused (same build), plus keep prior vN goldens.
+   Lock hashes in `SHA256SUMS`.
+5. **Extend the matrix** (old reader opens optional / refuses required;
+   new engine opens all; resave without feature stays at prior
+   `format`/`min_reader`; `catch_unwind` / `catch_loader_panic` never
+   panics). Keep prior matrix rows.
+6. **Ship without the drill flag** in release/alpha product builds. Canary
+   / rehearsal features stay behind cargo features forever or are removed
+   only after a real replacement lands.
 
 ## Schemas and checklist
 

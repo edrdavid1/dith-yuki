@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import AppLayout from './app/AppLayout';
 import RecoveryDialog from './components/RecoveryDialog';
 import {
@@ -24,6 +24,7 @@ function App() {
   const dispatch = useAppDispatch();
   const [gate, setGate] = useState<RecoveryGate>({ kind: 'scanning' });
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,20 +57,34 @@ function App() {
 
   const onRecoverAll = useCallback(async () => {
     if (gate.kind !== 'journals') return;
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     try {
+      // One tab per recovery_id (guards double-click / overlapping invokes).
+      const seen = new Set<string>();
       for (const j of gate.journals) {
-        await recoverJournal(j.recovery_id);
+        if (seen.has(j.recovery_id)) continue;
+        seen.add(j.recovery_id);
+        try {
+          await recoverJournal(j.recovery_id);
+        } catch (err) {
+          // Already claimed by a concurrent recover — skip.
+          console.error(`Recover failed for ${j.recovery_id}:`, err);
+        }
       }
       await finish();
     } catch (err) {
       console.error('Recover failed:', err);
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }, [finish, gate]);
 
   const onDiscardAll = useCallback(async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     try {
       await discardRecoveryJournals();
@@ -77,12 +92,15 @@ function App() {
     } catch (err) {
       console.error('Discard journals failed:', err);
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }, [finish]);
 
   const onReopenRoster = useCallback(async () => {
     if (gate.kind !== 'roster') return;
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     try {
       for (const entry of gate.rosterDocs) {
@@ -96,6 +114,35 @@ function App() {
       }
       await finish();
     } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }, [finish, gate]);
+
+  const onOpenOriginalsOnly = useCallback(async () => {
+    if (gate.kind !== 'journals') {
+      setGate({ kind: 'none' });
+      return;
+    }
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      // Skip journal blobs; reopen the last-session paths when we have them.
+      const seen = new Set<string>();
+      for (const entry of gate.rosterDocs) {
+        const path = entry.project_path ?? entry.source_path;
+        if (!path || seen.has(path)) continue;
+        seen.add(path);
+        try {
+          await openProject(path);
+        } catch (err) {
+          console.error(`Reopen original failed for ${path}:`, err);
+        }
+      }
+      await finish();
+    } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }, [finish, gate]);
@@ -120,6 +167,9 @@ function App() {
           onRecoverAll={() => void onRecoverAll()}
           onDiscardAll={() => void onDiscardAll()}
           onReopenRoster={gate.kind === 'roster' ? () => void onReopenRoster() : undefined}
+          onOpenOriginalsOnly={
+            gate.kind === 'journals' ? () => void onOpenOriginalsOnly() : undefined
+          }
           onSkip={onSkip}
         />
       ) : null}

@@ -4,13 +4,13 @@ use crate::document::Document;
 use crate::serialize::archive::{create_dither_archive, ZipArchiveReader, MIME_DYPROJ};
 use crate::serialize::assets::{threshold_map_basename, threshold_map_zip_entry};
 use crate::serialize::document_dto::DocumentFile;
-use crate::serialize::features::{required_version_for_features, FormatVersion};
+use crate::serialize::features::FormatVersion;
 use crate::serialize::manifest::{build_dyproj_manifest_json, build_manifest_files};
 use crate::serialize::migrate::ProjectError;
 use crate::serialize::pixels::{
     assemble_layer_png, build_composite_rgba8, build_processed_composite_rgba8,
-    collect_raster_layers, count_raster_layers, encode_rgba8_png, reencode_png_clean,
-    soft_size_warning,
+    collect_raster_layers, count_raster_layers, encode_rgba8_png, soft_size_warning,
+    strip_png_ancillary_chunks,
 };
 use crate::serialize::project::{
     chrono_like_now, collect_custom_png_embeds, rewrite_custom_png_paths, SaveProjectResult,
@@ -73,9 +73,14 @@ impl ProjectWriteOptions {
     pub fn normal() -> Self {
         Self {
             compact_json: false,
-            strip_png_metadata: false,
+            // Beta readiness Goal A: ordinary Save strips ancillary PNG chunks
+            // (EXIF/GPS/ICC/text) so a normal `.dyproj` is safe to forward.
+            // Share Copy exclusives (omit author / neutral thumb / compact) stay separate.
+            strip_png_metadata: true,
             include_author: true,
-            target_format: FormatVersion::V1_0,
+            // Ceiling = what this build supports; writers still emit the *minimum*
+            // version required by used features (§2.6), never above this.
+            target_format: crate::serialize::features::SUPPORTED_FORMAT,
             timestamp: None,
             include_preview: true,
         }
@@ -86,7 +91,7 @@ impl ProjectWriteOptions {
             compact_json: opts.compact,
             strip_png_metadata: opts.strip_metadata,
             include_author: opts.include_author,
-            target_format: FormatVersion::V1_0,
+            target_format: crate::serialize::features::SUPPORTED_FORMAT,
             // Stable stamp so Share Copy of the same doc is byte-identical.
             timestamp: Some("0".into()),
             include_preview: opts.include_preview,
@@ -167,7 +172,8 @@ pub fn write_project_to_bytes(
         let mut cleaned_embeds = HashMap::new();
         let mut old_to_new: HashMap<String, String> = HashMap::new();
         for (old_base, bytes) in embeds {
-            let clean = reencode_png_clean(&bytes)?;
+            // Preserve grayscale / indexed color — do not RGBA-reencode maps.
+            let clean = strip_png_ancillary_chunks(&bytes)?;
             let new_base = threshold_map_basename(&clean);
             old_to_new.insert(old_base, new_base.clone());
             cleaned_embeds.insert(new_base, clean);
@@ -188,7 +194,8 @@ pub fn write_project_to_bytes(
     for layer in rasters {
         let mut png = assemble_layer_png(cache, layer, doc.width, doc.height, doc.id.0)?;
         if opts.strip_png_metadata {
-            png = reencode_png_clean(&png)?;
+            // Chunk-strip only — do not re-encode pixels (metadata ≠ preview quality).
+            png = strip_png_ancillary_chunks(&png)?;
         }
         layer_pngs.insert(layer.id.0, png);
     }
@@ -211,13 +218,19 @@ pub fn write_project_to_bytes(
         }
     };
     let mut composite_png = encode_rgba8_png(&composite_rgba, doc.width, doc.height)?;
-    let thumbnail_png = if opts.include_preview {
+    // Preview content is independent of metadata scrub (§1.2): real thumbnail on
+    // normal Save; neutral only when Share Copy sets include_preview=false.
+    let mut thumbnail_png = if opts.include_preview {
         build_thumbnail_png_cached(&composite_rgba, doc.width, doc.height)
     } else {
         neutral_thumbnail_png()
     };
     if opts.strip_png_metadata {
-        composite_png = reencode_png_clean(&composite_png)?;
+        // Strip ancillary chunks without a second pixel encode. Re-encoding via
+        // `reencode_png_clean` would replace the deterministic thumbnail encoder
+        // with the generic image-crate path and couple scrub to preview quality.
+        composite_png = strip_png_ancillary_chunks(&composite_png)?;
+        thumbnail_png = strip_png_ancillary_chunks(&thumbnail_png)?;
     }
 
     let document_json = encode_json(&file, opts.compact_json)?;
@@ -247,19 +260,29 @@ pub fn write_project_to_bytes(
 
     let files = build_manifest_files(&payload);
     let now = opts.timestamp.clone().unwrap_or_else(chrono_like_now);
-    let format = required_version_for_features(std::iter::empty::<&str>());
-    let format = if opts.target_format < format {
+    let (features_required, features_optional) =
+        crate::serialize::features::collect_used_format_features(&doc_for_json);
+    let computed = crate::serialize::features::format_versions_for_used_features(
+        &features_required,
+        &features_optional,
+    );
+    // Downgrade / target clamp: never write above the explicit target.
+    let format = if opts.target_format < computed.format {
         opts.target_format
     } else {
-        format
+        computed.format
     };
-    let min_reader = format;
-    let _ = opts.include_author; // dyproj has no author field today
+    let min_reader = if opts.target_format < computed.min_reader {
+        opts.target_format
+    } else {
+        computed.min_reader
+    };
+    let _ = opts.include_author; // dyproj has no author field today (§1.2)
     let mut manifest_json = build_dyproj_manifest_json(
         format,
         min_reader,
-        &[],
-        &[],
+        &features_required,
+        &features_optional,
         app_version,
         &now,
         &now,

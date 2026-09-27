@@ -109,7 +109,7 @@ pub fn write_journal_for_doc(state: &AppState, doc_id: u32) -> Result<(), String
     write_meta(&recovery_dir, &meta)?;
 
     if let Ok(mut guard) = state.journal.lock() {
-        guard.note_flushed(doc_id);
+        guard.note_flushed(doc_id, snapshot.revision);
     }
     Ok(())
 }
@@ -148,5 +148,37 @@ mod tests {
         delete_journal_for_session(&state, &session);
         assert!(!meta_path.exists());
         assert!(!blob.exists());
+        let _ = blob;
+    }
+
+    #[test]
+    fn soft_discard_reuses_matching_revision_without_rewrite() {
+        use crate::journal::commands::prepare_soft_discard_sync;
+        use crate::journal::meta::{journal_meta_path, read_meta};
+
+        let dir = tempfile::tempdir().unwrap();
+        let recovery = dir.path().join("recovery");
+        let state = Arc::new(AppState::empty_process(None, 16 * 1024 * 1024, false));
+        crate::journal::set_recovery_dir(&state, recovery.clone());
+
+        let session = state.spawn_session(Document::new(DocumentId::new(1), 64, 64));
+        session.document_handle.mutate(|d| d.increment_generation());
+
+        write_journal_for_doc(&state, 1).unwrap();
+        let blob = journal_blob_path(&recovery, session.recovery_id);
+        let meta_path = journal_meta_path(&recovery, session.recovery_id);
+        let mtime_before = std::fs::metadata(&blob).unwrap().modified().unwrap();
+
+        // Touch after a beat so mtime would change if we rewrote.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        prepare_soft_discard_sync(&state, 1).unwrap();
+
+        let mtime_after = std::fs::metadata(&blob).unwrap().modified().unwrap();
+        assert_eq!(
+            mtime_before, mtime_after,
+            "matching revision must not rewrite the journal blob"
+        );
+        let meta = read_meta(&meta_path).unwrap();
+        assert!(meta.discarded);
     }
 }

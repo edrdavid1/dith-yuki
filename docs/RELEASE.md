@@ -1,19 +1,19 @@
 # Releasing Dither Yuki
 
-How we cut macOS/Windows builds, sign updater artifacts, and ship a public alpha.
+How we cut macOS/Windows builds, sign updater artifacts, and ship a public beta.
 
 ## Channels
 
 | Tag example | Release title | Updater (`/releases/latest`) |
 |---|---|---|
-| `v0.4.2-alpha` | `Dither Yuki v0.4.2-alpha (alpha)` | Becomes latest (see note) |
-| `v0.4.3-alpha` | next alpha in the 0.4 line (patch digit) | Same |
-| `v0.4.0-beta.1` / `v0.4.0-rc.1` | `… (alpha)` suffix when applicable | Same |
-| `v0.4.0` | `Dither Yuki v0.4.0` | Stable latest |
+| `v0.4.5-alpha` | `Dither Yuki v0.4.5-alpha (alpha)` | Becomes latest (see note) |
+| `v1.0.0-beta` | `Dither Yuki v1.0.0-beta (beta)` | Same |
+| `v1.0.0-beta.2` / `v1.0.0-rc.1` | channel suffix from tag (`beta` / `alpha`) | Same |
+| `v1.0.0` | `Dither Yuki v1.0.0` | Stable latest |
 
 Workflow: [`.github/workflows/release.yml`](../.github/workflows/release.yml) on `push` of `v*`.
 
-**Important:** GitHub’s `/releases/latest` **ignores** releases marked as GitHub “Pre-release”. The in-app updater endpoint uses that URL, so this workflow keeps `prerelease: false` and communicates alpha via the **tag** + title suffix `(alpha)`. When you later run stable + alpha in parallel, add a separate `alpha.json` endpoint instead of relying on GitHub prerelease flags.
+**Important:** GitHub’s `/releases/latest` **ignores** releases marked as GitHub “Pre-release”. The in-app updater endpoint uses that URL, so this workflow keeps `prerelease: false` and communicates the channel via the **tag** + title suffix (`(alpha)` / `(beta)`). When you later run stable + pre-release in parallel, add a separate channel endpoint instead of relying on GitHub prerelease flags.
 
 App endpoint (hardcoded in `tauri.conf.json`):
 
@@ -48,7 +48,7 @@ npm run tauri signer generate -w ~/.tauri/dither.key
 # Put the private key contents into the GitHub secret.
 ```
 
-### Apple secrets (public alpha / no Gatekeeper warn)
+### Apple secrets (public beta / no Gatekeeper warn)
 
 | Secret | Purpose |
 |---|---|
@@ -62,20 +62,19 @@ npm run tauri signer generate -w ~/.tauri/dither.key
 
 When `APPLE_CERTIFICATE` is unset, CI creates a **self-signed** identity `L'eco non di Bergamo` (`scripts/macos-self-sign-cert.sh`) so Gatekeeper can offer **Open Anyway**. This is not Apple Developer ID / notarization.
 
-Full alpha signing guide (macOS + Windows self-sign): [`SIGNING_ALPHA.md`](./SIGNING_ALPHA.md).
+Full signing guide (macOS + Windows self-sign): [`SIGNING_ALPHA.md`](./SIGNING_ALPHA.md).
 
 ## Cut a release
 
 1. Bump version in lockstep: root `package.json`, `frontend/package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`.
-2. Update release notes intent (alpha scope: no paint / ICC / video).
+2. Update release notes intent (beta scope: no paint / ICC / video).
 3. Commit, then:
 
-Alpha builds use `0.4.N-alpha` (no `alpha.K` suffix): **N** is the alpha
-iteration within the minor line (`0.4.2-alpha`, then `0.4.3-alpha`, …).
+Beta builds use `1.0.0-beta` (then `1.0.0-beta.2`, …). Legacy alphas used `0.4.N-alpha`.
 
 ```bash
-git tag -a v0.4.2-alpha -m "Dither Yuki 0.4.2-alpha"
-git push origin v0.4.2-alpha
+git tag -a v1.0.0-beta -m "Dither Yuki 1.0.0-beta"
+git push origin v1.0.0-beta
 ```
 
 4. Watch Actions → **Release**. macOS job builds Quick Look `.appex`, creates the
@@ -86,7 +85,7 @@ git push origin v0.4.2-alpha
    [ALPHA_PREVIEWS_WINDOWS.md](./ALPHA_PREVIEWS_WINDOWS.md)).
 7. Optional: `npm run release:verify` after assets are public.
 
-## Gatekeeper (self-signed macOS alpha)
+## Gatekeeper (self-signed macOS beta)
 
 1. Drag the app to Applications and **double-click** once (expect a block).
 2. **System Settings → Privacy & Security** → **Open Anyway**.

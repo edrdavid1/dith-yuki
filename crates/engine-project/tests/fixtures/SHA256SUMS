@@ -1,4 +1,7 @@
-# SHA-256 of golden v1 fixtures. Do not regenerate existing entries.
+# SHA-256 of golden fixtures. Do not regenerate existing entries.
 # Format: <hash>  <path-relative-to-tests/fixtures>
 9952bf434a1978156b6d657cd26ae8c55f5cba74d5679089dffa499213b44876  dyproj/v1/minimal.dyproj
 155b74570a1c0cde812dc65230a7ccb5f7c2f8a5ce3cabd5a6fb3e674e9ecf14  dyuki/v1/minimal.dyuki
+20da18df5c9e720f40000df76e755b0c14d070178a1e9a00fc3eef2f9d24a715  dyproj/drill/neither-used.dyproj
+0ad7c1adf33007e6797f9b152b87198e53038e36c11a361bb51f8d09f75efbde  dyproj/drill/optional-used.dyproj
+6bb7d8b8eba4e766e1b48881965ca1d42adbb6f9d11da0a4d568bec7d1f3b7d6  dyproj/drill/required-used.dyproj

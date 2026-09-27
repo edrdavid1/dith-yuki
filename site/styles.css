@@ -200,6 +200,135 @@ footer a {
   color: var(--ink);
 }
 
+/* ─── Bug report ─────────────────────────────────────────────────────────── */
+
+.report {
+  position: relative;
+  z-index: 1;
+  max-width: 36rem;
+  padding: clamp(2rem, 6vw, 5rem);
+  min-height: 100vh;
+}
+
+.brand-compact {
+  font-size: clamp(1.75rem, 5vw, 2.5rem);
+  margin-bottom: 0.75rem;
+}
+
+.report h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(1.5rem, 3.4vw, 2rem);
+  letter-spacing: -0.03em;
+}
+
+.report-lede {
+  margin: 1rem 0 0;
+}
+
+.prefilled {
+  margin: 1.5rem 0 0;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--rule);
+  background: rgba(255, 255, 255, 0.35);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.prefilled-label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.report-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-top: 1.5rem;
+}
+
+.report-form label {
+  margin-top: 0.65rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.report-form .optional {
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.report-form textarea,
+.report-form input[type="email"] {
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--rule);
+  border-radius: 0.35rem;
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+}
+
+.report-form textarea:focus,
+.report-form input[type="email"]:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: 1px;
+}
+
+.report-form .btn {
+  margin-top: 1rem;
+  align-self: flex-start;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+}
+
+.report-form .btn:disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.botcheck {
+  position: absolute;
+  left: -9999px;
+  opacity: 0;
+  height: 0;
+  width: 0;
+}
+
+.form-status {
+  min-height: 1.25rem;
+  margin: 0.5rem 0 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.form-status.is-ok {
+  color: #2a5a1a;
+  font-weight: 600;
+}
+
+.form-status.is-err {
+  color: #8a1f1f;
+  font-weight: 600;
+}
+
+.github-alt,
+.back {
+  margin: 1.75rem 0 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.github-alt a,
+.back a {
+  color: var(--ink);
+  font-weight: 600;
+}
+
 @keyframes rise {
   from {
     opacity: 0;
