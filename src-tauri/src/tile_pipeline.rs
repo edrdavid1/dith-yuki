@@ -289,8 +289,8 @@ pub fn compute_processed_tile(
                     }
                 }
             }
-            return Ok(requested
-                .ok_or_else(|| EngineError::invalid_state("ED strip missing requested tile"))?);
+            return requested
+                .ok_or_else(|| EngineError::invalid_state("ED strip missing requested tile"));
         }
 
         apply_filter_to_tile_with_caches(
