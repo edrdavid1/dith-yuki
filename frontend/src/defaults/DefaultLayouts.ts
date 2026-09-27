@@ -18,6 +18,12 @@ export type SidebarFlexSide = 'left' | 'right';
 
 // ─── Shared global config ─────────────────────────────────────────────────────
 
+/**
+ * Figma `heder-of-window` height (WindowTitlebar / tabset_sizer).
+ * Splitter drag must not shrink a docked panel below this, or titles overlap.
+ */
+export const DOCK_TABSET_MIN_HEIGHT = 20;
+
 const FLEX_GLOBAL = {
   tabEnableRename: false,
   tabEnableClose: false,
@@ -33,6 +39,9 @@ const FLEX_GLOBAL = {
   splitterSize: 0,
   splitterExtra: 4,
   enableEdgeDock: false,
+  // Keep each stacked panel at least one titlebar tall while resizing.
+  tabSetMinHeight: DOCK_TABSET_MIN_HEIGHT,
+  tabSetTabStripHeight: DOCK_TABSET_MIN_HEIGHT,
 } as const;
 
 // ─── Default layout JSON ──────────────────────────────────────────────────────

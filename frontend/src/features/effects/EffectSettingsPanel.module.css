@@ -107,7 +107,7 @@
 }
 
 .effect-settings-body {
-  padding: 10px;
+  padding: 10px 10px 0;
 }
 
 .effect-settings-content {
@@ -123,12 +123,19 @@
   color: var(--color-dark-gray);
 }
 
+/* Same 10px side inset as .effect-settings-body / chooser rows. */
+.pattern-actions-wrap {
+  padding: 10px 10px 10px;
+  box-sizing: border-box;
+  width: 100%;
+}
+
 .pattern-actions {
   display: flex;
   flex-direction: row;
   align-items: stretch;
   gap: 6px;
-  padding: 10px 0 12px;
+  padding: 0;
   width: 100%;
   box-sizing: border-box;
 }

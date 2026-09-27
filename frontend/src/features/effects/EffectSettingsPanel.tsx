@@ -184,13 +184,13 @@ export default function EffectSettingsPanel({
           <Icon name="save" width={16} height={16} />
         </button>
       </Tooltip>
-      <Tooltip label="Load pattern">
+      <Tooltip label="Apply pattern">
         <button
           type="button"
           className={cn('pattern-action-btn')}
           disabled={!canUsePattern}
           onClick={() => onLoadPattern?.()}
-          aria-label="Load pattern"
+          aria-label="Apply pattern"
         >
           <Icon name="layers" width={16} height={16} />
         </button>
@@ -327,7 +327,7 @@ export default function EffectSettingsPanel({
                 </button>
               ))}
             </div>
-            {patternActions}
+            <div className={cn('pattern-actions-wrap')}>{patternActions}</div>
           </SimpleBar>
         </div>
       </div>
@@ -418,10 +418,8 @@ export default function EffectSettingsPanel({
       )}
       <div className={cn("effect-settings-scroll")}>
         <SimpleBar style={{ height: '100%' }}>
-          <div className={cn("effect-settings-body")}>
-            {renderSettings()}
-            {patternActions}
-          </div>
+          <div className={cn("effect-settings-body")}>{renderSettings()}</div>
+          <div className={cn('pattern-actions-wrap')}>{patternActions}</div>
         </SimpleBar>
       </div>
     </div>

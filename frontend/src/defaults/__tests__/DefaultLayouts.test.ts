@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  DOCK_TABSET_MIN_HEIGHT,
   getDefaultFlexLayoutJson,
   isValidFlexLayoutJson,
   parseFlexLayoutJson,
@@ -27,6 +28,12 @@ describe('DefaultLayouts (B5)', () => {
       .children;
     expect(leftTabs.map((t) => t.component)).toEqual(['layers']);
     expect(rightTabs.map((t) => t.component)).toEqual(['effect', 'colorlab']);
+  });
+
+  it('keeps docked panels at least one titlebar tall while resizing', () => {
+    const model = getDefaultFlexLayoutJson('right');
+    expect(model.global?.tabSetMinHeight).toBe(DOCK_TABSET_MIN_HEIGHT);
+    expect(model.global?.tabSetTabStripHeight).toBe(DOCK_TABSET_MIN_HEIGHT);
   });
 
   it('parseFlexLayoutJson falls back cleanly on garbage', () => {
