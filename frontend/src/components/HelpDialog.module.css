@@ -117,8 +117,15 @@
   text-transform: none;
 }
 
-.help-update-btn {
+.help-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
   margin-top: 6px;
+}
+
+.help-update-btn {
   min-width: 128px;
   height: 28px;
   padding: 0 16px;

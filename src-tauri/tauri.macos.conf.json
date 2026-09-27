@@ -8,7 +8,8 @@
   "bundle": {
     "resources": {
       "icons/proj-icon.icns": "proj-icon.icns",
-      "icons/pattern-icon.icns": "pattern-icon.icns"
+      "icons/pattern-icon.icns": "pattern-icon.icns",
+      "icons/alt/alt2.icns": "icons/alt/alt2.icns"
     },
     "macOS": {
       "files": {

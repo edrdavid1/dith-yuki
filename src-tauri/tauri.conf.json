@@ -1,6 +1,6 @@
 {
   "productName": "Dither Yuki",
-  "version": "0.4.5-alpha",
+  "version": "1.0.0-beta",
   "identifier": "com.dither.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -29,7 +29,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost https://asset.localhost blob: data: tile: http://tile.localhost; connect-src ipc: http://ipc.localhost; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost https://asset.localhost blob: data: tile: http://tile.localhost; connect-src ipc: http://ipc.localhost https://api.web3forms.com; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
     }
   },
   "bundle": {

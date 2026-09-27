@@ -148,6 +148,7 @@ export default function LayersFeature({
     <LayersPanel
       layers={layers}
       selectedLayerId={selectedLayerId}
+      docId={docId}
       filters={filters}
       selectedFilterId={selectedFilterId}
       onSelect={handleSelect}

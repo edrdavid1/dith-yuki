@@ -27,6 +27,9 @@
   position: relative;
   outline: none;
   overflow: hidden;
+  /* WebView2: keep browser scroll/zoom from fighting our wheel handler. */
+  touch-action: none;
+  overscroll-behavior: contain;
 }
 
 .preview-image {

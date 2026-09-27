@@ -42,6 +42,28 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
+      - name: Version drill matrix (new engine)
+        run: >
+          cargo test -p engine-project --features version-drill
+          --test version_drill
+
+      - name: Build reference-reader-v1.0 (no version-drill)
+        run: cargo build -p engine-project --bin dyproj-cli --release
+
+      - name: Assert release CLI has no canary marker
+        run: |
+          if strings target/release/dyproj-cli | grep -F 'DRILL-ONLY-CANARY-MARKER'; then
+            echo "canary marker leaked into release dyproj-cli" >&2
+            exit 1
+          fi
+
+      - name: Upload reference-reader-v1.0
+        uses: actions/upload-artifact@v4
+        with:
+          name: reference-reader-v1.0
+          path: target/release/dyproj-cli
+          if-no-files-found: error
+
   frontend:
     name: Frontend (vitest)
     runs-on: ubuntu-latest

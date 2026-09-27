@@ -18,6 +18,21 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+/** Convert wheel deltas to CSS pixels (WebView2 may send DOM_DELTA_LINE). */
+export function normalizeWheelDelta(e: WheelEvent): { dx: number; dy: number } {
+  let scale = 1;
+  if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+    scale = 16;
+  } else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+    scale = 400;
+  }
+  return { dx: e.deltaX * scale, dy: e.deltaY * scale };
+}
+
+const IPC_DEBOUNCE_MS = 16;
+/** Tile refetch after trackpad gesture settles (spec §2.2). */
+const WHEEL_IPC_DEBOUNCE_MS = 120;
+
 // ─── Pan constraint ───────────────────────────────────────────────────────────
 
 /**
@@ -91,13 +106,25 @@ export function useViewport(docWidth: number, docHeight: number): UseViewportRet
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const integerSnapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastWheelCursorRef = useRef<{ x: number; y: number } | null>(null);
+  const ipcDebounceMsRef = useRef(IPC_DEBOUNCE_MS);
+  const wheelRafRef = useRef<number | null>(null);
+  const pendingWheelRef = useRef<{
+    panDx: number;
+    panDy: number;
+    zoomFactor: number;
+    cursorX: number;
+    cursorY: number;
+    wantIntegerSnap: boolean;
+  } | null>(null);
 
   const sendViewportToBackend = useCallback((vp: ViewportState) => {
     if (debounceTimerRef.current !== null) {
       clearTimeout(debounceTimerRef.current);
     }
+    const delay = ipcDebounceMsRef.current;
     debounceTimerRef.current = setTimeout(() => {
       debounceTimerRef.current = null;
+      ipcDebounceMsRef.current = IPC_DEBOUNCE_MS;
       if (vp.canvasWidth > 0 && vp.canvasHeight > 0) {
         setViewportIPC({
           zoom: vp.zoom,
@@ -110,10 +137,10 @@ export function useViewport(docWidth: number, docHeight: number): UseViewportRet
           logIpcError('useViewport.setViewport', err);
         });
       }
-    }, 16);
+    }, delay);
   }, []);
 
-  // Clean up debounce timers on unmount
+  // Clean up debounce / rAF on unmount
   useEffect(() => {
     return () => {
       if (debounceTimerRef.current !== null) {
@@ -121,6 +148,9 @@ export function useViewport(docWidth: number, docHeight: number): UseViewportRet
       }
       if (integerSnapTimerRef.current !== null) {
         clearTimeout(integerSnapTimerRef.current);
+      }
+      if (wheelRafRef.current !== null) {
+        cancelAnimationFrame(wheelRafRef.current);
       }
     };
   }, []);
@@ -178,69 +208,98 @@ export function useViewport(docWidth: number, docHeight: number): UseViewportRet
   );
 
   // ─── Wheel: trackpad pan, pinch / Ctrl+wheel zoom ─────────────────────
+  // Coalesce to one React update per frame; defer tile IPC (~120ms) so
+  // WebView2 high-rate wheel streams do not thrash the tile pipeline.
 
-  const handleWheel = useCallback(
-    (e: WheelEvent) => {
-      let dx = e.deltaX;
-      let dy = e.deltaY;
-      if (e.deltaMode === 1) {
-        dx *= 16;
-        dy *= 16;
-      } else if (e.deltaMode === 2) {
-        dx *= 400;
-        dy *= 400;
-      }
+  const flushPendingWheel = useCallback(() => {
+    wheelRafRef.current = null;
+    const pending = pendingWheelRef.current;
+    if (!pending) return;
+    pendingWheelRef.current = null;
 
-      // macOS pinch-to-zoom is delivered as wheel + ctrlKey. Mouse Ctrl+wheel
-      // zooms the same way. Two-finger trackpad scroll (no ctrl) pans, like
-      // Photoshop / Preview — Space+drag remains available as a hand tool.
-      const isPinchZoom = e.ctrlKey;
+    ipcDebounceMsRef.current = WHEEL_IPC_DEBOUNCE_MS;
 
-      if (!isPinchZoom) {
-        if (e.shiftKey && dx === 0) {
-          dx = dy;
-          dy = 0;
-        }
-        if (dx === 0 && dy === 0) return;
-        setViewport((prev) =>
-          constrainPan(
-            {
-              ...prev,
-              panX: prev.panX + dx / prev.zoom,
-              panY: prev.panY + dy / prev.zoom,
-            },
-            docWidth,
-            docHeight,
-          ),
-        );
-        return;
-      }
+    const { panDx, panDy, zoomFactor, cursorX, cursorY, wantIntegerSnap } = pending;
 
-      // Continuous exponential zoom. Discrete ×2/÷2 per wheel event jumped
-      // ~200%→6000% in a single gesture.
-      const factor = Math.exp(-dy * 0.0012);
-
+    if (zoomFactor !== 1) {
       setViewport((prev) => {
-        const newZoom = clamp(prev.zoom * factor, ZOOM_MIN, ZOOM_MAX);
+        const newZoom = clamp(prev.zoom * zoomFactor, ZOOM_MIN, ZOOM_MAX);
         if (newZoom === prev.zoom) return prev;
-
-        const cursorDocX = prev.panX + e.offsetX / prev.zoom;
-        const cursorDocY = prev.panY + e.offsetY / prev.zoom;
-        const newPanX = cursorDocX - e.offsetX / newZoom;
-        const newPanY = cursorDocY - e.offsetY / newZoom;
-
+        const cursorDocX = prev.panX + cursorX / prev.zoom;
+        const cursorDocY = prev.panY + cursorY / prev.zoom;
+        const newPanX = cursorDocX - cursorX / newZoom;
+        const newPanY = cursorDocY - cursorY / newZoom;
         return constrainPan(
           { ...prev, zoom: newZoom, panX: newPanX, panY: newPanY },
           docWidth,
           docHeight,
         );
       });
+      if (wantIntegerSnap) {
+        scheduleIntegerSnap(cursorX, cursorY);
+      }
+      return;
+    }
 
-      if (zoomModeRef.current === 'integer') {
-        scheduleIntegerSnap(e.offsetX, e.offsetY);
+    if (panDx === 0 && panDy === 0) return;
+    setViewport((prev) =>
+      constrainPan(
+        {
+          ...prev,
+          panX: prev.panX + panDx / prev.zoom,
+          panY: prev.panY + panDy / prev.zoom,
+        },
+        docWidth,
+        docHeight,
+      ),
+    );
+  }, [docWidth, docHeight, scheduleIntegerSnap]);
+
+  const handleWheel = useCallback(
+    (e: WheelEvent) => {
+      let { dx, dy } = normalizeWheelDelta(e);
+
+      // macOS pinch-to-zoom is delivered as wheel + ctrlKey. Mouse Ctrl+wheel
+      // zooms the same way. Two-finger trackpad scroll (no ctrl) pans, like
+      // Photoshop / Preview — Space+drag remains available as a hand tool.
+      const isPinchZoom = e.ctrlKey;
+
+      let pending = pendingWheelRef.current;
+      if (!pending) {
+        pending = {
+          panDx: 0,
+          panDy: 0,
+          zoomFactor: 1,
+          cursorX: e.offsetX,
+          cursorY: e.offsetY,
+          wantIntegerSnap: false,
+        };
+        pendingWheelRef.current = pending;
+      }
+
+      if (!isPinchZoom) {
+        if (e.shiftKey && dx === 0) {
+          dx = dy;
+          dy = 0;
+        }
+        pending.panDx += dx;
+        pending.panDy += dy;
+      } else {
+        // Continuous exponential zoom. Discrete ×2/÷2 per wheel event jumped
+        // ~200%→6000% in a single gesture.
+        pending.zoomFactor *= Math.exp(-dy * 0.0012);
+        pending.cursorX = e.offsetX;
+        pending.cursorY = e.offsetY;
+        if (zoomModeRef.current === 'integer') {
+          pending.wantIntegerSnap = true;
+        }
+      }
+
+      if (wheelRafRef.current === null) {
+        wheelRafRef.current = requestAnimationFrame(flushPendingWheel);
       }
     },
-    [docWidth, docHeight, scheduleIntegerSnap],
+    [flushPendingWheel],
   );
 
   // ─── Pan with middle mouse or Space+left mouse ────────────────────────

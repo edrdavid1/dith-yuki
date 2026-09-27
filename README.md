@@ -6,7 +6,7 @@
 
 <p align="center">
   Desktop studio for dithering, palettes, and layered pixel-art images.<br />
-  Public <strong>alpha</strong> · macOS &amp; Windows
+  Public <strong>beta</strong> · macOS &amp; Windows
 </p>
 
 <p align="center">
@@ -33,7 +33,7 @@ A focused **dither / palette studio** — not a paint app, not a print pipeline.
 
 Tile-based preview keeps large documents responsive.
 
-### Alpha scope
+### Beta scope
 
 No paint tools, ICC / print pipeline, or video / batch export. Linux is not a supported platform.
 
@@ -44,7 +44,7 @@ No paint tools, ICC / print pipeline, or video / batch export. Linux is not a su
 - Riemersma, ASCII, and similar full-document algorithms do not progressive-tile the preview — they show a “Rendering…” state until the whole pass finishes.
 - An adaptive RAM tile-cache budget is in the build; it is **not** proven as a 4K/8K fix yet (diagnostics incomplete).
 
-**Platforms:** macOS is the primary QA surface. Windows ships and is usable, but newer and less battle-tested — please file bugs. Alpha DMGs are self-signed (Gatekeeper → Open Anyway) unless Apple Developer ID notarization secrets are present in CI.
+**Platforms:** macOS is the primary QA surface. Windows ships and is usable, but newer and less battle-tested — please file bugs. Beta DMGs are self-signed (Gatekeeper → Open Anyway) unless Apple Developer ID notarization secrets are present in CI.
 
 ### Install
 
@@ -53,7 +53,7 @@ No paint tools, ICC / print pipeline, or video / batch export. Linux is not a su
 
 #### macOS Gatekeeper
 
-Alpha DMGs are **self-signed** as **L'eco non di Bergamo** (not Apple Developer ID):
+Beta DMGs are **self-signed** as **L'eco non di Bergamo** (not Apple Developer ID):
 
 1. Install from the DMG, then **double-click** the app once (macOS blocks it).
 2. **System Settings → Privacy & Security** → scroll down → **Open Anyway**.
@@ -63,7 +63,8 @@ When Developer ID notarization is wired in CI, this step goes away.
 
 ### Feedback
 
-Use the [bug report template](https://github.com/edrdavid1/dith-yuki/issues/new?template=bug_report.yml) — include OS, app version, and steps to reproduce.
+Use Help → **Report a bug** in the app (Web3Forms email; version/OS prefilled). Optional:
+[GitHub issue template](https://github.com/edrdavid1/dith-yuki/issues/new?template=bug_report.yml).
 
 ---
 

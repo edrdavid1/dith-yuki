@@ -253,6 +253,17 @@
   outline-offset: 2px;
 }
 
+.preferences-icon-swatch {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.preferences-icon-swatch:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
 .preferences-section .param-group {
   margin: 0;
 }

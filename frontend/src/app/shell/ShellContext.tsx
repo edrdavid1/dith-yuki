@@ -45,6 +45,11 @@ export type ShellState = {
   welcomeBackground: WelcomeBackground;
   /** When true, hide the Recent files list on the welcome screen. */
   hideRecentList: boolean;
+  /**
+   * macOS app icon variant id (`default`, `alt2`, …).
+   * Mirrored to Rust `{app_data}/app_icon.json` for pre-window Dock reapply.
+   */
+  appIconId: string;
   setSidebarWidth: (side: DockSide, width: number | ((prev: number) => number)) => void;
   setSidebarCollapsed: (side: DockSide, collapsed: boolean) => void;
   resetSidebarWidths: () => void;
@@ -57,6 +62,7 @@ export type ShellState = {
   setPreviewBackground: (kind: PreviewBackground) => void;
   setWelcomeBackground: (kind: WelcomeBackground) => void;
   setHideRecentList: (hidden: boolean) => void;
+  setAppIconId: (id: string) => void;
 };
 
 /** v2 persisted shape (additive split ratios). */
@@ -72,6 +78,7 @@ export type PersistedShellPrefsV2 = {
   previewBackground: PreviewBackground;
   welcomeBackground: WelcomeBackground;
   hideRecentList: boolean;
+  appIconId: string;
 };
 
 /** Legacy v1 keys (exclusive single sidebar). */
@@ -84,10 +91,12 @@ type PersistedShellPrefsV1 = {
   previewBackground?: PreviewBackground | string;
   welcomeBackground?: WelcomeBackground | string;
   hideRecentList?: boolean;
+  appIconId?: string;
 };
 
 const DEFAULT_AUTO_EXTRACT_PALETTES = true;
 const DEFAULT_HIDE_RECENT_LIST = false;
+const DEFAULT_APP_ICON_ID = 'default';
 const DEFAULT_SIDEBAR_WIDTH = 332;
 const DEFAULT_SPLIT_RATIO = 0.5;
 
@@ -149,6 +158,7 @@ function defaultPrefs(): PersistedShellPrefsV2 {
     previewBackground: DEFAULT_PREVIEW_BACKGROUND,
     welcomeBackground: DEFAULT_WELCOME_BACKGROUND,
     hideRecentList: DEFAULT_HIDE_RECENT_LIST,
+    appIconId: DEFAULT_APP_ICON_ID,
   };
 }
 
@@ -202,6 +212,10 @@ export function migrateShellPrefs(raw: unknown): PersistedShellPrefsV2 {
         typeof obj.hideRecentList === 'boolean'
           ? obj.hideRecentList
           : DEFAULT_HIDE_RECENT_LIST,
+      appIconId:
+        typeof obj.appIconId === 'string' && obj.appIconId.length > 0
+          ? obj.appIconId
+          : DEFAULT_APP_ICON_ID,
     };
   }
 
@@ -229,6 +243,9 @@ export function migrateShellPrefs(raw: unknown): PersistedShellPrefsV2 {
   prefs.welcomeBackground = parseWelcomeBackground(v1.welcomeBackground);
   if (typeof v1.hideRecentList === 'boolean') {
     prefs.hideRecentList = v1.hideRecentList;
+  }
+  if (typeof v1.appIconId === 'string' && v1.appIconId.length > 0) {
+    prefs.appIconId = v1.appIconId;
   }
   return prefs;
 }
@@ -278,6 +295,7 @@ function applyPrefsPatch(
     setPreviewBackground: (kind: PreviewBackground) => void;
     setWelcomeBackground: (kind: WelcomeBackground) => void;
     setHideRecentList: (hidden: boolean) => void;
+    setAppIconId: (id: string) => void;
   }
 ) {
   setters.setLeftSidebar({ ...parsed.leftSidebar });
@@ -288,6 +306,7 @@ function applyPrefsPatch(
   setters.setPreviewBackground(parsed.previewBackground);
   setters.setWelcomeBackground(parsed.welcomeBackground);
   setters.setHideRecentList(parsed.hideRecentList);
+  setters.setAppIconId(parsed.appIconId);
 }
 
 /**
@@ -308,6 +327,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
   const [previewBackground, setPreviewBackgroundState] = useState(initial.previewBackground);
   const [welcomeBackground, setWelcomeBackgroundState] = useState(initial.welcomeBackground);
   const [hideRecentList, setHideRecentListState] = useState(initial.hideRecentList);
+  const [appIconId, setAppIconIdState] = useState(initial.appIconId);
 
   const prefsRef = useRef<PersistedShellPrefsV2>({
     version: 2,
@@ -320,6 +340,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     previewBackground,
     welcomeBackground,
     hideRecentList,
+    appIconId,
   });
   prefsRef.current = {
     version: 2,
@@ -332,6 +353,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     previewBackground,
     welcomeBackground,
     hideRecentList,
+    appIconId,
   };
 
   const persistPrefs = useCallback((prefs: PersistedShellPrefsV2) => {
@@ -363,6 +385,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     previewBackground,
     welcomeBackground,
     hideRecentList,
+    appIconId,
     persistPrefs,
   ]);
 
@@ -385,6 +408,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
         setPreviewBackground: setPreviewBackgroundState,
         setWelcomeBackground: setWelcomeBackgroundState,
         setHideRecentList: setHideRecentListState,
+        setAppIconId: setAppIconIdState,
       });
     };
 
@@ -479,6 +503,10 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     setHideRecentListState(hidden);
   }, []);
 
+  const setAppIconId = useCallback((id: string) => {
+    setAppIconIdState(typeof id === 'string' && id.length > 0 ? id : DEFAULT_APP_ICON_ID);
+  }, []);
+
   const swapSidebars = useCallback(() => {
     const prefs = prefsRef.current;
     setLeftSidebarState({ ...prefs.rightSidebar });
@@ -498,6 +526,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       previewBackground,
       welcomeBackground,
       hideRecentList,
+      appIconId,
       setSidebarWidth,
       setSidebarCollapsed,
       resetSidebarWidths,
@@ -508,6 +537,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       setPreviewBackground,
       setWelcomeBackground,
       setHideRecentList,
+      setAppIconId,
     }),
     [
       leftSidebar,
@@ -518,6 +548,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       previewBackground,
       welcomeBackground,
       hideRecentList,
+      appIconId,
       setSidebarWidth,
       setSidebarCollapsed,
       resetSidebarWidths,
@@ -528,6 +559,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       setPreviewBackground,
       setWelcomeBackground,
       setHideRecentList,
+      setAppIconId,
     ]
   );
 

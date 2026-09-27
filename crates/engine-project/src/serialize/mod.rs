@@ -35,8 +35,10 @@ pub use assets::{
 };
 pub use document_dto::{filter_from_file, filter_to_file, DocumentFile, FilterInstanceFile};
 pub use features::{
-    feature_by_id, required_version_for_features, unknown_required_features, FeatureDef,
-    FormatVersion, FEATURE_REGISTRY, SUPPORTED_FORMAT_MAJOR,
+    collect_used_format_features, feature_by_id, feature_registry,
+    format_versions_for_used_features, required_version_for_features, unknown_required_features,
+    FeatureDef, FormatVersion, UsedFormatVersions, FEATURE_REGISTRY, SUPPORTED_FORMAT,
+    SUPPORTED_FORMAT_MAJOR,
 };
 pub use id_remap::{remap_document_file, IdRemapTables, RemappedDocument};
 pub use limits::ArchiveLimits;
@@ -58,7 +60,8 @@ pub use pattern::{
 pub use pixels::{
     assemble_layer_png, build_composite_png, build_composite_rgba8,
     build_processed_composite_rgba8, decode_png_to_f32, decode_png_to_f32_with_limits,
-    reencode_png_clean, soft_size_warning, threshold_map_png_limits, PngDecodeLimits,
+    find_forbidden_png_chunk, inject_png_text_chunk, reencode_png_clean, soft_size_warning,
+    strip_png_ancillary_chunks, threshold_map_png_limits, PngDecodeLimits, FORBIDDEN_PNG_ANCILLARY,
 };
 pub use project::{
     open_project_from_bytes, open_project_from_path, read_png_file, save_project_to_bytes,

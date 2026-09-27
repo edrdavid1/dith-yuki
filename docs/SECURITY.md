@@ -16,7 +16,8 @@ Threat model and engineering rules for `.dyproj` / `.dyuki`. Companion to
 | T14 | Executable content in params | data-only filters; audit in `FORMAT_DECISIONS` |
 | T15–T16 | XSS / path injection in UI | text-only display; CSP; `sanitize_*`; no `innerHTML` |
 | T17 | Panic → crash | `catch_loader_panic` + `spawn_blocking` JoinError |
-| T18 | Privacy leak on share | Share Copy defaults; path scrub; privacy scan test |
+| T18 | Privacy leak on share | Ordinary Save + Share Copy scrub PNG ancillary chunks; path scrub; privacy scan test |
+
 | T19–T25 | OS preview / shell providers | See «Preview components» below |
 
 ## Preview components

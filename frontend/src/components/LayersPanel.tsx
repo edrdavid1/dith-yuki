@@ -23,9 +23,26 @@ const cn = bind({ ...styles, ...retroSlider, ...layerControls });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+/** Per-document UI state for effect-layer display numbers / rename labels. */
+type DocFilterUiState = {
+  numbers: Record<string, number>;
+  nextNumber: number;
+  names: Record<string, string>;
+};
+
+function emptyDocFilterUi(): DocFilterUiState {
+  return { numbers: {}, nextNumber: 1, names: {} };
+}
+
+function docFilterUiKey(docId: number | null | undefined): string {
+  return docId == null ? '__none__' : String(docId);
+}
+
 export interface LayersPanelProps {
   layers: LayerNodeDto[];
   selectedLayerId: number | null;
+  /** Active document — effect `#N` numbering is isolated per open project. */
+  docId?: number | null;
   /** Filters on the image source layer — shown as virtual effect layers */
   filters: FilterInfo[];
   /** Currently selected filter ID (for highlighting) */
@@ -88,6 +105,7 @@ function filterKindToIconType(kind: string): string {
 export default function LayersPanel({
   layers,
   selectedLayerId,
+  docId = null,
   filters,
   selectedFilterId,
   onSelect,
@@ -133,12 +151,13 @@ export default function LayersPanel({
   const [isOpacityPopupOpen, setIsOpacityPopupOpen] = useState(false);
   const opacityPopupRef = useRef<HTMLDivElement | null>(null);
 
-  // Stable numbering: assign a persistent number to each filter by ID
-  const [filterNumbers, setFilterNumbers] = useState<Record<string, number>>({});
-  const nextNumberRef = useRef(1);
+  // Stable numbering + rename labels, isolated per open document
+  const docKey = docFilterUiKey(docId);
+  const [filterUiByDoc, setFilterUiByDoc] = useState<Record<string, DocFilterUiState>>({});
+  const filterUi = filterUiByDoc[docKey] ?? emptyDocFilterUi();
+  const filterNumbers = filterUi.numbers;
+  const filterNames = filterUi.names;
 
-  // Custom names for filters (editable via double-click)
-  const [filterNames, setFilterNames] = useState<Record<string, string>>({});
   const [editingFilterId, setEditingFilterId] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -152,20 +171,44 @@ export default function LayersPanel({
   const dragFilterIdRef = useRef<string | null>(null);
   const dropTargetIndexRef = useRef<number | null>(null);
 
-  // Assign stable numbers to new filters as they appear
+  // Assign stable numbers to new filters as they appear (within this document only).
+  // Skip IDs already numbered under another doc — when open/switch updates docId
+  // before refreshFilters settles, the previous project's filters briefly remain
+  // in Redux and must not consume this project's #1, #2, …
   useEffect(() => {
-    let updated = false;
-    const newNumbers = { ...filterNumbers };
-    for (const filter of filters) {
-      if (!(filter.id in newNumbers)) {
-        newNumbers[filter.id] = nextNumberRef.current++;
-        updated = true;
+    setFilterUiByDoc((prev) => {
+      const claimedElsewhere = new Set<string>();
+      for (const [key, ui] of Object.entries(prev)) {
+        if (key === docKey) continue;
+        for (const id of Object.keys(ui.numbers)) {
+          claimedElsewhere.add(id);
+        }
       }
-    }
-    if (updated) {
-      setFilterNumbers(newNumbers);
-    }
-  }, [filters]);
+
+      const current = prev[docKey] ?? emptyDocFilterUi();
+      let nextNumber = current.nextNumber;
+      let changed = false;
+      const numbers = { ...current.numbers };
+      for (const filter of filters) {
+        if (claimedElsewhere.has(filter.id)) continue;
+        if (!(filter.id in numbers)) {
+          numbers[filter.id] = nextNumber++;
+          changed = true;
+        }
+      }
+      if (!changed) return prev;
+      return {
+        ...prev,
+        [docKey]: { ...current, numbers, nextNumber },
+      };
+    });
+  }, [filters, docKey]);
+
+  // Drop in-progress rename when switching projects
+  useEffect(() => {
+    setEditingFilterId(null);
+    setEditNameValue('');
+  }, [docKey]);
 
   // Focus rename input when editing starts
   useEffect(() => {
@@ -184,11 +227,20 @@ export default function LayersPanel({
     if (editingFilterId === null) return;
     const trimmed = editNameValue.trim();
     if (trimmed.length > 0) {
-      setFilterNames((prev) => ({ ...prev, [editingFilterId]: trimmed }));
+      setFilterUiByDoc((prev) => {
+        const current = prev[docKey] ?? emptyDocFilterUi();
+        return {
+          ...prev,
+          [docKey]: {
+            ...current,
+            names: { ...current.names, [editingFilterId]: trimmed },
+          },
+        };
+      });
     }
     setEditingFilterId(null);
     setEditNameValue('');
-  }, [editingFilterId, editNameValue]);
+  }, [docKey, editingFilterId, editNameValue]);
 
   const handleRenameKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {

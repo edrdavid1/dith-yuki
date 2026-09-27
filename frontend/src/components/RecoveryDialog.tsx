@@ -15,6 +15,8 @@ export interface RecoveryDialogProps {
   onRecoverAll: () => void;
   onDiscardAll: () => void;
   onReopenRoster?: () => void;
+  /** Journals present: reopen saved paths without applying journal blobs. */
+  onOpenOriginalsOnly?: () => void;
   onSkip: () => void;
 }
 
@@ -25,6 +27,7 @@ export default function RecoveryDialog({
   onRecoverAll,
   onDiscardAll,
   onReopenRoster,
+  onOpenOriginalsOnly,
   onSkip,
 }: RecoveryDialogProps) {
   const hasJournals = journals.length > 0;
@@ -103,7 +106,9 @@ export default function RecoveryDialog({
             <p className={cn('new-project-field')} style={{ opacity: 0.75 }}>
               Also had {rosterDocs.length} open tab
               {rosterDocs.length === 1 ? '' : 's'} last session
-              {onReopenRoster ? ' — you can reopen saved files after recover.' : '.'}
+              {onOpenOriginalsOnly
+                ? ' — use Open originals only to skip journals.'
+                : '.'}
             </p>
           ) : null}
 
@@ -114,7 +119,7 @@ export default function RecoveryDialog({
               onClick={onSkip}
               disabled={busy}
             >
-              {hasJournals ? 'Open originals only' : 'Skip'}
+              Skip
             </button>
             {hasJournals ? (
               <button
@@ -124,6 +129,17 @@ export default function RecoveryDialog({
                 disabled={busy}
               >
                 Discard journals
+              </button>
+            ) : null}
+            {hasJournals && onOpenOriginalsOnly ? (
+              <button
+                type="button"
+                className={cn('new-project-btn')}
+                onClick={onOpenOriginalsOnly}
+                disabled={busy || !hasRoster}
+                title={!hasRoster ? 'No saved paths from the previous session' : undefined}
+              >
+                {busy ? 'Opening…' : 'Open originals only'}
               </button>
             ) : null}
             {!hasJournals && hasRoster && onReopenRoster ? (

@@ -21,6 +21,8 @@ pub struct JournalRuntime {
     /// Per-doc schedule generation — stale debounce tasks no-op.
     generations: HashMap<u32, u64>,
     last_flush: HashMap<u32, Instant>,
+    /// Document revision captured at the last successful journal write.
+    last_flush_revision: HashMap<u32, u64>,
     heartbeat_started: bool,
 }
 
@@ -29,8 +31,17 @@ impl JournalRuntime {
         Self::default()
     }
 
-    pub fn note_flushed(&mut self, doc_id: u32) {
+    pub fn note_flushed(&mut self, doc_id: u32, revision: u64) {
         self.last_flush.insert(doc_id, Instant::now());
+        self.last_flush_revision.insert(doc_id, revision);
+    }
+
+    /// True when an in-memory flush already matches this document revision.
+    pub fn flush_matches_revision(&self, doc_id: u32, revision: u64) -> bool {
+        self.last_flush_revision
+            .get(&doc_id)
+            .copied()
+            .is_some_and(|r| r == revision)
     }
 
     fn bump_generation(&mut self, doc_id: u32) -> u64 {

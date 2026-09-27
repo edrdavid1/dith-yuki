@@ -593,8 +593,10 @@ pub fn pack_pattern_to_bytes(
             continue;
         }
         let bytes = read_threshold_png_for_save(&path, &mut read_png)?;
-        let basename = threshold_map_basename(&bytes);
-        embeds.insert(basename.clone(), bytes);
+        // Same hygiene as `.dyproj` Save: strip ancillary chunks, keep color type.
+        let clean = crate::serialize::pixels::strip_png_ancillary_chunks(&bytes)?;
+        let basename = threshold_map_basename(&clean);
+        embeds.insert(basename.clone(), clean);
         path_to_basename.insert(path, basename);
     }
 

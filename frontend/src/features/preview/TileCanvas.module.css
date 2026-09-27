@@ -5,4 +5,5 @@
   image-rendering: pixelated;
   image-rendering: crisp-edges;
   will-change: transform;
+  touch-action: none;
 }

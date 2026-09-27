@@ -1,6 +1,13 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import SimpleBar from 'simplebar-react';
 import { useShell } from '../../app/shell/ShellContext';
+import { isMacOS } from '../../lib/platform';
+import {
+  getAppIcon,
+  listAppIcons,
+  setAppIcon,
+  type AppIconVariant,
+} from '../../shared/ipc/appIcon';
 import {
   PREVIEW_BACKGROUNDS,
   previewBackgroundStyle,
@@ -35,8 +42,48 @@ export default function PreferencesPanel() {
     setWelcomeBackground,
     hideRecentList,
     setHideRecentList,
+    appIconId,
+    setAppIconId,
   } = useShell();
   const { bindings, capturing, setCapturing, setBinding, resetDefaults } = useShortcuts();
+  const showAppIcon = isMacOS();
+  const [iconVariants, setIconVariants] = useState<AppIconVariant[]>([]);
+  const [iconWarning, setIconWarning] = useState<string | null>(null);
+  const [iconBusy, setIconBusy] = useState(false);
+
+  useEffect(() => {
+    if (!showAppIcon) return;
+    let cancelled = false;
+    void Promise.all([listAppIcons(), getAppIcon()])
+      .then(([variants, state]) => {
+        if (cancelled) return;
+        setIconVariants(variants);
+        setAppIconId(state.id);
+      })
+      .catch(() => {
+        if (!cancelled) setIconVariants([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showAppIcon, setAppIconId]);
+
+  const handleSelectAppIcon = useCallback(
+    async (id: string) => {
+      if (iconBusy || id === appIconId) return;
+      setIconBusy(true);
+      try {
+        const result = await setAppIcon(id);
+        setAppIconId(result.id);
+        setIconWarning(result.warning);
+      } catch (err) {
+        console.warn('set_app_icon failed', err);
+      } finally {
+        setIconBusy(false);
+      }
+    },
+    [appIconId, iconBusy, setAppIconId]
+  );
 
   useEffect(() => {
     if (!capturing) return;
@@ -143,6 +190,43 @@ export default function PreferencesPanel() {
             <span>Hide recent files list on welcome screen</span>
           </label>
         </div>
+
+        {showAppIcon && iconVariants.length > 0 ? (
+          <>
+            <p className={cn('preferences-label', 'preferences-label-spaced')}>App icon</p>
+            <div
+              className={cn('preferences-swatch-row')}
+              role="group"
+              aria-label="App icon"
+            >
+              {iconVariants.map((variant) => {
+                const selected = appIconId === variant.id;
+                return (
+                  <button
+                    key={variant.id}
+                    type="button"
+                    className={cn(
+                      'preferences-swatch',
+                      'preferences-icon-swatch',
+                      selected && 'preferences-swatch-active'
+                    )}
+                    style={{ backgroundImage: `url(${variant.previewSrc})` }}
+                    aria-label={variant.label}
+                    aria-pressed={selected}
+                    title={variant.todoDesign ? `${variant.label} (placeholder)` : variant.label}
+                    disabled={iconBusy}
+                    onClick={() => void handleSelectAppIcon(variant.id)}
+                  />
+                );
+              })}
+            </div>
+            {iconWarning ? (
+              <p className={cn('preferences-hint')} role="status">
+                {iconWarning}
+              </p>
+            ) : null}
+          </>
+        ) : null}
       </details>
 
       <details

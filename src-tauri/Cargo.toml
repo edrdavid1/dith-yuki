@@ -1,6 +1,6 @@
 [package]
 name = "dither"
-version = "0.4.5-alpha"
+version = "1.0.0-beta"
 edition = "2021"
 description = "Tile-based dithering studio for pixel art, palettes, and layered images"
 authors = ["L'eco non di Bergamo"]
@@ -14,6 +14,7 @@ repository = "https://github.com/edrdavid1/dith-yuki"
 tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-os = "2"
+tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tokio = { version = "1", features = ["full"] }
@@ -45,6 +46,10 @@ ctrlc = "3"
 cocoa = "0.26"
 objc = "0.2"
 block = "0.1"
+# Custom app icon (SPEC_dither_custom_app_icon) — objc2 stack for NSWorkspace/NSImage.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSWorkspace", "NSImage", "NSBitmapImageRep"] }
+objc2-foundation = { version = "0.3", features = ["NSString", "NSBundle"] }
 
 [dev-dependencies]
 proptest = "1.4"

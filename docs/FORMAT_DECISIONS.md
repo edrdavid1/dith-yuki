@@ -5,6 +5,158 @@ Journal of findings and choices while implementing
 
 ---
 
+## 2026-09-27 — Custom app icon (macOS Preferences gallery)
+
+Source: `.local-doc/SPEC_dither_custom_app_icon.md`.
+
+### ПРОВЕРИТЬ results
+
+1. **objc2 crate versions (§0):** crates.io at implement time → `objc2 0.6.4`,
+   `objc2-app-kit 0.3.2`, `objc2-foundation 0.3.2`. Feature names
+   `NSApplication` / `NSWorkspace` / `NSImage` / `NSBitmapImageRep` still match
+   docs.rs. `NSWorkspace.setIcon_forFile_options` returns `bool`
+   (false = soft failure). Clearing uses `None` for the image argument.
+   `NSApplication::sharedApplication` requires `MainThreadMarker`.
+   Kept legacy `cocoa`/`objc` for existing titlebar/menu code; new icon path
+   uses objc2 only (no dual call sites for the same API).
+
+2. **Icon asset pipeline (§3):** no `scripts/build-icons.*` in repo. Alt
+   variant uses shipped `src-tauri/icons/app-icon-2.icns` copied to
+   `icons/alt/alt2.icns` and bundled via `tauri.macos.conf.json`
+   `bundle.resources` → `icons/alt/alt2.icns`. Id `alt2`, marked
+   `TODO(design)`. UI thumbnails: 128² PNG under `frontend/public/app-icons/`.
+
+3. **Settings store (§4):** Preferences UI prefs live in
+   `localStorage` key `dither.shellPrefs` (`ShellContext`). Added field
+   `appIconId`. Rust cannot read localStorage before the WebView, so
+   `set_app_icon` also mirrors the id to `{app_data}/app_icon.json` for
+   unconditional startup reapply (§5.2). Shell field remains the Preferences
+   store; the mirror is not a second user-facing settings system.
+
+4. **Finder refresh (§9.7):** call `NSWorkspace.noteFileSystemChanged(_:)`
+   after a successful `setIcon`. Included prophylactically; packaged `.app`
+   visual confirmation still recommended on device.
+
+5. **codesign after setIcon (§7):** Ad-hoc (T0) experiment on a fresh
+   `codesign --force --deep --sign -` copy of
+   `target/release/bundle/macos/Dither Yuki.app`:
+   - **Before** `setIcon`: `codesign --verify --deep --strict` → valid.
+   - **After** `setIcon(alt2.icns)` (returns `true`): `--strict` fails with
+     `resource fork, Finder information, or similar detritus not allowed`
+     / `Disallowed xattr com.apple.FinderInfo` on the `.app` bundle root.
+   - **`codesign --verify --deep` without `--strict`**: still accepts the
+     bundle; `Contents/MacOS/<binary>` remains `--strict`-valid (custom icon
+     is Finder metadata on the bundle, not a rewrite of signed `Contents/`).
+   - **After** `setIcon(nil)` clear: `--strict` valid again.
+   - Conclusion: Persistent path is **kept enabled**. The `--strict` failure
+     is the normal Finder custom-icon xattr, same class of change Telegram
+     uses; disabling Persistent would only leave Session Dock. T1/T2
+     (Developer ID) still should be spot-checked on a real signed build when
+     those identities are available — expected same FinderInfo pattern.
+   - Stale local `Dither Yuki.app` without re-sign already failed verify both
+     before and after (unrelated missing resources); not used as baseline.
+
+6. **Dev-loop “app keeps closing” (2026-09-27 follow-up):**
+   - Terminal showed `File src-tauri/icons/.DS_Store changed. Rebuilding
+     application…` — Tauri `dev` watcher restarted the process whenever Finder
+     touched `.DS_Store` under `icons/` (added with alt assets). Removed the
+     `.DS_Store` files; root `.gitignore` already ignores them.
+   - Hardened apply path: skip `NSWorkspace.setIcon` unless
+     `bundlePath` ends in `.app` (avoids writing Finder icons onto
+     `target/debug` during `tauri dev`); never pass `nil` to
+     `setApplicationIconImage` (restore via `iconForFile`); wrap apply in
+     `catch_unwind`.
+
+### Implementation notes
+
+- Commands: `list_app_icons`, `get_app_icon`, `set_app_icon` (macOS apply;
+  Windows/Linux list empty / set errors).
+- Preferences «App icon» section gated by `isMacOS()` — absent on Windows.
+- Session Dock always applied; Persistent failure surfaces inline warning
+  (English placeholder until §11.2 copy is finalized).
+
+### Open questions (§11) — unchanged
+
+1. Final variant count/designs. 2. Warning copy. 3. Beta flag vs ship now.
+4. Mac App Store / sandbox implications for Persistent.
+
+---
+
+## 2026-09-27 — Beta readiness (`.dyproj` Save hygiene + version drill)
+
+Source: `.local-doc/SPEC_dither_beta_readiness.md`.
+
+### ПРОВЕРИТЬ results
+
+1. **Threshold map path hash vs `manifest.files` (§0):**
+   - `assets/threshold_maps/{hash}.png` basenames use **BLAKE3 truncated to 32 hex**
+     (`serialize/assets.rs` → `content_hash`).
+   - `manifest.files[*].sha256` uses **SHA-256** (`sha256_hex`). Different
+     algorithms on purpose; do not conflate them.
+
+2. **`.dyproj` `author` field (§1.2):**
+   - `build_dyproj_manifest_json` does **not** write `author`.
+   - `NormalizedManifest.author` exists for shared normalize (used by `.dyuki`).
+   - Share Copy `include_author` is a no-op for `.dyproj` today
+     (`let _ = opts.include_author` in `share.rs`). «Omit author» is meaningful
+     for `.dyuki` / future dyproj File Info only.
+
+3. **`.dyuki` PNG scrub (§4.4):**
+   - Pattern pack previously embedded threshold PNGs as-is.
+   - **Now** also runs `reencode_png_clean` on embeds (same hygiene as dyproj).
+   - `thumbnail.png` for patterns is already critical-chunks-only via the
+     thumbnail encoder.
+
+### Goal A implemented
+
+- `ProjectWriteOptions::normal().strip_png_metadata = true` (was Share-only).
+- Ordinary Save scrub path:
+  - **Imported embeds** (threshold maps): `strip_png_ancillary_chunks`
+    (critical chunks only; preserves IHDR color type / grayscale).
+  - **Self-encoded rasters** (layers / composite / thumbnail): also
+    `strip_png_ancillary_chunks` only — **never** `reencode_png_clean`.
+    Metadata scrub and preview quality are independent axes; re-encoding
+    would replace the deterministic thumbnail encoder with the generic
+    image-crate path. Normal Save keeps real ≤1024 preview + full-res
+    filter-aware `composite.png` (Share Copy alone may opt into neutral thumb).
+- Share Copy exclusives unchanged: omit-author / neutral thumb / compact JSON.
+- Tests: `tests/save_png_scrub.rs` (metadata absence + real preview dims).
+- **Original-image storage (deferred):** when implemented, the same mandatory
+  PNG ancillary scrub MUST apply to stored originals (SPEC §1.3 forward note).
+  Prefer `strip_png_ancillary_chunks` when color type / pixels must be preserved.
+
+### Goal B implemented
+
+- Cargo feature `version-drill` on `engine-project` (off by default; must not
+  be enabled in release/alpha product builds).
+- Canary features `canary-optional` / `canary-required` + `canary-drill` layer
+  node + `canary_note` document field — all `#[cfg(feature = "version-drill")]`,
+  marked `DRILL-ONLY-CANARY-MARKER`.
+- `check_open_gate` compares full `{major,minor}` against `SUPPORTED_FORMAT`.
+- Writers compute `format` from any used feature and `min_reader` from
+  **required** used features only (§2.6 minimum-version default).
+- Thin CLI: `dyproj-cli open <path>` (`crates/engine-project/src/bin/dyproj-cli.rs`)
+  — CI artifact name `reference-reader-v1.0` when built without `version-drill`.
+- Fixtures: `tests/fixtures/dyproj/drill/{optional,required,neither}-used.dyproj`
+  (v1.0 golden remains `dyproj/v1/minimal.dyproj`).
+- Matrix tests: `version_drill_old_reader.rs` (default CI) +
+  `version_drill.rs` (`--features version-drill`).
+
+### §2.6 decision (awaits product owner confirmation)
+
+**Implemented default: «минимальная версия»** — resave without new features
+keeps `{1, 0}`. Alternative «always upgrade» is recorded as open question §4.2;
+not treated as final without owner sign-off.
+
+### Open questions status (§4)
+
+1. dyproj `author` — none today; product to decide if File Info Author appears.
+2. §2.6 — awaiting owner confirmation of minimum-version default.
+3. Original-image scrub — pre-recorded requirement above.
+4. dyuki scrub — closed: now shares the same re-encode path for embeds.
+
+---
+
 ## 2026-09-22 — Windows NSIS installer branding
 
 Source: `.local-doc/SPEC_dither_installer_branding.md`.

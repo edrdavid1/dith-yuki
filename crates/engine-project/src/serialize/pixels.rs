@@ -494,12 +494,130 @@ pub fn encode_rgba8_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>,
 }
 
 /// Decode PNG → re-encode as clean RGBA8 PNG (drops EXIF/XMP/iCCP/text chunks).
+///
+/// **Note:** always outputs RGBA8. Prefer [`strip_png_ancillary_chunks`] for
+/// threshold-map embeds that must stay grayscale.
 pub fn reencode_png_clean(png_bytes: &[u8]) -> Result<Vec<u8>, ProjectError> {
     let img = image::load_from_memory(png_bytes)
         .map_err(|e| ProjectError::Codec(format!("PNG re-encode load: {e}")))?
         .to_rgba8();
     let (w, h) = img.dimensions();
     encode_rgba8_png(img.as_raw(), w, h)
+}
+
+/// Drop ancillary PNG chunks while preserving IHDR color type and IDAT bytes.
+///
+/// Keeps only critical chunks (`IHDR`, `PLTE`, `IDAT`, `IEND`). Used for
+/// CustomPng / threshold-map embeds so grayscale maps stay grayscale.
+pub fn strip_png_ancillary_chunks(png: &[u8]) -> Result<Vec<u8>, ProjectError> {
+    if png.len() < 8 || &png[0..8] != b"\x89PNG\r\n\x1a\n" {
+        return Err(ProjectError::Codec("not a PNG".into()));
+    }
+    let mut out = Vec::with_capacity(png.len());
+    out.extend_from_slice(&png[0..8]);
+    let mut i = 8usize;
+    while i + 8 <= png.len() {
+        let len = u32::from_be_bytes(png[i..i + 4].try_into().unwrap()) as usize;
+        let end = i
+            .checked_add(12 + len)
+            .ok_or_else(|| ProjectError::Codec("PNG chunk overflow".into()))?;
+        if end > png.len() {
+            return Err(ProjectError::Codec("PNG truncated chunk".into()));
+        }
+        let ty = &png[i + 4..i + 8];
+        let keep = matches!(ty, b"IHDR" | b"PLTE" | b"IDAT" | b"IEND");
+        if keep {
+            out.extend_from_slice(&png[i..end]);
+        }
+        let is_iend = ty == b"IEND";
+        i = end;
+        if is_iend {
+            break;
+        }
+    }
+    if find_forbidden_png_chunk(&out).is_some() {
+        return Err(ProjectError::Codec(
+            "strip_png_ancillary_chunks left forbidden chunk".into(),
+        ));
+    }
+    Ok(out)
+}
+
+/// Ancillary PNG chunk types that MUST NOT appear in a saved `.dyproj` / `.dyuki`
+/// embedded PNG after the beta-readiness scrub (Goal A).
+pub const FORBIDDEN_PNG_ANCILLARY: &[&[u8; 4]] = &[
+    b"tEXt", b"iTXt", b"zTXt", b"eXIf", b"iCCP", b"pHYs", b"gAMA", b"sRGB", b"cHRM",
+];
+
+/// Return the first forbidden ancillary chunk type found in `png`, if any.
+pub fn find_forbidden_png_chunk(png: &[u8]) -> Option<[u8; 4]> {
+    if png.len() < 8 || &png[0..8] != b"\x89PNG\r\n\x1a\n" {
+        return None;
+    }
+    let mut i = 8usize;
+    while i + 8 <= png.len() {
+        let len = u32::from_be_bytes(png[i..i + 4].try_into().ok()?) as usize;
+        let ty: [u8; 4] = png[i + 4..i + 8].try_into().ok()?;
+        if FORBIDDEN_PNG_ANCILLARY.iter().any(|f| **f == ty) {
+            return Some(ty);
+        }
+        // length + type + data + crc
+        i = i.checked_add(12 + len)?;
+    }
+    None
+}
+
+/// Insert a `tEXt` chunk before `IEND` (test / fuzz helper).
+pub fn inject_png_text_chunk(png: &[u8], keyword: &str, text: &str) -> Result<Vec<u8>, ProjectError> {
+    if png.len() < 12 || &png[0..8] != b"\x89PNG\r\n\x1a\n" {
+        return Err(ProjectError::Codec("not a PNG".into()));
+    }
+    // Find IEND
+    let mut i = 8usize;
+    let mut iend_at = None;
+    while i + 8 <= png.len() {
+        let len = u32::from_be_bytes(png[i..i + 4].try_into().unwrap()) as usize;
+        let ty = &png[i + 4..i + 8];
+        if ty == b"IEND" {
+            iend_at = Some(i);
+            break;
+        }
+        i = i
+            .checked_add(12 + len)
+            .ok_or_else(|| ProjectError::Codec("PNG chunk overflow".into()))?;
+    }
+    let iend_at = iend_at.ok_or_else(|| ProjectError::Codec("PNG missing IEND".into()))?;
+
+    let mut data = Vec::new();
+    data.extend_from_slice(keyword.as_bytes());
+    data.push(0);
+    data.extend_from_slice(text.as_bytes());
+
+    let mut chunk = Vec::with_capacity(12 + data.len());
+    chunk.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    chunk.extend_from_slice(b"tEXt");
+    chunk.extend_from_slice(&data);
+    let crc = png_crc32_ieee(&chunk[4..]);
+    chunk.extend_from_slice(&crc.to_be_bytes());
+
+    let mut out = Vec::with_capacity(png.len() + chunk.len());
+    out.extend_from_slice(&png[..iend_at]);
+    out.extend_from_slice(&chunk);
+    out.extend_from_slice(&png[iend_at..]);
+    Ok(out)
+}
+
+fn png_crc32_ieee(bytes: &[u8]) -> u32 {
+    // PNG CRC-32 (ISO-3309 / ITU-T V.42), same as zlib.
+    let mut crc: u32 = 0xffff_ffff;
+    for &b in bytes {
+        crc ^= u32::from(b);
+        for _ in 0..8 {
+            let mask = if crc & 1 != 0 { 0xedb8_8320 } else { 0 };
+            crc = (crc >> 1) ^ mask;
+        }
+    }
+    !crc
 }
 
 /// Decode PNG → f32 RGBA with resource limits (SPEC §7.6).
