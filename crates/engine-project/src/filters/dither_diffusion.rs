@@ -1015,10 +1015,8 @@ pub fn apply_error_diffusion_tile_row_strip(
                 // y = k·TILE_SIZE and draws hard tile lines when pixel_size > 1.
                 let rep_x = (block_gx - origin_gx) as isize;
                 let rep_y = (block_gy - origin_gy) as isize;
-                let in_strip = rep_x >= 0
-                    && rep_y >= 0
-                    && (rep_x as usize) < wide
-                    && (rep_y as usize) < SIZE;
+                let in_strip =
+                    rep_x >= 0 && rep_y >= 0 && (rep_x as usize) < wide && (rep_y as usize) < SIZE;
                 let rep_already = in_strip
                     && ((rep_y as usize) < y
                         || ((rep_y as usize) == y
@@ -1108,8 +1106,16 @@ pub fn apply_error_diffusion_tile_row_strip(
                         (adj_r, adj_g, adj_b)
                     };
                     if let PaletteQuant::Simple(picker) = &palette_quant {
-                        let (rgb, _) =
-                            simple_ed_step(picker, sr, sg, sb, 0.0, 0.0, 0.0, params.threshold_scale);
+                        let (rgb, _) = simple_ed_step(
+                            picker,
+                            sr,
+                            sg,
+                            sb,
+                            0.0,
+                            0.0,
+                            0.0,
+                            params.threshold_scale,
+                        );
                         quant_r = rgb.0;
                         quant_g = rgb.1;
                         quant_b = rgb.2;

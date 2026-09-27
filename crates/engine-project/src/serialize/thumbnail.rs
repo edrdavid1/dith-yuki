@@ -362,8 +362,7 @@ pub fn render_pattern_preview_rgba(
                 .zip(raws.iter())
                 .map(|(c, t)| (*c, t.as_ref()))
                 .collect();
-            let mut outputs: Vec<PixelTile> =
-                (0..strip.len()).map(|_| PixelTile::new()).collect();
+            let mut outputs: Vec<PixelTile> = (0..strip.len()).map(|_| PixelTile::new()).collect();
             apply_filter_stack_tile_row_strip(
                 &strip,
                 &layer,

@@ -148,6 +148,11 @@ footer {
   border-color: rgba(18, 20, 26, 0.35);
 }
 
+.btn.is-loading {
+  opacity: 0.72;
+  pointer-events: none;
+}
+
 .meta {
   margin: 1.25rem 0 0;
   font-size: 0.85rem;

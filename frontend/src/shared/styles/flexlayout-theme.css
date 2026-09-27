@@ -66,7 +66,9 @@
   background: transparent !important;
   border: none !important;
   box-sizing: border-box !important;
-  overflow: visible !important;
+  /* Clip title chrome if the column is too short for every minHeight —
+   * absolute `.flexlayout__tab` bodies are layout siblings, not children. */
+  overflow: hidden !important;
 }
 
 .flexlayout__tabset_tabbar_outer,

@@ -613,7 +613,7 @@ describe('EffectSettingsPanel', () => {
       expect(screen.getByRole('button', { name: 'Export pattern' })).toBeDisabled();
       expect(screen.getByRole('button', { name: 'Import pattern' })).toBeDisabled();
       expect(screen.getByRole('button', { name: 'Save pattern' })).toBeDisabled();
-      expect(screen.getByRole('button', { name: 'Load pattern' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Apply pattern' })).toBeDisabled();
     });
 
     it('enables pattern actions when a layer is targeted', () => {
@@ -648,7 +648,7 @@ describe('EffectSettingsPanel', () => {
       const exp = screen.getByRole('button', { name: 'Export pattern' });
       const imp = screen.getByRole('button', { name: 'Import pattern' });
       const save = screen.getByRole('button', { name: 'Save pattern' });
-      const load = screen.getByRole('button', { name: 'Load pattern' });
+      const load = screen.getByRole('button', { name: 'Apply pattern' });
       expect(exp).not.toBeDisabled();
       expect(imp).not.toBeDisabled();
       expect(save).not.toBeDisabled();

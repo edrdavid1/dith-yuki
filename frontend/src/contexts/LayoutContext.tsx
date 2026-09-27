@@ -17,7 +17,12 @@ import { listen } from '@tauri-apps/api/event';
 import { getAllWebviewWindows } from '@tauri-apps/api/webviewWindow';
 import { Actions, DockLocation, Model, TabNode, TabSetNode } from 'flexlayout-react';
 import type { IJsonModel } from 'flexlayout-react';
-import { getDefaultFlexLayout, getDefaultFlexLayoutJson, LAYOUT_TOAST_MESSAGES } from '../defaults/DefaultLayouts';
+import {
+  DOCK_TABSET_MIN_HEIGHT,
+  getDefaultFlexLayout,
+  getDefaultFlexLayoutJson,
+  LAYOUT_TOAST_MESSAGES,
+} from '../defaults/DefaultLayouts';
 import type { FlexSide } from '../defaults/DefaultLayouts';
 import { isPanelOnFlexLayout } from '../factories/layoutPanelFactory';
 
@@ -112,6 +117,7 @@ export function listDockedFlexComponents(model: Model | null): string[] {
 /**
  * After float/dock: tabsets that only hold floating tabs collapse so a remaining
  * docked panel fills the column; docked tabsets get normal weight back.
+ * Floating-only tabsets also drop minHeight so they don't reserve a titlebar slot.
  */
 function rebalanceFloatingTabsets(model: Model): void {
   const tabsets: TabSetNode[] = [];
@@ -130,7 +136,10 @@ function rebalanceFloatingTabsets(model: Model): void {
     // Tiny weight keeps the floating tab (and its OS popout) alive in the model
     // without reserving half the dock when a sibling tabset still has content.
     model.doAction(
-      Actions.updateNodeAttributes(ts.getId(), { weight: hasDocked ? 100 : 0.01 }),
+      Actions.updateNodeAttributes(ts.getId(), {
+        weight: hasDocked ? 100 : 0.01,
+        minHeight: hasDocked ? DOCK_TABSET_MIN_HEIGHT : 0,
+      }),
     );
   }
 }
@@ -188,9 +197,14 @@ function applyAppChromePolicy(model: Model): Model {
       splitterExtra: 4,
       // No left/right edge-dock hit targets (sidebar is a vertical stack only).
       enableEdgeDock: false,
+      // Titlebar-tall floor so stacked panels cannot cover each other's titles.
+      tabSetMinHeight: DOCK_TABSET_MIN_HEIGHT,
+      tabSetTabStripHeight: DOCK_TABSET_MIN_HEIGHT,
     })
   );
   normalizeSideToVerticalStack(model);
+  // Always rebalance — normalize may no-op on an already-vertical saved layout.
+  rebalanceFloatingTabsets(model);
   return model;
 }
 

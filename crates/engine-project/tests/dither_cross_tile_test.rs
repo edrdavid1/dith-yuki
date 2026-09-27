@@ -541,8 +541,16 @@ fn tiled_fs_palette_matches_monolithic_at_seam() {
     let palette_id = doc.add_palette(
         "BW".into(),
         vec![
-            LinearColor { r: 0.0, g: 0.0, b: 0.0 },
-            LinearColor { r: 1.0, g: 1.0, b: 1.0 },
+            LinearColor {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            LinearColor {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+            },
         ],
     );
     let palette = doc.get_palette(palette_id).unwrap().clone();

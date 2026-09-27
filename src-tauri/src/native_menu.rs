@@ -155,7 +155,13 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
 
     Menu::with_items(
         app,
-        &[&app_menu, &file_menu, &edit_menu, &patterns_menu, &help_menu],
+        &[
+            &app_menu,
+            &file_menu,
+            &edit_menu,
+            &patterns_menu,
+            &help_menu,
+        ],
     )
 }
 
