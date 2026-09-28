@@ -32,6 +32,7 @@ mod tile_serve;
 mod undo;
 mod viewport;
 mod webview_debug;
+mod window_background;
 mod worker;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -40,8 +41,6 @@ use std::sync::Arc;
 use commands::AppState;
 use engine_project::layer::LayerNode;
 use engine_tiles::{Priority, RecomputeTask, TileCoord, TileKey, TILE_SIZE};
-#[cfg(target_os = "macos")]
-use objc::{class, msg_send, sel, sel_impl};
 use tauri::webview::{NewWindowResponse, WebviewWindowBuilder};
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 use tile_protocol::{parse_tile_url, LayerTarget};
@@ -189,6 +188,10 @@ fn main() {
             static FLEX_POPOUT_SEQ: AtomicU64 = AtomicU64::new(1);
             let main_window =
                 webview_debug::apply(WebviewWindowBuilder::from_config(app, &main_conf)?)
+                    .background_color(window_background::THEME_BG)
+                    .on_page_load(|window, payload| {
+                        window_background::reapply_after_load(&window, payload.event());
+                    })
                     .on_new_window(move |url, features| {
                         let n = FLEX_POPOUT_SEQ.fetch_add(1, Ordering::Relaxed);
                         let label = format!("flex-popout-{n}");
@@ -206,7 +209,11 @@ fn main() {
                             .title("Dither")
                             .resizable(true)
                             .decorations(false)
-                            .min_inner_size(280.0, 200.0),
+                            .min_inner_size(280.0, 200.0)
+                            .background_color(window_background::THEME_BG)
+                            .on_page_load(|window, payload| {
+                                window_background::reapply_after_load(&window, payload.event());
+                            }),
                         );
                         #[cfg(target_os = "macos")]
                         let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay);
@@ -269,24 +276,12 @@ fn main() {
                                 let _ = window.set_focus();
 
                                 #[cfg(target_os = "macos")]
-                                {
-                                    macos_title::apply_overlay_csd(&window);
-                                    if let Ok(ns_window) = window.ns_window() {
-                                        use cocoa::appkit::NSWindow;
-                                        use cocoa::base::id;
-                                        let ns_window = ns_window as id;
-                                        unsafe {
-                                            let bg_color: id = msg_send![
-                                                class!(NSColor),
-                                                colorWithRed: (0xCD as f64) / 255.0
-                                                green: (0xCD as f64) / 255.0
-                                                blue: (0xCD as f64) / 255.0
-                                                alpha: 1.0f64
-                                            ];
-                                            ns_window.setBackgroundColor_(bg_color);
-                                        }
-                                    }
-                                }
+                                macos_title::apply_overlay_csd(&window);
+                                // Popouts stay visible at creation. The patched
+                                // FloatingWindow reuses a named window and polls
+                                // `.closed`; it never calls show(), so a hidden
+                                // popout would stay blank.
+                                window_background::apply(&window);
                                 NewWindowResponse::Create { window }
                             }
                             Err(err) => {
@@ -356,28 +351,11 @@ fn main() {
                 crate::journal::signals::install_signal_flush(app_handle.clone());
             }
 
-            // Set native titlebar color on macOS
+            // decorations stay true so traffic lights exist; Overlay+fullSize
+            // puts them on the same row as File/Edit (not a second native strip).
             #[cfg(target_os = "macos")]
-            {
-                use cocoa::appkit::NSWindow;
-                use cocoa::base::id;
-
-                // decorations stay true so traffic lights exist; Overlay+fullSize
-                // puts them on the same row as File/Edit (not a second native strip).
-                macos_title::apply_overlay_csd(&main_window);
-                let ns_window = main_window.ns_window().unwrap() as id;
-                unsafe {
-                    // Match --color-gray (#CDCDCD) so the Overlay strip isn't a darker band.
-                    let bg_color: id = msg_send![
-                        class!(NSColor),
-                        colorWithRed: (0xCD as f64) / 255.0
-                        green: (0xCD as f64) / 255.0
-                        blue: (0xCD as f64) / 255.0
-                        alpha: 1.0f64
-                    ];
-                    ns_window.setBackgroundColor_(bg_color);
-                }
-            }
+            macos_title::apply_overlay_csd(&main_window);
+            window_background::apply(&main_window);
 
             #[cfg(not(target_os = "macos"))]
             {
