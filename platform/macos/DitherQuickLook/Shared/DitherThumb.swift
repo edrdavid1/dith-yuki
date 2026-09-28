@@ -119,9 +119,25 @@ private func ditherThumbReadAt(
   return 0
 }
 
-func fit(_ imageSize: CGSize, into maxSize: CGSize) -> CGSize {
-  let sx = maxSize.width / max(imageSize.width, 1)
-  let sy = maxSize.height / max(imageSize.height, 1)
-  let s = min(sx, sy)
-  return CGSize(width: imageSize.width * s, height: imageSize.height * s)
+/// Point size from the bitmap only. `scale` is the system factor (1 for Space).
+/// One bitmap pixel becomes `1/scale` points, so the reply is not a larger canvas.
+func pointSizeFromBitmap(_ image: CGImage, scale: CGFloat) -> CGSize {
+  let s = max(scale, 1)
+  return CGSize(
+    width: max(1, (CGFloat(image.width) / s).rounded()),
+    height: max(1, (CGFloat(image.height) / s).rounded())
+  )
+}
+
+/// Draw into the whole `contextSize`. If Quick Look left the CTM at identity,
+/// the bitmap is `contextSize * scale` pixels and a point-sized rect would sit
+/// in the bottom-left; scale user space up to that bitmap first.
+func drawFullContext(_ image: CGImage, in context: CGContext, contextSize: CGSize) {
+  let sx = abs(context.ctm.a)
+  let userW = CGFloat(context.width) / (sx > 0.0001 ? sx : 1)
+  if contextSize.width >= 1, userW > contextSize.width * 1.5 {
+    let k = userW / contextSize.width
+    context.scaleBy(x: k, y: k)
+  }
+  context.draw(image, in: CGRect(origin: .zero, size: contextSize))
 }
