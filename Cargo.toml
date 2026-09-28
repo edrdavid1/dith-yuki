@@ -13,6 +13,8 @@ members = [
     "crates/dither-thumb",
     "crates/dither-thumb-ffi",
     "platform/windows/dither-shell",
+    "platform/windows/dither-shell-diag",
+    "platform/windows/xtask",
 ]
 exclude = ["fuzz"]
 
@@ -48,4 +50,6 @@ opt-level = "s"
 [profile.release.package.dither-thumb]
 opt-level = "s"
 [profile.release.package.dither-thumb-ffi]
+opt-level = "s"
+[profile.release.package.dither-shell]
 opt-level = "s"

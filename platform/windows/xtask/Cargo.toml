@@ -1,0 +1,14 @@
+[package]
+name = "dither-shell-xtask"
+version = "0.1.0"
+edition = "2021"
+description = "Generate NSIS registry keys for the Dither shell extension"
+license = "FCL-1.0"
+publish = false
+
+[[bin]]
+name = "dither-shell-xtask"
+path = "src/main.rs"
+
+[dependencies]
+dither-shell = { path = "../dither-shell" }
