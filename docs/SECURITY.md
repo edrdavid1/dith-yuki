@@ -29,8 +29,9 @@ opened. They MUST:
   `dither-zip-safe::ThumbLimits`)
 - Never call platform PNG/ZIP decoders on raw archive bytes
 - Never log file paths; map all failures to «no preview»
-- Catch panics at the FFI boundary (`dt_extract` → `DT_INTERNAL`)
-- Stay reentrant: no global mutable state, no worker threads
+- Catch panics at the FFI / COM boundary (`dt_extract` → `DT_INTERNAL`; shell `catch_unwind` → `E_FAIL`)
+- Stay reentrant: no worker threads. The COM lock count and the diagnostic code ring are the only process-wide state
+- Windows: no `LoadLibrary` of a path from the file or the environment; the DLL is the in-proc server named by the installer. Process isolation stays on (`DisableProcessIsolation` is not set). Install under the app directory, not a writable search path
 
 Threats T19–T25 (PNG bomb, Zip Slip in thumb path, DoS, DLL hijack,
 misleading preview, leaks): full table in

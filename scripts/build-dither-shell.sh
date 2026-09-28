@@ -16,7 +16,7 @@ fi
 cd "$ROOT"
 rustup target add "$TARGET" >/dev/null
 # Static CRT so the DLL does not need VC++ redistributable in dllhost.exe.
-export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static"
+export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static -C control-flow-guard=checks"
 cargo build -p dither-shell --release --target "$TARGET"
 
 OUT="$ROOT/target/$TARGET/release"

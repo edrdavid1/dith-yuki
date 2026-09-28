@@ -1,9 +1,47 @@
 //! `ReadAt` over `IStream` (Seek + Read under a mutex).
 
+use crate::diag_codes::{record, Reason};
 use dither_zip_safe::io::{IoError, ReadAt};
 use std::sync::Mutex;
-use windows::core::Interface;
-use windows::Win32::System::Com::{ISequentialStream, IStream, STREAM_SEEK_SET};
+use windows::core::{Error, Interface, Ref};
+use windows::Win32::Foundation::{ERROR_ALREADY_INITIALIZED, E_INVALIDARG};
+use windows::Win32::System::Com::{
+    ISequentialStream, IStream, STATFLAG_NONAME, STATSTG, STREAM_SEEK_SET,
+};
+
+pub struct BoundStream {
+    pub stream: Option<IStream>,
+    pub size: u64,
+}
+
+impl BoundStream {
+    pub fn new() -> Self {
+        Self {
+            stream: None,
+            size: 0,
+        }
+    }
+
+    pub fn initialize(&mut self, pstream: Ref<'_, IStream>) -> windows::core::Result<()> {
+        if self.stream.is_some() {
+            record(Reason::AlreadyInitialized);
+            return Err(Error::from(ERROR_ALREADY_INITIALIZED));
+        }
+        let stream = pstream.ok().map_err(|_| Error::from(E_INVALIDARG))?.clone();
+        let size = unsafe {
+            let mut stat = STATSTG::default();
+            stream.Stat(&mut stat, STATFLAG_NONAME)?;
+            stat.cbSize
+        };
+        if size == 0 {
+            record(Reason::InvalidArg);
+            return Err(Error::from(E_INVALIDARG));
+        }
+        self.stream = Some(stream);
+        self.size = size;
+        Ok(())
+    }
+}
 
 pub struct StreamReadAt {
     stream: Mutex<IStream>,
@@ -62,5 +100,26 @@ impl ReadAt for StreamReadAt {
             .map_err(|e| IoError::Io(std::io::Error::other(e.message())))?;
             Ok(read as usize)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+    use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+    use windows::Win32::UI::Shell::SHCreateMemStream;
+
+    #[test]
+    fn memory_stream_short_read() {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        }
+        let stream = unsafe { SHCreateMemStream(Some(&[9, 8, 7, 6])) }.expect("stream");
+        let mut io = StreamReadAt::new(stream, 4, 8, Instant::now() + Duration::from_secs(2));
+        let mut buf = [0u8; 8];
+        assert_eq!(io.read_at(0, &mut buf).unwrap(), 4);
+        assert_eq!(&buf[..4], &[9, 8, 7, 6]);
+        assert_eq!(io.size(), 4);
     }
 }

@@ -153,3 +153,10 @@ Template rehearsed by the `version-drill` canary (see
 
 - JSON Schema drafts: [`docs/schema/`](./schema/)
 - Format PR checklist: [`docs/FORMAT_PR_CHECKLIST.md`](./FORMAT_PR_CHECKLIST.md)
+
+## System previews
+
+Explorer and Quick Look read **only** `mimetype` and `thumbnail.png` (see
+[`PREVIEWS.md`](./PREVIEWS.md) and [`SECURITY.md`](./SECURITY.md)). They do not
+open `manifest.json`, layers, or other entries. Windows CLSIDs are frozen in
+`platform/windows/dither-shell/src/registry_keys.rs`.

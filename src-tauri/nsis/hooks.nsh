@@ -4,10 +4,9 @@
 ; bundle.fileAssociations[].name in tauri.conf.json, and the .ico files are
 ; shipped as resources by tauri.windows.conf.json.
 ;
-; Thumbnail provider: dither_shell.dll is copied to $INSTDIR\shell\<version>\
-; and registered under HKCU/HKLM (SHCTX) for .dyproj / .dyuki and ProgIDs.
-;
-; CLSID {BC7D0A00-220F-46DD-AAA8-C754864EE648} is frozen — never change.
+; Thumbnail and preview handler: keys come from platform/windows/registry_keys.nsh
+; (generated from dither-shell registry_keys.rs). The DLL is copied to
+; $INSTDIR\shell\<version>\ so Explorer can keep the previous file mapped.
 ;
 ; APP_UNASSOCIATE removes the whole class key on uninstall; we also clean CLSID.
 ;
@@ -39,8 +38,33 @@
 ; Uninstall confirm — reassure that user documents are kept
 !define MUI_UNCONFIRMPAGE_TEXT_TOP "This will remove Dither Yuki from your computer. Your saved .dyproj files and exported images will not be deleted."
 
-!define DITHER_CLSID_THUMB "{BC7D0A00-220F-46DD-AAA8-C754864EE648}"
-!define DITHER_SHELL_THUMB "{E357FCCD-A995-4576-B01F-234630154E96}"
+!include "${__FILEDIR__}\..\..\platform\windows\registry_keys.nsh"
+
+Var DitherShellDll
+
+; Pick an arch-specific DLL when the installer shipped one. Otherwise use
+; dither_shell.dll from the bundle (the arch the installer itself was built for).
+Function DitherSelectShellDll
+  StrCpy $DitherShellDll "$INSTDIR\dither_shell.dll"
+  Push $R7
+  Push $R8
+  Push $R9
+  System::Call "kernel32::GetCurrentProcess() p .R9"
+  System::Call "kernel32::IsWow64Process2(p R9, *i .R8, *i .R7)"
+  IntCmp $R7 43620 dither_is_arm dither_try_x64 dither_try_x64
+  dither_is_arm:
+    IfFileExists "$INSTDIR\dither_shell_arm64.dll" 0 dither_dll_done
+      StrCpy $DitherShellDll "$INSTDIR\dither_shell_arm64.dll"
+    Goto dither_dll_done
+  dither_try_x64:
+    IntCmp $R7 34404 0 dither_dll_done dither_dll_done
+      IfFileExists "$INSTDIR\dither_shell_x64.dll" 0 dither_dll_done
+        StrCpy $DitherShellDll "$INSTDIR\dither_shell_x64.dll"
+  dither_dll_done:
+  Pop $R9
+  Pop $R8
+  Pop $R7
+FunctionEnd
 
 ; Close a running copy before overwriting dither.exe (in-app update / reinstall).
 !macro NSIS_HOOK_PREINSTALL
@@ -53,30 +77,45 @@
   WriteRegStr SHCTX "Software\Classes\Dither Project\DefaultIcon" "" "$INSTDIR\proj-icon.ico"
   WriteRegStr SHCTX "Software\Classes\Dither Pattern\DefaultIcon" "" "$INSTDIR\pattern-icon.ico"
 
-  ; Versioned shell DLL folder (allows update while Explorer holds the old DLL).
-  CreateDirectory "$INSTDIR\shell\${VERSION}"
-  ; DLL is expected beside resources as dither_shell.dll when built into the bundle.
-  IfFileExists "$INSTDIR\dither_shell.dll" 0 dither_shell_skip
-    CopyFiles /SILENT "$INSTDIR\dither_shell.dll" "$INSTDIR\shell\${VERSION}\dither_shell.dll"
-    WriteRegStr SHCTX "Software\Classes\CLSID\${DITHER_CLSID_THUMB}" "" "Dither Thumbnail Provider"
-    WriteRegStr SHCTX "Software\Classes\CLSID\${DITHER_CLSID_THUMB}\InprocServer32" "" "$INSTDIR\shell\${VERSION}\dither_shell.dll"
-    WriteRegStr SHCTX "Software\Classes\CLSID\${DITHER_CLSID_THUMB}\InprocServer32" "ThreadingModel" "Apartment"
+  Call DitherSelectShellDll
+  IfFileExists "$DitherShellDll" 0 dither_shell_skip
+    CreateDirectory "$INSTDIR\shell\${VERSION}"
+    CopyFiles /SILENT "$DitherShellDll" "$INSTDIR\shell\${VERSION}\dither_shell.dll"
+    StrCpy $DitherShellDll "$INSTDIR\shell\${VERSION}\dither_shell.dll"
+    !insertmacro DITHER_WRITE_SHELL_KEYS
 
-    WriteRegStr SHCTX "Software\Classes\.dyproj\ShellEx\${DITHER_SHELL_THUMB}" "" "${DITHER_CLSID_THUMB}"
-    WriteRegStr SHCTX "Software\Classes\.dyuki\ShellEx\${DITHER_SHELL_THUMB}" "" "${DITHER_CLSID_THUMB}"
-    WriteRegStr SHCTX "Software\Classes\Dither Project\ShellEx\${DITHER_SHELL_THUMB}" "" "${DITHER_CLSID_THUMB}"
-    WriteRegStr SHCTX "Software\Classes\Dither Pattern\ShellEx\${DITHER_SHELL_THUMB}" "" "${DITHER_CLSID_THUMB}"
+    Push $R8
+    Push $R9
+    FindFirst $R8 $R9 "$INSTDIR\shell\*"
+    dither_clean_loop:
+      StrCmp $R9 "" dither_clean_done
+      StrCmp $R9 "." dither_clean_next
+      StrCmp $R9 ".." dither_clean_next
+      StrCmp $R9 "${VERSION}" dither_clean_next
+      RMDir /r "$INSTDIR\shell\$R9"
+      IfErrors 0 dither_clean_next
+        System::Call 'kernel32::MoveFileEx(t "$INSTDIR\shell\$R9", i 0, i 4)'
+      dither_clean_next:
+      FindNext $R8 $R9
+      Goto dither_clean_loop
+    dither_clean_done:
+    FindClose $R8
+    Pop $R9
+    Pop $R8
   dither_shell_skip:
 
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)'
   !insertmacro UPDATEFILEASSOC
 !macroend
 
+!macro NSIS_HOOK_PREUNINSTALL
+  !insertmacro DITHER_DELETE_SHELL_KEYS
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)'
+!macroend
+
 !macro NSIS_HOOK_POSTUNINSTALL
-  DeleteRegKey SHCTX "Software\Classes\CLSID\${DITHER_CLSID_THUMB}"
-  DeleteRegKey SHCTX "Software\Classes\.dyproj\ShellEx\${DITHER_SHELL_THUMB}"
-  DeleteRegKey SHCTX "Software\Classes\.dyuki\ShellEx\${DITHER_SHELL_THUMB}"
-  DeleteRegKey SHCTX "Software\Classes\Dither Project\ShellEx\${DITHER_SHELL_THUMB}"
-  DeleteRegKey SHCTX "Software\Classes\Dither Pattern\ShellEx\${DITHER_SHELL_THUMB}"
+  !insertmacro DITHER_DELETE_SHELL_KEYS
   RMDir /r "$INSTDIR\shell"
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)'
   !insertmacro UPDATEFILEASSOC
 !macroend

@@ -626,3 +626,29 @@ Limits, Save-over-migrated behavior, original-image storage, shader/expression f
 - Files are **immutable** after commit: CI locks SHA-256 via `SHA256SUMS`.
 - Regeneration only with explicit `GENERATE_GOLDEN_V1=1` for *new* fixture names; existing hashes must not change.
 - Snapshot assertions cover open success + structural fields (size, layer count, filter kinds), not full pixel dumps (pixels covered by existing unit round-trips).
+
+---
+
+## 2026-09-28 — Windows shell previews (SPEC_dither_windows_previews)
+
+Code is in place. Items marked **ПРОВЕРИТЬ** were **not** run on a live Explorer. Do not treat them as verified.
+
+| Item | Decision until a Windows run |
+|---|---|
+| Minimum Windows | Unchanged from the installer: Windows 10 and 11. Not re-probed. |
+| HKCU thumbnail registration (§7.1) | Still `installMode: currentUser`, keys under `SHCTX` (HKCU). Whether Explorer loads an HKCU thumbnail provider is **unverified**. |
+| ProgID (§6.1) | `Dither Project` / `Dither Pattern`, matching Tauri `fileAssociations[].name`. No `reg export` from an installed build in this pass. |
+| `Shell Extensions\Approved` | Not written. Add only if a target machine refuses the provider without it. |
+| No-preview HRESULT | `WTS_E_FAILEDEXTRACTION` (`0x8004B200`). `E_FAIL` / `E_NOTIMPL` were not compared on Explorer. |
+| DIB orientation | Top-down (`biHeight < 0`). The calibration fixture's "F" is the check; it has not been opened in Explorer. |
+| Preview `AppID` | `{6d2b5079-2f0b-48dd-ab7f-97cec514d30b}` (documented 64-bit `prevhost.exe`). Per-user `PreviewHandlers` under HKCU is written with `SHCTX` and is **unverified**. If `currentUser` cannot register the pane, the alpha pane stays unavailable. |
+| Peek | Not tested. Unsupported until a Windows run shows that Peek uses the registered preview handler. |
+| ARM64 DLL vs x64 app | Installer prefers `dither_shell_arm64.dll` / `dither_shell_x64.dll` when those files exist, otherwise the single bundled `dither_shell.dll`. A second ARM64 binary is not produced by the current CI script. |
+| Control Flow Guard | `scripts/build-dither-shell.sh` passes `-C control-flow-guard=checks`. This rustc accepts the flag. A Windows link of the DLL with that flag was not run here. |
+| `cargo xwin` / both MSVC targets | Not run. Host tests and `cargo check --target x86_64-pc-windows-gnu` were run. |
+| `IShellItemImageFactory` on a runner without Explorer | Implemented as `dither-shell-diag shell-thumb`. Not executed. |
+
+Geometry (R1): `dt_extract` does not upscale and does not pad. The Windows thumbnail bitmap is `bitmap.width × bitmap.height`. macOS `contextSize` is `bitmap pixels / scale`, drawn with `CGRect(origin: .zero, size: contextSize)` after correcting an identity CTM so the rect covers the pixel buffer.
+
+CLSID preview (frozen): `{C8BC1EC9-FB9C-4374-9925-D82D2819A965}`. Thumbnail CLSID unchanged.
+

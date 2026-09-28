@@ -1,0 +1,14 @@
+[package]
+name = "dither-shell-diag"
+version = "0.1.0"
+edition = "2021"
+description = "Diagnose Dither Windows thumbnail and preview registration"
+license = "FCL-1.0"
+
+[[bin]]
+name = "dither-shell-diag"
+path = "src/main.rs"
+
+[dependencies]
+dither-shell = { path = "../dither-shell" }
+png = "0.17"

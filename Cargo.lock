@@ -1291,6 +1291,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "dither-shell-diag"
+version = "0.1.0"
+dependencies = [
+ "dither-shell",
+ "png 0.17.16",
+]
+
+[[package]]
+name = "dither-shell-xtask"
+version = "0.1.0"
+dependencies = [
+ "dither-shell",
+]
+
+[[package]]
 name = "dither-thumb"
 version = "0.1.0"
 dependencies = [
