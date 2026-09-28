@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="application-name" content="Dither Yuki" />
   <meta name="author" content="L'eco non di Bergamo" />
-  <meta name="theme-color" content="#000000" />
+  <meta name="theme-color" content="#CDCDCD" />
   <meta
     name="description"
     content="Tile-based dithering studio for pixel art, palettes, and layered images."
@@ -16,8 +16,9 @@
       margin: 0;
       width: 100%;
       height: 100%;
-      /* Match welcome artwork fallback so boot → UI never flashes a foreign color. */
-      background: #000;
+      /* Same as --bg-window (#CDCDCD) so a resize gap matches the chrome.
+         The splash node below keeps its own black artwork. */
+      background: #CDCDCD;
     }
 
     #boot-screen {
