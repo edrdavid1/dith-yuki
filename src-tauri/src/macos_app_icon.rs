@@ -238,9 +238,7 @@ mod native {
         }
 
         if !can_persist {
-            log::info!(
-                "app icon: skipping NSWorkspace.setIcon (not a .app bundle: {bundle_path})"
-            );
+            log::info!("app icon: skipping NSWorkspace.setIcon (not a .app bundle: {bundle_path})");
             return Ok(true);
         }
 
