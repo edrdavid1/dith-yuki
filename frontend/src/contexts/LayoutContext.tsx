@@ -115,34 +115,109 @@ export function listDockedFlexComponents(model: Model | null): string[] {
 }
 
 /**
- * After float/dock: tabsets that only hold floating tabs collapse so a remaining
- * docked panel fills the column; docked tabsets get normal weight back.
- * Floating-only tabsets also drop minHeight so they don't reserve a titlebar slot.
+ * After float/dock: collapse ghost hosts so a remaining docked panel fills the column.
+ *
+ * Floating tabs must stay in the model (OS popouts), but a floating-only *tabset*
+ * still occupies a stack slot — tiny weight still gets ~1px from FlexLayout's fill
+ * loop, and the title strip paints as the residual gap. Parking floating tabs into
+ * a docked sibling tabset lets `_tidy` delete the empty host so one tabset owns 100%.
  */
-function rebalanceFloatingTabsets(model: Model): void {
-  const tabsets: TabSetNode[] = [];
-  model.visitNodes((node) => {
-    if (node.getType() === TabSetNode.TYPE) tabsets.push(node as TabSetNode);
-  });
-  for (const ts of tabsets) {
-    const children = ts.getChildren();
-    let hasDocked = false;
-    for (const child of children) {
-      if (child.getType() === TabNode.TYPE && !(child as TabNode).isFloating()) {
-        hasDocked = true;
-        break;
+export function rebalanceFloatingTabsets(model: Model): void {
+  if (rebalanceGuard > 0) return;
+  rebalanceGuard += 1;
+  try {
+    const tabsets: TabSetNode[] = [];
+    model.visitNodes((node) => {
+      if (node.getType() === TabSetNode.TYPE) tabsets.push(node as TabSetNode);
+    });
+
+    const dockedHosts: TabSetNode[] = [];
+    const floatingOnly: TabSetNode[] = [];
+    for (const ts of tabsets) {
+      let hasDocked = false;
+      let hasFloating = false;
+      for (const child of ts.getChildren()) {
+        if (child.getType() !== TabNode.TYPE) continue;
+        if ((child as TabNode).isFloating()) hasFloating = true;
+        else hasDocked = true;
+      }
+      if (hasDocked) dockedHosts.push(ts);
+      else if (hasFloating) floatingOnly.push(ts);
+    }
+
+    // Park floating-only hosts into a docked sibling — empty tabsets are tidied away.
+    if (dockedHosts.length > 0 && floatingOnly.length > 0) {
+      const hostId = dockedHosts[0]!.getId();
+      for (const ts of floatingOnly) {
+        // Snapshot — moveNode mutates children.
+        const movers = ts
+          .getChildren()
+          .filter(
+            (c) => c.getType() === TabNode.TYPE && (c as TabNode).isFloating(),
+          ) as TabNode[];
+        for (const tab of movers) {
+          model.doAction(
+            Actions.moveNode(tab.getId(), hostId, DockLocation.CENTER, -1),
+          );
+        }
       }
     }
-    // Tiny weight keeps the floating tab (and its OS popout) alive in the model
-    // without reserving half the dock when a sibling tabset still has content.
-    model.doAction(
-      Actions.updateNodeAttributes(ts.getId(), {
-        weight: hasDocked ? 100 : 0.01,
-        minHeight: hasDocked ? DOCK_TABSET_MIN_HEIGHT : 0,
-      }),
-    );
+
+    // Refresh tabset list after parking/tidy; ensure a docked tab is selected.
+    const after: TabSetNode[] = [];
+    model.visitNodes((node) => {
+      if (node.getType() === TabSetNode.TYPE) after.push(node as TabSetNode);
+    });
+    for (const ts of after) {
+      const children = ts.getChildren();
+      let hasDocked = false;
+      let dockedTab: TabNode | null = null;
+      for (const child of children) {
+        if (child.getType() !== TabNode.TYPE) continue;
+        const tab = child as TabNode;
+        if (!tab.isFloating()) {
+          hasDocked = true;
+          if (!dockedTab) dockedTab = tab;
+        }
+      }
+      if (hasDocked && dockedTab) {
+        const selected = ts.getSelectedNode();
+        if (
+          !selected ||
+          selected.getType() !== TabNode.TYPE ||
+          (selected as TabNode).isFloating()
+        ) {
+          model.doAction(Actions.selectTab(dockedTab.getId()));
+        }
+      }
+      // Fallback for all-floating column (sidebar already visually collapsed):
+      // fixed height 0 so nothing reserves a titlebar strip.
+      // Do NOT reset weight on docked tabsets — that fights the splitter.
+      model.doAction(
+        Actions.updateNodeAttributes(
+          ts.getId(),
+          hasDocked
+            ? {
+                minHeight: DOCK_TABSET_MIN_HEIGHT,
+                height: undefined,
+                enableTabStrip: true,
+              }
+            : {
+                weight: 0.01,
+                minHeight: 0,
+                height: 0,
+                enableTabStrip: false,
+              },
+        ),
+      );
+    }
+  } finally {
+    rebalanceGuard -= 1;
   }
 }
+
+/** Prevent re-entrant rebalance when moveNode/selectTab fires onModelChange. */
+let rebalanceGuard = 0;
 
 /**
  * Color Lab parity: panels in a sidebar stack vertically — never as side-by-side

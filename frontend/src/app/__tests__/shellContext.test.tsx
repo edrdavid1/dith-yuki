@@ -48,6 +48,7 @@ describe('ShellContext', () => {
     expect(result.current.welcomeBackground).toBe('artwork');
     expect(result.current.hideRecentList).toBe(false);
     expect(result.current.appIconId).toBe('default');
+    expect(result.current.hapticFeedback).toBe(true);
   });
 
   it('updates split ratios independently per side', () => {
@@ -206,6 +207,11 @@ describe('ShellContext', () => {
     expect(migrateShellPrefs({ version: 2, appIconId: 'alt2' }).appIconId).toBe('alt2');
     expect(migrateShellPrefs({ version: 2 }).appIconId).toBe('default');
     expect(migrateShellPrefs({ version: 2, appIconId: '' }).appIconId).toBe('default');
+  });
+
+  it('parses hapticFeedback and defaults to true', () => {
+    expect(migrateShellPrefs({ version: 2, hapticFeedback: false }).hapticFeedback).toBe(false);
+    expect(migrateShellPrefs({ version: 2 }).hapticFeedback).toBe(true);
   });
 
   it('migrates v1 exclusive sidebarSide=right by default', () => {

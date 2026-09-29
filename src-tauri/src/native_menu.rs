@@ -115,6 +115,11 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
 
     let undo = MenuItem::with_id(app, "undo", "Undo", true, Some("CmdOrCtrl+Z"))?;
     let redo = MenuItem::with_id(app, "redo", "Redo", true, Some("CmdOrCtrl+Shift+Z"))?;
+    // System roles so Cmd+C/V/X/A reach the WebView first responder (text fields).
+    let cut = PredefinedMenuItem::cut(app, None)?;
+    let copy = PredefinedMenuItem::copy(app, None)?;
+    let paste = PredefinedMenuItem::paste(app, None)?;
+    let select_all = PredefinedMenuItem::select_all(app, None)?;
     let copy_ascii_text = MenuItem::with_id(
         app,
         "copy-ascii-text",
@@ -133,7 +138,18 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
         app,
         "Edit",
         true,
-        &[&undo, &redo, &copy_ascii_text, &copy_ascii_ansi],
+        &[
+            &undo,
+            &redo,
+            &PredefinedMenuItem::separator(app)?,
+            &cut,
+            &copy,
+            &paste,
+            &select_all,
+            &PredefinedMenuItem::separator(app)?,
+            &copy_ascii_text,
+            &copy_ascii_ansi,
+        ],
     )?;
 
     let export_pattern =
@@ -209,34 +225,66 @@ fn strip_system_edit_items() {
     }
 }
 
+/// Keep app Edit items + system Cut/Copy/Paste/Select All; strip AppKit
+/// injections (Writing Tools, AutoFill, Dictation, Emoji, …).
 #[cfg(target_os = "macos")]
-unsafe fn strip_unwanted_edit_items(edit_menu: cocoa::base::id) {
+unsafe fn should_keep_edit_item(item: cocoa::base::id) -> bool {
     use cocoa::base::{id, nil};
     use cocoa::foundation::NSString;
     use objc::{msg_send, sel, sel_impl};
 
+    let is_sep: bool = msg_send![item, isSeparatorItem];
+    if is_sep {
+        return true;
+    }
+
+    // Locale-independent: PredefinedMenuItem roles use standard selectors.
+    let action: objc::runtime::Sel = msg_send![item, action];
+    if !action.as_ptr().is_null() {
+        match action.name() {
+            "copy:" | "cut:" | "paste:" | "selectAll:" | "undo:" | "redo:" => return true,
+            _ => {}
+        }
+    }
+
+    // Custom items (English UI) + title fallback for predefined roles.
+    let title: id = msg_send![item, title];
+    for keep in [
+        "Undo",
+        "Redo",
+        "Cut",
+        "Copy",
+        "Paste",
+        "Select All",
+        "Copy ASCII Text",
+        "Copy ASCII ANSI",
+    ] {
+        let ns: id = NSString::alloc(nil).init_str(keep);
+        let eq: bool = msg_send![title, isEqualToString: ns];
+        if eq {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn strip_unwanted_edit_items(edit_menu: cocoa::base::id) {
+    use cocoa::base::{id, nil};
+    use objc::{msg_send, sel, sel_impl};
+
     let items: id = msg_send![edit_menu, itemArray];
-    let copy: id = msg_send![items, copy];
-    if copy == nil {
+    let snapshot: id = msg_send![items, copy];
+    if snapshot == nil {
         return;
     }
-    let count: usize = msg_send![copy, count];
+    let count: usize = msg_send![snapshot, count];
     for i in 0..count {
-        let item: id = msg_send![copy, objectAtIndex: i];
+        let item: id = msg_send![snapshot, objectAtIndex: i];
         if item == nil {
             continue;
         }
-        let is_sep: bool = msg_send![item, isSeparatorItem];
-        if is_sep {
-            let _: () = msg_send![edit_menu, removeItem: item];
-            continue;
-        }
-        let title: id = msg_send![item, title];
-        let undo: id = NSString::alloc(nil).init_str("Undo");
-        let redo: id = NSString::alloc(nil).init_str("Redo");
-        let is_undo: bool = msg_send![title, isEqualToString: undo];
-        let is_redo: bool = msg_send![title, isEqualToString: redo];
-        if !is_undo && !is_redo {
+        if !should_keep_edit_item(item) {
             let _: () = msg_send![edit_menu, removeItem: item];
         }
     }

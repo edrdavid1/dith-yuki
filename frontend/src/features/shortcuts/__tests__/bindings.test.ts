@@ -1,9 +1,9 @@
-import { describe, expect, it } from 'vitest';
 import {
   defaultShortcutMap,
   eventToChord,
   findMatchingShortcut,
   formatChord,
+  isEditableKeyboardTarget,
   matchChord,
   parseStoredShortcutMap,
 } from '../bindings';
@@ -22,6 +22,28 @@ describe('shortcut bindings', () => {
     expect(findMatchingShortcut(zoomFit, map)).toBe('zoomFit');
     expect(findMatchingShortcut(del, map)).toBe('deleteLayer');
     expect(findMatchingShortcut(focus, map)).toBe('focusMode');
+  });
+
+  it('does not claim Cmd/Ctrl+C/V/X (system clipboard)', () => {
+    const map = defaultShortcutMap();
+    for (const key of ['c', 'v', 'x'] as const) {
+      expect(
+        findMatchingShortcut(new KeyboardEvent('keydown', { key, metaKey: true }), map)
+      ).toBeNull();
+      expect(
+        findMatchingShortcut(new KeyboardEvent('keydown', { key, ctrlKey: true }), map)
+      ).toBeNull();
+    }
+  });
+
+  it('isEditableKeyboardTarget covers inputs and nested fields', () => {
+    const input = document.createElement('input');
+    expect(isEditableKeyboardTarget(input)).toBe(true);
+    const wrap = document.createElement('div');
+    const nested = document.createElement('textarea');
+    wrap.appendChild(nested);
+    expect(isEditableKeyboardTarget(nested)).toBe(true);
+    expect(isEditableKeyboardTarget(document.createElement('div'))).toBe(false);
   });
 
   it('formats chords for Windows-style Ctrl labels', () => {

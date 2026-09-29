@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import styles from '../../shared/ui/ResizeHandle.module.css';
 import { bind } from '../../shared/ui/cn';
 const cn = bind(styles);
@@ -19,8 +19,21 @@ interface ResizeHandleProps {
  */
 export default function ResizeHandle({ direction, onResize, className = '', style }: ResizeHandleProps) {
   const startPos = useRef(0);
+  const elRef = useRef<HTMLDivElement | null>(null);
+
+  // macOS Force Touch ("two-level click") steals the gesture for Look Up —
+  // cancel it on the handle so a deeper press still starts a normal drag.
+  useEffect(() => {
+    const el = elRef.current;
+    if (!el) return;
+    const blockForce = (e: Event) => e.preventDefault();
+    el.addEventListener('webkitmouseforcewillbegin', blockForce);
+    return () => el.removeEventListener('webkitmouseforcewillbegin', blockForce);
+  }, []);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    // Primary button only — ignore right-click / force-click secondary.
+    if (e.button !== 0) return;
     e.preventDefault();
     startPos.current = direction === 'horizontal' ? e.clientX : e.clientY;
 
@@ -48,6 +61,7 @@ export default function ResizeHandle({ direction, onResize, className = '', styl
 
   return (
     <div
+      ref={elRef}
       className={cn('resize-handle', cursorClass, className)}
       style={style}
       onMouseDown={handleMouseDown}
