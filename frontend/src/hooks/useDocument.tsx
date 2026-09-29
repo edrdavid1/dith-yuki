@@ -38,6 +38,7 @@ import {
   exportAscii,
   type AsciiExportFormat,
 } from '../shared/ipc/ascii';
+import { copyTextToClipboard } from '../shared/clipboard';
 import { suggestedSaveDefaultPath } from '../shared/unsavedGuard';
 
 /**
@@ -197,7 +198,7 @@ export function useDocument() {
           format,
           layer_id: selectedLayerId,
         });
-        await navigator.clipboard.writeText(text);
+        await copyTextToClipboard(text);
       } catch (err) {
         dispatch(
           setDocumentMeta({

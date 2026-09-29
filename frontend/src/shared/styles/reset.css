@@ -29,6 +29,15 @@ body {
   font-size: 12px;
 }
 
+/* Opt text fields (and marked copyable UI) back in when ancestors set user-select: none. */
+input,
+textarea,
+[contenteditable='true'],
+.copyable-text {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 /* ─── Checkbox (square, dark-gray border; primary fill when checked) ───────── */
 
 input[type='checkbox'] {

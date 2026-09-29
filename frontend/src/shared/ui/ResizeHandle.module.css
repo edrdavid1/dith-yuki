@@ -4,6 +4,10 @@
   flex-shrink: 0;
   background: transparent;
   z-index: 5;
+  /* macOS Force Touch / callout must not steal the drag. */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .resize-handle-h {

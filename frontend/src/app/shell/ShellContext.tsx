@@ -50,6 +50,8 @@ export type ShellState = {
    * Mirrored to Rust `{app_data}/app_icon.json` for pre-window Dock reapply.
    */
   appIconId: string;
+  /** macOS slider / UI tactile feedback (Taptic Engine). Default on. */
+  hapticFeedback: boolean;
   setSidebarWidth: (side: DockSide, width: number | ((prev: number) => number)) => void;
   setSidebarCollapsed: (side: DockSide, collapsed: boolean) => void;
   resetSidebarWidths: () => void;
@@ -63,6 +65,7 @@ export type ShellState = {
   setWelcomeBackground: (kind: WelcomeBackground) => void;
   setHideRecentList: (hidden: boolean) => void;
   setAppIconId: (id: string) => void;
+  setHapticFeedback: (enabled: boolean) => void;
 };
 
 /** v2 persisted shape (additive split ratios). */
@@ -79,6 +82,7 @@ export type PersistedShellPrefsV2 = {
   welcomeBackground: WelcomeBackground;
   hideRecentList: boolean;
   appIconId: string;
+  hapticFeedback: boolean;
 };
 
 /** Legacy v1 keys (exclusive single sidebar). */
@@ -92,11 +96,13 @@ type PersistedShellPrefsV1 = {
   welcomeBackground?: WelcomeBackground | string;
   hideRecentList?: boolean;
   appIconId?: string;
+  hapticFeedback?: boolean;
 };
 
 const DEFAULT_AUTO_EXTRACT_PALETTES = true;
 const DEFAULT_HIDE_RECENT_LIST = false;
 const DEFAULT_APP_ICON_ID = 'default';
+const DEFAULT_HAPTIC_FEEDBACK = true;
 const DEFAULT_SIDEBAR_WIDTH = 332;
 const DEFAULT_SPLIT_RATIO = 0.5;
 
@@ -106,6 +112,7 @@ const DEFAULT_SIDEBAR_GEOM: SidebarGeom = {
 };
 
 const ShellContext = createContext<ShellState | null>(null);
+export { ShellContext };
 
 const SHELL_PREFS_KEY = 'dither.shellPrefs';
 const SHELL_PREFS_CHANNEL = 'dither.shellPrefs';
@@ -159,6 +166,7 @@ function defaultPrefs(): PersistedShellPrefsV2 {
     welcomeBackground: DEFAULT_WELCOME_BACKGROUND,
     hideRecentList: DEFAULT_HIDE_RECENT_LIST,
     appIconId: DEFAULT_APP_ICON_ID,
+    hapticFeedback: DEFAULT_HAPTIC_FEEDBACK,
   };
 }
 
@@ -216,6 +224,10 @@ export function migrateShellPrefs(raw: unknown): PersistedShellPrefsV2 {
         typeof obj.appIconId === 'string' && obj.appIconId.length > 0
           ? obj.appIconId
           : DEFAULT_APP_ICON_ID,
+      hapticFeedback:
+        typeof obj.hapticFeedback === 'boolean'
+          ? obj.hapticFeedback
+          : DEFAULT_HAPTIC_FEEDBACK,
     };
   }
 
@@ -246,6 +258,9 @@ export function migrateShellPrefs(raw: unknown): PersistedShellPrefsV2 {
   }
   if (typeof v1.appIconId === 'string' && v1.appIconId.length > 0) {
     prefs.appIconId = v1.appIconId;
+  }
+  if (typeof v1.hapticFeedback === 'boolean') {
+    prefs.hapticFeedback = v1.hapticFeedback;
   }
   return prefs;
 }
@@ -296,6 +311,7 @@ function applyPrefsPatch(
     setWelcomeBackground: (kind: WelcomeBackground) => void;
     setHideRecentList: (hidden: boolean) => void;
     setAppIconId: (id: string) => void;
+    setHapticFeedback: (enabled: boolean) => void;
   }
 ) {
   setters.setLeftSidebar({ ...parsed.leftSidebar });
@@ -307,6 +323,7 @@ function applyPrefsPatch(
   setters.setWelcomeBackground(parsed.welcomeBackground);
   setters.setHideRecentList(parsed.hideRecentList);
   setters.setAppIconId(parsed.appIconId);
+  setters.setHapticFeedback(parsed.hapticFeedback);
 }
 
 /**
@@ -328,6 +345,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
   const [welcomeBackground, setWelcomeBackgroundState] = useState(initial.welcomeBackground);
   const [hideRecentList, setHideRecentListState] = useState(initial.hideRecentList);
   const [appIconId, setAppIconIdState] = useState(initial.appIconId);
+  const [hapticFeedback, setHapticFeedbackState] = useState(initial.hapticFeedback);
 
   const prefsRef = useRef<PersistedShellPrefsV2>({
     version: 2,
@@ -341,6 +359,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     welcomeBackground,
     hideRecentList,
     appIconId,
+    hapticFeedback,
   });
   prefsRef.current = {
     version: 2,
@@ -354,6 +373,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     welcomeBackground,
     hideRecentList,
     appIconId,
+    hapticFeedback,
   };
 
   const persistPrefs = useCallback((prefs: PersistedShellPrefsV2) => {
@@ -386,6 +406,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     welcomeBackground,
     hideRecentList,
     appIconId,
+    hapticFeedback,
     persistPrefs,
   ]);
 
@@ -409,6 +430,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
         setWelcomeBackground: setWelcomeBackgroundState,
         setHideRecentList: setHideRecentListState,
         setAppIconId: setAppIconIdState,
+        setHapticFeedback: setHapticFeedbackState,
       });
     };
 
@@ -507,6 +529,10 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     setAppIconIdState(typeof id === 'string' && id.length > 0 ? id : DEFAULT_APP_ICON_ID);
   }, []);
 
+  const setHapticFeedback = useCallback((enabled: boolean) => {
+    setHapticFeedbackState(enabled);
+  }, []);
+
   const swapSidebars = useCallback(() => {
     const prefs = prefsRef.current;
     setLeftSidebarState({ ...prefs.rightSidebar });
@@ -527,6 +553,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       welcomeBackground,
       hideRecentList,
       appIconId,
+      hapticFeedback,
       setSidebarWidth,
       setSidebarCollapsed,
       resetSidebarWidths,
@@ -538,6 +565,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       setWelcomeBackground,
       setHideRecentList,
       setAppIconId,
+      setHapticFeedback,
     }),
     [
       leftSidebar,
@@ -549,6 +577,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       welcomeBackground,
       hideRecentList,
       appIconId,
+      hapticFeedback,
       setSidebarWidth,
       setSidebarCollapsed,
       resetSidebarWidths,
@@ -560,6 +589,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       setWelcomeBackground,
       setHideRecentList,
       setAppIconId,
+      setHapticFeedback,
     ]
   );
 
