@@ -24,12 +24,15 @@
 A focused **dither / palette studio** — not a paint app, not a print pipeline.
 
 - Ordered dithering (Bayer, halftone, custom threshold maps) and error diffusion (Floyd–Steinberg, Atkinson, and others)
+- ASCII / text-art effect (CPU full-document preview + export / clipboard)
 - Palette quantization with Color Lab (Oklab, ramps, harmony, import ASE / GPL / …)
 - Palette dither modes: Strict, Guided, Mixed, Simple
 - Non-destructive layers, blend modes, undo / redo
 - Projects (`.dyproj`) and shareable patterns (`.dyuki`)
 - Dockable panels (Layers, Effect, Color Lab, Preview)
-- In-app updates from GitHub Releases (from 0.2.0)
+- Finder / Explorer thumbnails and preview pane for project files
+- macOS slider tactile feedback (Preferences toggle)
+- In-app updates from GitHub Releases (from 0.2.0; current channel **1.0.x-beta**)
 
 Tile-based preview keeps large documents responsive.
 
@@ -49,7 +52,7 @@ No paint tools, ICC / print pipeline, or video / batch export. Linux is not a su
 ### Install
 
 1. Get the latest build from [Releases](https://github.com/edrdavid1/dith-yuki/releases/latest) (macOS DMG, Windows NSIS) or the [website](https://ditheryuki.com/).
-2. After **0.2.0**, use **Help → Check for Updates** (Minisign-verified).
+2. After **0.2.0**, use **Help → Check for Updates** (Minisign-verified). Current releases are **1.0.x-beta**.
 
 #### macOS Gatekeeper
 
@@ -104,7 +107,8 @@ npm run release:verify     # updater config + latest.json smoke
 
 ```
 src-tauri/     # Tauri app: IPC, workers, tile://, menus, panels
-crates/        # engines (project, tiles, color, gpu, io)
+crates/        # engines (project, tiles, color, gpu, registry, ascii, thumb)
+platform/      # Quick Look / Windows shell preview hosts
 frontend/      # React + Redux Toolkit UI
 site/          # public download landing (GitHub Pages)
 docs/          # as-built architecture & developer guides
@@ -112,7 +116,7 @@ docs/          # as-built architecture & developer guides
 
 ### Documentation
 
-Start with [docs/README.md](./docs/README.md) (index). Day-to-day: [Dev setup](./docs/dev-setup.md) · [Release](./docs/RELEASE.md) · [Architecture](./docs/architecture.md) · [Crash recovery](./docs/crash-recovery.md).
+Start with [docs/README.md](./docs/README.md) (index). Day-to-day: [Dev setup](./docs/dev-setup.md) · [Release](./docs/RELEASE.md) · [Architecture](./docs/architecture.md) · [Product snapshot](./docs/product-snapshot.md) · [Crash recovery](./docs/crash-recovery.md).
 
 ---
 

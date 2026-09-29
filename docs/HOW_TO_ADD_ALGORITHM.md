@@ -1,12 +1,18 @@
 # How to add an algorithm
 
-This is the checklist for adding a **built-in** filter algorithm. New algorithms
-register themselves; the tile apply path, GPU eligibility signal, schema-driven
-settings panel, and document load/save go through `AlgorithmRegistry`. Do not add
-new arms to the old `FilterKind` / `DitherModeV2` dispatch matches.
+This is the checklist for adding a **built-in** filter algorithm. Traits and
+schema types live in `crates/engine-registry`; implementations register in
+`crates/engine-project/src/algorithms/`. The tile apply path, GPU eligibility
+signal, schema-driven settings panel, and document load/save go through
+`AlgorithmRegistry`. Do not add new arms to the old `FilterKind` /
+`DitherModeV2` dispatch matches.
 
 `FilterKind` and `DitherModeV2` remain **legacy serde aliases** for on-disk
 `FilterInstanceFile.kind` and `DitherParamsV2.mode`. New code uses `AlgorithmId`.
+
+**Special case — ASCII:** `EffectCategory::Ascii` is a full-document job
+(`ExecutionScope::FullDocument`), not progressive tiles. Tile `apply` may be
+identity; see [ascii-as-built.md](./ascii-as-built.md).
 
 ## Step 1 — Choose a stable `AlgorithmId`
 
@@ -42,7 +48,7 @@ Required methods:
 | `gpu_eligibility()` | `Eligible` or `Cpu(CpuCheckpointKind::…)`. The registry does **not** build GPU passes (Invariant 4). |
 | `param_schema()` | Static `&[ParamField]` for `AlgorithmSettingsPanel`. Same slice every call. |
 | `schema_version()` | Start at `1`. Increment only on breaking param changes. |
-| `category()` | `Dithering`, `Glitch`, `ColorAdjust`, `Stylize`, or `Palette` |
+| `category()` | `Dithering`, `Glitch`, `ColorAdjust`, `Stylize`, `Palette`, or `Ascii` |
 | `requires_full_row()` | Default `false`. Error diffusion returns `true`. |
 | `migrate_params()` | Default no-op. Must be pure and idempotent. |
 

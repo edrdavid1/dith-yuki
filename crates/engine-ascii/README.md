@@ -2,6 +2,7 @@
 
 Text-art / ASCII output stage for Dither Yuki. Design:
 [`.local-doc/ASCII_DITHER_system_spec.md`](../../.local-doc/ASCII_DITHER_system_spec.md).
+As-built app integration: [`docs/ascii-as-built.md`](../../docs/ascii-as-built.md).
 
 This crate does **not** depend on `engine-project`. It takes an RGBA buffer +
 settings and returns an [`AsciiGrid`](crate::AsciiGrid); preview and exporters
@@ -16,7 +17,7 @@ render from that grid.
 
 Licenses: `assets/fonts/*-OFL.txt`.
 
-## Current surface (steps 2–7, partial)
+## Current surface
 
 - Font load / monospace validation / cell metrics
 - Symbol sets (Bourke ramps, ASCII, blocks, quadrants, sextants, octants, braille, CP437)
@@ -28,12 +29,16 @@ Licenses: `assets/fonts/*-OFL.txt`.
 - Colored convert + RGBA / sRGB8 render
 - Exporters: TXT, ANSI (+ parse-back), HTML, SVG (text+rects), PNG, JSON
 
+App wiring (outside this crate): `FilterKind::Ascii` / `AsciiParams`, Effect UI,
+File → **Export ASCII…**, Edit → **Copy ASCII Text** / **Copy ASCII ANSI**,
+Image|ASCII preview toggle. See `docs/ascii-as-built.md`.
+
 ## Still open
 
-- SVG outline `<path>` / `<use>` (currently `<text>`)
+- SVG outline `<path>` / `<use>` (currently `<text>` / rects)
 - JJN/Stucki/Atkinson cell kernels beyond FS
 - `CacheStage::Ascii` for Image|ASCII dual view (preview currently publishes as Processed)
-- Frontend: dedicated ASCII panel, export dialog, clipboard
+- Dedicated FlexLayout ASCII panel (settings live under Effect)
 - GPU path + perf harness
 
 ## Regenerate Unicode tables

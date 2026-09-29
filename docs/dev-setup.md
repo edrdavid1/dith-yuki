@@ -29,9 +29,12 @@ After `npm install`, `patch:flexlayout` must run (postinstall). Without it, Flex
 
 ## Layout
 
-- **Rust engines** live in `crates/`. Document model and filters: `engine-project`. GPU: `engine-gpu` (Path B).
+- **Rust engines** live in `crates/`. Document model and filters: `engine-project`.
+  Algorithm trait / IDs: `engine-registry`. ASCII grid: `engine-ascii`. GPU: `engine-gpu` (Path B).
+  OS thumbnails: `dither-thumb` (+ FFI) with hosts under `platform/`.
 - **Tauri glue** (commands, workers, `tile://`): `src-tauri/src/`.
 - **UI**: `frontend/src/` (React 18, Redux Toolkit, TypeScript, flexlayout-react 0.7.15).
+  macOS slider haptics: Preferences → Tactile feedback ([haptics-as-built.md](./haptics-as-built.md)).
 - **Docs**: [docs/README.md](./README.md) is as-built. Working agent specs stay local-only (not published).
 
 Public APIs in Rust should have `///` comments. Match existing naming in the file you edit.
@@ -44,7 +47,7 @@ See [RELEASE.md](./RELEASE.md). Quick checks:
 npm run release:verify
 ```
 
-Cut an alpha with a pre-release tag (`v0.3.0-alpha.1`). Feedback goes through the [bug report template](../.github/ISSUE_TEMPLATE/bug_report.yml).
+Cut a beta with a pre-release tag (`v1.0.5-beta`, …). Feedback goes through the [bug report template](../.github/ISSUE_TEMPLATE/bug_report.yml).
 
 ## Commits
 

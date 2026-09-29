@@ -1,30 +1,36 @@
 # Архитектура Dither Yuki 2
 
-> Комплексный архитектурный документ. As-built **0.2.0**.
-> Последнее обновление: 5 сентября 2026.
+> Комплексный архитектурный документ. As-built **1.0.5-beta**.
+> Последнее обновление: 30 сентября 2026.
 >
 > Оптимизация: начинать с **§13** (стоимость тайла / где теряется время) и
 > [tile-pipeline.md](./tile-pipeline.md) §11. Не трогать фильтры, пока не ясно,
 > какой участок реально в профиле.
 >
 > **См. также:**
+> - [product-snapshot.md](./product-snapshot.md) — что реально работает в beta
 > - [multi-doc-tabs.md](./multi-doc-tabs.md) — вкладки, мультипроектность, shared TileCache, save/export
 > - [tile-pipeline.md](./tile-pipeline.md) — тайловый pipeline, координаты, ED, GPU, стоимость тайла
 > - [gpu-as-built.md](./gpu-as-built.md) — Path B resident + auto-dispatch
-> - [FLEXLAYOUT_DOCKING.md](./FLEXLAYOUT_DOCKING.md) — Layers / Effect / Color Lab
+> - [ascii-as-built.md](./ascii-as-built.md) — ASCII (CPU full-document)
+> - [haptics-as-built.md](./haptics-as-built.md) — macOS Taptic на слайдерах
+> - [PREVIEWS.md](./PREVIEWS.md) — Quick Look / Explorer thumbnails
+> - [FLEXLAYOUT_DOCKING.md](./FLEXLAYOUT_DOCKING.md) — Layers / Effect / Color Lab / Preview
 > - [color-lab.md](./color-lab.md) — цвет, палитры, Color Lab
 > - [palette-dither.md](./palette-dither.md) — Strict / Guided / Mixed / Simple
+> - [HOW_TO_ADD_ALGORITHM.md](./HOW_TO_ADD_ALGORITHM.md) — новый `FilterAlgorithm`
 
 ---
 
 ## 1. Общий обзор проекта
 
-**Dither Yuki 2** — десктопное приложение для неразрушающей обработки изображений с акцентом на художественные эффекты: дизеринг (ordered, error diffusion, custom threshold maps), палитровая квантизация (Oklab + KD-tree), цветовые кривые, уровни и глитч-эффекты.
+**Dither Yuki 2** — десктопное приложение для неразрушающей обработки изображений с акцентом на художественные эффекты: дизеринг (ordered, error diffusion, custom threshold maps), палитровая квантизация (Oklab + KD-tree), ASCII / text-art, цветовые кривые, уровни и глитч-эффекты.
 
 Ключевые архитектурные принципы:
 - **Push-based tile rendering** — backend вычисляет тайлы инкрементально и уведомляет frontend о готовности
 - **Lock-free конкурентность** — ArcSwap для документа, DashMap для кэшей, SegQueue для scheduling
 - **Perceptually-uniform color** — Oklab space для палитровой квантизации, linear RGB f32 как внутреннее представление
+- **Registry-first filters** — новые эффекты через `engine-registry` (`AlgorithmId` + `FilterAlgorithm`); `FilterKind` — legacy serde alias
 - **Dockable UI** — Layers / Effect / Color Lab (left/right FlexLayout) + Preview (center FlexLayout); float = `flex-popout-*`
 
 ### 1.1 Стек технологий
@@ -43,57 +49,66 @@
 | Docking | flexlayout-react | 0.7.15 (pin; ADR ~0.10.x open) |
 | Oklab volume (Color Lab) | three | ^0.185 |
 | In-app updates | tauri-plugin-updater + process | 2 |
+| macOS haptics | tauri-macos-haptics (+ `-api`) | 4 |
+| Clipboard | tauri-plugin-clipboard-manager | 2 |
 
 ### 1.2 Структура репозитория
 
 ```
 dither-yuki-2/
 ├── Cargo.toml                  # Workspace root (resolver = "2")
+├── ALGORITHM_ID_REGISTRY.txt   # Stable AlgorithmId list (CI parity)
 ├── src-tauri/                  # Tauri backend (IPC, workers, panels, tile protocol)
-│   ├── tauri.conf.json         # version 0.2.0, updater pubkey, icons, file assoc
+│   ├── tauri.conf.json         # version 1.0.5-beta, updater pubkey, icons, file assoc
 │   └── src/
-│       ├── main.rs             # Entry, tile://, GpuContext, worker spawn
-│       ├── commands/           # IPC modules + AppState (document / filters / palettes / …)
-│       ├── services/           # document / viewport / layer / filter / palette / panel
+│       ├── main.rs             # Entry, tile://, GpuContext, plugins (incl. haptics), worker spawn
+│       ├── commands/           # IPC modules (document / filters / registry / ascii / …)
+│       ├── services/           # document / viewport / layer / filter / palette / undo
+│       ├── state/              # AppState assembly
+│       ├── journal/            # crash-recovery journals
 │       ├── document_session.rs # multi-doc registry
 │       ├── memory_budget.rs    # adaptive RAM tile-cache budget
-│       ├── tile_protocol.rs    # tile:// URL → RGBA8
+│       ├── tile_protocol.rs / tile_serve.rs
 │       ├── tile_pipeline.rs    # compute_processed_tile / compute_composite_tile
 │       ├── viewport.rs         # set_viewport, visible + prefetch
 │       ├── worker.rs           # WorkerWake (Condvar) + tile_worker_loop
 │       ├── undo.rs             # UndoManager (Arc<Document> stacks)
 │       ├── dock_affinity.rs    # dock-zone hit-test (Flex redock complete = JS)
 │       ├── flexlayout_persistence.rs
-│       ├── panel_manager.rs    # Preferences leftover (+ Preview stub)
-│       └── recent_files.rs
+│       ├── native_menu.rs / pattern_library.rs / recent_files.rs
+│       └── macos_*.rs / window_background.rs / …
 ├── crates/
-│   ├── engine-core/            # Phase 0 stub (не используется)
+│   ├── engine-core/            # Phase 0 stub (не используется hot path)
+│   ├── engine-registry/        # AlgorithmId, FilterAlgorithm, ParamField, EffectCategory
 │   ├── engine-tiles/           # PixelTile, cache, scheduler, coords, pyramid, BRC
-│   ├── engine-project/         # Document, layers, filters, compositor, serialize
+│   ├── engine-project/         # Document, layers, filters, compositor, serialize, algorithms/
 │   │   └── src/
-│   │       ├── filter.rs       # DitherParamsV2 (bias/angle/serpentine/dither_alpha)
+│   │       ├── filter.rs       # FilterInstance (+ algorithm_id), DitherParamsV2, AsciiParams
+│   │       ├── algorithms/     # register_all() → AlgorithmRegistry
 │   │       ├── compositor.rs / simd.rs
 │   │       ├── serialize/      # .dyproj / .dyuki (zip + assets + migrate)
-│   │       └── filters/
-│   │           ├── apply.rs            # stack + Full_Then_Blend
-│   │           ├── gpu_graph.rs        # Path B compile from FilterStack
-│   │           ├── dither_ordered.rs   # Bayer, CustomPng, Halftone, Wave
-│   │           ├── dither_diffusion.rs # FS, Atkinson, JJN, Stucki, Burkes, Sierra
-│   │           ├── dither_residuals.rs
-│   │           ├── palette_quantize.rs # LUT nearest (не KD на hot path)
-│   │           └── curves / levels / glow / crt / glitch
+│   │       └── filters/        # apply (registry dispatch), gpu_graph, ED, residuals, …
+│   ├── engine-ascii/           # Fonts, match, grid, exporters (no engine-project dep)
 │   ├── engine-gpu/             # Path B resident (cache, graph, executor, decision)
 │   ├── engine-color/           # Oklab, KdTree (build LUT), PaletteLut3D 64³
-│   └── engine-io/              # sandbox + svg_export (meshing / contour)
+│   ├── engine-io/              # sandbox + svg_export (meshing / contour)
+│   ├── dither-zip-safe/        # Shared zip limits for thumbnails / loaders
+│   ├── dither-thumb/           # thumbnail.png extract (EOCD → PNG → RGBA)
+│   └── dither-thumb-ffi/       # C ABI for OS preview providers
+├── platform/
+│   ├── macos/DitherQuickLook/  # Quick Look Preview (+ Thumbnail)
+│   └── windows/dither-shell/   # Explorer COM thumbnail + preview handler
 ├── frontend/
 │   └── src/
 │       ├── main.tsx / App.tsx
-│       ├── app/                # AppLayout, RTK store, slices, LayoutProvider
-│       ├── features/           # preview, effects, layers, color-lab, panels, document
-│       ├── components/         # MenuBar, FlexLayoutContainer, dialogs
-│       ├── hooks/              # useDocument, useViewport, useAppUpdates, …
+│       ├── app/                # AppLayout, RTK store, slices, LayoutProvider, ShellContext
+│       ├── features/           # preview, effects, layers, color-lab, panels, document, preferences
+│       ├── components/         # MenuBar, FlexLayoutContainer, Slider, dialogs
+│       ├── hooks/              # useDocument, useViewport, useHapticFeedback, …
 │       ├── workers/tileWorker.ts
 │       └── shared/ipc/         # canonical invoke wrappers
+├── site/                       # public download landing (GitHub Pages)
+└── docs/                       # as-built (index: docs/README.md)
 ```
 
 ### 1.3 Workspace members
@@ -108,7 +123,16 @@ members = [
     "crates/engine-io",
     "crates/engine-project",
     "crates/engine-gpu",
+    "crates/engine-registry",
+    "crates/engine-ascii",
+    "crates/dither-zip-safe",
+    "crates/dither-thumb",
+    "crates/dither-thumb-ffi",
+    "platform/windows/dither-shell",
+    "platform/windows/dither-shell-diag",
+    "platform/windows/xtask",
 ]
+exclude = ["fuzz"]
 resolver = "2"
 ```
 
@@ -120,24 +144,39 @@ graph LR
     EngIO[engine-io]
     EngColor[engine-color]
     EngTiles[engine-tiles]
+    EngRegistry[engine-registry]
+    EngAscii[engine-ascii]
     EngProject[engine-project]
     EngGpu[engine-gpu]
+    ZipSafe[dither-zip-safe]
+    Thumb[dither-thumb]
+    ThumbFfi[dither-thumb-ffi]
     SrcTauri[src-tauri / dither]
 
     EngIO --> EngCore
     EngColor --> EngCore
     EngColor --> EngIO
     EngTiles --> EngCore
+    EngRegistry --> EngTiles
+    EngAscii --> EngColor
     EngProject --> EngCore
+    EngProject --> EngRegistry
     EngProject --> EngColor
     EngProject --> EngTiles
     EngProject --> EngGpu
+    EngProject --> EngAscii
+    EngProject --> EngIO
+    Thumb --> ZipSafe
+    ThumbFfi --> Thumb
     SrcTauri --> EngCore
+    SrcTauri --> EngRegistry
     SrcTauri --> EngTiles
     SrcTauri --> EngProject
     SrcTauri --> EngColor
     SrcTauri --> EngGpu
 ```
+
+Preview host binaries (`dither-shell`, Quick Look) link `dither-thumb-ffi` and do **not** pull `engine-project`. See [PREVIEWS.md](./PREVIEWS.md).
 
 ---
 
@@ -167,26 +206,30 @@ graph TB
         get_layer_tree[get_layer_tree]
         filter_cmds[add_filter / update_filter / remove_filter]
         palette_cmds[add_palette / remove_palette / import_palette]
-        panel_cmds[undock_panel / dock_panel / show_panel / hide_panel]
+        registry_cmds[list_algorithms_for_category / get_algorithm_schema]
+        ascii_cmds[export_ascii / ascii_clipboard_text / set_ascii_preview]
+        flex_cmds[save_layout_* / update_dock_zone]
         export_image[export_image]
     end
 
     subgraph Backend ["Rust Backend (src-tauri)"]
-        AppState[AppState]
-        DocHandle[DocumentHandle — ArcSwap]
+        AppState[AppState — sessions + TileState]
+        DocHandle[DocumentHandle — ArcSwap per session]
         TileCache[TileCache — DashMap + LRU]
         SchedulerQ[Scheduler — 4 priority queues]
         ViewportSt[ViewportState — Mutex]
         PalCache[PaletteKdCache — DashMap]
         GpuCtx[GpuContext — Option Arc]
-        PanelMgr[PanelManager — Mutex]
+        FlexPersist[FlexLayoutPersistence]
         WorkerWake[WorkerWake — Condvar]
         WorkerPool[Worker Pool — N threads]
     end
 
     subgraph Engine ["Engine Crates"]
+        EngRegistry[engine-registry: AlgorithmId / FilterAlgorithm]
         EngProject[engine-project: Document, Layers, Filters, Compositor]
-        EngTiles[engine-tiles: PixelTile, Cache, Scheduler, Decompose]
+        EngAscii[engine-ascii: grid / exporters]
+        EngTiles[engine-tiles: PixelTile, Cache, Scheduler]
         EngColor[engine-color: Oklab, KD-tree, Palette, ThresholdMap]
         EngGpu[engine-gpu: Path B resident + auto-dispatch]
     end
@@ -195,12 +238,14 @@ graph TB
     MenuBar -->|invoke| create_document
     MenuBar -->|invoke| get_recent_files
     MenuBar -->|invoke| export_image
+    MenuBar -->|invoke| ascii_cmds
     EffectPanel -->|invoke| filter_cmds
+    EffectPanel -->|invoke| registry_cmds
     ColorLab -->|invoke| palette_cmds
+    AppLayout -->|invoke| flex_cmds
     TileCanvas -->|viewport change| set_viewport
     TileWorker -->|fetch| tile_proto
     tile_ready -->|push event| TileCanvas
-    panel_cmds --> PanelMgr
 
     load_image --> AppState
     create_document --> AppState
@@ -215,7 +260,7 @@ graph TB
     AppState --> ViewportSt
     AppState --> PalCache
     AppState --> GpuCtx
-    AppState --> PanelMgr
+    AppState --> FlexPersist
 
     WorkerPool -->|dequeue| SchedulerQ
     WorkerPool -->|compute| EngProject
@@ -225,6 +270,8 @@ graph TB
     WorkerPool -->|palette lookup| PalCache
 
     DocHandle --> EngProject
+    EngProject -->|registry| EngRegistry
+    EngProject -->|ascii job| EngAscii
     EngProject -->|GpuEligible| EngGpu
     TileCache --> EngTiles
     PalCache --> EngColor
@@ -263,40 +310,56 @@ graph TB
 
 ### 3.1 AppState
 
+Process-wide state. Per-document fields live on [`DocumentSession`](../src-tauri/src/document_session.rs)
+(handle, undo/history, paths). Shared tile machinery is one `TileState` for all tabs.
+
 ```rust
 pub struct AppState {
-    pub document_handle: DocumentHandle,     // Lock-free доступ к Document
-    pub tile_cache: TileCache,               // LRU; RAM budget adaptive (512 MiB–4 GiB) + evict_layer
-    pub scheduler: Scheduler,                // Priority task queues для worker pool
-    pub viewport: Mutex<ViewportState>,      // Текущий viewport для priority decisions
-    pub palette_cache: PaletteKdCache,       // Concurrent KD-tree кэш палитр
-    pub palette_lut_cache: PaletteLutCache,  // O(1) LUT nearest-color
-    pub threshold_cache: ThresholdMapCache,
-    pub error_residuals: ErrorResidualsStore,
-    pub block_representatives: BlockRepresentativeCache,
-    pub ed_frontier: EdFrontier,             // ED/Composite blocked-on-deps (wavefront)
-    /// Optional wgpu (None = CPU-only / no adapter)
-    pub gpu: Option<Arc<engine_gpu::GpuContext>>,
-    pub panel_manager: Mutex<PanelManager>,  // Preferences leftover (+ Preview stub)
-    pub undo_manager: Mutex<UndoManager>,    // Track N: snapshot Arc<Document> stacks, max_depth=50
-    pub saved_snapshot: Mutex<Option<Arc<Document>>>, // Track P: Saved_Mark; dirty = !ptr_eq(live, mark)
-    pub worker_wake: WorkerWake,             // Condvar; notify_one on enqueue
-    // … selection, dock_affinity, float-drag hooks …
+    pub sessions: Mutex<HashMap<u32, Arc<DocumentSession>>>,
+    pub next_doc_id: AtomicU32,
+    pub active_id: Mutex<Option<u32>>,
+    pub tiles: TileState,            // TileCache, Scheduler, palette/LUT/threshold,
+                                     // residuals, BRC, EdFrontier, FullDocumentCache
+    pub worker_wake: WorkerWake,
+    pub gpu: Option<Arc<GpuContext>>,
+    pub gpu_resident: Option<Arc<GpuTileCache>>,
+    pub gpu_executor: Option<Mutex<GpuExecutor>>,
+    pub app_handle: Mutex<Option<AppHandle>>,
+    pub ui: UiState,                 // viewport + selection
+    pub dock_affinity: Mutex<DockAffinityController>,
+    pub preview_pass_inflight: AtomicUsize,
+    pub pending_preview_refresh: Mutex<Option<PendingPreviewRefresh>>,
+    pub ascii_preview: AtomicBool,   // Image|ASCII preview toggle (default true)
+    pub full_document_busy: AtomicUsize, // “Rendering…” for ASCII / Riemersma
+    pub flexlayout_persistence: Mutex<FlexLayoutPersistence>,
+    pub flexlayout_left / right / center: Mutex<FlexLayoutPersistence>,
+    pub ram_budget_source: RamBudgetSource,
+    pub journal: Mutex<JournalRuntime>,
+}
+
+pub struct DocumentSession {
+    pub id: DocumentId,
+    pub recovery_id: Uuid,
+    pub document_handle: DocumentHandle,
+    pub history: HistoryState,       // undo_manager + saved_snapshot (dirty = !ptr_eq)
+    pub project_path / source_path: Mutex<Option<PathBuf>>,
+    // io_inflight — close blocked while save/export assemble runs
 }
 ```
 
-**Инициализация** (в `main.rs`):
-- Создаётся пустой `Document` (800×600)
+**Инициализация** (в `main.rs` / `AppState::empty_process`):
+- Пустой session registry (`active_id = None` → welcome)
 - `TileCache` с адаптивным RAM-бюджетом (25% system RAM, clamp 512 MiB–4 GiB; `DITHER_RAM_BUDGET_MIB`)
 - `Scheduler::new()` — пустые очереди задач
-- `ViewportState::default()` — zoom 1.0, pan (0,0)
-- Palette / threshold / residuals caches — empty
-- **GPU:** `GpuContext::try_new_blocking()` unless `DITHER_FORCE_CPU=1`; on failure → `gpu = None` + one warn (app continues CPU-only). Warm download + A2 warmup on by default; cold GPU compute only if `DITHER_GPU_PREVIEW=1`.
-- `PanelManager` — загрузка persisted state или defaults
+- Palette / threshold / residuals / full-document caches — empty
+- **GPU:** `GpuContext::try_new_blocking()` unless `DITHER_FORCE_CPU=1`; on failure → `gpu = None` + one warn (app continues CPU-only). Warm download + A2 warmup on by default; cold GPU compute only if `DITHER_GPU_PREVIEW=1`. Optional `GpuTileCache` + `GpuExecutor`.
+- FlexLayout persistence (left / right / center) + crash-recovery journal
 - State оборачивается в `Arc<AppState>` для sharing с worker threads
 - Worker pool spawn: N = `available_parallelism` или 4
 - `WorkerWake` Condvar: enqueue → `notify_one`; idle worker → `wait()` (не sleep 1ms)
 - Workers call `apply_filter_to_tile_with_caches(..., state.gpu.as_deref())`
+
+Подробнее про вкладки: [multi-doc-tabs.md](./multi-doc-tabs.md).
 
 ### 3.2 DocumentHandle
 
@@ -330,7 +393,7 @@ pub struct DocumentHandle {
 
 ### 3.2.2 Dirty flag (Track P)
 
-`saved_snapshot` is the live `Arc<Document>` at the last clean point (successful save, or `clear_history` after open / load / create). Dirty is `!Arc::ptr_eq(live, saved_mark)` — not `Document.revision`. Empty / welcome (no layers) is not dirty. Frontend title: `{• }{basename | Untitled} — Dither Engine`. One Unsaved_Guard (Save / Don’t Save / Cancel) on main-window close and File New/Open. GPU: auto-dispatch (warm download + A2); cold compute `DITHER_GPU_PREVIEW=1`; force CPU `DITHER_FORCE_CPU=1`. In-app updates start at **0.2.0** (`tauri-plugin-updater` + GitHub `latest.json`); **0.1.0 cannot self-update** — install the 0.2.0 DMG once. Minisign pubkey is in `tauri.conf.json`; the private key is a CI secret, never git. Apple notarization is wired in CI when Apple secrets are present; without them Gatekeeper may warn on first DMG open (closed-alpha OK). See [RELEASE.md](./RELEASE.md). File → Import Image as Layer places at origin, clips, no scale.
+`saved_snapshot` is the live `Arc<Document>` at the last clean point (successful save, or `clear_history` after open / load / create). Dirty is `!Arc::ptr_eq(live, saved_mark)` — not `Document.revision`. Empty / welcome (no layers) is not dirty. Frontend title: `{• }{basename | Untitled} — Dither Engine`. One Unsaved_Guard (Save / Don’t Save / Cancel) on main-window close and File New/Open. GPU: auto-dispatch (warm download + A2); cold compute `DITHER_GPU_PREVIEW=1`; force CPU `DITHER_FORCE_CPU=1`. In-app updates ship from **0.2.0** onward (`tauri-plugin-updater` + GitHub `latest.json`); **0.1.0 cannot self-update** — install a ≥0.2.0 build once. Current beta tags are **1.0.x-beta**. Minisign pubkey is in `tauri.conf.json`; the private key is a CI secret, never git. Apple notarization is wired in CI when Apple secrets are present; without them Gatekeeper may warn on first DMG open (beta OK). See [RELEASE.md](./RELEASE.md). macOS slider haptics: [haptics-as-built.md](./haptics-as-built.md). File → Import Image as Layer places at origin, clips, no scale.
 
 ### 3.3 Tile Protocol Handler (tile://)
 
@@ -451,7 +514,8 @@ loop {
 | `generate_palette` | Async MedianCut/KMeans from layer tiles → new Palette |
 | `list_builtin_palettes` / `import_builtin_palette` | Built-in retro presets → Document palette |
 | `generate_ramp_palette` / `generate_harmony_palette` / `colors_to_oklab` / `get_palette_oklab` | Color Lab & Oklab conversion utilities |
-| `undock_panel` / `dock_panel` / `show_panel` / `hide_panel` | Leftover Preferences / PanelManager stubs |
+| `export_ascii` / `ascii_clipboard_text` / `set_ascii_preview` / `get_ascii_preview` | ASCII export, clipboard, Image\|ASCII preview |
+| `list_algorithms_for_category` / `get_algorithm_schema` | AlgorithmRegistry surface for Effect UI |
 | `save_layout_left` / `save_layout_right` / `save_layout_center` / `load_layout_*` | FlexLayout persist (per side + center Preview) |
 | `update_dock_zone` / `begin_float_drag` / `complete_float_drag` / `cancel_float_drag` | Affinity hit-test + JS redock complete |
 
@@ -665,28 +729,35 @@ pub fn composite_tile(root: &[LayerNode], coord: TileCoord, cache: &TileCache)
 ```rust
 pub struct FilterInstance {
     pub id: FilterInstanceId,     // UUID v4
-    pub kind: FilterKind,         // Curves | Levels | Dither | PaletteQuantize | Glitch | Glow | Crt | Placeholder
+    pub kind: FilterKind,         // legacy serde alias (incl. Ascii | Adjust | …)
     pub params: FilterParams,
     pub enabled: bool,
     pub requires_full_row: bool,  // ED → row-major dependency enforcement
     pub opacity: f32,             // Track I: default 1.0; Full_Then_Blend
     pub blend_mode: BlendMode,    // Track I: default Normal
+    pub algorithm_id: Option<String>, // stable AlgorithmId when known
+    pub schema_version: Option<u32>,
 }
 ```
+
+Новые эффекты регистрируются в `engine-registry` (`AlgorithmId`); `kind` /
+`DitherModeV2` остаются on-disk aliases. Чеклист: [HOW_TO_ADD_ALGORITHM.md](./HOW_TO_ADD_ALGORITHM.md).
 
 #### FilterParams (все варианты)
 
 ```rust
 pub enum FilterParams {
     Curves { curve: Vec<(f32, f32)>, channel: CurveChannel },
-    Levels { input_black, input_white, gamma, output_black, output_white },
+    Levels { input_black, input_white, gamma, output_black, output_white, … },
     Dither { mode: DitherMode, color_depth: u8 },           // Legacy V1 → From into V2
     DitherV2(DitherParamsV2),
     PaletteQuantize { palette_id: PaletteId, diffusion: Option<DiffusionKernel> },
     Glitch { glitch_type: GlitchType, intensity: f32, seed: u64 },
     Glow { radius: f32, intensity: f32, threshold: f32 },
     Crt { period: f32, strength: f32, mask_strength: f32 },
-    Placeholder(String),
+    Adjust { /* brightness/contrast/… */ },
+    Ascii(AsciiParams),             // full-document text-art — see ascii-as-built.md
+    Placeholder(PlaceholderParams),
 }
 ```
 
@@ -845,7 +916,29 @@ pub fn resolve_user_path(raw: &str, allowed_ext: &[&str]) -> Result<PathBuf, San
 
 ### 4.6 engine-core (Phase 0 stub)
 
-Базовые типы-заглушки. В текущей реализации **не используются** — реальные типы живут в `engine-project/src/types.rs`. Сохранён для обратной совместимости workspace.
+Базовые типы-заглушки. В текущей реализации **не используются** на hot path — реальные типы живут в `engine-project/src/types.rs`. Сохранён для обратной совместимости workspace.
+
+### 4.7 engine-registry
+
+Трейт `FilterAlgorithm`, типы `AlgorithmId`, `ParamField`, `EffectCategory`,
+`GpuEligibility`, runtime `AlgorithmRegistry`. Не зависит от `engine-project`
+(чтобы не было цикла); `FilterContext` живёт в `engine-project`.
+
+- Стабильные ID: `ALGORITHM_ID_REGISTRY.txt` + CI `algorithm_id_registry_matches_txt`
+- UI settings: schema-driven `ParamField` → `AlgorithmSettingsPanel`
+- Чеклист добавления: [HOW_TO_ADD_ALGORITHM.md](./HOW_TO_ADD_ALGORITHM.md)
+
+### 4.8 engine-ascii
+
+CPU text-art pipeline (fonts / atlas / match / grid / exporters). **Не** зависит от
+`engine-project`. Интеграция: `FilterParams::Ascii`, `algorithms/ascii.rs`,
+`filters/ascii_job.rs` + full-document ensure. As-built: [ascii-as-built.md](./ascii-as-built.md).
+
+### 4.9 Preview crates (`dither-zip-safe` / `dither-thumb` / `dither-thumb-ffi`)
+
+Узкий trust boundary для OS-превью: читают только `mimetype` + `thumbnail.png`.
+Хосты: macOS Quick Look, Windows `dither_shell.dll`. As-built: [PREVIEWS.md](./PREVIEWS.md),
+угрозы: [SECURITY.md](./SECURITY.md).
 
 ---
 
@@ -860,10 +953,15 @@ pub fn apply_filter_to_tile(tile: &PixelTile, layer: &Layer, coord: TileCoord)
 
 1. Копирует source tile → result (`PixelTile::new` + `copy_from_slice`, ~1.03 MB)
 2. Итерирует `layer.filters` в порядке добавления
-3. Для каждого enabled: `apply_filter_with_blend` → `apply_single_filter` на 100%, затем
+3. Для каждого enabled: `apply_filter_with_blend` → `apply_single_filter_into` на 100%, затем
    если `opacity < 1` или `blend_mode != Normal` — ещё один тайл + `blend_tile`
 4. Disabled пропускаются
 5. Optional `gpu` — Path B graph / eligibility; routing is auto-dispatch, not a global toggle
+
+**Dispatch (as-built):** `resolve_algorithm_id(filter)` → `builtin_registry().get_by_str`
+→ `FilterAlgorithm::apply` in-place. Legacy fallback: `FilterParams::Levels` /
+старый `Dither` / `Placeholder` без registry id. ASCII и Riemersma — full-document
+jobs, не progressive tile path.
 
 Вызывается из: `compute_processed_tile` (worker, passes `state.gpu`) и export paths (`gpu = None` OK).
 
@@ -874,7 +972,6 @@ pub fn apply_filter_to_tile_with_caches(
     document, residuals_store, block_cache, gpu,
 )
 ```
-
 ### 5.2 Curves
 
 - Catmull-Rom spline интерполяция по control points [0.0–1.0]
@@ -1202,7 +1299,8 @@ Canonical: [FLEXLAYOUT_DOCKING.md](./FLEXLAYOUT_DOCKING.md).
 | WorkerWake | `Mutex<bool> + Condvar` | Idle wait / enqueue notify |
 | ErrorResiduals | `DashMap<(LayerId, TileCoord), ErrorResiduals>` | Per-tile error buffers |
 | Generation counters | `AtomicU64` / `AtomicBool` | Lock-free increments/flags |
-| PanelManager | `Mutex<PanelManager>` | Short lock (panel state updates) |
+| Sessions map | `Mutex<HashMap<u32, Arc<DocumentSession>>>` | Short lock (tab open/close/activate) |
+| FlexLayout persistence | `Mutex<FlexLayoutPersistence>` × sides | Short lock (layout save/load) |
 | AppState sharing | `Arc<AppState>` | Shared between main + N workers |
 
 ### 8.3 Паттерны безопасности
@@ -1657,13 +1755,18 @@ Halftone/CRT ≤ 1/255), debounce undo = 100ms в `useEffectLayer`.
 | No mask editing UI | `MaskRef` + `apply_mask` есть, UI нет |
 | Luminance simplified | `CurveChannel::Luminance` ≠ Oklab L* |
 | Paint-aware undo | Snapshot структуры; пиксельный paint в модели нет |
-| Apple notarization | Wired in CI when Apple secrets present; without them Gatekeeper warn on first DMG (closed alpha OK) — see [RELEASE.md](./RELEASE.md) |
+| Apple notarization | Wired in CI when Apple secrets present; without them Gatekeeper warn on first DMG (beta OK) — see [RELEASE.md](./RELEASE.md) |
+| ASCII GPU | CPU path shipped; GPU stages не default ([ascii-as-built.md](./ascii-as-built.md)) |
 
 ### 14.2 Будущие улучшения
 
 - [x] Pyramid display (level > 0) — box-filter of L0 Composite; filters always L0
 - [x] In-place / ping-pong `PixelTile` в filter stack (peak live temps ≤2 Normal / ≤3 Track I; park)
 - [x] Path B resident + auto-dispatch A1–A4; A5 export NO-GO
+- [x] `engine-registry` + `AlgorithmId` for built-ins
+- [x] ASCII CPU effect + export/clipboard
+- [x] OS previews (Quick Look / Explorer) via `dither-thumb`
+- [x] macOS slider haptics (`tauri-macos-haptics`)
 - [ ] A8 f16/sparse (occupancy ~19% — не приоритет)
 - [ ] Track C phases 2–3 (VRAM adaptive / disk scratch) — Phase 1 RAM adaptive in tree
 - [ ] SIMD Bayer / Oklab; LUT для Curves
@@ -1672,9 +1775,9 @@ Halftone/CRT ≤ 1/255), debounce undo = 100ms в `useEffectLayer`.
 - [x] WorkerWake Condvar (не sleep 1ms)
 - [x] PaletteLut3D 64³ (Track B1)
 - [x] `engine-gpu` Bayer/Halftone/CRT (Track D); ED CPU-only
+- [ ] ASCII GPU + optional `CacheStage::Ascii`
 - [ ] Video / ICC / batch export
 - [ ] Proper Luminance via Oklab L*
-
 ---
 
 ## Приложение A: TypeScript IPC Interfaces
@@ -1701,7 +1804,10 @@ export interface FilterInfo {
   opacity: number;           // Track I, default 1
   blend_mode: string;
 }
-export type FilterKind = 'Dither' | 'DitherV2' | 'Curves' | 'Levels' | 'Glitch' | 'PaletteQuantize' | 'Glow' | 'Crt';
+export type FilterKind =
+  | 'Dither' | 'DitherV2' | 'Curves' | 'Levels' | 'Glitch'
+  | 'PaletteQuantize' | 'Glow' | 'Crt' | 'Adjust' | 'Ascii' | 'Placeholder';
+// Prefer AlgorithmId from registry IPC for new UI; FilterKind remains on-disk alias.
 
 // Viewport
 export interface ViewportState {
@@ -1799,5 +1905,5 @@ cargo bench -p engine-project
 
 ---
 
-**Last Updated:** 5 September 2026
-**Version:** 0.2.0
+**Last Updated:** 30 September 2026
+**Version:** 1.0.5-beta

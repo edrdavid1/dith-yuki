@@ -8,7 +8,7 @@
 
 ## 1. Overview & Core Architecture
 
-Dither Yuki 0.2.0 features the **Path B Resident GPU Executor** (`crates/engine-gpu`). Unlike legacy per-tile GPU dispatch (Path A v1, which uploaded and downloaded tile data over the PCIe bus on every individual filter pass), Path B maintains intermediate tile data **GPU-resident** in VRAM across the entire filter graph.
+Dither Yuki **1.0.x** features the **Path B Resident GPU Executor** (`crates/engine-gpu`). Unlike legacy per-tile GPU dispatch (Path A v1, which uploaded and downloaded tile data over the PCIe bus on every individual filter pass), Path B maintains intermediate tile data **GPU-resident** in VRAM across the entire filter graph.
 
 ```
 CPU TileCache (RAM) ──(Upload on Miss)──► GpuTileCache (VRAM Array)
@@ -74,7 +74,7 @@ Performance was evaluated using an industrial statistical harness ($n=20$, relea
 
 ### R1 Rollout Verdict: `OPT_IN_ONLY`
 
-GPU acceleration is **NOT default-on** in Dither Yuki 0.2.0 for the following architectural reasons:
+GPU acceleration is **NOT default-on** in Dither Yuki **1.0.x** for the following architectural reasons:
 
 1. **Cold Path Penalty (E3):** First-touch navigation and panning into uncached tiles is ~3× slower on GPU than CPU (~30.9 ms vs ~10.4 ms).
 2. **ED Checkpoint Tax:** Any document pipeline containing Error Diffusion (a primary feature of Dither Yuki) requires falling back to CPU, eliminating GPU gains.
