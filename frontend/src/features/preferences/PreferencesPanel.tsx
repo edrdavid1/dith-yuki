@@ -44,6 +44,8 @@ export default function PreferencesPanel() {
     setHideRecentList,
     appIconId,
     setAppIconId,
+    hapticFeedback,
+    setHapticFeedback,
   } = useShell();
   const { bindings, capturing, setCapturing, setBinding, resetDefaults } = useShortcuts();
   const showAppIcon = isMacOS();
@@ -123,6 +125,37 @@ export default function PreferencesPanel() {
         </div>
       </details>
 
+      <details className={cn('preferences-section')} open>
+        <summary id="prefs-interface-heading" className={cn('preferences-section-title')}>
+          Interface
+        </summary>
+        <div className={cn('param-group')}>
+          <label className={cn('preferences-checkbox-row')}>
+            <input
+              type="checkbox"
+              checked={hapticFeedback}
+              onChange={(e) => setHapticFeedback(e.target.checked)}
+            />
+            <span>Tactile feedback on sliders</span>
+          </label>
+          <p className={cn('preferences-hint')}>
+            {isMacOS()
+              ? 'Uses the Force Touch trackpad Taptic Engine while dragging sliders. Has no effect with a mouse or when system haptic feedback is off.'
+              : 'macOS only (Force Touch trackpad). Has no effect on this platform.'}
+          </p>
+        </div>
+        <div className={cn('param-group', 'preferences-label-spaced')}>
+          <label className={cn('preferences-checkbox-row')}>
+            <input
+              type="checkbox"
+              checked={hideRecentList}
+              onChange={(e) => setHideRecentList(e.target.checked)}
+            />
+            <span>Hide recent files list on welcome screen</span>
+          </label>
+        </div>
+      </details>
+
       <details className={cn('preferences-section')}>
         <summary id="prefs-theme-heading" className={cn('preferences-section-title')}>
           Theme
@@ -178,17 +211,6 @@ export default function PreferencesPanel() {
               />
             );
           })}
-        </div>
-
-        <div className={cn('param-group', 'preferences-label-spaced')}>
-          <label className={cn('preferences-checkbox-row')}>
-            <input
-              type="checkbox"
-              checked={hideRecentList}
-              onChange={(e) => setHideRecentList(e.target.checked)}
-            />
-            <span>Hide recent files list on welcome screen</span>
-          </label>
         </div>
 
         {showAppIcon && iconVariants.length > 0 ? (

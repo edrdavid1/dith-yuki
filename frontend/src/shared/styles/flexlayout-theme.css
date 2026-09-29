@@ -267,6 +267,7 @@
   z-index: 6 !important;
   user-select: none !important;
   -webkit-user-select: none !important;
+  -webkit-touch-callout: none !important;
 }
 
 /* Pull lower stack up by one border so frames meet; padding = drag hit band. */
@@ -364,6 +365,39 @@
 
 .flexlayout__tab_floating_inner {
   display: none !important;
+}
+
+/*
+ * Floating-only tabsets are collapsed with inline height: 0px (see
+ * rebalanceFloatingTabsets). FlexLayout still mounts an empty tabstrip whose
+ * borders would leave a residual line under the remaining panel's title.
+ */
+.flexlayout__tabset[style*='height: 0px'],
+.flexlayout__tabset[style*='height:0px'] {
+  visibility: hidden !important;
+  border: none !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
+}
+
+.flexlayout__tabset[style*='height: 0px'] .flexlayout__tabset_tabbar_outer,
+.flexlayout__tabset[style*='height:0px'] .flexlayout__tabset_tabbar_outer,
+.flexlayout__tabset[style*='height: 0px'] .flexlayout__tabset_content,
+.flexlayout__tabset[style*='height:0px'] .flexlayout__tabset_content {
+  display: none !important;
+  border: none !important;
+  height: 0 !important;
+  min-height: 0 !important;
+}
+
+/* Orphan absolute tab body for a height-0 floating host. */
+.flexlayout__tab[style*='height: 0px'],
+.flexlayout__tab[style*='height:0px'],
+.flexlayout__tab[style*='height: 1px'],
+.flexlayout__tab[style*='height:1px'] {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }
 
 /* ── Overflow popup = WindowTitlebar menu look ─────────────────────────────── */

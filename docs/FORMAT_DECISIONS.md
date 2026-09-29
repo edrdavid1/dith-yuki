@@ -5,6 +5,36 @@ Journal of findings and choices while implementing
 
 ---
 
+## 2026-09-29 — Clipboard fix (SPEC_dither_clipboard_fix)
+
+Source: `.local-doc/SPEC_dither_clipboard_fix.md`.
+
+### Diagnosis (§1) — code evidence
+
+| Id | Symptom | Result |
+|----|---------|--------|
+| D1 | Global keydown steals Cmd/Ctrl+C/V/X | **Not confirmed.** `useAppShortcuts` / `bindings` have no C/V/X chords. `suppressBrowserChrome` only blocks Ctrl+Shift+C (inspect). Editable check already exists (`isEditableKeyboardTarget`). |
+| D2 | Unconditional preventDefault on copy/cut/paste | **Not confirmed.** No `copy`/`cut`/`paste` document listeners. |
+| D3 | Native Edit menu lacks / strips system Copy–Paste | **Confirmed (macOS).** `native_menu.rs` Edit submenu has custom Undo/Redo + “Copy ASCII *” only — no `PredefinedMenuItem::{cut,copy,paste,select_all}`. `strip_unwanted_edit_items` + `observe_edit_menu_for_system_items` remove every non-Undo/Redo item (including AppKit-injected Copy/Paste/Cut and our ASCII items) on menu open. On macOS, WKWebView text fields rely on those Edit roles for Cmd+C/V/X. Windows uses HTML `MenuBar` (no native Edit strip) — D3 N/A there. |
+| D4 | Inherited `user-select: none` blocks field selection | **Partially confirmed.** No global `body { user-select: none }`, but panel chrome (Color Lab, Layers row, Preview, titlebars, etc.) sets `user-select: none` on ancestors; CSS inheritance can block selection in nested `input`/`textarea` unless fields opt back into `text`. |
+| D5 | `clipboard-manager` missing | **Confirmed.** Not in `Cargo.toml`, not `.plugin(...)` in `main.rs`, no `@tauri-apps/plugin-clipboard-manager` in `frontend/package.json`. |
+| D6 | No clipboard ACL | **Confirmed.** `capabilities/default.json` has no `clipboard-manager:*` permissions. |
+| D7 | Wrong window capability scope | **N/A** once permissions land on `default` (`windows` already includes `main`, `panel-*`, `flex-popout-*`, `*`). |
+| D8 | Swallowed clipboard errors | **Not confirmed for silent swallow.** `copyAsciiTextFn` uses try/catch and surfaces `notification`. Still used `navigator.clipboard.writeText` (webview API), not the Tauri plugin — failures are ACL/permission class once on the plugin path. |
+
+**Live DevTools ACL string:** not captured in this pass (no interactive Copy ASCII run against a built app). Code path + missing plugin/ACL are sufficient to treat programmatic Copy ASCII as D5+D6; fix switches to `writeText` from the plugin with `clipboard-manager:allow-write-text` only (sole consumer is plain-text write).
+
+**§7 product answers (from code, not owner):** no Cmd/Ctrl+C/V/X app shortcuts; no `readImage`/`writeImage` callers — text write only. Copyable non-input UI list left as open product question; added `.copyable-text` hook + field opt-in CSS only.
+
+### Fix applied
+
+- macOS Edit: Predefined Cut/Copy/Paste/Select All; strip allowlist keeps those (by action and/or title), separators, Undo/Redo, Copy ASCII *.
+- Plugin + capability `allow-write-text`; frontend `copyTextToClipboard` → ASCII copy.
+- `reset.css`: `input`/`textarea`/`[contenteditable]`/`.copyable-text` → `user-select: text`.
+- `suppressBrowserChrome` reuses shared `isEditableKeyboardTarget`.
+
+---
+
 ## 2026-09-27 — Ship macOS Finder content thumbnails
 
 Product feedback: Space (Quick Look Preview) worked, but Finder icons stayed

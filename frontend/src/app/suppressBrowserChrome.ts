@@ -6,12 +6,7 @@
  * preventDefault themselves; we only block the engine's default menu + keys.
  */
 
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  const tag = target.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
-}
+import { isEditableKeyboardTarget } from '../features/shortcuts/bindings';
 
 function isBrowserReloadKey(e: KeyboardEvent): boolean {
   const key = e.key;
@@ -45,7 +40,7 @@ function onKeyDown(e: KeyboardEvent) {
     e.stopPropagation();
     return;
   }
-  if (isBrowserReloadKey(e) && !isEditableTarget(e.target)) {
+  if (isBrowserReloadKey(e) && !isEditableKeyboardTarget(e.target)) {
     e.preventDefault();
     e.stopPropagation();
   }
@@ -53,7 +48,7 @@ function onKeyDown(e: KeyboardEvent) {
 
 function onContextMenu(e: MouseEvent) {
   // Allow OS edit menus in fields; block WebView Reload / Inspect elsewhere.
-  if (isEditableTarget(e.target)) return;
+  if (isEditableKeyboardTarget(e.target)) return;
   e.preventDefault();
 }
 

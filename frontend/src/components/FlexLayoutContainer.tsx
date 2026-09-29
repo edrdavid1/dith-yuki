@@ -21,6 +21,7 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   listDockedFlexComponents,
   normalizeSideToVerticalStack,
+  rebalanceFloatingTabsets,
   useLayoutContext,
   useSideLayout,
 } from '../contexts/LayoutContext';
@@ -211,31 +212,23 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
   useEffect(() => {
     const root = columnRef.current;
     if (!root) return;
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (!t?.closest('.flexlayout__splitter, .flexlayout__splitter_extra')) return;
-      const doc = root.ownerDocument;
-      const prevUserSelect = doc.body.style.userSelect;
-      doc.body.style.userSelect = 'none';
-      const onSelectStart = (ev: Event) => ev.preventDefault();
-      const onUp = () => {
-        doc.body.style.userSelect = prevUserSelect;
-        doc.removeEventListener('selectstart', onSelectStart);
-        doc.removeEventListener('mouseup', onUp);
-      };
-      doc.addEventListener('selectstart', onSelectStart);
-      doc.addEventListener('mouseup', onUp);
-    };
-    root.addEventListener('mousedown', onDown, true);
-    return () => root.removeEventListener('mousedown', onDown, true);
-  }, [model]);
 
-  useEffect(() => {
-    const root = columnRef.current;
-    if (!root) return;
+    // macOS Force Touch on the splitter would open Look Up instead of dragging.
+    const blockForce = (e: Event) => {
+      const t = e.target as HTMLElement | null;
+      if (!t?.closest('.flexlayout__splitter, .flexlayout__splitter_extra')) return;
+      e.preventDefault();
+    };
+
     const onDown = (e: MouseEvent) => {
       const t = e.target as HTMLElement | null;
       if (!t?.closest('.flexlayout__splitter, .flexlayout__splitter_extra')) return;
+      // Primary button only — ignore right-click / secondary force-click.
+      if (e.button !== 0) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       const doc = root.ownerDocument;
       const prevUserSelect = doc.body.style.userSelect;
       const prevWebkit = (doc.body.style as CSSStyleDeclaration & { webkitUserSelect?: string }).webkitUserSelect;
@@ -252,8 +245,13 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
       doc.addEventListener('selectstart', onSelectStart);
       doc.addEventListener('mouseup', onUp);
     };
+
+    root.addEventListener('webkitmouseforcewillbegin', blockForce, true);
     root.addEventListener('mousedown', onDown, true);
-    return () => root.removeEventListener('mousedown', onDown, true);
+    return () => {
+      root.removeEventListener('webkitmouseforcewillbegin', blockForce, true);
+      root.removeEventListener('mousedown', onDown, true);
+    };
   }, [model]);
 
   const saveCommand =
@@ -297,6 +295,14 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
         try {
           // Keep Color Lab–style vertical stack if a drop somehow created peer tabs.
           normalizeSideToVerticalStack(newModel);
+          // Float/unfloat from any path (menu, drag, FL) must park ghost hosts.
+          if (
+            action.type === Actions.FLOAT_TAB ||
+            action.type === Actions.UNFLOAT_TAB ||
+            action.type === Actions.MOVE_NODE
+          ) {
+            rebalanceFloatingTabsets(newModel);
+          }
         } finally {
           normalizingRef.current = false;
         }
