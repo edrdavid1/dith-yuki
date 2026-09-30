@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeWheelDelta } from '../useViewport';
+import {
+  clampWheelDelta,
+  MAX_DELTA_PER_EVENT,
+  normalizeWheelDelta,
+} from '../useViewport';
 
 function wheel(partial: Partial<WheelEvent>): WheelEvent {
   return {
@@ -31,6 +35,18 @@ describe('normalizeWheelDelta', () => {
       normalizeWheelDelta(
         wheel({ deltaX: 0, deltaY: 1, deltaMode: WheelEvent.DOM_DELTA_PAGE }),
       ),
-    ).toEqual({ dx: 0, dy: 400 });
+    ).toEqual({ dx: 0, dy: 800 });
+  });
+});
+
+describe('clampWheelDelta', () => {
+  it('passes through values within the per-event cap', () => {
+    expect(clampWheelDelta(40)).toBe(40);
+    expect(clampWheelDelta(-40)).toBe(-40);
+  });
+
+  it('caps oversized deltas from a single wheel event', () => {
+    expect(clampWheelDelta(500)).toBe(MAX_DELTA_PER_EVENT);
+    expect(clampWheelDelta(-500)).toBe(-MAX_DELTA_PER_EVENT);
   });
 });
