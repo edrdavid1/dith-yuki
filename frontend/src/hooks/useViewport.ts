@@ -20,13 +20,26 @@ function clamp(value: number, min: number, max: number): number {
 
 /** Convert wheel deltas to CSS pixels (WebView2 may send DOM_DELTA_LINE). */
 export function normalizeWheelDelta(e: WheelEvent): { dx: number; dy: number } {
+  const LINE_HEIGHT_PX = 16;
+  const PAGE_HEIGHT_PX = 800;
+
   let scale = 1;
   if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) {
-    scale = 16;
+    scale = LINE_HEIGHT_PX;
   } else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
-    scale = 400;
+    scale = PAGE_HEIGHT_PX;
   }
   return { dx: e.deltaX * scale, dy: e.deltaY * scale };
+}
+
+/**
+ * Cap one wheel event so WebView2 line/page spikes (or driver glitches)
+ * cannot throw the viewport in a single jump. Tunable starting point.
+ */
+export const MAX_DELTA_PER_EVENT = 120;
+
+export function clampWheelDelta(value: number): number {
+  return Math.max(-MAX_DELTA_PER_EVENT, Math.min(MAX_DELTA_PER_EVENT, value));
 }
 
 const IPC_DEBOUNCE_MS = 16;
@@ -257,7 +270,9 @@ export function useViewport(docWidth: number, docHeight: number): UseViewportRet
 
   const handleWheel = useCallback(
     (e: WheelEvent) => {
-      let { dx, dy } = normalizeWheelDelta(e);
+      const raw = normalizeWheelDelta(e);
+      let dx = clampWheelDelta(raw.dx);
+      let dy = clampWheelDelta(raw.dy);
 
       // macOS pinch-to-zoom is delivered as wheel + ctrlKey. Mouse Ctrl+wheel
       // zooms the same way. Two-finger trackpad scroll (no ctrl) pans, like
