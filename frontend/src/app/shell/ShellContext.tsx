@@ -52,6 +52,8 @@ export type ShellState = {
   appIconId: string;
   /** macOS slider / UI tactile feedback (Taptic Engine). Default on. */
   hapticFeedback: boolean;
+  /** Cursor-following UI tooltips. Default on. */
+  tooltipsEnabled: boolean;
   setSidebarWidth: (side: DockSide, width: number | ((prev: number) => number)) => void;
   setSidebarCollapsed: (side: DockSide, collapsed: boolean) => void;
   resetSidebarWidths: () => void;
@@ -66,6 +68,7 @@ export type ShellState = {
   setHideRecentList: (hidden: boolean) => void;
   setAppIconId: (id: string) => void;
   setHapticFeedback: (enabled: boolean) => void;
+  setTooltipsEnabled: (enabled: boolean) => void;
 };
 
 /** v2 persisted shape (additive split ratios). */
@@ -83,6 +86,7 @@ export type PersistedShellPrefsV2 = {
   hideRecentList: boolean;
   appIconId: string;
   hapticFeedback: boolean;
+  tooltipsEnabled: boolean;
 };
 
 /** Legacy v1 keys (exclusive single sidebar). */
@@ -97,12 +101,14 @@ type PersistedShellPrefsV1 = {
   hideRecentList?: boolean;
   appIconId?: string;
   hapticFeedback?: boolean;
+  tooltipsEnabled?: boolean;
 };
 
 const DEFAULT_AUTO_EXTRACT_PALETTES = true;
 const DEFAULT_HIDE_RECENT_LIST = false;
 const DEFAULT_APP_ICON_ID = 'default';
 const DEFAULT_HAPTIC_FEEDBACK = true;
+const DEFAULT_TOOLTIPS_ENABLED = true;
 const DEFAULT_SIDEBAR_WIDTH = 332;
 const DEFAULT_SPLIT_RATIO = 0.5;
 
@@ -167,6 +173,7 @@ function defaultPrefs(): PersistedShellPrefsV2 {
     hideRecentList: DEFAULT_HIDE_RECENT_LIST,
     appIconId: DEFAULT_APP_ICON_ID,
     hapticFeedback: DEFAULT_HAPTIC_FEEDBACK,
+    tooltipsEnabled: DEFAULT_TOOLTIPS_ENABLED,
   };
 }
 
@@ -228,6 +235,10 @@ export function migrateShellPrefs(raw: unknown): PersistedShellPrefsV2 {
         typeof obj.hapticFeedback === 'boolean'
           ? obj.hapticFeedback
           : DEFAULT_HAPTIC_FEEDBACK,
+      tooltipsEnabled:
+        typeof obj.tooltipsEnabled === 'boolean'
+          ? obj.tooltipsEnabled
+          : DEFAULT_TOOLTIPS_ENABLED,
     };
   }
 
@@ -261,6 +272,9 @@ export function migrateShellPrefs(raw: unknown): PersistedShellPrefsV2 {
   }
   if (typeof v1.hapticFeedback === 'boolean') {
     prefs.hapticFeedback = v1.hapticFeedback;
+  }
+  if (typeof v1.tooltipsEnabled === 'boolean') {
+    prefs.tooltipsEnabled = v1.tooltipsEnabled;
   }
   return prefs;
 }
@@ -312,6 +326,7 @@ function applyPrefsPatch(
     setHideRecentList: (hidden: boolean) => void;
     setAppIconId: (id: string) => void;
     setHapticFeedback: (enabled: boolean) => void;
+    setTooltipsEnabled: (enabled: boolean) => void;
   }
 ) {
   setters.setLeftSidebar({ ...parsed.leftSidebar });
@@ -324,6 +339,7 @@ function applyPrefsPatch(
   setters.setHideRecentList(parsed.hideRecentList);
   setters.setAppIconId(parsed.appIconId);
   setters.setHapticFeedback(parsed.hapticFeedback);
+  setters.setTooltipsEnabled(parsed.tooltipsEnabled);
 }
 
 /**
@@ -346,6 +362,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
   const [hideRecentList, setHideRecentListState] = useState(initial.hideRecentList);
   const [appIconId, setAppIconIdState] = useState(initial.appIconId);
   const [hapticFeedback, setHapticFeedbackState] = useState(initial.hapticFeedback);
+  const [tooltipsEnabled, setTooltipsEnabledState] = useState(initial.tooltipsEnabled);
 
   const prefsRef = useRef<PersistedShellPrefsV2>({
     version: 2,
@@ -360,6 +377,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     hideRecentList,
     appIconId,
     hapticFeedback,
+    tooltipsEnabled,
   });
   prefsRef.current = {
     version: 2,
@@ -374,6 +392,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     hideRecentList,
     appIconId,
     hapticFeedback,
+    tooltipsEnabled,
   };
 
   const persistPrefs = useCallback((prefs: PersistedShellPrefsV2) => {
@@ -407,6 +426,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     hideRecentList,
     appIconId,
     hapticFeedback,
+    tooltipsEnabled,
     persistPrefs,
   ]);
 
@@ -431,6 +451,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
         setHideRecentList: setHideRecentListState,
         setAppIconId: setAppIconIdState,
         setHapticFeedback: setHapticFeedbackState,
+        setTooltipsEnabled: setTooltipsEnabledState,
       });
     };
 
@@ -533,6 +554,10 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     setHapticFeedbackState(enabled);
   }, []);
 
+  const setTooltipsEnabled = useCallback((enabled: boolean) => {
+    setTooltipsEnabledState(enabled);
+  }, []);
+
   const swapSidebars = useCallback(() => {
     const prefs = prefsRef.current;
     setLeftSidebarState({ ...prefs.rightSidebar });
@@ -554,6 +579,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       hideRecentList,
       appIconId,
       hapticFeedback,
+      tooltipsEnabled,
       setSidebarWidth,
       setSidebarCollapsed,
       resetSidebarWidths,
@@ -566,6 +592,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       setHideRecentList,
       setAppIconId,
       setHapticFeedback,
+      setTooltipsEnabled,
     }),
     [
       leftSidebar,
@@ -578,6 +605,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       hideRecentList,
       appIconId,
       hapticFeedback,
+      tooltipsEnabled,
       setSidebarWidth,
       setSidebarCollapsed,
       resetSidebarWidths,
@@ -590,6 +618,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       setHideRecentList,
       setAppIconId,
       setHapticFeedback,
+      setTooltipsEnabled,
     ]
   );
 

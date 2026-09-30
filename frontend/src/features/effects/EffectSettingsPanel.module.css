@@ -102,7 +102,10 @@
   min-height: 0;
 }
 
-.effect-settings-scroll :global(.simplebar-scrollable-y .simplebar-content-wrapper) {
+/* Always reserve the gutter — not only when `.simplebar-scrollable-y` is set.
+   Curves uses aspect-ratio:1, so a toggling 13px pad changes content width →
+   graph height → overflow on/off in a loop (panel flicker when docked short). */
+.effect-settings-scroll :global(.simplebar-content-wrapper) {
   padding-right: 13px !important;
 }
 

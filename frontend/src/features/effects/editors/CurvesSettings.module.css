@@ -8,6 +8,8 @@
 
 .curve-graph-well {
   width: 100%;
+  max-width: 256px;
+  margin-inline: auto;
   aspect-ratio: 1;
   background: var(--bg-input);
   box-shadow: var(--shadow-field);

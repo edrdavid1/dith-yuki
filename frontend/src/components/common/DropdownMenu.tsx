@@ -76,12 +76,48 @@ export default function DropdownMenu({
       setMenuPosition(null);
       return;
     }
-    const rect = fieldRef.current.getBoundingClientRect();
-    setMenuPosition({
-      top: rect.bottom,
-      left: rect.left,
-      width: rect.width,
-    });
+    const doc = hostDocument();
+    const view = doc.defaultView ?? window;
+    const pad = 6;
+
+    const update = () => {
+      const field = fieldRef.current;
+      if (!field) return;
+      const rect = field.getBoundingClientRect();
+      const menuH = menuRef.current?.offsetHeight ?? 0;
+      const menuW = Math.max(rect.width, menuRef.current?.offsetWidth ?? rect.width);
+      const vw = view.innerWidth;
+      const vh = view.innerHeight;
+
+      let top = rect.bottom;
+      let left = rect.left;
+      if (menuH > 0 && top + menuH > vh - pad && rect.top - menuH >= pad) {
+        top = rect.top - menuH;
+      } else if (menuH > 0 && top + menuH > vh - pad) {
+        top = Math.max(pad, vh - pad - menuH);
+      }
+      if (left + menuW > vw - pad) {
+        left = Math.max(pad, vw - pad - menuW);
+      }
+      if (left < pad) left = pad;
+
+      setMenuPosition((prev) => {
+        if (
+          prev &&
+          prev.top === top &&
+          prev.left === left &&
+          prev.width === rect.width
+        ) {
+          return prev;
+        }
+        return { top, left, width: rect.width };
+      });
+    };
+
+    update();
+    // Second pass after the portaled menu mounts so we can flip using real height.
+    const id = view.requestAnimationFrame(update);
+    return () => view.cancelAnimationFrame(id);
   }, [isOpen]);
 
   useEffect(() => {

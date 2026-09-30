@@ -41,6 +41,7 @@ export default function HarmonySection({ onInsert, onError }: HarmonySectionProp
   const [busy, setBusy] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerAnchor, setPickerAnchor] = useState<DOMRect | null>(null);
+  const [pickerPortalRoot, setPickerPortalRoot] = useState<Element | null>(null);
 
   const refreshPreview = useCallback(async () => {
     setBusy(true);
@@ -83,7 +84,9 @@ export default function HarmonySection({ onInsert, onError }: HarmonySectionProp
             style={{ backgroundColor: `#${baseHex}` }}
             onClick={(e) => {
               setPickerOpen(true);
-              setPickerAnchor((e.currentTarget as HTMLElement).getBoundingClientRect());
+              const el = e.currentTarget as HTMLElement;
+              setPickerAnchor(el.getBoundingClientRect());
+              setPickerPortalRoot(el.ownerDocument.body);
             }}
             aria-label="Harmony base color"
           />
@@ -145,8 +148,10 @@ export default function HarmonySection({ onInsert, onError }: HarmonySectionProp
             onCancel={() => {
               setPickerOpen(false);
               setPickerAnchor(null);
+              setPickerPortalRoot(null);
             }}
             anchorRect={pickerAnchor}
+            portalRoot={pickerPortalRoot}
           />
         )}
       </div>
