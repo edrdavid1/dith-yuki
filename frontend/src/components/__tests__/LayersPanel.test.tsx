@@ -75,6 +75,47 @@ describe('LayersPanel blend/opacity', () => {
     expect(props.onBlendModeChange).not.toHaveBeenCalled();
   });
 
+  it('disables Opacity for Strict dither with a bound palette', () => {
+    const strict: FilterInfo = {
+      ...filter,
+      opacity: 0.4,
+      params: {
+        ...(filter.params as object),
+        palette_id: 7,
+        palette_dither_mode: 'strict',
+      } as FilterInfo['params'],
+    };
+    const { props } = renderLayers({
+      filters: [strict],
+      selectedFilterId: 'filter-1',
+      selectedLayerId: 1,
+    });
+    const input = screen.getByLabelText('Opacity');
+    expect(input).toBeDisabled();
+    expect(input).toHaveValue('100%');
+    expect(screen.getByRole('button', { name: 'Open opacity slider' })).toBeDisabled();
+    expect(props.onFilterBlendChange).toHaveBeenCalledWith({ opacity: 1 });
+  });
+
+  it('keeps Opacity editable for Guided dither with a bound palette', () => {
+    const guided: FilterInfo = {
+      ...filter,
+      opacity: 0.4,
+      params: {
+        ...(filter.params as object),
+        palette_id: 7,
+        palette_dither_mode: { guided: { channel_levels: 4 } },
+      } as FilterInfo['params'],
+    };
+    renderLayers({
+      filters: [guided],
+      selectedFilterId: 'filter-1',
+      selectedLayerId: 1,
+    });
+    expect(screen.getByLabelText('Opacity')).not.toBeDisabled();
+    expect(screen.getByLabelText('Opacity')).toHaveValue('40%');
+  });
+
   it('toggles effect visibility from the eye button', () => {
     const { props } = renderLayers();
     fireEvent.click(screen.getByRole('button', { name: 'Hide effect' }));

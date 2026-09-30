@@ -103,6 +103,11 @@
     box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
 }
 
+.lp-opacity-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .lp-opacity-popup {
   position: absolute;
   top: 24px;

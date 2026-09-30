@@ -17,6 +17,7 @@ import {
   displayFilterOrder,
   stackIndexAfterDisplayReorder,
 } from '../features/layers/filterDisplayOrder';
+import { ditherFilterLocksOpacity } from '../features/layers/filterOpacityLock';
 import { formatChords } from '../features/shortcuts/bindings';
 import { useShortcutBindings } from '../features/shortcuts/ShortcutsContext';
 const cn = bind({ ...styles, ...retroSlider, ...layerControls });
@@ -138,11 +139,15 @@ export default function LayersPanel({
       : null;
   const trashDisabled = selectedFilterId === null;
   const controlsDisabled = selectedFilter === null && selectedLayerId === null;
-  const currentOpacityPercent = selectedFilter
-    ? Math.round((selectedFilter.opacity ?? 1) * 100)
-    : selectedLayer
-      ? Math.round(selectedLayer.opacity * 100)
-      : 100;
+  const opacityLocked = ditherFilterLocksOpacity(selectedFilter);
+  const opacityControlsDisabled = controlsDisabled || opacityLocked;
+  const currentOpacityPercent = opacityLocked
+    ? 100
+    : selectedFilter
+      ? Math.round((selectedFilter.opacity ?? 1) * 100)
+      : selectedLayer
+        ? Math.round(selectedLayer.opacity * 100)
+        : 100;
   const currentBlendMode = selectedFilter
     ? (selectedFilter.blend_mode ?? 'Normal')
     : (selectedLayer?.blend_mode ?? 'Normal');
@@ -339,6 +344,24 @@ export default function LayersPanel({
     }
   }, [selectedLayerId, selectedFilterId]);
 
+  // Snap leftover Fade opacity when entering Strict/Mixed + palette.
+  useEffect(() => {
+    if (!opacityLocked || selectedFilter == null) return;
+    if ((selectedFilter.opacity ?? 1) >= 1) return;
+    onFilterBlendChange({ opacity: 1 });
+  }, [
+    opacityLocked,
+    selectedFilter?.id,
+    selectedFilter?.opacity,
+    onFilterBlendChange,
+  ]);
+
+  useEffect(() => {
+    if (opacityLocked) {
+      setIsOpacityPopupOpen(false);
+    }
+  }, [opacityLocked]);
+
   const handleBlendModeChange = useCallback((mode: string) => {
     if (selectedFilterId !== null) {
       onFilterBlendChange({ blend_mode: mode });
@@ -350,12 +373,18 @@ export default function LayersPanel({
   }, [selectedFilterId, selectedLayerId, onBlendModeChange, onFilterBlendChange]);
 
   const toggleOpacityPopup = useCallback(() => {
+    if (opacityControlsDisabled) return;
     if (selectedFilterId !== null || selectedLayerId !== null) {
       setIsOpacityPopupOpen((open) => !open);
     }
-  }, [selectedFilterId, selectedLayerId]);
+  }, [opacityControlsDisabled, selectedFilterId, selectedLayerId]);
 
   const commitOpacity = useCallback(() => {
+    if (opacityLocked) {
+      setOpacityText('100%');
+      setOpacityEditing(false);
+      return;
+    }
     const raw = opacityText.replace('%', '').trim();
     const parsed = Number(raw);
 
@@ -373,7 +402,15 @@ export default function LayersPanel({
     }
     setOpacityText(`${clamped}%`);
     setOpacityEditing(false);
-  }, [opacityText, currentOpacityPercent, selectedFilterId, selectedLayerId, onOpacityChange, onFilterBlendChange]);
+  }, [
+    opacityLocked,
+    opacityText,
+    currentOpacityPercent,
+    selectedFilterId,
+    selectedLayerId,
+    onOpacityChange,
+    onFilterBlendChange,
+  ]);
 
   const handleOpacityInputKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -422,14 +459,21 @@ export default function LayersPanel({
           className={cn("lp-dropdown-wrap-small")}
         />
 
-        <div className={cn("lp-opacity")}>
+        <div
+          className={cn("lp-opacity")}
+          title={
+            opacityLocked
+              ? 'Opacity is locked at 100% in Strict / Mixed — Fade would leave non-palette colors'
+              : undefined
+          }
+        >
           <span className={cn("lp-opacity-label")}>Opacity :</span>
           <div className={cn("lp-opacity-control")} ref={opacityPopupRef}>
             <input
               className={cn("lp-opacity-input")}
               type="text"
               value={opacityText}
-              disabled={controlsDisabled}
+              disabled={opacityControlsDisabled}
               aria-label="Opacity"
               onChange={(e) => setOpacityText(e.target.value)}
               onFocus={() => setOpacityEditing(true)}
@@ -440,10 +484,10 @@ export default function LayersPanel({
               type="button"
               className={cn("lp-opacity-btn")}
               onClick={toggleOpacityPopup}
-              disabled={controlsDisabled}
+              disabled={opacityControlsDisabled}
               aria-label="Open opacity slider"
             />
-            {isOpacityPopupOpen && (
+            {isOpacityPopupOpen && !opacityLocked && (
               <div className={cn("lp-opacity-popup")}>
                 <div
                   className={cn("retro-slider-track", "layer-opacity-slider")}
