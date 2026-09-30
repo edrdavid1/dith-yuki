@@ -46,6 +46,8 @@ export default function PreferencesPanel() {
     setAppIconId,
     hapticFeedback,
     setHapticFeedback,
+    tooltipsEnabled,
+    setTooltipsEnabled,
   } = useShell();
   const { bindings, capturing, setCapturing, setBinding, resetDefaults } = useShortcuts();
   const showAppIcon = isMacOS();
@@ -138,11 +140,16 @@ export default function PreferencesPanel() {
             />
             <span>Tactile feedback on sliders</span>
           </label>
-          <p className={cn('preferences-hint')}>
-            {isMacOS()
-              ? 'Uses the Force Touch trackpad Taptic Engine while dragging sliders. Has no effect with a mouse or when system haptic feedback is off.'
-              : 'macOS only (Force Touch trackpad). Has no effect on this platform.'}
-          </p>
+        </div>
+        <div className={cn('param-group', 'preferences-label-spaced')}>
+          <label className={cn('preferences-checkbox-row')}>
+            <input
+              type="checkbox"
+              checked={tooltipsEnabled}
+              onChange={(e) => setTooltipsEnabled(e.target.checked)}
+            />
+            <span>Show tooltips</span>
+          </label>
         </div>
         <div className={cn('param-group', 'preferences-label-spaced')}>
           <label className={cn('preferences-checkbox-row')}>

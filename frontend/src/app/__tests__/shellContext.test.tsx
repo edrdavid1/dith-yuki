@@ -214,6 +214,11 @@ describe('ShellContext', () => {
     expect(migrateShellPrefs({ version: 2 }).hapticFeedback).toBe(true);
   });
 
+  it('parses tooltipsEnabled and defaults to true', () => {
+    expect(migrateShellPrefs({ version: 2, tooltipsEnabled: false }).tooltipsEnabled).toBe(false);
+    expect(migrateShellPrefs({ version: 2 }).tooltipsEnabled).toBe(true);
+  });
+
   it('migrates v1 exclusive sidebarSide=right by default', () => {
     const migrated = migrateShellPrefs({
       sidebarWidth: 280,

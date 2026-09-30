@@ -94,6 +94,7 @@ export default function ColorLabFeature({
   const [builtins, setBuiltins] = useState<BuiltinPaletteDto[]>([]);
   const [colorPickerIndex, setColorPickerIndex] = useState<number | null>(null);
   const [pickerAnchorRect, setPickerAnchorRect] = useState<DOMRect | null>(null);
+  const [pickerPortalRoot, setPickerPortalRoot] = useState<Element | null>(null);
   const [canAutoInterpolate, setCanAutoInterpolate] = useState(false);
   const lastLivePushRef = useRef('');
 
@@ -481,12 +482,16 @@ export default function ColorLabFeature({
   const handleOpenColorPicker = useCallback((index: number, e: React.MouseEvent) => {
     dispatch(setSelectedColorIndex(index));
     setColorPickerIndex(index);
-    setPickerAnchorRect((e.currentTarget as HTMLElement).getBoundingClientRect());
+    const el = e.currentTarget as HTMLElement;
+    setPickerAnchorRect(el.getBoundingClientRect());
+    // FlexLayout OS popouts host the panel DOM in another document.
+    setPickerPortalRoot(el.ownerDocument.body);
   }, [dispatch]);
 
   const handleCloseColorPicker = useCallback(() => {
     setColorPickerIndex(null);
     setPickerAnchorRect(null);
+    setPickerPortalRoot(null);
   }, []);
 
   const handleColorPickerConfirm = useCallback(
@@ -554,6 +559,7 @@ export default function ColorLabFeature({
         onConfirm={handleColorPickerConfirm}
         onCancel={handleCloseColorPicker}
         anchorRect={pickerAnchorRect}
+        portalRoot={pickerPortalRoot}
       />
     ) : null;
 
@@ -584,7 +590,7 @@ export default function ColorLabFeature({
   }
 
   return (
-    <div className={cn('color-lab-floating')}>
+    <div className={cn('color-lab-floating')} data-dock-window="colorlab">
       <div className={cn('color-lab-scroll')}>
         <SimpleBar style={{ height: '100%' }}>{body}</SimpleBar>
       </div>

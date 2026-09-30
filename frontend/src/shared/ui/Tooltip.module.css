@@ -25,8 +25,12 @@
 
 .tooltip {
   position: fixed;
+  left: -9999px;
+  top: 0;
+  visibility: hidden;
   z-index: 20000;
   pointer-events: none;
+  box-sizing: border-box;
   max-width: 240px;
   padding: 3px 8px;
   background: var(--bg-window, #CDCDCD);
@@ -37,5 +41,6 @@
   font-size: 12px;
   line-height: 1.25;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light);
 }

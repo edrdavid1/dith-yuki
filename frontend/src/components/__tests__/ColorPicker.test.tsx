@@ -99,4 +99,18 @@ describe('ColorPicker', () => {
     const preview = screen.getByLabelText('Color preview');
     expect(preview).toBeInTheDocument();
   });
+
+  it('portals into document.body by default', () => {
+    renderPicker();
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.parentElement).toBe(document.body);
+  });
+
+  it('portals into portalRoot when provided', () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    renderPicker({ portalRoot: host });
+    expect(screen.getByRole('dialog').parentElement).toBe(host);
+    host.remove();
+  });
 });

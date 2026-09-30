@@ -31,6 +31,7 @@ export default function RampGeneratorSection({ onInsert, onError }: RampGenerato
   const [busy, setBusy] = useState(false);
   const [picker, setPicker] = useState<PickerTarget>(null);
   const [pickerAnchor, setPickerAnchor] = useState<DOMRect | null>(null);
+  const [pickerPortalRoot, setPickerPortalRoot] = useState<Element | null>(null);
 
   const refreshPreview = useCallback(async () => {
     setBusy(true);
@@ -56,7 +57,9 @@ export default function RampGeneratorSection({ onInsert, onError }: RampGenerato
 
   const openPicker = (target: 'from' | 'to', e: React.MouseEvent) => {
     setPicker(target);
-    setPickerAnchor((e.currentTarget as HTMLElement).getBoundingClientRect());
+    const el = e.currentTarget as HTMLElement;
+    setPickerAnchor(el.getBoundingClientRect());
+    setPickerPortalRoot(el.ownerDocument.body);
   };
 
   return (
@@ -127,8 +130,10 @@ export default function RampGeneratorSection({ onInsert, onError }: RampGenerato
             onCancel={() => {
               setPicker(null);
               setPickerAnchor(null);
+              setPickerPortalRoot(null);
             }}
             anchorRect={pickerAnchor}
+            portalRoot={pickerPortalRoot}
           />
         )}
       </div>
