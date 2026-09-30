@@ -1,6 +1,6 @@
 {
   "productName": "Dither Yuki",
-  "version": "1.0.6-beta",
+  "version": "1.0.7-beta",
   "identifier": "com.dither.app",
   "build": {
     "beforeDevCommand": "npm run dev",
