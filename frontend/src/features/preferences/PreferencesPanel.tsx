@@ -51,6 +51,7 @@ export default function PreferencesPanel() {
   } = useShell();
   const { bindings, capturing, setCapturing, setBinding, resetDefaults } = useShortcuts();
   const showAppIcon = isMacOS();
+  const showHapticFeedback = isMacOS();
   const [iconVariants, setIconVariants] = useState<AppIconVariant[]>([]);
   const [iconWarning, setIconWarning] = useState<string | null>(null);
   const [iconBusy, setIconBusy] = useState(false);
@@ -131,17 +132,24 @@ export default function PreferencesPanel() {
         <summary id="prefs-interface-heading" className={cn('preferences-section-title')}>
           Interface
         </summary>
-        <div className={cn('param-group')}>
-          <label className={cn('preferences-checkbox-row')}>
-            <input
-              type="checkbox"
-              checked={hapticFeedback}
-              onChange={(e) => setHapticFeedback(e.target.checked)}
-            />
-            <span>Tactile feedback on sliders</span>
-          </label>
-        </div>
-        <div className={cn('param-group', 'preferences-label-spaced')}>
+        {showHapticFeedback ? (
+          <div className={cn('param-group')}>
+            <label className={cn('preferences-checkbox-row')}>
+              <input
+                type="checkbox"
+                checked={hapticFeedback}
+                onChange={(e) => setHapticFeedback(e.target.checked)}
+              />
+              <span>Tactile feedback on sliders</span>
+            </label>
+          </div>
+        ) : null}
+        <div
+          className={cn(
+            'param-group',
+            showHapticFeedback && 'preferences-label-spaced'
+          )}
+        >
           <label className={cn('preferences-checkbox-row')}>
             <input
               type="checkbox"
