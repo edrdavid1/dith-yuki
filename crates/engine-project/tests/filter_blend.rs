@@ -212,3 +212,80 @@ fn ed_opacity_50_2x2_no_worse_seam_than_full() {
         "left tile is not a 50% mix with pre"
     );
 }
+
+/// Production tile_pipeline uses the ED strip path for Floyd–Steinberg, not
+/// `apply_filter_to_tile_with_caches`. Opacity must Full_Then_Blend there too.
+#[test]
+fn ed_strip_opacity_50_is_mix_with_pre() {
+    use engine_project::filters::apply_filter_stack_tile_row_strip;
+
+    let rgba = gradient_rgba();
+    let coord = TileCoord {
+        level: 0,
+        x: 0,
+        y: 0,
+    };
+    let pre = gradient_tile(coord, &rgba);
+
+    let mut layer_full = Layer::new(LayerId::new(1), LayerKind::Raster, IMG_W, IMG_H);
+    layer_full.filters.push(fs_filter(1.0));
+    let mut layer_half = Layer::new(LayerId::new(1), LayerKind::Raster, IMG_W, IMG_H);
+    layer_half.filters.push(fs_filter(0.5));
+
+    let palette_cache = PaletteKdCache::new();
+    let lut_cache = PaletteLutCache::new();
+    let threshold_cache = ThresholdMapCache::new();
+    let doc = Document::new(DocumentId::new(1), IMG_W, IMG_H);
+    let blocks = BlockRepresentativeCache::new();
+    let store_full = ErrorResidualsStore::new();
+    let store_half = ErrorResidualsStore::new();
+
+    let tiles_full = vec![(coord, &pre)];
+    let mut out_full = vec![PixelTile::new()];
+    apply_filter_stack_tile_row_strip(
+        &tiles_full,
+        &layer_full,
+        &palette_cache,
+        &lut_cache,
+        &threshold_cache,
+        &doc,
+        &store_full,
+        &blocks,
+        None,
+        &mut out_full,
+    )
+    .unwrap();
+
+    let tiles_half = vec![(coord, &pre)];
+    let mut out_half = vec![PixelTile::new()];
+    apply_filter_stack_tile_row_strip(
+        &tiles_half,
+        &layer_half,
+        &palette_cache,
+        &lut_cache,
+        &threshold_cache,
+        &doc,
+        &store_half,
+        &blocks,
+        None,
+        &mut out_half,
+    )
+    .unwrap();
+
+    let mut expected = PixelTile::new();
+    expected.data.copy_from_slice(&pre.data);
+    blend_tile(&mut expected, &out_full[0], BlendMode::Normal, 0.5);
+
+    for y in HALO..(HALO + TILE_SIZE) {
+        for x in HALO..(HALO + TILE_SIZE) {
+            for c in 0..4u32 {
+                let got = out_half[0].at(x, y, c);
+                let exp = expected.at(x, y, c);
+                assert!(
+                    (got - exp).abs() < 1e-5,
+                    "ED strip 50% mix mismatch at ({x},{y},c{c}): {got} vs {exp}"
+                );
+            }
+        }
+    }
+}

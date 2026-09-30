@@ -1032,7 +1032,17 @@ impl FilterService {
         };
 
         let mut temp_filter = FilterInstance::new(filter_kind, new_params.clone());
-        if let Some(opacity) = req.opacity {
+        // Strict/Mixed + palette: Fade would break the exact-swatch contract.
+        // Always store opacity 1.0 (mode switch or explicit opacity patch).
+        let opacity_to_apply = if matches!(
+            &new_params,
+            FilterParams::DitherV2(p) if p.locks_filter_opacity()
+        ) {
+            Some(1.0)
+        } else {
+            req.opacity
+        };
+        if let Some(opacity) = opacity_to_apply {
             temp_filter.opacity = opacity;
         }
         let parsed_blend = if let Some(ref name) = req.blend_mode {
@@ -1124,7 +1134,7 @@ impl FilterService {
                         layer_id,
                         filter_id,
                         new_params.clone(),
-                        req.opacity,
+                        opacity_to_apply,
                         parsed_blend,
                         req.enabled,
                     );

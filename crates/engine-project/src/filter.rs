@@ -446,6 +446,12 @@ impl PaletteDitherMode {
         matches!(self, Self::Guided { .. } | Self::Mixed { .. })
     }
 
+    /// Strict / Mixed guarantee only palette swatches on screen.
+    /// Partial filter opacity (Fade over continuous input) would break that.
+    pub fn is_exact_palette(self) -> bool {
+        matches!(self, Self::Strict | Self::Mixed { .. })
+    }
+
     pub fn channel_levels(self) -> Option<u8> {
         match self {
             Self::Guided { channel_levels } | Self::Mixed { channel_levels } => channel_levels,
@@ -627,6 +633,12 @@ impl DitherParamsV2 {
     /// This is a convenience wrapper around the `From<(DitherMode, u8)>` trait impl.
     pub fn from_legacy(mode: DitherMode, color_depth: u8) -> Self {
         Self::from((mode, color_depth))
+    }
+
+    /// Strict/Mixed with a bound palette: filter opacity must stay at 1.0.
+    /// Fade (α-blend over continuous input) would leave non-palette colors on screen.
+    pub fn locks_filter_opacity(&self) -> bool {
+        self.palette_id.is_some() && self.palette_dither_mode.is_exact_palette()
     }
 
     /// Validate all dither parameters are within acceptable ranges.
@@ -1128,6 +1140,15 @@ impl FilterInstance {
             blend_mode: BlendMode::Normal,
             algorithm_id: None,
             schema_version: None,
+        }
+    }
+
+    /// Opacity used by Full_Then_Blend. Strict/Mixed + palette always returns 1.0
+    /// so continuous Fade cannot violate the exact-swatch contract.
+    pub fn effective_opacity(&self) -> f32 {
+        match &self.params {
+            FilterParams::DitherV2(p) if p.locks_filter_opacity() => 1.0,
+            _ => self.opacity,
         }
     }
 
@@ -2325,6 +2346,43 @@ mod tests {
         )
         .unwrap();
         assert_eq!(simple.palette_dither_mode, PaletteDitherMode::Simple);
+    }
+
+    #[test]
+    fn strict_mixed_with_palette_lock_filter_opacity() {
+        let mut params = DitherParamsV2::default();
+        params.palette_id = Some(crate::types::PaletteId::new(1));
+        params.palette_dither_mode = PaletteDitherMode::Strict;
+        assert!(params.locks_filter_opacity());
+
+        params.palette_dither_mode = PaletteDitherMode::Mixed {
+            channel_levels: Some(4),
+        };
+        assert!(params.locks_filter_opacity());
+
+        params.palette_dither_mode = PaletteDitherMode::Guided {
+            channel_levels: Some(4),
+        };
+        assert!(!params.locks_filter_opacity());
+
+        params.palette_dither_mode = PaletteDitherMode::Simple;
+        assert!(!params.locks_filter_opacity());
+
+        params.palette_dither_mode = PaletteDitherMode::Strict;
+        params.palette_id = None;
+        assert!(!params.locks_filter_opacity());
+
+        let mut filter = FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2({
+                let mut p = DitherParamsV2::default();
+                p.palette_id = Some(crate::types::PaletteId::new(2));
+                p.palette_dither_mode = PaletteDitherMode::Strict;
+                p
+            }),
+        );
+        filter.opacity = 0.4;
+        assert_eq!(filter.effective_opacity(), 1.0);
     }
 
     #[test]

@@ -179,7 +179,8 @@ pub fn apply_filter_to_tile_with_park(
 
     let mut applied_any = false;
     for filter in enabled {
-        if filter.opacity >= 1.0 && filter.blend_mode == BlendMode::Normal {
+        let opacity = filter.effective_opacity();
+        if opacity >= 1.0 && filter.blend_mode == BlendMode::Normal {
             engine_tiles::with_raw_block_sampling(!applied_any, || {
                 apply_single_filter_into(
                     &front,
@@ -220,7 +221,7 @@ pub fn apply_filter_to_tile_with_park(
                 return Err(e);
             }
             back.copy_from(&front);
-            blend_tile(&mut back, &scratch, filter.blend_mode, filter.opacity);
+            blend_tile(&mut back, &scratch, filter.blend_mode, opacity);
             park.give(scratch);
         }
 
@@ -291,19 +292,30 @@ pub fn apply_filter_stack_tile_row_strip(
 
     // Fast path: only one ED filter and nothing else — strip ED directly.
     if enabled.len() == 1 && enabled[0].requires_full_row {
-        let params = dither_params_for_ed(enabled[0])?;
-        return apply_error_diffusion_tile_row_strip(
+        let filter = enabled[0];
+        let params = dither_params_for_ed(filter)?;
+        apply_error_diffusion_tile_row_strip(
             tiles,
             &params,
             residuals_store,
             layer.id,
-            enabled[0].id.as_u128(),
+            filter.id.as_u128(),
             palette_cache,
             lut_cache,
             document,
             block_cache,
             outputs,
-        );
+        )?;
+        // Track I: residuals stay from the full ED result; opacity/blend is a post-step.
+        let opacity = filter.effective_opacity();
+        if opacity < 1.0 || filter.blend_mode != BlendMode::Normal {
+            for (i, (_, pre)) in tiles.iter().enumerate() {
+                let full = std::mem::replace(&mut outputs[i], PixelTile::new());
+                outputs[i].copy_from(pre);
+                blend_tile(&mut outputs[i], &full, filter.blend_mode, opacity);
+            }
+        }
+        return Ok(());
     }
 
     let n = tiles.len();
@@ -320,6 +332,7 @@ pub fn apply_filter_stack_tile_row_strip(
 
     let mut applied_any = false;
     for filter in &enabled {
+        let opacity = filter.effective_opacity();
         if filter.requires_full_row {
             let params = dither_params_for_ed(filter)?;
             let strip: Vec<(TileCoord, &PixelTile)> = tiles
@@ -341,7 +354,14 @@ pub fn apply_filter_stack_tile_row_strip(
                     &mut back,
                 )
             })?;
-        } else if filter.opacity >= 1.0 && filter.blend_mode == BlendMode::Normal {
+            if opacity < 1.0 || filter.blend_mode != BlendMode::Normal {
+                for i in 0..n {
+                    let full = std::mem::replace(&mut back[i], PixelTile::new());
+                    back[i].copy_from(&front[i]);
+                    blend_tile(&mut back[i], &full, filter.blend_mode, opacity);
+                }
+            }
+        } else if opacity >= 1.0 && filter.blend_mode == BlendMode::Normal {
             for i in 0..n {
                 let coord = tiles[i].0;
                 engine_tiles::with_raw_block_sampling(!applied_any, || {
@@ -383,7 +403,7 @@ pub fn apply_filter_stack_tile_row_strip(
                 });
                 apply_result?;
                 back[i].copy_from(&front[i]);
-                blend_tile(&mut back[i], &scratch, filter.blend_mode, filter.opacity);
+                blend_tile(&mut back[i], &scratch, filter.blend_mode, opacity);
             }
         }
         std::mem::swap(&mut front, &mut back);
@@ -426,13 +446,18 @@ fn apply_filter_with_blend(
         gpu,
     )?;
 
-    if filter.opacity >= 1.0 && filter.blend_mode == BlendMode::Normal {
+    if filter.effective_opacity() >= 1.0 && filter.blend_mode == BlendMode::Normal {
         return Ok(full_result);
     }
 
     let mut out = PixelTile::new();
     out.copy_from(pre);
-    blend_tile(&mut out, &full_result, filter.blend_mode, filter.opacity);
+    blend_tile(
+        &mut out,
+        &full_result,
+        filter.blend_mode,
+        filter.effective_opacity(),
+    );
     Ok(out)
 }
 
