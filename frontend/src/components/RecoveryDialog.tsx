@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import styles from '../features/document/NewProjectDialog.module.css';
 import { bind } from '../shared/ui/cn';
@@ -33,25 +33,23 @@ export default function RecoveryDialog({
   const hasJournals = journals.length > 0;
   const hasRoster = rosterDocs.length > 0;
   const title = hasJournals ? 'Recover unsaved work?' : 'Reopen previous session?';
+  const dialogRef = useRef<HTMLDivElement>(null);
 
-  const handleOverlayClick = useCallback(
-    (e: React.MouseEvent) => {
-      if (e.target === e.currentTarget && !busy) onSkip();
-    },
-    [busy, onSkip]
-  );
+  // Close is first in DOM; take focus onto the dialog so the × is not highlighted on open.
+  useEffect(() => {
+    requestAnimationFrame(() => dialogRef.current?.focus());
+  }, []);
 
   return createPortal(
-    <div
-      className={cn('new-project-overlay')}
-      onClick={handleOverlayClick}
-      data-testid="recovery-dialog-overlay"
-    >
+    <div className={cn('new-project-overlay')} data-testid="recovery-dialog-overlay">
       <div
+        ref={dialogRef}
         className={cn('new-project-dialog', 'new-project-dialog-wide')}
         role="dialog"
         aria-modal="true"
         aria-labelledby="recovery-dialog-title"
+        tabIndex={-1}
+        style={{ outline: 'none' }}
       >
         <DialogTitlebar title={title} titleId="recovery-dialog-title" onClose={onSkip} />
         <div className={cn('new-project-body')} style={{ padding: '14px 12px 12px' }}>
