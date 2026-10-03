@@ -5,10 +5,11 @@ use std::sync::{Arc, OnceLock};
 use engine_gpu::resident::default_vram_config;
 use engine_gpu::{
     compile_graph, palette_guided_params, palette_mixed_params_from_palette,
-    palette_quantize_params_from_lut, void_and_cluster_ranks, BayerPassParams, CrosshatchPassParams,
-    CrtPassParams, GpuCompositeFrameJob, GpuCompositeLayerOp, GpuCompositeTileWork, GpuContext,
-    GpuExecutor, GpuFrameJob, GpuPipelineKey, GpuTileCache, GpuTileWork, GraphLayerFilter,
-    HalftonePassParams, LineScreenPassParams, VoidAndClusterPassParams, WavePassParams,
+    palette_quantize_params_from_lut, void_and_cluster_ranks, BayerPassParams,
+    CrosshatchPassParams, CrtPassParams, GpuCompositeFrameJob, GpuCompositeLayerOp,
+    GpuCompositeTileWork, GpuContext, GpuExecutor, GpuFrameJob, GpuPipelineKey, GpuTileCache,
+    GpuTileWork, GraphLayerFilter, HalftonePassParams, LineScreenPassParams,
+    VoidAndClusterPassParams, WavePassParams,
 };
 use engine_tiles::{CacheStage, PixelTile, TileCoord, TileKey};
 
@@ -167,8 +168,8 @@ fn bayer_threshold_i32(gx: i32, gy: i32, matrix: u32) -> f32 {
                 123, 219, 91, 241, 113, 209, 81, 249, 121, 217, 89, 15, 143, 47, 175, 7, 135, 39,
                 167, 13, 141, 45, 173, 5, 133, 37, 165, 207, 79, 239, 111, 199, 71, 231, 103, 205,
                 77, 237, 109, 197, 69, 229, 101, 63, 191, 31, 159, 55, 183, 23, 151, 61, 189, 29,
-                157, 53, 181, 21, 149, 255, 127, 223, 95, 247, 119, 215, 87, 253, 125, 221, 93, 245,
-                117, 213, 85,
+                157, 53, 181, 21, 149, 255, 127, 223, 95, 247, 119, 215, 87, 253, 125, 221, 93,
+                245, 117, 213, 85,
             ];
             M[my * 16 + mx] as f32 / 256.0
         }
@@ -199,13 +200,13 @@ fn bayer_threshold_i32(gx: i32, gy: i32, matrix: u32) -> f32 {
                 134, 70, 188, 124, 41, 201, 25, 241, 37, 197, 21, 255, 42, 202, 26, 242, 38, 198,
                 22, 252, 169, 105, 153, 89, 165, 101, 149, 85, 170, 106, 154, 90, 166, 102, 150,
                 86, 3, 233, 57, 217, 13, 229, 53, 213, 0, 234, 58, 218, 14, 230, 54, 214, 131, 67,
-                185, 121, 141, 77, 181, 117, 128, 64, 186, 122, 142, 78, 182, 118, 35, 195, 19, 249,
-                45, 205, 29, 245, 32, 192, 16, 250, 46, 206, 30, 246, 163, 99, 147, 83, 173, 109,
-                157, 93, 160, 96, 144, 80, 174, 110, 158, 94, 11, 227, 51, 211, 7, 237, 61, 221, 8,
-                224, 48, 208, 4, 238, 62, 222, 139, 75, 179, 115, 135, 71, 189, 125, 136, 72, 176,
-                112, 132, 68, 190, 126, 43, 203, 27, 243, 39, 199, 23, 253, 40, 200, 24, 240, 36,
-                196, 20, 254, 171, 107, 155, 91, 167, 103, 151, 87, 168, 104, 152, 88, 164, 100,
-                148, 84,
+                185, 121, 141, 77, 181, 117, 128, 64, 186, 122, 142, 78, 182, 118, 35, 195, 19,
+                249, 45, 205, 29, 245, 32, 192, 16, 250, 46, 206, 30, 246, 163, 99, 147, 83, 173,
+                109, 157, 93, 160, 96, 144, 80, 174, 110, 158, 94, 11, 227, 51, 211, 7, 237, 61,
+                221, 8, 224, 48, 208, 4, 238, 62, 222, 139, 75, 179, 115, 135, 71, 189, 125, 136,
+                72, 176, 112, 132, 68, 190, 126, 43, 203, 27, 243, 39, 199, 23, 253, 40, 200, 24,
+                240, 36, 196, 20, 254, 171, 107, 155, 91, 167, 103, 151, 87, 168, 104, 152, 88,
+                164, 100, 148, 84,
             ];
             M[my * 16 + mx] as f32 / 256.0
         }
@@ -338,13 +339,15 @@ fn run_resident_vac_parity(threshold_bias: f32, pattern_angle: f32) {
     };
 
     let graph = Arc::new(
-        compile_graph(&[GraphLayerFilter::VoidAndCluster(VoidAndClusterPassParams {
-            levels: 4,
-            threshold_scale: 1.0,
-            color_mode: 0,
-            threshold_bias,
-            pattern_angle,
-        })])
+        compile_graph(
+            &[GraphLayerFilter::VoidAndCluster(VoidAndClusterPassParams {
+                levels: 4,
+                threshold_scale: 1.0,
+                color_mode: 0,
+                threshold_bias,
+                pattern_angle,
+            })],
+        )
         .expect("graph"),
     );
 
@@ -395,13 +398,15 @@ fn resident_vac_seam_2x2() {
 
     let raw = gradient_tile();
     let graph = Arc::new(
-        compile_graph(&[GraphLayerFilter::VoidAndCluster(VoidAndClusterPassParams {
-            levels: 4,
-            threshold_scale: 1.0,
-            color_mode: 0,
-            threshold_bias: 0.0,
-            pattern_angle: 0.0,
-        })])
+        compile_graph(
+            &[GraphLayerFilter::VoidAndCluster(VoidAndClusterPassParams {
+                levels: 4,
+                threshold_scale: 1.0,
+                color_mode: 0,
+                threshold_bias: 0.0,
+                pattern_angle: 0.0,
+            })],
+        )
         .expect("graph"),
     );
 

@@ -214,9 +214,7 @@ fn load_png_threshold_map(bytes: &[u8]) -> Result<ThresholdMap, ThresholdMapErro
             pixels
         }
         (png::ColorType::GrayscaleAlpha, png::BitDepth::Eight) => {
-            buf.chunks_exact(2)
-                .map(|px| px[0] as f32 / 255.0)
-                .collect()
+            buf.chunks_exact(2).map(|px| px[0] as f32 / 255.0).collect()
         }
         (png::ColorType::Rgb, png::BitDepth::Eight) => buf
             .chunks_exact(3)

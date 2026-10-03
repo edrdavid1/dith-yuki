@@ -83,9 +83,7 @@ impl FilterAlgorithm for LineScreen {
 
     fn gpu_eligibility(&self, params: &serde_json::Value) -> GpuEligibility {
         match serde_json::from_value::<DitherParamsV2>(params.clone()) {
-            Ok(p) if p.pixel_size > 1 => {
-                GpuEligibility::Cpu(CpuCheckpointKind::BlockGranularity)
-            }
+            Ok(p) if p.pixel_size > 1 => GpuEligibility::Cpu(CpuCheckpointKind::BlockGranularity),
             Ok(p) if p.palette_id.is_none() => GpuEligibility::Eligible,
             Ok(_) => GpuEligibility::Cpu(CpuCheckpointKind::IneligibleDither),
             Err(_) => GpuEligibility::Cpu(CpuCheckpointKind::IneligibleDither),

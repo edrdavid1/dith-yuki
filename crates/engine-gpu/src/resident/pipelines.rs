@@ -11,8 +11,8 @@ use crate::graph::{
     LineScreenPassParams, PaletteGuidedPassParams, PaletteMixedPassParams,
     PaletteQuantizePassParams, VoidAndClusterPassParams, WavePassParams,
 };
-use crate::void_and_cluster_matrix::{ranks, SIZE};
 use crate::resident::format::TILE_EXTENT;
+use crate::void_and_cluster_matrix::{ranks, SIZE};
 use crate::GpuError;
 
 /// Per-frame ring of fixed-size GPU buffers for uniforms / small storage uploads.
@@ -484,7 +484,8 @@ impl ResidentVoidAndClusterPipelines {
             .write(device, queue, bytemuck::bytes_of(&pattern));
 
         let in_view = ResidentBayerPipelines::layer_view(resident, resident_layer, "vac-res-in");
-        let out_view = ResidentBayerPipelines::layer_view(scratch, scratch_layer, "vac-scratch-out");
+        let out_view =
+            ResidentBayerPipelines::layer_view(scratch, scratch_layer, "vac-scratch-out");
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("resident-vac-bg"),

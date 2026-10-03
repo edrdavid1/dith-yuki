@@ -232,16 +232,14 @@ fn dither_v2_spec(
         | DitherModeV2::Bayer8x8
         | DitherModeV2::Bayer16x16
         | DitherModeV2::ClusteredDotOrdered
-        | DitherModeV2::DispersedDotOrdered => {
-            GraphLayerFilter::Bayer(BayerPassParams {
-                pipeline: bayer_pipeline(&params.mode).unwrap(),
-                levels: params.levels,
-                threshold_scale: params.threshold_scale,
-                color_mode: dither_color_mode(params),
-                threshold_bias: params.threshold_bias,
-                pattern_angle: params.pattern_angle,
-            })
-        }
+        | DitherModeV2::DispersedDotOrdered => GraphLayerFilter::Bayer(BayerPassParams {
+            pipeline: bayer_pipeline(&params.mode).unwrap(),
+            levels: params.levels,
+            threshold_scale: params.threshold_scale,
+            color_mode: dither_color_mode(params),
+            threshold_bias: params.threshold_bias,
+            pattern_angle: params.pattern_angle,
+        }),
         DitherModeV2::VoidAndCluster => {
             GraphLayerFilter::VoidAndCluster(engine_gpu::VoidAndClusterPassParams {
                 levels: params.levels,
@@ -264,12 +262,14 @@ fn dither_v2_spec(
                 angle_offset_deg: params.pattern_angle.rem_euclid(360.0),
             })
         }
-        DitherModeV2::LineScreen => GraphLayerFilter::LineScreen(engine_gpu::LineScreenPassParams {
-            cell_size: params.halftone_cell_size,
-            threshold_scale: params.threshold_scale,
-            pattern_angle: params.pattern_angle,
-            dither_alpha: params.dither_alpha,
-        }),
+        DitherModeV2::LineScreen => {
+            GraphLayerFilter::LineScreen(engine_gpu::LineScreenPassParams {
+                cell_size: params.halftone_cell_size,
+                threshold_scale: params.threshold_scale,
+                pattern_angle: params.pattern_angle,
+                dither_alpha: params.dither_alpha,
+            })
+        }
         DitherModeV2::CrosshatchDither => {
             GraphLayerFilter::Crosshatch(engine_gpu::CrosshatchPassParams {
                 spacing: params.wave_wavelength.max(2.0),

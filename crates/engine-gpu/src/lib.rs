@@ -28,9 +28,6 @@ mod vram_budget;
 mod warmup;
 
 pub use bayer::{apply_bayer_gpu, BayerGpuParams, BayerMatrixSize};
-pub use void_and_cluster::{
-    apply_void_and_cluster_gpu, void_and_cluster_ranks, VoidAndClusterGpuParams,
-};
 pub use composite::{
     CompositePassParams, GpuCompositeFrameJob, GpuCompositeLayerOp, GpuCompositeTileWork,
 };
@@ -43,7 +40,7 @@ pub use dispatch::{
 };
 pub use executor::{GpuExecutor, GpuFrameJob, GpuTileWork};
 pub use graph::{
-    compile_graph, BayerPassParams, ComputeGraph, CrosshatchPassParams, CpuCheckpointKind,
+    compile_graph, BayerPassParams, ComputeGraph, CpuCheckpointKind, CrosshatchPassParams,
     CrtPassParams, GpuPass, GpuPipelineKey, GraphCompileError, GraphLayerFilter, GraphNode,
     HalftonePassParams, LineScreenPassParams, PaletteGuidedPassParams, PaletteMixedPassParams,
     PaletteQuantizePassParams, VoidAndClusterPassParams, WavePassParams,
@@ -62,6 +59,9 @@ pub use resident::{
     ResidentVoidAndClusterPipelines, ResidentWavePipelines,
 };
 pub use stats::not_worse_than;
+pub use void_and_cluster::{
+    apply_void_and_cluster_gpu, void_and_cluster_ranks, VoidAndClusterGpuParams,
+};
 pub use vram_budget::{
     compute_vram_budget, query_adapter_memory, resolve_vram_budget, VramBudget, VramBudgetSource,
     MAX_VRAM_BUDGET_BYTES, MIN_VRAM_BUDGET_BYTES,
