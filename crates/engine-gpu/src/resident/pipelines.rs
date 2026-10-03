@@ -7,9 +7,11 @@ use wgpu::util::DeviceExt;
 
 use crate::dispatch::{TileUniforms, CORE_SIZE, WORKGROUP_SIZE};
 use crate::graph::{
-    BayerPassParams, CrtPassParams, GpuPipelineKey, HalftonePassParams, PaletteGuidedPassParams,
-    PaletteMixedPassParams, PaletteQuantizePassParams,
+    BayerPassParams, CrosshatchPassParams, CrtPassParams, GpuPipelineKey, HalftonePassParams,
+    LineScreenPassParams, PaletteGuidedPassParams, PaletteMixedPassParams,
+    PaletteQuantizePassParams, VoidAndClusterPassParams, WavePassParams,
 };
+use crate::void_and_cluster_matrix::{ranks, SIZE};
 use crate::resident::format::TILE_EXTENT;
 use crate::GpuError;
 
@@ -80,6 +82,9 @@ pub struct ResidentBayerPipelines {
     pipe2: wgpu::ComputePipeline,
     pipe4: wgpu::ComputePipeline,
     pipe8: wgpu::ComputePipeline,
+    pipe16: wgpu::ComputePipeline,
+    pipe_clustered: wgpu::ComputePipeline,
+    pipe_dispersed: wgpu::ComputePipeline,
     uniform_pool: UploadBufferPool,
     pattern_pool: UploadBufferPool,
 }
@@ -159,6 +164,9 @@ impl ResidentBayerPipelines {
             pipe2: make("bayer2_main"),
             pipe4: make("bayer4_main"),
             pipe8: make("bayer8_main"),
+            pipe16: make("bayer16_main"),
+            pipe_clustered: make("clustered8_main"),
+            pipe_dispersed: make("dispersed16_main"),
             uniform_pool: UploadBufferPool::new(
                 "resident-bayer-uniform-pool",
                 std::mem::size_of::<BayerUniforms>() as u64,
@@ -182,6 +190,9 @@ impl ResidentBayerPipelines {
             GpuPipelineKey::Bayer2 => &self.pipe2,
             GpuPipelineKey::Bayer4 => &self.pipe4,
             GpuPipelineKey::Bayer8 => &self.pipe8,
+            GpuPipelineKey::Bayer16 => &self.pipe16,
+            GpuPipelineKey::ClusteredDot => &self.pipe_clustered,
+            GpuPipelineKey::DispersedDot => &self.pipe_dispersed,
             _ => &self.pipe4,
         }
     }
@@ -319,6 +330,200 @@ impl ResidentBayerPipelines {
     }
 }
 
+/// Path B void-and-cluster (static ranks buffer + Bayer-like pattern uniforms).
+pub struct ResidentVoidAndClusterPipelines {
+    layout: wgpu::BindGroupLayout,
+    pipe: wgpu::ComputePipeline,
+    ranks_buf: wgpu::Buffer,
+    uniform_pool: UploadBufferPool,
+    pattern_pool: UploadBufferPool,
+}
+
+impl ResidentVoidAndClusterPipelines {
+    pub fn create(device: &wgpu::Device) -> Result<Self, GpuError> {
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("resident-vac-bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba32Float,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("vac-resident-wgsl"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/void_and_cluster_resident.wgsl").into(),
+            ),
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("resident-vac-pl"),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipe = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("resident-vac_main"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("vac_main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        let ranks_u32: Vec<u32> = ranks().iter().map(|&r| r as u32).collect();
+        debug_assert_eq!(ranks_u32.len(), SIZE * SIZE);
+        let ranks_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("resident-vac-ranks"),
+            contents: bytemuck::cast_slice(&ranks_u32),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        Ok(Self {
+            layout,
+            pipe,
+            ranks_buf,
+            uniform_pool: UploadBufferPool::new(
+                "resident-vac-uniform-pool",
+                std::mem::size_of::<BayerUniforms>() as u64,
+                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            ),
+            pattern_pool: UploadBufferPool::new(
+                "resident-vac-pattern-pool",
+                std::mem::size_of::<BayerPatternUniforms>() as u64,
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            ),
+        })
+    }
+
+    pub fn begin_frame(&self) {
+        self.uniform_pool.reset();
+        self.pattern_pool.reset();
+    }
+
+    pub fn encode_vac_pass(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        resident: &wgpu::Texture,
+        resident_layer: u32,
+        scratch: &wgpu::Texture,
+        scratch_layer: u32,
+        tile_x: u32,
+        tile_y: u32,
+        params: VoidAndClusterPassParams,
+    ) {
+        let (pattern_sin, pattern_cos) = ResidentBayerPipelines::pattern_trig(params.pattern_angle);
+        let uniforms = BayerUniforms {
+            tile: TileUniforms::for_tile(tile_x, tile_y),
+            params: [params.levels as f32, params.threshold_scale, 0.0, 0.0],
+        };
+        let pattern = BayerPatternUniforms {
+            packed: [
+                pattern_sin,
+                pattern_cos,
+                params.color_mode as f32,
+                params.threshold_bias,
+            ],
+        };
+
+        let uniform_buf = self
+            .uniform_pool
+            .write(device, queue, bytemuck::bytes_of(&uniforms));
+        let pattern_buf = self
+            .pattern_pool
+            .write(device, queue, bytemuck::bytes_of(&pattern));
+
+        let in_view = ResidentBayerPipelines::layer_view(resident, resident_layer, "vac-res-in");
+        let out_view = ResidentBayerPipelines::layer_view(scratch, scratch_layer, "vac-scratch-out");
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("resident-vac-bg"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&in_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&out_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: pattern_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.ranks_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("resident-vac-pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.pipe);
+        pass.set_bind_group(0, &bind_group, &[]);
+        let groups = CORE_SIZE / WORKGROUP_SIZE;
+        pass.dispatch_workgroups(groups, groups, 1);
+    }
+}
+
 /// Tile + cell params (32 bytes — Metal-safe primary uniform).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -421,13 +626,20 @@ impl ResidentHalftonePipelines {
         tile_y: u32,
         params: HalftonePassParams,
     ) {
+        let mut flags = 0.0f32;
+        if params.dither_alpha {
+            flags += 1.0;
+        }
+        if params.grayscale {
+            flags += 2.0;
+        }
         let uniforms = HalftoneUniforms {
             tile: TileUniforms::for_tile(tile_x, tile_y),
             params: [
                 params.cell_size as f32,
                 params.threshold_scale,
-                if params.dither_alpha { 1.0 } else { 0.0 },
-                if params.grayscale { 1.0 } else { 0.0 },
+                flags,
+                params.angle_offset_deg,
             ],
         };
         let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -460,6 +672,463 @@ impl ResidentHalftonePipelines {
 
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("resident-halftone-pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        let groups = CORE_SIZE / WORKGROUP_SIZE;
+        pass.dispatch_workgroups(groups, groups, 1);
+    }
+}
+
+/// Line-screen / crosshatch share the same 32-byte uniform layout.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct LinePatternUniforms {
+    tile: TileUniforms,
+    params: [f32; 4],
+}
+
+pub struct ResidentLineScreenPipelines {
+    layout: wgpu::BindGroupLayout,
+    pipeline: wgpu::ComputePipeline,
+}
+
+impl ResidentLineScreenPipelines {
+    pub fn create(device: &wgpu::Device) -> Result<Self, GpuError> {
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("resident-line-screen-bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba32Float,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("line-screen-resident-wgsl"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/line_screen_resident.wgsl").into(),
+            ),
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("resident-line-screen-pl"),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("line-screen-main"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        Ok(Self { layout, pipeline })
+    }
+
+    pub fn begin_frame(&self) {}
+
+    fn layer_view(texture: &wgpu::Texture, layer: u32, label: &'static str) -> wgpu::TextureView {
+        texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some(label),
+            format: Some(wgpu::TextureFormat::Rgba32Float),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            base_mip_level: 0,
+            mip_level_count: None,
+            base_array_layer: layer,
+            array_layer_count: Some(1),
+            aspect: wgpu::TextureAspect::All,
+            usage: None,
+        })
+    }
+
+    pub fn encode_line_screen_pass(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        resident: &wgpu::Texture,
+        resident_layer: u32,
+        scratch: &wgpu::Texture,
+        scratch_layer: u32,
+        tile_x: u32,
+        tile_y: u32,
+        params: LineScreenPassParams,
+    ) {
+        let uniforms = LinePatternUniforms {
+            tile: TileUniforms::for_tile(tile_x, tile_y),
+            params: [
+                params.cell_size as f32,
+                params.threshold_scale,
+                if params.dither_alpha { 1.0 } else { 0.0 },
+                params.pattern_angle,
+            ],
+        };
+        let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("resident-line-screen-uniforms"),
+            contents: bytemuck::bytes_of(&uniforms),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let in_view = Self::layer_view(resident, resident_layer, "line-screen-res-in");
+        let out_view = Self::layer_view(scratch, scratch_layer, "line-screen-scratch-out");
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("resident-line-screen-bg"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&in_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&out_view),
+                },
+            ],
+        });
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("resident-line-screen-pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        let groups = CORE_SIZE / WORKGROUP_SIZE;
+        pass.dispatch_workgroups(groups, groups, 1);
+    }
+}
+
+pub struct ResidentCrosshatchPipelines {
+    layout: wgpu::BindGroupLayout,
+    pipeline: wgpu::ComputePipeline,
+}
+
+impl ResidentCrosshatchPipelines {
+    pub fn create(device: &wgpu::Device) -> Result<Self, GpuError> {
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("resident-crosshatch-bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba32Float,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("crosshatch-resident-wgsl"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/crosshatch_resident.wgsl").into(),
+            ),
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("resident-crosshatch-pl"),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("crosshatch-main"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        Ok(Self { layout, pipeline })
+    }
+
+    pub fn begin_frame(&self) {}
+
+    fn layer_view(texture: &wgpu::Texture, layer: u32, label: &'static str) -> wgpu::TextureView {
+        texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some(label),
+            format: Some(wgpu::TextureFormat::Rgba32Float),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            base_mip_level: 0,
+            mip_level_count: None,
+            base_array_layer: layer,
+            array_layer_count: Some(1),
+            aspect: wgpu::TextureAspect::All,
+            usage: None,
+        })
+    }
+
+    pub fn encode_crosshatch_pass(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        resident: &wgpu::Texture,
+        resident_layer: u32,
+        scratch: &wgpu::Texture,
+        scratch_layer: u32,
+        tile_x: u32,
+        tile_y: u32,
+        params: CrosshatchPassParams,
+    ) {
+        let uniforms = LinePatternUniforms {
+            tile: TileUniforms::for_tile(tile_x, tile_y),
+            params: [
+                params.spacing,
+                params.threshold_scale,
+                if params.dither_alpha { 1.0 } else { 0.0 },
+                params.pattern_angle,
+            ],
+        };
+        let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("resident-crosshatch-uniforms"),
+            contents: bytemuck::bytes_of(&uniforms),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let in_view = Self::layer_view(resident, resident_layer, "crosshatch-res-in");
+        let out_view = Self::layer_view(scratch, scratch_layer, "crosshatch-scratch-out");
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("resident-crosshatch-bg"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&in_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&out_view),
+                },
+            ],
+        });
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("resident-crosshatch-pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        let groups = CORE_SIZE / WORKGROUP_SIZE;
+        pass.dispatch_workgroups(groups, groups, 1);
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct WaveUniforms {
+    tile: TileUniforms,
+    params: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct WaveShapeUniforms {
+    packed: [f32; 4],
+}
+
+pub struct ResidentWavePipelines {
+    layout: wgpu::BindGroupLayout,
+    pipeline: wgpu::ComputePipeline,
+}
+
+impl ResidentWavePipelines {
+    pub fn create(device: &wgpu::Device) -> Result<Self, GpuError> {
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("resident-wave-bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba32Float,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("wave-resident-wgsl"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/wave_resident.wgsl").into()),
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("resident-wave-pl"),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("wave-main"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        Ok(Self { layout, pipeline })
+    }
+
+    pub fn begin_frame(&self) {}
+
+    fn layer_view(texture: &wgpu::Texture, layer: u32, label: &'static str) -> wgpu::TextureView {
+        texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some(label),
+            format: Some(wgpu::TextureFormat::Rgba32Float),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            base_mip_level: 0,
+            mip_level_count: None,
+            base_array_layer: layer,
+            array_layer_count: Some(1),
+            aspect: wgpu::TextureAspect::All,
+            usage: None,
+        })
+    }
+
+    pub fn encode_wave_pass(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        resident: &wgpu::Texture,
+        resident_layer: u32,
+        scratch: &wgpu::Texture,
+        scratch_layer: u32,
+        tile_x: u32,
+        tile_y: u32,
+        params: WavePassParams,
+    ) {
+        let uniforms = WaveUniforms {
+            tile: TileUniforms::for_tile(tile_x, tile_y),
+            params: [
+                params.levels as f32,
+                params.threshold_scale,
+                params.color_mode as f32,
+                params.threshold_bias,
+            ],
+        };
+        let shape = WaveShapeUniforms {
+            packed: [
+                params.wavelength,
+                params.amplitude,
+                params.phase,
+                params.wave_angle,
+            ],
+        };
+        let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("resident-wave-uniforms"),
+            contents: bytemuck::bytes_of(&uniforms),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let shape_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("resident-wave-shape"),
+            contents: bytemuck::bytes_of(&shape),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let in_view = Self::layer_view(resident, resident_layer, "wave-res-in");
+        let out_view = Self::layer_view(scratch, scratch_layer, "wave-scratch-out");
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("resident-wave-bg"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&in_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&out_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: shape_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("resident-wave-pass"),
             timestamp_writes: None,
         });
         pass.set_pipeline(&self.pipeline);

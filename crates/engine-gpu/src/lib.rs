@@ -22,10 +22,15 @@ mod palette_quantize;
 mod prefer;
 pub mod resident;
 mod stats;
+mod void_and_cluster;
+mod void_and_cluster_matrix;
 mod vram_budget;
 mod warmup;
 
 pub use bayer::{apply_bayer_gpu, BayerGpuParams, BayerMatrixSize};
+pub use void_and_cluster::{
+    apply_void_and_cluster_gpu, void_and_cluster_ranks, VoidAndClusterGpuParams,
+};
 pub use composite::{
     CompositePassParams, GpuCompositeFrameJob, GpuCompositeLayerOp, GpuCompositeTileWork,
 };
@@ -38,9 +43,10 @@ pub use dispatch::{
 };
 pub use executor::{GpuExecutor, GpuFrameJob, GpuTileWork};
 pub use graph::{
-    compile_graph, BayerPassParams, ComputeGraph, CpuCheckpointKind, CrtPassParams, GpuPass,
-    GpuPipelineKey, GraphCompileError, GraphLayerFilter, GraphNode, HalftonePassParams,
-    PaletteGuidedPassParams, PaletteMixedPassParams, PaletteQuantizePassParams,
+    compile_graph, BayerPassParams, ComputeGraph, CrosshatchPassParams, CpuCheckpointKind,
+    CrtPassParams, GpuPass, GpuPipelineKey, GraphCompileError, GraphLayerFilter, GraphNode,
+    HalftonePassParams, LineScreenPassParams, PaletteGuidedPassParams, PaletteMixedPassParams,
+    PaletteQuantizePassParams, VoidAndClusterPassParams, WavePassParams,
 };
 pub use halftone::{apply_halftone_gpu, HalftoneGpuParams};
 pub use palette_guided::{palette_guided_params, palette_mixed_params_from_palette};
@@ -51,8 +57,9 @@ pub use prefer::{
 };
 pub use resident::{
     GpuTileCache, GpuVramStats, ResidentBayerPipelines, ResidentCompositePipelines,
-    ResidentCrtPipelines, ResidentHalftonePipelines, ResidentPaletteGuidedPipelines,
-    ResidentPalettePipelines,
+    ResidentCrosshatchPipelines, ResidentCrtPipelines, ResidentHalftonePipelines,
+    ResidentLineScreenPipelines, ResidentPaletteGuidedPipelines, ResidentPalettePipelines,
+    ResidentVoidAndClusterPipelines, ResidentWavePipelines,
 };
 pub use stats::not_worse_than;
 pub use vram_budget::{

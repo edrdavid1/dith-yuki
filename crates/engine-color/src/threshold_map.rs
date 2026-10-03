@@ -3,7 +3,7 @@
 //! Provides:
 //! - `ThresholdMap`: a loaded, normalized f32 threshold map for ordered dithering
 //! - `ThresholdMapCache`: a concurrent cache (max 64 entries) keyed by (path, mtime)
-//! - PNG loading with sandbox validation, grayscale enforcement, and dimension limits
+//! - PNG loading with sandbox validation, luminance conversion, and dimension limits
 
 use dashmap::DashMap;
 use std::collections::VecDeque;
@@ -39,7 +39,9 @@ impl ThresholdMap {
 /// Errors that can occur when loading or validating a threshold map.
 #[derive(Debug, Error)]
 pub enum ThresholdMapError {
-    #[error("not grayscale: found {actual} color type, expected 1-bit or 8-bit grayscale")]
+    #[error(
+        "unsupported PNG for threshold map: {actual} (need 1/8-bit grayscale or 8-bit RGB/RGBA)"
+    )]
     NotGrayscale { actual: String },
 
     #[error("dimensions {w}×{h} exceed maximum 4096×4096")]
@@ -83,7 +85,7 @@ impl ThresholdMapCache {
     /// 1. Validate path via sandbox (must be .png, within home dir)
     /// 2. Get file modification time
     /// 3. Check cache by (canonical_path, mtime)
-    /// 4. On miss: read PNG, validate grayscale + dimensions, normalize, cache
+    /// 4. On miss: read PNG, convert to luminance + dimensions, normalize, cache
     /// 5. LRU eviction at 64 entries
     pub fn get_or_load(&self, path: &Path) -> Result<Arc<ThresholdMap>, ThresholdMapError> {
         // 1. Resolve and validate the path via sandbox
@@ -138,14 +140,19 @@ impl Default for ThresholdMapCache {
     }
 }
 
+/// Rec. 709 luminance in `[0, 1]` from 8-bit sRGB channels.
+#[inline]
+fn luma8(r: u8, g: u8, b: u8) -> f32 {
+    (0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32) / 255.0
+}
+
 /// Load and validate a PNG file as a threshold map.
 ///
-/// Validates:
-/// - Color type must be Grayscale
-/// - Bit depth must be 1 or 8
-/// - Dimensions must be ≤ 4096×4096
+/// Accepts:
+/// - 1-bit / 8-bit grayscale (and grayscale+alpha — gray channel only)
+/// - 8-bit RGB / RGBA (converted to Rec. 709 luminance; alpha ignored)
 ///
-/// Normalizes pixel values to [0.0, 1.0].
+/// Dimensions must be ≤ 4096×4096. Values are normalized to `[0.0, 1.0]`.
 fn load_png_threshold_map(bytes: &[u8]) -> Result<ThresholdMap, ThresholdMapError> {
     let decoder = png::Decoder::new(Cursor::new(bytes));
     let mut reader = decoder
@@ -153,29 +160,27 @@ fn load_png_threshold_map(bytes: &[u8]) -> Result<ThresholdMap, ThresholdMapErro
         .map_err(|e| ThresholdMapError::Decode(e.to_string()))?;
 
     let info = reader.info();
+    let color_type = info.color_type;
+    let bit_depth = info.bit_depth;
+    let width = info.width;
+    let height = info.height;
 
-    // Validate color type: must be Grayscale
-    if info.color_type != png::ColorType::Grayscale {
+    let supported = matches!(
+        (color_type, bit_depth),
+        (
+            png::ColorType::Grayscale,
+            png::BitDepth::One | png::BitDepth::Eight
+        ) | (
+            png::ColorType::GrayscaleAlpha | png::ColorType::Rgb | png::ColorType::Rgba,
+            png::BitDepth::Eight
+        )
+    );
+    if !supported {
         return Err(ThresholdMapError::NotGrayscale {
-            actual: format!("{:?}", info.color_type),
+            actual: format!("{color_type:?} {bit_depth:?}"),
         });
     }
 
-    // Validate bit depth: must be 1 or 8
-    match info.bit_depth {
-        png::BitDepth::One | png::BitDepth::Eight => {}
-        other => {
-            return Err(ThresholdMapError::NotGrayscale {
-                actual: format!("Grayscale {:?}-bit", other),
-            });
-        }
-    }
-
-    let width = info.width;
-    let height = info.height;
-    let bit_depth = info.bit_depth;
-
-    // Validate dimensions
     if width > 4096 || height > 4096 {
         return Err(ThresholdMapError::TooLarge {
             w: width,
@@ -183,20 +188,19 @@ fn load_png_threshold_map(bytes: &[u8]) -> Result<ThresholdMap, ThresholdMapErro
         });
     }
 
-    // Read all pixel data
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let output_info = reader
         .next_frame(&mut buf)
         .map_err(|e| ThresholdMapError::Decode(e.to_string()))?;
     buf.truncate(output_info.buffer_size());
 
-    // Normalize to [0.0, 1.0]
-    let data = match bit_depth {
-        png::BitDepth::Eight => buf.iter().map(|&v| v as f32 / 255.0).collect(),
-        png::BitDepth::One => {
-            // 1-bit: each byte contains 8 pixels (MSB first)
-            let mut pixels = Vec::with_capacity((width * height) as usize);
-            // Rows are byte-aligned in PNG
+    let n = (width * height) as usize;
+    let data = match (color_type, bit_depth) {
+        (png::ColorType::Grayscale, png::BitDepth::Eight) => {
+            buf.iter().map(|&v| v as f32 / 255.0).collect()
+        }
+        (png::ColorType::Grayscale, png::BitDepth::One) => {
+            let mut pixels = Vec::with_capacity(n);
             let bytes_per_row = (width as usize).div_ceil(8);
             for row in 0..height as usize {
                 let row_start = row * bytes_per_row;
@@ -209,9 +213,23 @@ fn load_png_threshold_map(bytes: &[u8]) -> Result<ThresholdMap, ThresholdMapErro
             }
             pixels
         }
-        _ => unreachable!(), // Already validated above
+        (png::ColorType::GrayscaleAlpha, png::BitDepth::Eight) => {
+            buf.chunks_exact(2)
+                .map(|px| px[0] as f32 / 255.0)
+                .collect()
+        }
+        (png::ColorType::Rgb, png::BitDepth::Eight) => buf
+            .chunks_exact(3)
+            .map(|px| luma8(px[0], px[1], px[2]))
+            .collect(),
+        (png::ColorType::Rgba, png::BitDepth::Eight) => buf
+            .chunks_exact(4)
+            .map(|px| luma8(px[0], px[1], px[2]))
+            .collect(),
+        _ => unreachable!("supported combinations checked above"),
     };
 
+    debug_assert_eq!(data.len(), n);
     Ok(ThresholdMap {
         data,
         width,
@@ -250,12 +268,25 @@ mod tests {
         buf
     }
 
-    /// Helper: create an RGB PNG (non-grayscale) in memory.
+    /// Helper: create an RGB PNG in memory.
     fn create_rgb_png(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
         let mut buf = Vec::new();
         {
             let mut encoder = png::Encoder::new(&mut buf, width, height);
             encoder.set_color(png::ColorType::Rgb);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(pixels).unwrap();
+        }
+        buf
+    }
+
+    /// Helper: create an RGBA PNG in memory.
+    fn create_rgba_png(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut buf, width, height);
+            encoder.set_color(png::ColorType::Rgba);
             encoder.set_depth(png::BitDepth::Eight);
             let mut writer = encoder.write_header().unwrap();
             writer.write_image_data(pixels).unwrap();
@@ -353,23 +384,33 @@ mod tests {
     }
 
     #[test]
-    fn test_reject_non_grayscale_png() {
-        // Create an RGB PNG
+    fn test_load_rgb_png_as_luminance() {
+        // Pure red / green / blue / mid gray
         let pixels = vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 128, 128, 128];
         let png_bytes = create_rgb_png(2, 2, &pixels);
+        let map = load_png_threshold_map(&png_bytes).unwrap();
+        assert_eq!(map.width, 2);
+        assert_eq!(map.height, 2);
+        assert!((map.data[0] - luma8(255, 0, 0)).abs() < 1e-6);
+        assert!((map.data[1] - luma8(0, 255, 0)).abs() < 1e-6);
+        assert!((map.data[2] - luma8(0, 0, 255)).abs() < 1e-6);
+        assert!((map.data[3] - luma8(128, 128, 128)).abs() < 1e-6);
+    }
 
-        let result = load_png_threshold_map(&png_bytes);
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            ThresholdMapError::NotGrayscale { actual } => {
-                assert!(
-                    actual.contains("Rgb"),
-                    "Expected 'Rgb' in error, got: {}",
-                    actual
-                );
-            }
-            other => panic!("Expected NotGrayscale error, got: {:?}", other),
-        }
+    #[test]
+    fn test_load_rgba_png_ignores_alpha() {
+        let pixels = vec![
+            255, 0, 0, 0, // red, transparent
+            0, 255, 0, 255, // green, opaque
+            0, 0, 255, 128, // blue, semi
+            128, 128, 128, 64,
+        ];
+        let png_bytes = create_rgba_png(2, 2, &pixels);
+        let map = load_png_threshold_map(&png_bytes).unwrap();
+        assert!((map.data[0] - luma8(255, 0, 0)).abs() < 1e-6);
+        assert!((map.data[1] - luma8(0, 255, 0)).abs() < 1e-6);
+        assert!((map.data[2] - luma8(0, 0, 255)).abs() < 1e-6);
+        assert!((map.data[3] - luma8(128, 128, 128)).abs() < 1e-6);
     }
 
     #[test]

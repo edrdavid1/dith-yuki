@@ -34,7 +34,7 @@ As-built описание Color Lab. Общая карта системы — [a
 | Форматы | `src/palette/formats/` | ASE, ACO, GPL, PAL, CSV, JSON |
 | Генерация | `src/palette/generate.rs` | Median cut, K-means; subsample ≤ `MAX_GENERATION_SAMPLES` (200k); HashSet-дедуп |
 | Кэш | `src/palette_cache.rs` | `PaletteKdCache` (DashMap по id + revision) |
-| Threshold map | `src/threshold_map.rs` | PNG grayscale для ordered dither |
+| Threshold map | `src/threshold_map.rs` | PNG → luminance for ordered dither |
 
 ### Сущность `Palette`
 

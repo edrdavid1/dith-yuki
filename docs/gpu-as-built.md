@@ -51,8 +51,13 @@ Not all filters run on the GPU. The pipeline uses explicit **`CpuCheckpointKind`
 
 | Filter / Scope | Execution Path | Rationale |
 |----------------|----------------|-----------|
-| **Bayer Pattern** (all matrix sizes) | GPU Pass (`bayer.rs`) | Pure per-pixel pattern; 100% GPU resident |
-| **Halftone / CRT / Wave** | GPU Pass (`halftone.rs`, `crt.rs`) | Per-pixel pattern shader |
+| **Bayer Pattern** (2/4/8/16) | GPU Pass (`bayer.rs`) | Pure per-pixel pattern; 100% GPU resident (Guided/Mixed: 2/4/8) |
+| **Clustered / Dispersed Dot** | GPU Pass (`bayer.rs` entry points) | Static 8² / 16² matrices; Path B resident (Track H defaults) |
+| **Void and Cluster** | GPU Pass (`void_and_cluster.rs`) | Static 64² blue-noise matrix; Path B resident (Track H: ps=1, default bias/angle) |
+| **CMYK Halftone / Angled** | GPU Pass (`halftone.rs`) | Round-dot CMYK screens; angled adds `pattern_angle` offset |
+| **Line Screen / Crosshatch** | GPU Pass (`line_screen_resident` / `crosshatch_resident`) | Parametric stripe / hatch ladder |
+| **Wave** | GPU Pass (`wave_resident`) | Sinusoidal threshold + Bayer-style quantize |
+| **CRT** | GPU Pass (`crt.rs`) | Per-pixel pattern shader |
 | **Palette Quantize / Guided** | GPU Pass (`palette_*.rs`) | LUT / distance pass in WGSL |
 | **Error Diffusion (ED)** (FS, JJN, Stucki, Atkinson) | **`CpuCheckpointKind::ErrorDiffusion`** | Cross-pixel error propagation is strictly sequential; ED always falls back to CPU |
 | **`pixel_size > 1`** (Block Granularity) | **`CpuCheckpointKind::BlockGranularity`** | **Permanent Non-goal (Option a)**. Block-representative compute routes to CPU |

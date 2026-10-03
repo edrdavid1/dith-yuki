@@ -12,6 +12,11 @@ pub enum BayerMatrixSize {
     Bayer2 = 2,
     Bayer4 = 4,
     Bayer8 = 8,
+    Bayer16 = 16,
+    /// Classical clustered-dot 8×8 (discriminant is not the matrix side).
+    ClusteredDot = 108,
+    /// Ulichney dispersed-dot 16×16.
+    DispersedDot = 116,
 }
 
 #[repr(C)]
@@ -38,6 +43,9 @@ pub(crate) struct BayerPipelines {
     pub pipe2: wgpu::ComputePipeline,
     pub pipe4: wgpu::ComputePipeline,
     pub pipe8: wgpu::ComputePipeline,
+    pub pipe16: wgpu::ComputePipeline,
+    pub pipe_clustered: wgpu::ComputePipeline,
+    pub pipe_dispersed: wgpu::ComputePipeline,
 }
 
 impl BayerPipelines {
@@ -105,6 +113,9 @@ impl BayerPipelines {
             pipe2: make("bayer2_main"),
             pipe4: make("bayer4_main"),
             pipe8: make("bayer8_main"),
+            pipe16: make("bayer16_main"),
+            pipe_clustered: make("clustered8_main"),
+            pipe_dispersed: make("dispersed16_main"),
         })
     }
 
@@ -113,6 +124,9 @@ impl BayerPipelines {
             BayerMatrixSize::Bayer2 => &self.pipe2,
             BayerMatrixSize::Bayer4 => &self.pipe4,
             BayerMatrixSize::Bayer8 => &self.pipe8,
+            BayerMatrixSize::Bayer16 => &self.pipe16,
+            BayerMatrixSize::ClusteredDot => &self.pipe_clustered,
+            BayerMatrixSize::DispersedDot => &self.pipe_dispersed,
         }
     }
 }

@@ -12,7 +12,7 @@ use engine_project::filters::dither_ordered::apply_ordered_with_cache_into;
 use engine_project::filters::dither_residuals::ErrorResidualsStore;
 use engine_project::types::{DocumentId, LayerId, LayerKind};
 use engine_project::{Document, FilterContext, Layer};
-use engine_registry::{AlgorithmId, AlgorithmRegistry, CpuCheckpointKind, GpuEligibility};
+use engine_registry::{AlgorithmId, AlgorithmRegistry, GpuEligibility};
 use engine_tiles::block_cache::BlockRepresentativeCache;
 use engine_tiles::{PixelTile, TileCoord, HALO, TILE_SIZE};
 
@@ -131,7 +131,7 @@ fn registry_parity_halftone_screen_angled() {
 
     assert!(matches!(
         algo.gpu_eligibility(&serde_json::to_value(&params).unwrap()),
-        GpuEligibility::Cpu(CpuCheckpointKind::UnsupportedFilter)
+        GpuEligibility::Eligible
     ));
 
     let ctx = FilterContext::new(

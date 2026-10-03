@@ -12,7 +12,7 @@ use engine_project::filters::dither_ordered::apply_ordered_with_cache_into;
 use engine_project::filters::dither_residuals::ErrorResidualsStore;
 use engine_project::types::{DocumentId, LayerId, LayerKind};
 use engine_project::{Document, FilterContext, Layer};
-use engine_registry::{AlgorithmId, AlgorithmRegistry, CpuCheckpointKind, GpuEligibility};
+use engine_registry::{AlgorithmId, AlgorithmRegistry, GpuEligibility};
 use engine_tiles::block_cache::BlockRepresentativeCache;
 use engine_tiles::{PixelTile, TileCoord, HALO, TILE_SIZE};
 
@@ -82,10 +82,13 @@ fn registry_parity_dispersed_dot_ordered() {
         .get(AlgorithmId::new("dispersed_dot_ordered"))
         .expect("dispersed_dot_ordered registered");
 
-    assert!(matches!(
-        algo.gpu_eligibility(&serde_json::to_value(&params).unwrap()),
-        GpuEligibility::Cpu(CpuCheckpointKind::UnsupportedFilter)
-    ));
+    assert!(
+        matches!(
+            algo.gpu_eligibility(&serde_json::to_value(&params).unwrap()),
+            GpuEligibility::Eligible
+        ),
+        "dispersed_dot_ordered Track H defaults must be GPU-eligible"
+    );
 
     let ctx = FilterContext::new(
         coord,

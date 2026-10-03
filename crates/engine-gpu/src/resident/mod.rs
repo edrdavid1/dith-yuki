@@ -17,8 +17,10 @@ pub use format::{
 };
 pub use gather::ResidentGatherPipelines;
 pub use pipelines::{
-    ResidentBayerPipelines, ResidentCompositePipelines, ResidentCrtPipelines,
-    ResidentHalftonePipelines, ResidentPaletteGuidedPipelines, ResidentPalettePipelines,
+    ResidentBayerPipelines, ResidentCompositePipelines, ResidentCrosshatchPipelines,
+    ResidentCrtPipelines, ResidentHalftonePipelines, ResidentLineScreenPipelines,
+    ResidentPaletteGuidedPipelines, ResidentPalettePipelines, ResidentVoidAndClusterPipelines,
+    ResidentWavePipelines,
 };
 pub use readback::{ReadbackRing, TILE_CORE_RGBA8_BYTES};
 pub use slot::{GpuSlotMeta, SlotAllocator, SlotHandle};

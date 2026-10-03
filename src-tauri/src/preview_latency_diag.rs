@@ -642,16 +642,17 @@ fn build_resident_frame_job(
     })
 }
 
-/// GPU-resident Path B: one frame job for all visible L0 tiles (Bayer-only graph).
-/// Returns (p95 wall ms, tile count, v1 single-tile ms if measured).
+/// GPU-resident Path B: one frame job for all visible L0 tiles (GPU-only graph).
+/// Returns (p95 wall ms, tile count, p95 again for callers that expect a 3-tuple).
 fn run_resident_viewport_benchmark(
+    mode: DitherModeV2,
     origin: &[TileCoord],
     gpu: &Arc<engine_gpu::GpuContext>,
     repeats: usize,
 ) -> (f64, usize, f64) {
     std::env::set_var("DITHER_GPU_RESIDENT", "1");
     std::env::set_var("DITHER_GPU_RESIDENT_DIAG", "1");
-    let state = make_state(DitherModeV2::Bayer4x4, Some(Arc::clone(gpu)));
+    let state = make_state(mode.clone(), Some(Arc::clone(gpu)));
     fill_raw_tiles(&state, origin);
     set_viewport(&state, 1.0, 0.0, 0.0);
     let l0_count = origin.len();
@@ -670,7 +671,10 @@ fn run_resident_viewport_benchmark(
     let graph = std::sync::Arc::new(
         compile_layer_graph(&layer.filters).expect("resident graph must compile"),
     );
-    assert!(graph.is_gpu_only());
+    assert!(
+        graph.is_gpu_only(),
+        "mode {mode:?} must compile to a GPU-only graph for resident warm soak"
+    );
 
     let executor = state.gpu_executor.as_ref().unwrap().lock().unwrap();
 
@@ -699,7 +703,7 @@ fn run_resident_viewport_benchmark(
     std::env::remove_var("DITHER_GPU_RESIDENT_DIAG");
 
     println!(
-        "SCENARIO Bayer GPU-resident origin 100% (DITHER_GPU_RESIDENT=1)\n  visible_l0={l0_count}  cold_promote+1st={cold_promote_ms:.3}ms  steady p95({repeats})={resident_p95:.3}ms  max={max_ms:.3}ms  ms/tile={:.3}\n",
+        "SCENARIO {mode:?} GPU-resident origin 100% (DITHER_GPU_RESIDENT=1)\n  visible_l0={l0_count}  cold_promote+1st={cold_promote_ms:.3}ms  steady p95({repeats})={resident_p95:.3}ms  max={max_ms:.3}ms  ms/tile={:.3}\n",
         resident_p95 / l0_count.max(1) as f64
     );
     (resident_p95, l0_count, resident_p95)
@@ -714,8 +718,8 @@ fn measure_resident_viewport_p95(
     gpu: &Arc<engine_gpu::GpuContext>,
     repeats: usize,
 ) -> f64 {
-    let _ = (mode, zoom, x, y);
-    run_resident_viewport_benchmark(raw_coords, gpu, repeats).0
+    let _ = (zoom, x, y);
+    run_resident_viewport_benchmark(mode, raw_coords, gpu, repeats).0
 }
 
 fn build_resident_composite_job(
@@ -850,6 +854,58 @@ fn preview_latency_diag_gpu_resident() {
         origin.len()
     );
     run_gpu_viewport_timing(&origin);
+}
+
+/// VAC warm Path B: VoidAndCluster GPU-resident viewport vs VAC CPU pool.
+#[test]
+#[ignore = "diagnostic: cargo test -p dither --release preview_latency_diag_gpu_resident_vac -- --ignored --nocapture --test-threads=1"]
+fn preview_latency_diag_gpu_resident_vac() {
+    let origin = compute_visible_tiles(1.0, 0.0, 0.0, VP_W, VP_H, 0, DOC, DOC);
+    println!(
+        "\n=== VAC GPU-resident warm viewport diag ===\norigin100% L0 tiles={}\n",
+        origin.len()
+    );
+    run_vac_resident_viewport_timing(&origin);
+}
+
+/// Bayer16 warm Path B: GPU-resident viewport vs Bayer16 CPU pool.
+#[test]
+#[ignore = "diagnostic: cargo test -p dither --release preview_latency_diag_gpu_resident_bayer16 -- --ignored --nocapture --test-threads=1"]
+fn preview_latency_diag_gpu_resident_bayer16() {
+    let origin = compute_visible_tiles(1.0, 0.0, 0.0, VP_W, VP_H, 0, DOC, DOC);
+    println!(
+        "\n=== Bayer16 GPU-resident warm viewport diag ===\norigin100% L0 tiles={}\n",
+        origin.len()
+    );
+    run_bayer16_resident_viewport_timing(&origin);
+}
+
+/// ClusteredDot + DispersedDot warm Path B vs CPU pools.
+#[test]
+#[ignore = "diagnostic: cargo test -p dither --release preview_latency_diag_gpu_resident_ordered_dots -- --ignored --nocapture --test-threads=1"]
+fn preview_latency_diag_gpu_resident_ordered_dots() {
+    let origin = compute_visible_tiles(1.0, 0.0, 0.0, VP_W, VP_H, 0, DOC, DOC);
+    println!(
+        "\n=== Clustered/Dispersed Dot GPU-resident warm viewport diag ===\norigin100% L0 tiles={}\n",
+        origin.len()
+    );
+    run_ordered_resident_viewport_timing(DitherModeV2::ClusteredDotOrdered, &origin);
+    run_ordered_resident_viewport_timing(DitherModeV2::DispersedDotOrdered, &origin);
+}
+
+/// Geometric Path B: angled halftone, line screen, crosshatch vs CPU pools.
+#[test]
+#[ignore = "diagnostic: cargo test -p dither --release preview_latency_diag_gpu_resident_geometric -- --ignored --nocapture --test-threads=1"]
+fn preview_latency_diag_gpu_resident_geometric() {
+    let origin = compute_visible_tiles(1.0, 0.0, 0.0, VP_W, VP_H, 0, DOC, DOC);
+    println!(
+        "\n=== Geometric GPU-resident warm viewport diag ===\norigin100% L0 tiles={}\n",
+        origin.len()
+    );
+    run_ordered_resident_viewport_timing(DitherModeV2::HalftoneScreenAngled, &origin);
+    run_ordered_resident_viewport_timing(DitherModeV2::LineScreen, &origin);
+    run_ordered_resident_viewport_timing(DitherModeV2::CrosshatchDither, &origin);
+    run_ordered_resident_viewport_timing(DitherModeV2::Wave, &origin);
 }
 
 /// T7.5: multi-layer composite resident vs CPU composite.
@@ -1184,6 +1240,56 @@ fn run_gpu_viewport_timing(origin: &[TileCoord]) {
             println!("GPU: no adapter — skip DITHER_GPU_RESIDENT timing\n");
         }
     }
+}
+
+fn run_ordered_resident_viewport_timing(mode: DitherModeV2, origin: &[TileCoord]) {
+    match engine_gpu::GpuContext::try_new_blocking() {
+        Some(ctx) => {
+            let gpu = Arc::new(ctx);
+            const RESIDENT_REPEATS: usize = 7;
+
+            let resident_p95 = measure_resident_viewport_p95(
+                mode.clone(),
+                1.0,
+                0.0,
+                0.0,
+                origin,
+                &gpu,
+                RESIDENT_REPEATS,
+            );
+            let resident_n = origin.len();
+
+            let cpu_p95 = {
+                let mut cpu_samples = Vec::with_capacity(RESIDENT_REPEATS);
+                for _ in 0..RESIDENT_REPEATS {
+                    let (wall, _) = measure_scenario(mode.clone(), 1.0, 0.0, 0.0, origin);
+                    cpu_samples.push(wall.as_secs_f64() * 1000.0);
+                }
+                p95(cpu_samples)
+            };
+
+            let gate_pass = resident_p95 < cpu_p95;
+            let speedup = if resident_p95 > 0.0 {
+                cpu_p95 / resident_p95
+            } else {
+                f64::INFINITY
+            };
+            println!(
+                "=== {mode:?} Path B warm summary (origin ~{resident_n} L0 tiles, {RESIDENT_REPEATS} repeats) ===\n  CPU worker pool p95                    = {cpu_p95:7.1}ms\n  GPU-resident frame p95 (warm)          = {resident_p95:7.3}ms\n  speedup (CPU/GPU)                      = {speedup:7.2}x\n  gate (resident p95 < CPU p95)          = {gate_pass}\n"
+            );
+        }
+        None => {
+            println!("GPU: no adapter — skip {mode:?} DITHER_GPU_RESIDENT timing\n");
+        }
+    }
+}
+
+fn run_vac_resident_viewport_timing(origin: &[TileCoord]) {
+    run_ordered_resident_viewport_timing(DitherModeV2::VoidAndCluster, origin);
+}
+
+fn run_bayer16_resident_viewport_timing(origin: &[TileCoord]) {
+    run_ordered_resident_viewport_timing(DitherModeV2::Bayer16x16, origin);
 }
 
 /// T8: Adjust → ED → Bayer vs Bayer-only — documents checkpoint tax for GpuPreviewGate.

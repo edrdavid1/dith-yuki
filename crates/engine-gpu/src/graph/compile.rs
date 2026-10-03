@@ -14,7 +14,11 @@ fn empty_pass(pipeline: GpuPipelineKey) -> GpuPass {
     GpuPass {
         pipeline,
         bayer: None,
+        void_and_cluster: None,
         halftone: None,
+        line_screen: None,
+        crosshatch: None,
+        wave: None,
         crt: None,
         palette_quantize: None,
         palette_guided: None,
@@ -32,9 +36,29 @@ pub fn compile_graph(filters: &[GraphLayerFilter]) -> Result<ComputeGraph, Graph
                 pass.bayer = Some(*p);
                 nodes.push(GraphNode::Gpu(pass));
             }
+            GraphLayerFilter::VoidAndCluster(p) => {
+                let mut pass = empty_pass(GpuPipelineKey::VoidAndCluster);
+                pass.void_and_cluster = Some(*p);
+                nodes.push(GraphNode::Gpu(pass));
+            }
             GraphLayerFilter::Halftone(p) => {
                 let mut pass = empty_pass(GpuPipelineKey::Halftone);
                 pass.halftone = Some(*p);
+                nodes.push(GraphNode::Gpu(pass));
+            }
+            GraphLayerFilter::LineScreen(p) => {
+                let mut pass = empty_pass(GpuPipelineKey::LineScreen);
+                pass.line_screen = Some(*p);
+                nodes.push(GraphNode::Gpu(pass));
+            }
+            GraphLayerFilter::Crosshatch(p) => {
+                let mut pass = empty_pass(GpuPipelineKey::Crosshatch);
+                pass.crosshatch = Some(*p);
+                nodes.push(GraphNode::Gpu(pass));
+            }
+            GraphLayerFilter::Wave(p) => {
+                let mut pass = empty_pass(GpuPipelineKey::Wave);
+                pass.wave = Some(*p);
                 nodes.push(GraphNode::Gpu(pass));
             }
             GraphLayerFilter::Crt(p) => {
@@ -121,6 +145,7 @@ mod tests {
             threshold_scale: 1.0,
             dither_alpha: false,
             grayscale: false,
+            angle_offset_deg: 0.0,
         })])
         .unwrap();
         assert!(g.is_gpu_only());

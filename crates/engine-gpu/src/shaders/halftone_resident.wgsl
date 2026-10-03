@@ -11,7 +11,8 @@ struct TileUniforms {
 
 struct HalftoneUniforms {
     tile: TileUniforms,
-    // x=cell_size, y=threshold_scale, z=dither_alpha, w=grayscale (0/1)
+    // x=cell_size, y=threshold_scale, z=flags (bit0 dither_alpha, bit1 grayscale),
+    // w=angle_offset_deg (added to classic CMYK plate angles)
     params: vec4<f32>,
 }
 
@@ -92,8 +93,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let gy = f32(u.tile.tile_offset.y + gid.y);
     let s = u.params.x;
     let threshold_scale = u.params.y;
-    let dither_a = u.params.z > 0.5;
-    let is_gray = u.params.w > 0.5;
+    let flags = u32(u.params.z + 0.5);
+    let dither_a = (flags & 1u) != 0u;
+    let is_gray = (flags & 2u) != 0u;
+    // Match CPU: (plate_deg + offset).rem_euclid(360).to_radians()
+    let off = u.params.w;
 
     var r = rgba.r;
     var g = rgba.g;
@@ -107,7 +111,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let cmyk = rgb_to_cmyk(r, g, b);
-    let angles = array<f32, 4>(DEG15, DEG75, DEG0, DEG45);
+    // Offset 0 keeps classic const radians (bit-exact vs legacy CMYK path).
+    var angles = array<f32, 4>(DEG15, DEG75, DEG0, DEG45);
+    if (abs(off) >= 1e-6) {
+        angles = array<f32, 4>(
+            rem_euclid_f(15.0 + off, 360.0) * PI / 180.0,
+            rem_euclid_f(75.0 + off, 360.0) * PI / 180.0,
+            rem_euclid_f(0.0 + off, 360.0) * PI / 180.0,
+            rem_euclid_f(45.0 + off, 360.0) * PI / 180.0
+        );
+    }
     var dots = array<f32, 4>(0.0, 0.0, 0.0, 0.0);
     for (var i = 0u; i < 4u; i++) {
         let dist = rotated_cell_dist(gx, gy, s, angles[i]);

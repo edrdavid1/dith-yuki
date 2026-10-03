@@ -876,10 +876,12 @@ pub struct LinearColor { pub r: f32, pub g: f32, pub b: f32 }
 
 #### ThresholdMap (threshold_map.rs)
 
-Загрузка custom PNG threshold maps для ordered dithering.
+Загрузка custom PNG threshold maps для ordered dithering (`DitherModeV2::CustomPng`).
+- UI: Dithering → Algorithm → **Custom Threshold Map** (file dialog; empty path never committed)
 - Path validation через `engine_io::sandbox::resolve_user_path`
-- Grayscale → f32 normalized sampling
+- 1/8-bit gray or 8-bit RGB/RGBA → Rec.709 luminance → f32 sampling; max 4096²
 - Cache по (path, mtime) для hot-reload
+- Save embeds `assets/threshold_maps/{blake3-32hex}.png` (not a registry `AlgorithmId`)
 
 ---
 
@@ -910,8 +912,8 @@ pub fn resolve_user_path(raw: &str, allowed_ext: &[&str]) -> Result<PathBuf, San
 | Warmup | A2 prefetch promote; `DITHER_GPU_WARMUP=0` disables |
 | Env | `DITHER_FORCE_CPU=1`; `DITHER_GPU_PREVIEW=1` (cold compute). No Preferences toggle (A4). `DITHER_GPU=1` aliases preview-enabled. |
 
-**Eligible:** Bayer (ps=1, bias/angle 0), Halftone, CRT, Palette Guided/Mixed/Quantize (A7 LUT).  
-**Never GPU:** ED, CustomPng, Wave, Glow, `pixel_size>1`.  
+**Eligible:** Bayer / Clustered / Dispersed / VAC (ps=1, Track H bias/angle), Halftone angled, Line Screen, Crosshatch, Wave, CRT, Palette Guided/Mixed/Quantize (A7 LUT).  
+**Never GPU:** ED, CustomPng, stipple, Glow, `pixel_size>1`.  
 **Parity:** Bayer exact; Halftone/CRT ≤ `1/255`. As-built: [gpu-as-built.md](./gpu-as-built.md).
 
 ### 4.6 engine-core (Phase 0 stub)

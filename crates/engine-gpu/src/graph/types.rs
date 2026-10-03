@@ -8,7 +8,12 @@ pub enum GraphLayerFilter {
     /// Disabled filter entry — omitted from graph.
     Skip,
     Bayer(BayerPassParams),
+    /// Ulichney void-and-cluster ordered dither (static 64² matrix).
+    VoidAndCluster(VoidAndClusterPassParams),
     Halftone(HalftonePassParams),
+    LineScreen(LineScreenPassParams),
+    Crosshatch(CrosshatchPassParams),
+    Wave(WavePassParams),
     Crt(CrtPassParams),
     /// Nearest-color snap via `PaletteLut3D` (no ED). Payload carries LUT + palette RGB.
     PaletteQuantize(PaletteQuantizePassParams),
@@ -24,7 +29,14 @@ pub enum GpuPipelineKey {
     Bayer2,
     Bayer4,
     Bayer8,
+    Bayer16,
+    ClusteredDot,
+    DispersedDot,
+    VoidAndCluster,
     Halftone,
+    LineScreen,
+    Crosshatch,
+    Wave,
     Crt,
     PaletteQuantize,
     PaletteGuided,
@@ -42,12 +54,57 @@ pub struct BayerPassParams {
     pub pattern_angle: f32,
 }
 
+/// Void-and-cluster pass (same quantize knobs as Bayer; matrix is fixed 64²).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VoidAndClusterPassParams {
+    pub levels: u16,
+    pub threshold_scale: f32,
+    /// 0=rgb, 1=gray, 2=rgb+dither_alpha, 3=gray+dither_alpha
+    pub color_mode: u32,
+    pub threshold_bias: f32,
+    pub pattern_angle: f32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HalftonePassParams {
     pub cell_size: u8,
     pub threshold_scale: f32,
     pub dither_alpha: bool,
     pub grayscale: bool,
+    /// Degrees added to classic CMYK plate angles (`halftone_screen_angled`).
+    pub angle_offset_deg: f32,
+}
+
+/// Parallel line-screen stripes (luminance → ink width).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LineScreenPassParams {
+    pub cell_size: u8,
+    pub threshold_scale: f32,
+    pub pattern_angle: f32,
+    pub dither_alpha: bool,
+}
+
+/// Engraving-style crosshatch ladder.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CrosshatchPassParams {
+    pub spacing: f32,
+    pub threshold_scale: f32,
+    pub pattern_angle: f32,
+    pub dither_alpha: bool,
+}
+
+/// Sinusoidal wave ordered dither (Bayer-style quantize).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WavePassParams {
+    pub levels: u16,
+    pub threshold_scale: f32,
+    /// 0=rgb, 1=gray, 2=rgb+dither_alpha, 3=gray+dither_alpha
+    pub color_mode: u32,
+    pub threshold_bias: f32,
+    pub wavelength: f32,
+    pub amplitude: f32,
+    pub phase: f32,
+    pub wave_angle: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -114,7 +171,11 @@ impl PartialEq for PaletteMixedPassParams {
 pub struct GpuPass {
     pub pipeline: GpuPipelineKey,
     pub bayer: Option<BayerPassParams>,
+    pub void_and_cluster: Option<VoidAndClusterPassParams>,
     pub halftone: Option<HalftonePassParams>,
+    pub line_screen: Option<LineScreenPassParams>,
+    pub crosshatch: Option<CrosshatchPassParams>,
+    pub wave: Option<WavePassParams>,
     pub crt: Option<CrtPassParams>,
     pub palette_quantize: Option<PaletteQuantizePassParams>,
     pub palette_guided: Option<PaletteGuidedPassParams>,
@@ -183,15 +244,53 @@ pub fn hash_graph_nodes(nodes: &[GraphNode]) -> u64 {
                     h ^= b.threshold_bias.to_bits() as u64;
                     h ^= b.pattern_angle.to_bits() as u64;
                 }
+                if let Some(v) = &p.void_and_cluster {
+                    h ^= (v.levels as u64) << 8;
+                    h ^= v.color_mode as u64;
+                    h ^= v.threshold_scale.to_bits() as u64;
+                    h ^= v.threshold_bias.to_bits() as u64;
+                    h ^= v.pattern_angle.to_bits() as u64;
+                    h ^= 0x7661_635f; // "vac_" tag vs Bayer with same levels
+                }
                 if let Some(ht) = &p.halftone {
                     h ^= ht.cell_size as u64;
                     h ^= ht.threshold_scale.to_bits() as u64;
+                    h ^= ht.angle_offset_deg.to_bits() as u64;
                     if ht.dither_alpha {
                         h ^= 0x100;
                     }
                     if ht.grayscale {
                         h ^= 0x200;
                     }
+                }
+                if let Some(ls) = &p.line_screen {
+                    h ^= ls.cell_size as u64;
+                    h ^= ls.threshold_scale.to_bits() as u64;
+                    h ^= ls.pattern_angle.to_bits() as u64;
+                    if ls.dither_alpha {
+                        h ^= 0x300;
+                    }
+                    h ^= 0x6c73_5f5f; // "ls__"
+                }
+                if let Some(ch) = &p.crosshatch {
+                    h ^= ch.spacing.to_bits() as u64;
+                    h ^= ch.threshold_scale.to_bits() as u64;
+                    h ^= ch.pattern_angle.to_bits() as u64;
+                    if ch.dither_alpha {
+                        h ^= 0x400;
+                    }
+                    h ^= 0x6368_5f5f; // "ch__"
+                }
+                if let Some(w) = &p.wave {
+                    h ^= (w.levels as u64) << 8;
+                    h ^= w.color_mode as u64;
+                    h ^= w.threshold_scale.to_bits() as u64;
+                    h ^= w.threshold_bias.to_bits() as u64;
+                    h ^= w.wavelength.to_bits() as u64;
+                    h ^= w.amplitude.to_bits() as u64;
+                    h ^= w.phase.to_bits() as u64;
+                    h ^= w.wave_angle.to_bits() as u64;
+                    h ^= 0x7761_7665; // "wave"
                 }
                 if let Some(c) = &p.crt {
                     h ^= (c.period as u64) << 16;

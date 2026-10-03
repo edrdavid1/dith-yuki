@@ -91,8 +91,21 @@ impl FilterAlgorithm for Wave {
         .map_err(FilterError::from)
     }
 
-    fn gpu_eligibility(&self, _params: &serde_json::Value) -> GpuEligibility {
-        GpuEligibility::Cpu(CpuCheckpointKind::IneligibleDither)
+    fn gpu_eligibility(&self, params: &serde_json::Value) -> GpuEligibility {
+        match serde_json::from_value::<DitherParamsV2>(params.clone()) {
+            Ok(p) if p.pixel_size > 1 => {
+                GpuEligibility::Cpu(CpuCheckpointKind::BlockGranularity)
+            }
+            Ok(p)
+                if p.palette_id.is_none()
+                    && p.threshold_bias == 0.0
+                    && !p.palette_dither_mode.is_guided() =>
+            {
+                GpuEligibility::Eligible
+            }
+            Ok(_) => GpuEligibility::Cpu(CpuCheckpointKind::IneligibleDither),
+            Err(_) => GpuEligibility::Cpu(CpuCheckpointKind::IneligibleDither),
+        }
     }
 
     fn param_schema(&self) -> &'static [ParamField] {

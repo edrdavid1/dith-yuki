@@ -10,6 +10,10 @@ signal, schema-driven settings panel, and document load/save go through
 `FilterKind` and `DitherModeV2` remain **legacy serde aliases** for on-disk
 `FilterInstanceFile.kind` and `DitherParamsV2.mode`. New code uses `AlgorithmId`.
 
+**Special case — CustomPng:** not a registry algorithm (file-backed path payload).
+Product UI lives in `DitherSettings` (Algorithm → Custom Threshold Map + Browse).
+Do not add `custom_png` to `ALGORITHM_ID_REGISTRY.txt`.
+
 **Special case — ASCII:** `EffectCategory::Ascii` is a full-document job
 (`ExecutionScope::FullDocument`), not progressive tiles. Tile `apply` may be
 identity; see [ascii-as-built.md](./ascii-as-built.md).

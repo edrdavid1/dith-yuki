@@ -11,8 +11,9 @@ use crate::context::GpuContext;
 use crate::graph::{ComputeGraph, GpuPipelineKey, GraphNode};
 use crate::resident::{
     GpuTileCache, ReadbackRing, ResidentBayerPipelines, ResidentCompositePipelines,
-    ResidentCrtPipelines, ResidentGatherPipelines, ResidentHalftonePipelines,
-    ResidentPaletteGuidedPipelines, ResidentPalettePipelines, SlotHandle,
+    ResidentCrosshatchPipelines, ResidentCrtPipelines, ResidentGatherPipelines,
+    ResidentHalftonePipelines, ResidentLineScreenPipelines, ResidentPaletteGuidedPipelines,
+    ResidentPalettePipelines, ResidentVoidAndClusterPipelines, ResidentWavePipelines, SlotHandle,
 };
 use crate::GpuError;
 
@@ -68,7 +69,11 @@ pub struct GpuExecutor {
 impl GpuExecutor {
     pub fn spawn(ctx: Arc<GpuContext>, cache: Arc<GpuTileCache>) -> Result<Self, GpuError> {
         let bayer = ResidentBayerPipelines::create(&ctx.device)?;
+        let void_and_cluster = ResidentVoidAndClusterPipelines::create(&ctx.device)?;
         let halftone = ResidentHalftonePipelines::create(&ctx.device)?;
+        let line_screen = ResidentLineScreenPipelines::create(&ctx.device)?;
+        let crosshatch = ResidentCrosshatchPipelines::create(&ctx.device)?;
+        let wave = ResidentWavePipelines::create(&ctx.device)?;
         let crt = ResidentCrtPipelines::create(&ctx.device)?;
         let palette = ResidentPalettePipelines::create(&ctx.device)?;
         let palette_guided = ResidentPaletteGuidedPipelines::create(&ctx.device)?;
@@ -81,7 +86,11 @@ impl GpuExecutor {
                     ctx,
                     cache,
                     bayer,
+                    void_and_cluster,
                     halftone,
+                    line_screen,
+                    crosshatch,
+                    wave,
                     crt,
                     palette,
                     palette_guided,
@@ -143,7 +152,11 @@ fn executor_loop(
     ctx: Arc<GpuContext>,
     cache: Arc<GpuTileCache>,
     bayer: ResidentBayerPipelines,
+    void_and_cluster: ResidentVoidAndClusterPipelines,
     halftone: ResidentHalftonePipelines,
+    line_screen: ResidentLineScreenPipelines,
+    crosshatch: ResidentCrosshatchPipelines,
+    wave: ResidentWavePipelines,
     crt: ResidentCrtPipelines,
     palette: ResidentPalettePipelines,
     palette_guided: ResidentPaletteGuidedPipelines,
@@ -167,7 +180,11 @@ fn executor_loop(
                     &ctx,
                     &cache,
                     &bayer,
+                    &void_and_cluster,
                     &halftone,
+                    &line_screen,
+                    &crosshatch,
+                    &wave,
                     &crt,
                     &palette,
                     &palette_guided,
@@ -183,7 +200,11 @@ fn executor_loop(
                     &ctx,
                     &cache,
                     &bayer,
+                    &void_and_cluster,
                     &halftone,
+                    &line_screen,
+                    &crosshatch,
+                    &wave,
                     &crt,
                     &palette,
                     &palette_guided,
@@ -231,7 +252,11 @@ fn run_frame(
     ctx: &GpuContext,
     cache: &GpuTileCache,
     bayer: &ResidentBayerPipelines,
+    void_and_cluster: &ResidentVoidAndClusterPipelines,
     halftone: &ResidentHalftonePipelines,
+    line_screen: &ResidentLineScreenPipelines,
+    crosshatch: &ResidentCrosshatchPipelines,
+    wave: &ResidentWavePipelines,
     crt: &ResidentCrtPipelines,
     palette: &ResidentPalettePipelines,
     palette_guided: &ResidentPaletteGuidedPipelines,
@@ -250,6 +275,7 @@ fn run_frame(
         });
 
     bayer.begin_frame();
+    void_and_cluster.begin_frame();
 
     let mut in_flight = Vec::with_capacity(job.tiles.len());
 
@@ -282,6 +308,9 @@ fn run_frame(
                             GpuPipelineKey::Bayer2
                                 | GpuPipelineKey::Bayer4
                                 | GpuPipelineKey::Bayer8
+                                | GpuPipelineKey::Bayer16
+                                | GpuPipelineKey::ClusteredDot
+                                | GpuPipelineKey::DispersedDot
                         ) {
                             bayer.encode_bayer_pass(
                                 &ctx.device,
@@ -304,6 +333,29 @@ fn run_frame(
                             );
                         }
                     }
+                    if let Some(vac_params) = pass.void_and_cluster {
+                        if pass.pipeline == GpuPipelineKey::VoidAndCluster {
+                            void_and_cluster.encode_vac_pass(
+                                &ctx.device,
+                                &ctx.queue,
+                                &mut encoder,
+                                cache.resident_texture(),
+                                slot.index,
+                                cache.scratch_a(),
+                                scratch_layer,
+                                work.coord.x,
+                                work.coord.y,
+                                vac_params,
+                            );
+                            ResidentBayerPipelines::copy_layer(
+                                &mut encoder,
+                                cache.scratch_a(),
+                                scratch_layer,
+                                cache.resident_texture(),
+                                slot.index,
+                            );
+                        }
+                    }
                     if let Some(ht) = pass.halftone {
                         if pass.pipeline == GpuPipelineKey::Halftone {
                             halftone.encode_halftone_pass(
@@ -316,6 +368,72 @@ fn run_frame(
                                 work.coord.x,
                                 work.coord.y,
                                 ht,
+                            );
+                            ResidentBayerPipelines::copy_layer(
+                                &mut encoder,
+                                cache.scratch_a(),
+                                scratch_layer,
+                                cache.resident_texture(),
+                                slot.index,
+                            );
+                        }
+                    }
+                    if let Some(ls) = pass.line_screen {
+                        if pass.pipeline == GpuPipelineKey::LineScreen {
+                            line_screen.encode_line_screen_pass(
+                                &ctx.device,
+                                &mut encoder,
+                                cache.resident_texture(),
+                                slot.index,
+                                cache.scratch_a(),
+                                scratch_layer,
+                                work.coord.x,
+                                work.coord.y,
+                                ls,
+                            );
+                            ResidentBayerPipelines::copy_layer(
+                                &mut encoder,
+                                cache.scratch_a(),
+                                scratch_layer,
+                                cache.resident_texture(),
+                                slot.index,
+                            );
+                        }
+                    }
+                    if let Some(ch) = pass.crosshatch {
+                        if pass.pipeline == GpuPipelineKey::Crosshatch {
+                            crosshatch.encode_crosshatch_pass(
+                                &ctx.device,
+                                &mut encoder,
+                                cache.resident_texture(),
+                                slot.index,
+                                cache.scratch_a(),
+                                scratch_layer,
+                                work.coord.x,
+                                work.coord.y,
+                                ch,
+                            );
+                            ResidentBayerPipelines::copy_layer(
+                                &mut encoder,
+                                cache.scratch_a(),
+                                scratch_layer,
+                                cache.resident_texture(),
+                                slot.index,
+                            );
+                        }
+                    }
+                    if let Some(w) = pass.wave {
+                        if pass.pipeline == GpuPipelineKey::Wave {
+                            wave.encode_wave_pass(
+                                &ctx.device,
+                                &mut encoder,
+                                cache.resident_texture(),
+                                slot.index,
+                                cache.scratch_a(),
+                                scratch_layer,
+                                work.coord.x,
+                                work.coord.y,
+                                w,
                             );
                             ResidentBayerPipelines::copy_layer(
                                 &mut encoder,

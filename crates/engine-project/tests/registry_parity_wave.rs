@@ -4,7 +4,7 @@
 mod parity_harness;
 
 use engine_project::filter::{DitherModeV2, FilterParams};
-use engine_registry::{CpuCheckpointKind, GpuEligibility};
+use engine_registry::GpuEligibility;
 use parity_harness::{dither_params, Env};
 
 #[test]
@@ -14,7 +14,7 @@ fn registry_parity_wave() {
     env.assert_gpu(
         "wave",
         &FilterParams::DitherV2(params.clone()),
-        GpuEligibility::Cpu(CpuCheckpointKind::IneligibleDither),
+        GpuEligibility::Eligible,
     );
     env.assert_ordered("wave", params);
 }

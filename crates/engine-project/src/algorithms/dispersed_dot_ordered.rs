@@ -98,8 +98,21 @@ impl FilterAlgorithm for DispersedDotOrdered {
         .map_err(FilterError::from)
     }
 
-    fn gpu_eligibility(&self, _params: &serde_json::Value) -> GpuEligibility {
-        GpuEligibility::Cpu(CpuCheckpointKind::UnsupportedFilter)
+    fn gpu_eligibility(&self, params: &serde_json::Value) -> GpuEligibility {
+        match serde_json::from_value::<DitherParamsV2>(params.clone()) {
+            Ok(mut p) => {
+                p.mode = DitherModeV2::DispersedDotOrdered;
+                if p.pixel_size > 1 {
+                    return GpuEligibility::Cpu(CpuCheckpointKind::BlockGranularity);
+                }
+                if crate::filters::gpu_bridge::dispersed_dot_gpu_eligible(&p) {
+                    GpuEligibility::Eligible
+                } else {
+                    GpuEligibility::Cpu(CpuCheckpointKind::IneligibleDither)
+                }
+            }
+            Err(_) => GpuEligibility::Cpu(CpuCheckpointKind::IneligibleDither),
+        }
     }
 
     fn param_schema(&self) -> &'static [ParamField] {

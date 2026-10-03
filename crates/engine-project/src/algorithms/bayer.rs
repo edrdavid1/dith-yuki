@@ -266,9 +266,8 @@ impl FilterAlgorithm for Bayer16x16 {
         apply_bayer(tile, params, DitherModeV2::Bayer16x16, ctx)
     }
 
-    /// New catalog algorithm — CPU-only until a dedicated GPU gate (spec non-goal).
-    fn gpu_eligibility(&self, _params: &serde_json::Value) -> GpuEligibility {
-        GpuEligibility::Cpu(CpuCheckpointKind::UnsupportedFilter)
+    fn gpu_eligibility(&self, params: &serde_json::Value) -> GpuEligibility {
+        gpu_eligibility_for(DitherModeV2::Bayer16x16, params)
     }
 
     fn param_schema(&self) -> &'static [ParamField] {

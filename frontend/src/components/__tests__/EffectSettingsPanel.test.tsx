@@ -11,6 +11,16 @@ vi.mock('../../ipc/commands', () => ({
   listPalettes: vi.fn().mockResolvedValue([]),
 }));
 
+const openDialogMock = vi.fn();
+
+vi.mock('../../shared/ipc', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../shared/ipc')>();
+  return {
+    ...actual,
+    openDialog: (...args: unknown[]) => openDialogMock(...args),
+  };
+});
+
 vi.mock('../../shared/ipc/registry', () => ({
   EFFECT_CATEGORIES: ['dithering', 'glitch', 'color_adjust', 'stylize', 'palette', 'ascii'],
   listAlgorithmsForCategory: vi.fn(async (category: string) => {
@@ -171,6 +181,7 @@ describe('EffectSettingsPanel', () => {
 
   beforeEach(() => {
     onUpdateParams = vi.fn<(layerId: number, filterId: string, params: Record<string, unknown>) => void>();
+    openDialogMock.mockReset();
   });
 
   describe('Empty state', () => {
@@ -358,6 +369,48 @@ describe('EffectSettingsPanel', () => {
       fireEvent.click(screen.getByText('Floyd-Steinberg'));
       fireEvent.click(screen.getByRole('option', { name: 'Bayer 4×4' }));
       expect(onUpdateParams).toHaveBeenCalledWith(1, 'filter-1', expect.objectContaining({ mode: 'bayer_4x4' }));
+    });
+
+    it('picks a threshold map when selecting Custom Threshold Map', async () => {
+      openDialogMock.mockResolvedValue('/Users/test/maps/blue_noise.png');
+      renderPanel(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
+      fireEvent.click(screen.getByText('Floyd-Steinberg'));
+      fireEvent.click(screen.getByRole('option', { name: 'Custom Threshold Map' }));
+      await waitFor(() => {
+        expect(onUpdateParams).toHaveBeenCalledWith(
+          1,
+          'filter-1',
+          expect.objectContaining({
+            mode: { custom_png: { path: '/Users/test/maps/blue_noise.png' } },
+          }),
+        );
+      });
+    });
+
+    it('does not commit Custom Threshold Map when the file dialog is cancelled', async () => {
+      openDialogMock.mockResolvedValue(null);
+      renderPanel(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
+      fireEvent.click(screen.getByText('Floyd-Steinberg'));
+      fireEvent.click(screen.getByRole('option', { name: 'Custom Threshold Map' }));
+      await waitFor(() => {
+        expect(openDialogMock).toHaveBeenCalled();
+      });
+      expect(onUpdateParams).not.toHaveBeenCalled();
+    });
+
+    it('shows browse UI and ordered controls for an existing Custom Threshold Map', () => {
+      renderPanel(
+        <EffectSettingsPanel
+          selectedLayer={makeDitherLayer({
+            mode: { custom_png: { path: '/cache/threshold_maps/abcd1234.png' } },
+          })}
+          onUpdateParams={onUpdateParams}
+        />
+      );
+      expect(screen.getByDisplayValue('abcd1234.png')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Browse' })).toBeInTheDocument();
+      expect(screen.getByText('Threshold Bias')).toBeInTheDocument();
+      expect(screen.getByText('Pattern Angle')).toBeInTheDocument();
     });
 
     it('hides threshold bias and pattern angle for error diffusion', () => {
