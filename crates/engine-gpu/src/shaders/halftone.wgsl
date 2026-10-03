@@ -7,7 +7,7 @@ struct TileUniforms {
 
 struct HalftoneUniforms {
     tile: TileUniforms,
-    // cell_size, threshold_scale, _, _
+    // cell_size, threshold_scale, dither_alpha, angle_offset_deg
     params: vec4<f32>,
 }
 
@@ -81,6 +81,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let gy = f32(u.tile.tile_offset.y + gid.y);
     let s = u.params.x;
     let threshold_scale = u.params.y;
+    let off = u.params.w;
 
     let r = input_px[idx];
     let g = input_px[idx + 1u];
@@ -88,7 +89,15 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let a = input_px[idx + 3u];
 
     let cmyk = rgb_to_cmyk(r, g, b);
-    let angles = array<f32, 4>(DEG15, DEG75, DEG0, DEG45);
+    var angles = array<f32, 4>(DEG15, DEG75, DEG0, DEG45);
+    if (abs(off) >= 1e-6) {
+        angles = array<f32, 4>(
+            rem_euclid_f(15.0 + off, 360.0) * PI / 180.0,
+            rem_euclid_f(75.0 + off, 360.0) * PI / 180.0,
+            rem_euclid_f(0.0 + off, 360.0) * PI / 180.0,
+            rem_euclid_f(45.0 + off, 360.0) * PI / 180.0
+        );
+    }
     var dots = array<f32, 4>(0.0, 0.0, 0.0, 0.0);
     for (var i = 0u; i < 4u; i++) {
         let dist = rotated_cell_dist(gx, gy, s, angles[i]);

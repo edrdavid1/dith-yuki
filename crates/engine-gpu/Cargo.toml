@@ -2,7 +2,7 @@
 name = "engine-gpu"
 version = "0.1.0"
 edition = "2021"
-description = "Optional wgpu compute path for per-tile pattern filters (Bayer / Halftone / CRT)"
+description = "Optional wgpu compute path for per-tile pattern filters (Bayer / VAC / Halftone / CRT)"
 
 [features]
 default = []

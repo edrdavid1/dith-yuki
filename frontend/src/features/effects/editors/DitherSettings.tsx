@@ -3,12 +3,21 @@ import { clampParam } from '../../../types/effects';
 import Slider from '../../../components/common/Slider';
 import DropdownMenu from '../../../components/common/DropdownMenu';
 import { useAppSelector } from '../../../app/hooks';
+import { openDialog } from '../../../shared/ipc';
 import panelStyles from '../EffectSettingsPanel.module.css';
 import paramStyles from '../../../shared/ui/ParamControls.module.css';
+import inputStyles from '../../../shared/ui/ParamInput.module.css';
 import sliderStyles from '../../../shared/ui/Slider.module.css';
+import buttonStyles from '../../../shared/ui/FilterButtons.module.css';
 import { bind } from '../../../shared/ui/cn';
 
-const cn = bind({ ...panelStyles, ...paramStyles, ...sliderStyles });
+const cn = bind({
+  ...panelStyles,
+  ...paramStyles,
+  ...inputStyles,
+  ...sliderStyles,
+  ...buttonStyles,
+});
 
 type SimpleDitherMode =
   | 'bayer_2x2'
@@ -89,9 +98,31 @@ function modeToSimple(mode: DitherModeV2 | string | unknown): SimpleDitherMode {
   return 'floyd_steinberg';
 }
 
-function simpleToMode(simple: SimpleDitherMode): DitherModeV2 | string {
-  if (simple === 'custom_png') return { custom_png: { path: '' } } as unknown as DitherModeV2;
+function modeToCustomPath(mode: unknown): string {
+  if (typeof mode === 'object' && mode !== null && 'custom_png' in mode) {
+    const path = (mode as { custom_png?: { path?: unknown } }).custom_png?.path;
+    return typeof path === 'string' ? path : '';
+  }
+  return '';
+}
+
+function simpleToMode(simple: SimpleDitherMode, customPath: string): DitherModeV2 | string {
+  if (simple === 'custom_png') return { custom_png: { path: customPath } };
   return simple;
+}
+
+function pathBasename(path: string): string {
+  const normalized = path.replace(/\\/g, '/');
+  const parts = normalized.split('/');
+  return parts[parts.length - 1] || path;
+}
+
+async function pickThresholdMapPng(): Promise<string | null> {
+  const selected = await openDialog({
+    filters: [{ name: 'PNG Images', extensions: ['png'] }],
+    multiple: false,
+  });
+  return typeof selected === 'string' && selected.length > 0 ? selected : null;
 }
 
 function isGuidedMode(mode: unknown): boolean {
@@ -139,6 +170,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
   const thresholdBias = clampParam(Number(params.threshold_bias ?? 0), -0.5, 0.5);
   const patternAngle = Number(params.pattern_angle ?? 0);
   const simpleMode = modeToSimple(mode);
+  const customPath = modeToCustomPath(mode);
 
   const isOrderedMode = [
     'bayer_2x2',
@@ -213,6 +245,30 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
     });
   };
 
+  const handleModeSelect = async (v: string) => {
+    const newMode = v as SimpleDitherMode;
+    if (newMode !== 'custom_png') {
+      emit({ mode: simpleToMode(newMode, customPath) });
+      return;
+    }
+    // Never commit an empty path — validation rejects it and the UI rolls back.
+    if (customPath) {
+      emit({ mode: { custom_png: { path: customPath } } });
+      return;
+    }
+    const selected = await pickThresholdMapPng();
+    if (selected) {
+      emit({ mode: { custom_png: { path: selected } } });
+    }
+  };
+
+  const handleBrowseThresholdMap = async () => {
+    const selected = await pickThresholdMapPng();
+    if (selected) {
+      emit({ mode: { custom_png: { path: selected } } });
+    }
+  };
+
   return (
     <div className={cn('effect-settings-content')}>
       <p className={cn('effect-palette-hint')}>
@@ -255,13 +311,41 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
           { value: 'cmyk_halftone', label: 'CMYK Halftone' },
           { value: 'halftone_screen_angled', label: 'Halftone Screen (Angled)' },
           { value: 'wave', label: 'Wave' },
-          { value: 'custom_png', label: 'Custom PNG' },
+          { value: 'custom_png', label: 'Custom Threshold Map' },
         ]}
         onSelect={(v) => {
-          const newMode = v as SimpleDitherMode;
-          emit({ mode: simpleToMode(newMode) });
+          void handleModeSelect(v);
         }}
       />
+
+      {simpleMode === 'custom_png' && (
+        <div className={cn('threshold-map-row')}>
+          <span className={cn('threshold-map-label')}>Threshold Map</span>
+          <div className={cn('threshold-map-controls')}>
+            <input
+              type="text"
+              className={cn('param-input')}
+              value={customPath ? pathBasename(customPath) : ''}
+              readOnly
+              title={customPath || undefined}
+              placeholder="Select a grayscale PNG…"
+              aria-label="Threshold map path"
+            />
+            <button
+              type="button"
+              className={cn('filter-add-btn')}
+              onClick={() => {
+                void handleBrowseThresholdMap();
+              }}
+            >
+              Browse
+            </button>
+          </div>
+          <p className={cn('effect-palette-hint')}>
+            PNG ≤4096×4096 (color → luminance). Embedded into the project on save.
+          </p>
+        </div>
+      )}
 
       {simpleMode === 'riemersma' && (
         <p className={cn('effect-palette-hint')}>

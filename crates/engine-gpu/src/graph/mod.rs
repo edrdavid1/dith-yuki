@@ -5,7 +5,8 @@ mod types;
 
 pub use compile::{compile_graph, GraphCompileError};
 pub use types::{
-    BayerPassParams, ComputeGraph, CpuCheckpointKind, CrtPassParams, GpuPass, GpuPipelineKey,
-    GraphLayerFilter, GraphNode, HalftonePassParams, PaletteGuidedPassParams,
-    PaletteMixedPassParams, PaletteQuantizePassParams,
+    BayerPassParams, ComputeGraph, CpuCheckpointKind, CrosshatchPassParams, CrtPassParams, GpuPass,
+    GpuPipelineKey, GraphLayerFilter, GraphNode, HalftonePassParams, LineScreenPassParams,
+    PaletteGuidedPassParams, PaletteMixedPassParams, PaletteQuantizePassParams,
+    VoidAndClusterPassParams, WavePassParams,
 };

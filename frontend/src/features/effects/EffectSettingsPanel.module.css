@@ -126,6 +126,29 @@
   color: var(--color-dark-gray);
 }
 
+.threshold-map-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.threshold-map-label {
+  font-size: 11px;
+  color: var(--text-color);
+}
+
+.threshold-map-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.threshold-map-controls .param-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 10px;
+}
+
 /* Same 10px side inset as .effect-settings-body / chooser rows. */
 .pattern-actions-wrap {
   padding: 10px 10px 10px;

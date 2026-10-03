@@ -13,7 +13,7 @@ use engine_project::filters::dither_residuals::ErrorResidualsStore;
 use engine_project::filters::void_and_cluster;
 use engine_project::types::{DocumentId, LayerId, LayerKind};
 use engine_project::{Document, FilterContext, Layer};
-use engine_registry::{AlgorithmId, AlgorithmRegistry, CpuCheckpointKind, GpuEligibility};
+use engine_registry::{AlgorithmId, AlgorithmRegistry, GpuEligibility};
 use engine_tiles::block_cache::BlockRepresentativeCache;
 use engine_tiles::{PixelTile, TileCoord, HALO, TILE_SIZE};
 
@@ -85,7 +85,7 @@ fn registry_parity_void_and_cluster() {
 
     assert!(matches!(
         algo.gpu_eligibility(&serde_json::to_value(&params).unwrap()),
-        GpuEligibility::Cpu(CpuCheckpointKind::UnsupportedFilter)
+        GpuEligibility::Eligible
     ));
 
     let ctx = FilterContext::new(
@@ -126,6 +126,15 @@ fn registry_parity_void_and_cluster() {
     )
     .expect("dispatcher");
     assert_eq!(expected.data.as_ref(), via_dispatch.data.as_ref());
+}
+
+#[test]
+fn void_and_cluster_gpu_matrix_matches_cpu() {
+    assert_eq!(
+        engine_gpu::void_and_cluster_ranks(),
+        void_and_cluster::ranks(),
+        "GPU rank table must stay bit-identical to CPU void_and_cluster"
+    );
 }
 
 #[test]

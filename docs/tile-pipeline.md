@@ -344,8 +344,8 @@ Warm download from an already-filled VRAM slot runs **without** preview opt-in. 
 - **Atlas:** `Rgba32Float` 260×260 slots (`GpuTileCache`); one fused composite readback per frame.
 - **Executor:** dedicated `GpuExecutor` thread (no worker `submit_lock`).
 - **Decision:** `decide_tile_dispatch` — warm+current gen → GPU download; cold+opt-in → GPU compute; else CPU.
-- **Eligible:** Bayer2/4/8 (`pixel_size==1`, bias=0, angle=0); Halftone; CRT; Guided/Mixed/PaletteQuantize (A7).
-- **Not eligible:** all ED kernels, CustomPng, Wave, Glow, `pixel_size>1`. Pyramid `level > 0` → CPU.
+- **Eligible:** Bayer2/4/8/16 + Clustered/Dispersed/VAC (`pixel_size==1`, Track H bias/angle); Halftone angled; Line Screen; Crosshatch; Wave; CRT; Guided/Mixed/PaletteQuantize (A7).
+- **Not eligible:** all ED kernels, CustomPng, stipple, Glow, `pixel_size>1`. Pyramid `level > 0` → CPU.
 - **Parity:** Bayer exact (`f32 ==`); Halftone/CRT max ‖Δ‖∞ ≤ `1/255`.
 
 Cost vs CPU: [architecture.md](./architecture.md) §13.4.

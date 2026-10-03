@@ -143,6 +143,19 @@ fn bayer_pipeline(mode: &DitherModeV2) -> Option<GpuPipelineKey> {
         DitherModeV2::Bayer2x2 => Some(GpuPipelineKey::Bayer2),
         DitherModeV2::Bayer4x4 => Some(GpuPipelineKey::Bayer4),
         DitherModeV2::Bayer8x8 => Some(GpuPipelineKey::Bayer8),
+        DitherModeV2::Bayer16x16 => Some(GpuPipelineKey::Bayer16),
+        DitherModeV2::ClusteredDotOrdered => Some(GpuPipelineKey::ClusteredDot),
+        DitherModeV2::DispersedDotOrdered => Some(GpuPipelineKey::DispersedDot),
+        _ => None,
+    }
+}
+
+fn guided_bayer_pipeline(mode: &DitherModeV2) -> Option<GpuPipelineKey> {
+    match mode {
+        DitherModeV2::Bayer2x2 => Some(GpuPipelineKey::Bayer2),
+        DitherModeV2::Bayer4x4 => Some(GpuPipelineKey::Bayer4),
+        DitherModeV2::Bayer8x8 => Some(GpuPipelineKey::Bayer8),
+        // Guided/Mixed shaders are still Bayer 2/4/8 only.
         _ => None,
     }
 }
@@ -159,7 +172,7 @@ fn try_guided_or_mixed(
     params: &DitherParamsV2,
     palettes: Option<&PaletteGraphCtx<'_>>,
 ) -> Option<GraphLayerFilter> {
-    let matrix = bayer_pipeline(&params.mode)?;
+    let matrix = guided_bayer_pipeline(&params.mode)?;
     let ctx = palettes?;
     let pid = params.palette_id?;
     let palette = ctx.document.get_palette(pid)?;
@@ -214,9 +227,21 @@ fn dither_v2_spec(
     }
 
     match params.mode {
-        DitherModeV2::Bayer2x2 | DitherModeV2::Bayer4x4 | DitherModeV2::Bayer8x8 => {
-            GraphLayerFilter::Bayer(BayerPassParams {
-                pipeline: bayer_pipeline(&params.mode).unwrap(),
+        DitherModeV2::Bayer2x2
+        | DitherModeV2::Bayer4x4
+        | DitherModeV2::Bayer8x8
+        | DitherModeV2::Bayer16x16
+        | DitherModeV2::ClusteredDotOrdered
+        | DitherModeV2::DispersedDotOrdered => GraphLayerFilter::Bayer(BayerPassParams {
+            pipeline: bayer_pipeline(&params.mode).unwrap(),
+            levels: params.levels,
+            threshold_scale: params.threshold_scale,
+            color_mode: dither_color_mode(params),
+            threshold_bias: params.threshold_bias,
+            pattern_angle: params.pattern_angle,
+        }),
+        DitherModeV2::VoidAndCluster => {
+            GraphLayerFilter::VoidAndCluster(engine_gpu::VoidAndClusterPassParams {
                 levels: params.levels,
                 threshold_scale: params.threshold_scale,
                 color_mode: dither_color_mode(params),
@@ -224,18 +249,49 @@ fn dither_v2_spec(
                 pattern_angle: params.pattern_angle,
             })
         }
-        // New Batch A: CPU-only until a dedicated GPU path is approved.
-        DitherModeV2::Bayer16x16
-        | DitherModeV2::ClusteredDotOrdered
-        | DitherModeV2::DispersedDotOrdered
-        | DitherModeV2::VoidAndCluster
-        | DitherModeV2::CrosshatchDither
-        | DitherModeV2::LineScreen
-        | DitherModeV2::VoronoiStipple
+        DitherModeV2::HalftoneScreenAngled => {
+            if params.threshold_bias != 0.0 {
+                return GraphLayerFilter::CpuCheckpoint(CpuCheckpointKind::IneligibleDither);
+            }
+            let grayscale = matches!(params.color_mode, DitherColorMode::Grayscale);
+            GraphLayerFilter::Halftone(HalftonePassParams {
+                cell_size: params.halftone_cell_size,
+                threshold_scale: params.threshold_scale,
+                dither_alpha: params.dither_alpha,
+                grayscale,
+                angle_offset_deg: params.pattern_angle.rem_euclid(360.0),
+            })
+        }
+        DitherModeV2::LineScreen => {
+            GraphLayerFilter::LineScreen(engine_gpu::LineScreenPassParams {
+                cell_size: params.halftone_cell_size,
+                threshold_scale: params.threshold_scale,
+                pattern_angle: params.pattern_angle,
+                dither_alpha: params.dither_alpha,
+            })
+        }
+        DitherModeV2::CrosshatchDither => {
+            GraphLayerFilter::Crosshatch(engine_gpu::CrosshatchPassParams {
+                spacing: params.wave_wavelength.max(2.0),
+                threshold_scale: params.threshold_scale,
+                pattern_angle: params.pattern_angle,
+                dither_alpha: params.dither_alpha,
+            })
+        }
+        DitherModeV2::Wave => GraphLayerFilter::Wave(engine_gpu::WavePassParams {
+            levels: params.levels,
+            threshold_scale: params.threshold_scale,
+            color_mode: dither_color_mode(params),
+            threshold_bias: params.threshold_bias,
+            wavelength: params.wave_wavelength.max(2.0),
+            amplitude: params.wave_amplitude,
+            phase: params.wave_phase,
+            wave_angle: params.wave_angle,
+        }),
+        // Remaining Batch A: CPU until a dedicated GPU path is approved.
+        DitherModeV2::VoronoiStipple
         | DitherModeV2::RandomDotStipple
-        | DitherModeV2::HalftoneScreenAngled
-        | DitherModeV2::CustomPng { .. }
-        | DitherModeV2::Wave => {
+        | DitherModeV2::CustomPng { .. } => {
             GraphLayerFilter::CpuCheckpoint(CpuCheckpointKind::IneligibleDither)
         }
         DitherModeV2::CmykHalftone => {
@@ -248,6 +304,7 @@ fn dither_v2_spec(
                 threshold_scale: params.threshold_scale,
                 dither_alpha: params.dither_alpha,
                 grayscale,
+                angle_offset_deg: 0.0,
             })
         }
         _ => GraphLayerFilter::CpuCheckpoint(CpuCheckpointKind::IneligibleDither),
@@ -311,6 +368,80 @@ mod tests {
             g8.nodes.first(),
             Some(engine_gpu::GraphNode::Gpu(engine_gpu::GpuPass {
                 pipeline: engine_gpu::GpuPipelineKey::Bayer8,
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn compile_bayer16_graph() {
+        let bayer16 = FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::Bayer16x16,
+                levels: 4,
+                ..Default::default()
+            }),
+        );
+        let g = compile_layer_graph(&[bayer16]).unwrap();
+        assert!(g.is_gpu_only());
+        assert!(matches!(
+            g.nodes.first(),
+            Some(engine_gpu::GraphNode::Gpu(engine_gpu::GpuPass {
+                pipeline: engine_gpu::GpuPipelineKey::Bayer16,
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn compile_clustered_and_dispersed_dot_graphs() {
+        for (mode, key) in [
+            (
+                DitherModeV2::ClusteredDotOrdered,
+                engine_gpu::GpuPipelineKey::ClusteredDot,
+            ),
+            (
+                DitherModeV2::DispersedDotOrdered,
+                engine_gpu::GpuPipelineKey::DispersedDot,
+            ),
+        ] {
+            let filter = FilterInstance::new(
+                FilterKind::Dither,
+                FilterParams::DitherV2(DitherParamsV2 {
+                    mode,
+                    levels: 4,
+                    ..Default::default()
+                }),
+            );
+            let g = compile_layer_graph(&[filter]).unwrap();
+            assert!(g.is_gpu_only());
+            assert!(matches!(
+                g.nodes.first(),
+                Some(engine_gpu::GraphNode::Gpu(engine_gpu::GpuPass {
+                    pipeline,
+                    ..
+                })) if *pipeline == key
+            ));
+        }
+    }
+
+    #[test]
+    fn compile_void_and_cluster_graph() {
+        let vac = FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::VoidAndCluster,
+                levels: 4,
+                ..Default::default()
+            }),
+        );
+        let g = compile_layer_graph(&[vac]).unwrap();
+        assert!(g.is_gpu_only());
+        assert!(matches!(
+            g.nodes.first(),
+            Some(engine_gpu::GraphNode::Gpu(engine_gpu::GpuPass {
+                pipeline: engine_gpu::GpuPipelineKey::VoidAndCluster,
                 ..
             }))
         ));

@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use crate::bayer::BayerPipelines;
 use crate::crt::CrtPipeline;
 use crate::halftone::HalftonePipeline;
+use crate::void_and_cluster::VoidAndClusterPipelines;
 
 /// Shared GPU device for tile compute.
 ///
@@ -19,6 +20,7 @@ pub struct GpuContext {
     pub force_map_timeout: AtomicBool,
     pub(crate) submit_lock: Mutex<()>,
     pub(crate) bayer: Option<BayerPipelines>,
+    pub(crate) void_and_cluster: Option<VoidAndClusterPipelines>,
     pub(crate) halftone: Option<HalftonePipeline>,
     pub(crate) crt: Option<CrtPipeline>,
     /// Track C Phase 1: chosen once at adapter init.
@@ -89,6 +91,7 @@ impl GpuContext {
             force_map_timeout: AtomicBool::new(false),
             submit_lock: Mutex::new(()),
             bayer: None,
+            void_and_cluster: None,
             halftone: None,
             crt: None,
             vram_budget_bytes: vram.bytes,
@@ -98,6 +101,10 @@ impl GpuContext {
         ctx.bayer = BayerPipelines::create(&ctx.device).ok();
         if ctx.bayer.is_none() {
             log::warn!("engine-gpu: Bayer pipeline create failed; Bayer stays CPU");
+        }
+        ctx.void_and_cluster = VoidAndClusterPipelines::create(&ctx.device).ok();
+        if ctx.void_and_cluster.is_none() {
+            log::warn!("engine-gpu: Void-and-cluster pipeline create failed; VAC stays CPU");
         }
         ctx.halftone = HalftonePipeline::create(&ctx.device).ok();
         if ctx.halftone.is_none() {
