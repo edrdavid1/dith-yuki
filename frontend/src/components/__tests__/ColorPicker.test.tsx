@@ -18,6 +18,19 @@ describe('ColorPicker', () => {
     expect(screen.getByLabelText('Hex color value')).toBeInTheDocument();
   });
 
+  it('vendors react-colorful spectrum layout (saturation + hue)', () => {
+    renderPicker({ initialColor: 'B7B79E' });
+    const dialog = screen.getByRole('dialog');
+    const saturation = dialog.querySelector('.react-colorful__saturation');
+    const hue = dialog.querySelector('.react-colorful__hue');
+    expect(saturation).toBeTruthy();
+    expect(hue).toBeTruthy();
+    // Base paint lives in ColorPicker.module.css so FlexLayout popouts still
+    // get gradients even when the library's runtime <style> inject misses.
+    expect(getComputedStyle(saturation as Element).backgroundImage).toMatch(/linear-gradient/i);
+    expect(getComputedStyle(hue as Element).backgroundImage).toMatch(/linear-gradient/i);
+  });
+
   it('defaults to FFFFFF when no initialColor provided', () => {
     renderPicker();
     const input = screen.getByLabelText('Hex color value') as HTMLInputElement;

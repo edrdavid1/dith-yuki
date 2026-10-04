@@ -15,45 +15,107 @@
   overflow: hidden;
 }
 
-/* Override react-colorful styles to match retro theme.
-   react-colorful's classNames are third-party (not module-scoped), so they
-   must stay :global() to avoid being hashed away. */
+/*
+  Vendor react-colorful base layout/paint under our popup.
+
+  The library normally injects these into document.head at runtime. In FlexLayout
+  OS popouts that inject is unreliable (picker chrome from this module is cloned,
+  but the injected <style> often never lands), which collapses saturation to a
+  solid hue strip and leaves a blank gray canvas. Keeping the essentials here
+  means docked + floated Color Lab both get a working spectrum.
+  Class names are third-party — stay :global() so they are not hashed away.
+*/
 .color-picker-popup :global(.react-colorful) {
-  width: 100% !important;
-  height: 112px !important;
-  min-height: 72px !important;
-  flex: 1 1 auto !important;
-  border-radius: 0 !important;
-  border: var(--border) !important;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 112px;
+  min-height: 72px;
+  flex: 1 1 auto;
+  border-radius: 0;
+  border: var(--border);
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
 }
 
 .color-picker-popup :global(.react-colorful__saturation) {
-  border-radius: 0 !important;
-  border-bottom: var(--border) !important;
+  position: relative;
+  flex-grow: 1;
+  border-radius: 0;
+  border-bottom: var(--border);
+  /* White→hue across X, black→transparent up Y — needs the inline hue bg-color. */
+  background-image:
+    linear-gradient(0deg, #000, transparent),
+    linear-gradient(90deg, #fff, hsla(0, 0%, 100%, 0));
 }
 
-.color-picker-popup :global(.react-colorful__hue),
-.color-picker-popup :global(.react-colorful__alpha) {
-  height: 14px !important;
-  border-radius: 0 !important;
+.color-picker-popup :global(.react-colorful__hue) {
+  position: relative;
+  height: 14px;
   margin-top: 6px;
-  border: var(--border) !important;
+  border-radius: 0;
+  border: var(--border);
+  background: linear-gradient(
+    90deg,
+    red 0,
+    #ff0 17%,
+    #0f0 33%,
+    #0ff 50%,
+    #00f 67%,
+    #f0f 83%,
+    red
+  );
+}
+
+.color-picker-popup :global(.react-colorful__alpha) {
+  position: relative;
+  height: 14px;
+  margin-top: 6px;
+  border-radius: 0;
+  border: var(--border);
+}
+
+.color-picker-popup :global(.react-colorful__interactive) {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  outline: none;
+  touch-action: none;
 }
 
 .color-picker-popup :global(.react-colorful__pointer) {
-  width: 12px !important;
-  height: 12px !important;
-  border-radius: 0 !important;
-  border: var(--border) !important;
-  box-shadow: var(--shadow-inset-light), var(--shadow-inset-dark) !important;
+  position: absolute;
+  z-index: 1;
+  box-sizing: border-box;
+  width: 12px;
+  height: 12px;
+  transform: translate(-50%, -50%);
+  background-color: var(--color-white);
+  border-radius: 0;
+  border: var(--border);
+  box-shadow: var(--shadow-inset-light), var(--shadow-inset-dark);
+}
+
+.color-picker-popup :global(.react-colorful__pointer-fill) {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
 }
 
 .color-picker-popup :global(.react-colorful__saturation-pointer) {
-  width: 10px !important;
-  height: 10px !important;
-  border-radius: 0 !important;
-  border: var(--border-width) solid var(--color-white) !important;
-  box-shadow: 0 0 0 var(--border-width) var(--color-black) !important;
+  z-index: 3;
+  width: 10px;
+  height: 10px;
+  border-radius: 0;
+  border: var(--border-width) solid var(--color-white);
+  box-shadow: 0 0 0 var(--border-width) var(--color-black);
+}
+
+.color-picker-popup :global(.react-colorful__hue-pointer) {
+  z-index: 2;
 }
 
 /* Input row */
