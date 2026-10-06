@@ -153,18 +153,25 @@ button.window-titlebar-square {
 .window-titlebar-menu {
   position: fixed;
   z-index: 10000;
+  box-sizing: border-box;
   min-width: 180px;
-  padding: 2px;
+  padding: 0;
   background: var(--bg-window);
-  border: var(--border);
-  box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light);
+  border-top: var(--border-width) solid var(--color-black);
+  border-left: var(--border-width) solid var(--color-black);
+  border-right: var(--border-width) solid var(--color-white);
+  border-bottom: var(--border-width) solid var(--color-white);
+  box-shadow: 2px 2px 0px 0px rgba(0, 0, 0, 0.3);
+  user-select: none;
 }
 
 .window-titlebar-menu-item {
-  display: block;
+  display: flex;
+  align-items: center;
   width: 100%;
+  box-sizing: border-box;
   height: 22px;
-  padding: 0 10px;
+  padding: 0 12px;
   border: none;
   background: transparent;
   text-align: left;
@@ -172,10 +179,12 @@ button.window-titlebar-square {
   font-size: 12px;
   color: var(--text-color);
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .window-titlebar-menu-item:hover {
-  background: var(--bg-hover);
+  background: var(--bg-hover-inverted);
+  color: var(--color-hover-inverted);
 }
 
 /* Legacy absolute square (older dialogs) */

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import styles from './WindowTitlebar.module.css';
 import { bind } from './cn';
@@ -100,9 +100,41 @@ export default function WindowTitlebar({
 
   const closeMenu = useCallback(() => setMenu(null), []);
 
+  useLayoutEffect(() => {
+    if (!menu || !menuRef.current) return;
+    const el = menuRef.current;
+    const doc = menu.doc;
+    const win = doc.defaultView ?? window;
+    const pad = 4;
+    const rect = el.getBoundingClientRect();
+    const vw = win.innerWidth;
+    const vh = win.innerHeight;
+
+    let left = menu.x;
+    let top = menu.y;
+
+    if (left + rect.width > vw - pad) {
+      left = Math.max(pad, vw - rect.width - pad);
+    }
+    if (left < pad) {
+      left = pad;
+    }
+
+    if (top + rect.height > vh - pad) {
+      top = Math.max(pad, vh - rect.height - pad);
+    }
+    if (top < pad) {
+      top = pad;
+    }
+
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+  }, [menu]);
+
   useEffect(() => {
     if (!menu) return;
     const doc = menu.doc;
+    const win = doc.defaultView ?? window;
     const onPointer = (e: MouseEvent) => {
       if (menuRef.current?.contains(e.target as Node)) return;
       closeMenu();
@@ -110,11 +142,16 @@ export default function WindowTitlebar({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') closeMenu();
     };
+    const onResize = () => {
+      closeMenu();
+    };
     doc.addEventListener('mousedown', onPointer);
     doc.addEventListener('keydown', onKey);
+    win.addEventListener('resize', onResize);
     return () => {
       doc.removeEventListener('mousedown', onPointer);
       doc.removeEventListener('keydown', onKey);
+      win.removeEventListener('resize', onResize);
     };
   }, [menu, closeMenu]);
 
