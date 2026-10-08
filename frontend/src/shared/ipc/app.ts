@@ -7,3 +7,7 @@ export async function allowAppExit(): Promise<void> {
 export async function confirmAppQuit(): Promise<void> {
   return invoke('confirm_app_quit');
 }
+
+export async function stopDockBounce(): Promise<void> {
+  return invoke('stop_dock_bounce');
+}

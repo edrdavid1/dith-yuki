@@ -15,6 +15,8 @@ mod ipc_guard;
 mod journal;
 mod macos_app_icon;
 #[cfg(target_os = "macos")]
+mod macos_dock_bounce;
+#[cfg(target_os = "macos")]
 mod macos_first_mouse;
 #[cfg(target_os = "macos")]
 mod macos_title;
@@ -157,10 +159,19 @@ fn main() {
                         commands::panels::handle_panel_moved(&app_handle, state.inner(), logical);
                     }
                 }
+                // Attention only — never show from here (finishBoot owns reveal).
+                WindowEvent::Focused(true) if label == "main" => {
+                    #[cfg(target_os = "macos")]
+                    macos_dock_bounce::stop(&window.app_handle());
+                }
                 _ => {}
             }
         })
         .setup(move |app| {
+            // Slow cold starts: bounce the Dock icon until the window is ready.
+            #[cfg(target_os = "macos")]
+            macos_dock_bounce::start(app.handle());
+
             // Deliver first-click events to every WKWebView even when its
             // window is inactive. Without this, macOS swallows the activation
             // click and users must double-click to add a layer/effect once
@@ -292,16 +303,19 @@ fn main() {
                             }
                         }
                     })
-                    // Stay hidden until the frontend paints boot artwork, then show().
+                    // Stay hidden until finishBoot() paints real UI, then show().
                     .visible(false)
                     .build()?;
 
             // Failsafe: never leave the main window invisible if JS never calls show().
             {
                 let win = main_window.clone();
+                let failsafe_handle = app.handle().clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(4));
                     let _ = win.show();
+                    #[cfg(target_os = "macos")]
+                    macos_dock_bounce::stop(&failsafe_handle);
                 });
             }
 
@@ -393,6 +407,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             // Document commands
+            stop_dock_bounce,
             commands::allow_app_exit,
             commands::confirm_app_quit,
             crate::journal::commands::scan_recovery_journals,
@@ -508,6 +523,14 @@ fn main() {
             }
         }
     });
+}
+
+#[tauri::command]
+fn stop_dock_bounce(app: tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    macos_dock_bounce::stop(&app);
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
 }
 
 /// Build an HTTP response with CORS headers allowing any origin.

@@ -12,7 +12,7 @@ import './shared/styles/vendor/simplebar.css'
 import './shared/styles/chrome/titlebar.css'
 
 ;(async () => {
-  // Hidden window + delayed splash gate. App calls finishBoot() when ready.
+  // Window stays hidden until App calls finishBoot() after first paint.
   startBootGate()
 
   await initPlatform()
