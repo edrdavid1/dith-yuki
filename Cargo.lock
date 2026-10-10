@@ -1532,6 +1532,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 1.0.69",
 ]
 
@@ -1569,6 +1570,7 @@ dependencies = [
  "roxmltree",
  "tempfile",
  "thiserror 1.0.69",
+ "tiff",
  "windows-sys 0.59.0",
 ]
 

@@ -18,7 +18,7 @@ import { refreshLayers } from '../app/slices/layersSlice';
 import { refreshFilters } from '../app/slices/filtersSlice';
 import { maybeAutoExtractPalette } from '../app/autoExtract';
 import { useShell } from '../app/shell/ShellContext';
-import { openDialog, saveDialog } from '../shared/ipc';
+import { formatIpcError, openDialog, saveDialog } from '../shared/ipc';
 import { shareProjectCopy as shareProjectCopyIPC } from '../shared/ipc/project';
 import { listOpenDocuments } from '../shared/ipc/document';
 import type { BlankBackground } from '../shared/ipc/document';
@@ -30,6 +30,7 @@ import ExportImageDialog, {
   extensionForFormat,
   type ImageExportOptions,
 } from '../components/ExportImageDialog';
+import ExportPrintDialog from '../components/ExportPrintDialog';
 import AsciiExportDialog from '../components/AsciiExportDialog';
 import ShareCopyDialog from '../components/ShareCopyDialog';
 import type { ShareProjectCopyOptions } from '../shared/ipc/project';
@@ -38,6 +39,7 @@ import {
   exportAscii,
   type AsciiExportFormat,
 } from '../shared/ipc/ascii';
+import { printExportRun, type PrintExportConfig } from '../shared/ipc/printExport';
 import { copyTextToClipboard } from '../shared/clipboard';
 import { suggestedSaveDefaultPath } from '../shared/unsavedGuard';
 
@@ -51,6 +53,8 @@ export function useDocument() {
   const { autoExtractPalettes } = useShell();
   const [imageExportOpen, setImageExportOpen] = useState(false);
   const imageExportResolver = useRef<((opts: ImageExportOptions | null) => void) | null>(null);
+  const [printExportOpen, setPrintExportOpen] = useState(false);
+  const printExportResolver = useRef<((cfg: PrintExportConfig | null) => void) | null>(null);
   const [shareCopyOpen, setShareCopyOpen] = useState(false);
   const [asciiExportOpen, setAsciiExportOpen] = useState(false);
   const asciiResolver = useRef<((format: AsciiExportFormat | null) => void) | null>(null);
@@ -146,6 +150,50 @@ export function useDocument() {
       );
     } catch {
       // Dialog cancel / IPC errors handled in thunk
+    }
+  }, [dispatch, state.docId, state.projectPath, state.sourcePath]);
+
+  const exportPrintFn = useCallback(async () => {
+    if (!state.docId) return;
+    try {
+      const config = await new Promise<PrintExportConfig | null>((resolve) => {
+        printExportResolver.current = resolve;
+        setPrintExportOpen(true);
+      });
+      setPrintExportOpen(false);
+      printExportResolver.current = null;
+      if (!config) return;
+
+      const defaultPath = suggestedSaveDefaultPath({
+        projectPath: state.projectPath,
+        sourcePath: state.sourcePath,
+        extension: 'tif',
+      });
+      const filePath = await saveDialog({
+        filters: [{ name: 'CMYK TIFF', extensions: ['tif', 'tiff'] }],
+        ...(defaultPath ? { defaultPath } : {}),
+      });
+      if (!filePath) return;
+      const lower = filePath.toLowerCase();
+      const hasExt = lower.endsWith('.tif') || lower.endsWith('.tiff');
+      const withExt = hasExt ? filePath : `${filePath}.tif`;
+      const filename = withExt.split(/[/\\]/).pop() ?? withExt;
+
+      dispatch(setSaving(true));
+      try {
+        await printExportRun(state.docId, config, withExt);
+        dispatch(setDocumentMeta({ notification: `Print export: ${filename}` }));
+      } catch (err) {
+        dispatch(
+          setDocumentMeta({
+            error: formatIpcError(err),
+          })
+        );
+      } finally {
+        dispatch(setSaving(false));
+      }
+    } catch {
+      // Dialog cancel
     }
   }, [dispatch, state.docId, state.projectPath, state.sourcePath]);
 
@@ -458,6 +506,7 @@ export function useDocument() {
     exportPattern: exportPatternFn,
     importPattern: importPatternFn,
     exportAscii: exportAsciiFn,
+    exportPrint: exportPrintFn,
     copyAsciiText: copyAsciiTextFn,
     clearNotification: clearNotificationFn,
     svgDialog: (
@@ -466,6 +515,14 @@ export function useDocument() {
           isOpen={imageExportOpen}
           onExport={(opts) => imageExportResolver.current?.(opts)}
           onClose={() => imageExportResolver.current?.(null)}
+        />
+        <ExportPrintDialog
+          isOpen={printExportOpen}
+          docId={state.docId}
+          docWidth={state.width ?? 0}
+          docHeight={state.height ?? 0}
+          onExport={(cfg) => printExportResolver.current?.(cfg)}
+          onClose={() => printExportResolver.current?.(null)}
         />
         <AsciiExportDialog
           isOpen={asciiExportOpen}

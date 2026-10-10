@@ -64,8 +64,8 @@ Code: `crates/engine-color/src/display_rgb.rs`, `preview_encode.rs`, `soft_proof
 ## CMS engine and transform shape
 
 - Runtime CMS: **moxcms** (pure Rust). Linked into the app.
-- Reference golden tests: **lcms2** as a **dev-dependency** of `engine-color`
-  only — never shipped in the Tauri binary.
+- Soft-proof goldens and **print export** use **lcms2** (`engine-color` dependency).
+  Soft proof itself does not call lcms2 at runtime; print export does (native BPC).
 - Soft-proof shape: **two-leg** transform  
   `sRGB → CMYK (proof)` then `CMYK → sRGB (display)`.
 - Intents:

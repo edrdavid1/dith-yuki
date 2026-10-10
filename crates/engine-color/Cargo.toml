@@ -18,6 +18,8 @@ thiserror = "1.0"
 dashmap = "5.5"
 png = "0.17"
 moxcms = "0.9.1"
+# Print-export CMS (native BPC). Soft-proof stays on moxcms; see docs/print-export-cmyk.md.
+lcms2 = "6"
 log = "0.4"
 
 [[bin]]
@@ -27,8 +29,7 @@ path = "src/bin/gen_srgb_gamut_mesh.rs"
 [dev-dependencies]
 proptest = "1"
 criterion = { version = "0.5", features = ["html_reports"] }
-# Dev-only reference CMS for soft-proof golden tests — never linked into the Tauri binary.
-lcms2 = "6"
+tempfile = "3"
 
 [[bench]]
 name = "palette_lut_bench"

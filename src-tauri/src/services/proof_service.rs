@@ -209,6 +209,15 @@ impl ProofService {
             .contains_key(id)
     }
 
+    /// ICC bytes for a catalog profile (print export embed + CMS).
+    pub fn profile_icc_bytes(&self, id: &str) -> Option<Arc<[u8]>> {
+        self.profiles
+            .lock()
+            .expect("proof profiles")
+            .get(id)
+            .map(|p| Arc::clone(&p.bytes))
+    }
+
     /// If the configured profile is missing, disable proof (user re-enables after import).
     pub fn sanitize_config(&self, cfg: &mut SoftProofConfig) -> bool {
         if self.has_profile(&cfg.profile_id) {

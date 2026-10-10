@@ -69,6 +69,7 @@ export default function AppLayout() {
     closeNewProject,
     handleCreate,
     onSaveImage,
+    onExportPrint,
     onSaveProject,
     onSaveProjectAs,
     onShareProjectCopy,
@@ -452,6 +453,7 @@ export default function AppLayout() {
     handleOpenHelp,
     handleOpenPreferences,
     onSaveImage,
+    onExportPrint,
     onSaveProject,
     onSaveProjectAs,
     onShareProjectCopy,
@@ -513,6 +515,7 @@ export default function AppLayout() {
               onNewProject={welcome.onNewProject}
               onOpenImage={welcome.onOpenImage}
               onSaveImage={onSaveImage}
+              onExportPrint={onExportPrint}
               onExportAscii={() => void doc.exportAscii()}
               onCopyAsciiText={() => void doc.copyAsciiText('txt')}
               onCopyAsciiAnsi={() => void doc.copyAsciiText('ansi')}

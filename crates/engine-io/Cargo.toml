@@ -8,6 +8,7 @@ description = "Image codecs (PNG, JPEG, WebP), video decoding (ffmpeg)"
 engine-core = { path = "../engine-core" }
 thiserror = "1"
 dirs = "5"
+tiff = "0.11"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

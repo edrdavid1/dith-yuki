@@ -22,6 +22,7 @@ pub mod palette_cache;
 pub mod palette_guided;
 pub mod palette_lut;
 pub mod preview_encode;
+pub mod print_export;
 pub mod ramps;
 pub mod soft_proof;
 pub mod threshold_map;
@@ -31,6 +32,12 @@ pub use icc_precheck::precheck_icc_bytes;
 pub use preview_encode::{
     delta_e2000, delta_e2000_srgb8, encode_preview_rgb, encode_preview_rgba, linear_to_srgb_f32,
     srgb_f32_to_linear, SrgbEncodeLut,
+};
+pub use print_export::{
+    count_unique_rgb, estimate_export, gamut_report, rgba8_to_cmyk8, scale_cmyk8_nearest,
+    scaled_dimensions, validate_config, ExportSummary, GamutReport, PrintExportConfig,
+    PrintExportError, PrintExportEstimate, PrintExportFormat, PrintExportTransform,
+    TiffCompression, GAMUT_DELTA_E2000_THRESHOLD, MAX_PALETTE_COLORS,
 };
 pub use soft_proof::{
     soft_proof_config_hash, SoftProofConfig, SoftProofError, SoftProofIntent, SoftProofLut3D,

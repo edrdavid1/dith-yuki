@@ -82,6 +82,10 @@ export function useWelcomeScreen() {
     void runAndRefresh(doc.saveImage);
   }, [doc.saveImage, runAndRefresh]);
 
+  const onExportPrint = useCallback(() => {
+    void runAndRefresh(doc.exportPrint);
+  }, [doc.exportPrint, runAndRefresh]);
+
   const onSaveProject = useCallback(() => {
     void runAndRefresh(doc.saveProject);
   }, [doc.saveProject, runAndRefresh]);
@@ -129,6 +133,7 @@ export function useWelcomeScreen() {
     closeNewProject: () => setNewProjectOpen(false),
     handleCreate,
     onSaveImage,
+    onExportPrint,
     onSaveProject,
     onSaveProjectAs,
     onShareProjectCopy,

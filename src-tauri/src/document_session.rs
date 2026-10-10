@@ -122,6 +122,7 @@ impl AppState {
                     .ok()
                     .map(std::sync::Arc::new),
             ),
+            print_export_cancel: Mutex::new(None),
             // B3: FlexLayout persistence (initialized with temp dir, updated in main.rs)
             flexlayout_persistence: Mutex::new(
                 crate::flexlayout_persistence::FlexLayoutPersistence::new(std::env::temp_dir()),

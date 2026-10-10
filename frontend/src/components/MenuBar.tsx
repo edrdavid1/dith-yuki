@@ -14,6 +14,7 @@ interface MenuBarProps {
   onNewProject?: () => void;
   onOpenImage: () => void;
   onSaveImage: () => void;
+  onExportPrint?: () => void;
   onExportAscii?: () => void;
   onCopyAsciiText?: () => void;
   onCopyAsciiAnsi?: () => void;
@@ -58,6 +59,7 @@ function MenuBar({
   onNewProject,
   onOpenImage,
   onSaveImage,
+  onExportPrint,
   onExportAscii,
   onCopyAsciiText,
   onCopyAsciiAnsi,
@@ -227,6 +229,14 @@ function MenuBar({
               disabled={!hasDocument}
             >
               Save/Export
+            </button>
+            <button
+              className={cn('menubar-dropdown-item')}
+              role="menuitem"
+              onClick={() => onExportPrint && handleAction(onExportPrint)}
+              disabled={!hasDocument || !onExportPrint}
+            >
+              Export for Print…
             </button>
             <button
               className={cn("menubar-dropdown-item")}
