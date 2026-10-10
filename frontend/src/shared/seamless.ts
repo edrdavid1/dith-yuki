@@ -129,7 +129,7 @@ export function seamlessWarningLines(
 ): string[] {
   if (report.kind === 'approximate_only') {
     return [
-      'Error diffusion cannot be exactly seamless (sequential). Approximate wrap-padding is not available yet.',
+      'Error diffusion cannot be exactly seamless (sequential). Enable Approximate wrap-padding for a statistical edge fix — results are approximate only, not bit-periodic.',
     ];
   }
   if (report.kind === 'unknown') {

@@ -15,6 +15,8 @@ import {
   USER_AGREEMENT_BODY,
   USER_AGREEMENT_TITLE,
 } from '../shared/userAgreement';
+import { useWorkspaceOptional } from '../features/workspace/WorkspaceContext';
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 const cn = bind({ ...overlayStyles, ...styles });
 
@@ -34,6 +36,7 @@ export default function HelpDialog({
   onCheckForUpdates,
 }: HelpDialogProps) {
   const [reportOpen, setReportOpen] = useState(false);
+  const workspace = useWorkspaceOptional()?.workspace ?? 'general';
   const handleOverlayClick = useCallback(
     (e: React.MouseEvent) => {
       if (e.target === e.currentTarget) onClose();
@@ -90,6 +93,24 @@ export default function HelpDialog({
                       <pre className={cn('help-agreement-body')}>{USER_AGREEMENT_BODY}</pre>
                     </div>
                   </SimpleBar>
+                  <p className={cn('help-developer')}>
+                    Guides:{' '}
+                    <button
+                      type="button"
+                      className={cn('help-update-btn')}
+                      onClick={() => {
+                        const path =
+                          workspace === 'gamedev'
+                            ? 'docs/help/gamedev/README.md'
+                            : 'docs/help/general/README.md';
+                        void openUrl(
+                          `https://github.com/edrdavid1/dith-yuki/blob/main/${path}`,
+                        ).catch(() => undefined);
+                      }}
+                    >
+                      {workspace === 'gamedev' ? 'Gamedev guide' : 'General guide'}
+                    </button>
+                  </p>
                   <div className={cn('help-actions')}>
                     {onCheckForUpdates && (
                       <button

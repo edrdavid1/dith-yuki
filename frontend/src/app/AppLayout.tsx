@@ -10,6 +10,9 @@ import HelpDialog from '../components/HelpDialog';
 import PreferencesDialog from '../features/preferences/PreferencesDialog';
 import PatternManagerDialog from '../features/patterns/PatternManagerDialog';
 import { usePatternsUi } from '../features/patterns/PatternsUiContext';
+import WorkspacePromptDialog from '../features/workspace/WorkspacePromptDialog';
+import WorkspaceHintBanner from '../features/workspace/WorkspaceHintBanner';
+import { useWorkspaceOptional } from '../features/workspace/WorkspaceContext';
 import { useWelcomeScreen } from '../hooks/useWelcomeScreen';
 import { registerDocumentCommands, registerLayoutCommands } from '../features/shortcuts/commandRegistry';
 import { useAppUpdates } from '../hooks/useAppUpdates';
@@ -220,6 +223,18 @@ export default function AppLayout() {
     swapSidebars,
     previewBackground,
   } = useShell();
+  const workspaceApi = useWorkspaceOptional();
+  const projectPath = useAppSelector((s) => s.document.projectPath);
+  const sourcePath = useAppSelector((s) => s.document.sourcePath);
+
+  useEffect(() => {
+    const name = projectPath || sourcePath;
+    if (!name || !workspaceApi) return;
+    void workspaceApi.triggerHint({
+      trigger: 'filename',
+      filename: name.split(/[/\\]/).pop() ?? name,
+    });
+  }, [projectPath, sourcePath, workspaceApi]);
 
   const {
     left: leftLayout,
@@ -663,6 +678,7 @@ export default function AppLayout() {
         data-app-edges={previewAppEdges}
         style={previewBackgroundStyle(previewBackground)}
       >
+        <WorkspaceHintBanner />
         {/* Keep center FlexLayout mounted while floated so the popout portal stays alive. */}
         <div
           style={
@@ -778,6 +794,7 @@ export default function AppLayout() {
         onCreate={handleCreate}
       />
       <PreferencesDialog isOpen={preferencesOpen} onClose={() => setPreferencesOpen(false)} />
+      <WorkspacePromptDialog />
       <PatternManagerDialog
         isOpen={patternsOpen}
         intent={patternsIntent}

@@ -26,6 +26,8 @@ pub mod batch_export;
 pub use batch_export::*;
 pub mod pattern_library;
 pub use pattern_library::*;
+pub mod workspace;
+pub use workspace::*;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -91,6 +93,8 @@ pub struct AppState {
     pub print_export_cancel: Mutex<Option<Arc<AtomicBool>>>,
     /// Cancel flag for an in-flight batch export (cleared when the job ends).
     pub batch_export_cancel: Mutex<Option<Arc<AtomicBool>>>,
+    /// App-global Workspace / preferences config (`config.json`).
+    pub config: Arc<crate::config::ConfigStore>,
 }
 
 pub struct QuitGuard {

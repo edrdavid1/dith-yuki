@@ -58,3 +58,24 @@ path = "fuzz_targets/fuzz_soft_proof_icc.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_palette_hex"
+path = "fuzz_targets/fuzz_palette_hex.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_palette_pal"
+path = "fuzz_targets/fuzz_palette_pal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ed_wrap_padding"
+path = "fuzz_targets/fuzz_ed_wrap_padding.rs"
+test = false
+doc = false
+bench = false

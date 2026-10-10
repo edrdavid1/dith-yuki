@@ -35,7 +35,10 @@ Thumbs.db
 /fuzz/target/
 /fuzz/artifacts/
 /fuzz/coverage/
-/fuzz/corpus/
+/fuzz/corpus/**
+# Spec seed corpus for wrap-padding (gamedev.md §7.4) — commit hand-picked seeds.
+!/fuzz/corpus/fuzz_ed_wrap_padding/
+!/fuzz/corpus/fuzz_ed_wrap_padding/**
 /fuzz/Cargo.lock
 
 # Quick Look / XcodeGen build products

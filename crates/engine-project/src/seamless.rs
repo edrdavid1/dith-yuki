@@ -86,7 +86,7 @@ pub fn nearest_multiples(size: u32, period: u32) -> Option<(u32, u32)> {
     let above = below.saturating_add(period);
     let below = if below == 0 { period } else { below };
     // If size already exact, both sides are the size itself.
-    if size % period == 0 {
+    if size.is_multiple_of(period) {
         return Some((size, size));
     }
     Some((below, above))
@@ -136,8 +136,8 @@ pub fn check_seamless(
     let period_x = pattern_period_px(nx, pixel_size);
     let period_y = pattern_period_px(ny, pixel_size);
     let angle_bad = pattern_angle_breaks_periodicity(pattern_angle);
-    let width_ok = period_x > 0 && width % period_x == 0 && !angle_bad;
-    let height_ok = period_y > 0 && height % period_y == 0 && !angle_bad;
+    let width_ok = period_x > 0 && width.is_multiple_of(period_x) && !angle_bad;
+    let height_ok = period_y > 0 && height.is_multiple_of(period_y) && !angle_bad;
 
     SeamlessReport {
         kind: SeamlessKind::ExactOrdered,
@@ -156,7 +156,8 @@ pub fn seamless_warning_lines(report: &SeamlessReport, width: u32, height: u32) 
     match report.kind {
         SeamlessKind::ApproximateOnly => vec![
             "Error diffusion cannot be exactly seamless (sequential). \
-             An approximate wrap-padding mode is not available yet."
+             Enable Approximate wrap-padding for a statistical edge fix — \
+             results are approximate only, not bit-periodic."
                 .into(),
         ],
         SeamlessKind::Unknown => {
@@ -242,6 +243,7 @@ mod tests {
         assert_eq!(r.kind, SeamlessKind::ApproximateOnly);
         let lines = seamless_warning_lines(&r, 64, 64);
         assert!(!lines.is_empty());
+        assert!(lines[0].contains("approximate only") || lines[0].contains("Approximate"));
     }
 
     #[test]

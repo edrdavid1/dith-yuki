@@ -51,6 +51,15 @@ jobs:
           cargo test -p engine-color --release
           --test icc_hostile --test lcms_golden --test sat_behavior
 
+      - name: Palette hex/pal fuzz seeds (CI substitute)
+        # Bounded mutation pass over Lospec .hex and JASC/RIFF .pal seeds.
+        # Full libFuzzer (optional, nightly):
+        #   cp crates/engine-color/tests/fixtures/palettes/*.hex fuzz/corpus/fuzz_palette_hex/
+        #   cp crates/engine-color/tests/fixtures/palettes/*.pal fuzz/corpus/fuzz_palette_pal/
+        #   cd fuzz && cargo fuzz run fuzz_palette_hex -- -max_total_time=30
+        #   cd fuzz && cargo fuzz run fuzz_palette_pal -- -max_total_time=30
+        run: cargo test -p engine-color --test palette_fuzz_mutation
+
       - name: Version drill matrix (new engine)
         run: >
           cargo test -p engine-project --features version-drill

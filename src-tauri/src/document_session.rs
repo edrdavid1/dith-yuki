@@ -149,6 +149,9 @@ impl AppState {
             ),
             ram_budget_source: crate::memory_budget::RamBudgetSource::TestOverride,
             journal: Mutex::new(crate::journal::JournalRuntime::disabled()),
+            config: crate::config::ConfigStore::load(
+                &std::env::temp_dir().join("dither-yuki-test-config"),
+            ),
         }
     }
 

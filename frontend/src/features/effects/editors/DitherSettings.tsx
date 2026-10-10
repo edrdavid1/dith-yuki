@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import type { DitherModeV2 } from '../../../types';
 import { clampParam } from '../../../types/effects';
 import Slider from '../../../components/common/Slider';
@@ -6,6 +6,14 @@ import DropdownMenu from '../../../components/common/DropdownMenu';
 import { useAppSelector } from '../../../app/hooks';
 import { openDialog } from '../../../shared/ipc';
 import { checkSeamless, seamlessWarningLines } from '../../../shared/seamless';
+import {
+  WRAP_PADDING_HINT,
+  WRAP_PADDING_OVERSIZE_BANNER,
+  WRAP_PADDING_OVERSIZE_TOOLTIP,
+  WRAP_PADDING_TOOLTIP,
+  wrapPaddingFitsLimits,
+} from '../../../shared/wrapPadding';
+import { useWorkspaceOptional } from '../../workspace/WorkspaceContext';
 import panelStyles from '../EffectSettingsPanel.module.css';
 import paramStyles from '../../../shared/ui/ParamControls.module.css';
 import inputStyles from '../../../shared/ui/ParamInput.module.css';
@@ -176,6 +184,8 @@ function guidedChannelLevels(mode: unknown): number | null {
  * Dither effect params. Palette comes from Color Lab (`lastCreatedId`), not a local selector.
  */
 function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
+  const workspace = useWorkspaceOptional();
+  const visibility = workspace?.visibility;
   const lastCreatedId = useAppSelector((s) => s.palettes.lastCreatedId);
   const docWidth = useAppSelector((s) => s.document.width) ?? 0;
   const docHeight = useAppSelector((s) => s.document.height) ?? 0;
@@ -203,8 +213,14 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
       width: docWidth,
       height: docHeight,
     });
-    return seamlessWarningLines(report, docWidth, docHeight);
-  }, [simpleMode, pixelSize, patternAngle, docWidth, docHeight]);
+    const lines = seamlessWarningLines(report, docWidth, docHeight);
+    if (report.kind === 'approximate_only' && Boolean(params.wrap_padding)) {
+      return [
+        'Approximate wrap-padding is on — edges are seeded from opposite sides. Result is approximate only (not bit-periodic).',
+      ];
+    }
+    return lines;
+  }, [simpleMode, pixelSize, patternAngle, docWidth, docHeight, params.wrap_padding]);
 
   const isOrderedMode = [
     'bayer_2x2',
@@ -245,6 +261,18 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
     'zhou_fang',
   ].includes(simpleMode);
   const serpentine = Boolean(params.serpentine);
+  const wrapPadding = Boolean(params.wrap_padding);
+  const wrapPaddingFits = wrapPaddingFitsLimits(docWidth, docHeight, pixelSize);
+
+  useEffect(() => {
+    if (!isEdMode || !workspace) return;
+    void workspace.triggerHint({
+      trigger: 'ed_square',
+      docWidth,
+      docHeight,
+      edEnabled: true,
+    });
+  }, [isEdMode, docWidth, docHeight, workspace]);
   const ditherAlpha = params.dither_alpha !== false;
   const matchByBrightness = Boolean(params.match_by_brightness);
   const paletteDitherMode = params.palette_dither_mode;
@@ -274,6 +302,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
       threshold_bias: overrides.threshold_bias ?? thresholdBias,
       pattern_angle: overrides.pattern_angle ?? patternAngle,
       serpentine: overrides.serpentine ?? serpentine,
+      wrap_padding: overrides.wrap_padding ?? wrapPadding,
       dither_alpha: overrides.dither_alpha ?? ditherAlpha,
       match_by_brightness: overrides.match_by_brightness ?? matchByBrightness,
     });
@@ -352,21 +381,24 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
         }}
       />
 
-      <p className={cn('effect-palette-hint')} title="Temporal stability for animation frames">
-        {ANIMATION_STABLE_MODES.has(simpleMode)
-          ? 'Suitable for animation — pattern stays stable across frames.'
-          : 'May flicker between frames — error diffusion is not temporally stable.'}
-      </p>
-
-      {seamlessLines.map((line) => (
-        <p
-          key={line.slice(0, 48)}
-          className={cn('effect-palette-hint')}
-          title="Seamless / tileable texture check"
-        >
-          {line}
+      {visibility?.showEdTemporalWarning && (
+        <p className={cn('effect-palette-hint')} title="Temporal stability for animation frames">
+          {ANIMATION_STABLE_MODES.has(simpleMode)
+            ? 'Suitable for animation — pattern stays stable across frames.'
+            : 'May flicker between frames — error diffusion is not temporally stable.'}
         </p>
-      ))}
+      )}
+
+      {visibility?.showSeamlessPreview &&
+        seamlessLines.map((line) => (
+          <p
+            key={line.slice(0, 48)}
+            className={cn('effect-palette-hint')}
+            title="Seamless / tileable texture check"
+          >
+            {line}
+          </p>
+        ))}
 
       {simpleMode === 'custom_png' && (
         <div className={cn('threshold-map-row')}>
@@ -516,6 +548,57 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
           />
           Serpentine
         </label>
+      )}
+
+      {visibility?.showTilingSection && (
+        <details
+          className={cn('param-group')}
+          open={Boolean(workspace?.tilingAdvanced)}
+          data-testid="tiling-section"
+        >
+          <summary className={cn('effect-palette-hint')}>Tiling</summary>
+          <p className={cn('effect-palette-hint')}>
+            Use the preview 3×3 toggle to inspect tile seams.
+          </p>
+          {visibility.showAdvancedToggle && (
+            <label className={cn('param-checkbox-row')}>
+              <input
+                type="checkbox"
+                checked={Boolean(workspace?.tilingAdvanced)}
+                onChange={(e) =>
+                  void workspace?.setTilingAdvancedPreference(e.target.checked)
+                }
+              />
+              Advanced
+            </label>
+          )}
+          {visibility.showWrapPadding && isEdMode && (
+            <>
+              <label
+                className={cn('param-checkbox-row')}
+                title={
+                  wrapPaddingFits ? WRAP_PADDING_TOOLTIP : WRAP_PADDING_OVERSIZE_TOOLTIP
+                }
+              >
+                <input
+                  type="checkbox"
+                  checked={wrapPadding}
+                  disabled={!wrapPaddingFits}
+                  onChange={(e) => emit({ wrap_padding: e.target.checked })}
+                />
+                Approximate wrap-padding
+              </label>
+              <p className={cn('effect-palette-hint')} title={WRAP_PADDING_TOOLTIP}>
+                {WRAP_PADDING_HINT}
+              </p>
+              {!wrapPaddingFits && (
+                <p className={cn('effect-palette-hint')} role="status">
+                  {WRAP_PADDING_OVERSIZE_BANNER}
+                </p>
+              )}
+            </>
+          )}
+        </details>
       )}
 
       {isOrderedMode && (

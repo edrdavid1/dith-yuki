@@ -777,6 +777,7 @@ pub struct DitherParamsV2 {
     pub threshold_bias: f32,         // Track H, ordered only; GPU skip if ≠ 0
     pub pattern_angle: f32,          // Track H, Bayer/CustomPng; Block_Then_Rotate
     pub serpentine: bool,            // Track M, ED odd global rows R→L
+    pub wrap_padding: bool,          // Approximate wrap-padding ED (pad→ED→crop); see docs/adr/ed-wrap-padding.md
     pub dither_alpha: bool,          // default true: alpha → 0/1 per pixel_size block
 }
 ```

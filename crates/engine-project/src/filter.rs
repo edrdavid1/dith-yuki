@@ -239,19 +239,41 @@ impl DiffusionKernel {
         }
     }
 
-    /// Max |dx| / |dy| in kernel cells (FS / Ostromoukhov = 1, Atkinson / JJN /
-    /// … = 2, Shiau–Fan / Stevenson–Arce = 3).
+    /// Max `|dx|` / `|dy|` in kernel cells as a single scalar (legacy / residuals).
+    ///
+    /// Prefer [`Self::max_offset_xy`] when axes can differ (e.g. Shiau–Fan).
     pub fn max_offset(self) -> usize {
-        self.offsets()
-            .iter()
-            .map(|&(dx, dy, _)| dx.unsigned_abs().max(dy.unsigned_abs()) as usize)
-            .max()
-            .unwrap_or(1)
+        let (mx, my) = self.max_offset_xy();
+        mx.max(my)
     }
 
-    /// Cross-tile residual columns/rows: `pixel_size × max_offset()`.
+    /// Per-axis max absolute kernel offsets `(|dx|max, |dy|max)`.
+    ///
+    /// Asymmetric kernels (Shiau–Fan: dx=3, dy=1) need separate margins for
+    /// wrap-padding; a single scalar over-pads the short axis.
+    pub fn max_offset_xy(self) -> (usize, usize) {
+        let mut mx = 0usize;
+        let mut my = 0usize;
+        for &(dx, dy, _) in self.offsets() {
+            mx = mx.max(dx.unsigned_abs() as usize);
+            my = my.max(dy.unsigned_abs() as usize);
+        }
+        (mx.max(1), my.max(1))
+    }
+
+    /// Cross-tile residual columns/rows: `pixel_size × max_offset()` (square).
+    ///
+    /// Tile residual store uses a single margin; wrap-padding uses
+    /// [`Self::edge_margin_xy`] instead.
     pub fn edge_margin(self, pixel_size: u32) -> usize {
         pixel_size.max(1) as usize * self.max_offset()
+    }
+
+    /// Wrap-padding margin `(mx, my)` = `pixel_size × (|dx|max, |dy|max)`.
+    pub fn edge_margin_xy(self, pixel_size: u32) -> (u32, u32) {
+        let ps = pixel_size.max(1);
+        let (dx, dy) = self.max_offset_xy();
+        (ps.saturating_mul(dx as u32), ps.saturating_mul(dy as u32))
     }
 }
 
@@ -520,6 +542,11 @@ pub struct DitherParamsV2 {
     /// copied per pixel. Default true; missing JSON field deserializes as true.
     #[serde(default = "default_dither_alpha")]
     pub dither_alpha: bool,
+    /// Approximate seamless for error diffusion: wrap-pad opposite edges by
+    /// `pixel_size × kernel.max_offset()`, run ED, crop. Ordered modes ignore
+    /// this flag. Default false; result is approximate only.
+    #[serde(default)]
+    pub wrap_padding: bool,
 }
 
 fn default_threshold_scale() -> f32 {
@@ -574,6 +601,7 @@ impl Default for DitherParamsV2 {
             pattern_angle: 0.0,
             serpentine: false,
             dither_alpha: true,
+            wrap_padding: false,
         }
     }
 }
@@ -627,6 +655,7 @@ impl From<(DitherMode, u8)> for DitherParamsV2 {
             pattern_angle: 0.0,
             serpentine: false,
             dither_alpha: true,
+            wrap_padding: false,
         }
     }
 }

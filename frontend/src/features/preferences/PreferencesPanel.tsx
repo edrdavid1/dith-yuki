@@ -23,6 +23,8 @@ import {
   SHORTCUT_LABELS,
 } from '../shortcuts/bindings';
 import { useShortcuts } from '../shortcuts/ShortcutsContext';
+import { useWorkspace } from '../workspace/WorkspaceContext';
+import type { Workspace } from '../../shared/workspace/visibility';
 import styles from './PreferencesPanel.module.css';
 import paramStyles from '../../shared/ui/ParamControls.module.css';
 import { bind } from '../../shared/ui/cn';
@@ -49,6 +51,7 @@ export default function PreferencesPanel() {
     tooltipsEnabled,
     setTooltipsEnabled,
   } = useShell();
+  const { workspace, setWorkspacePreference } = useWorkspace();
   const { bindings, capturing, setCapturing, setBinding, resetDefaults } = useShortcuts();
   const showAppIcon = isMacOS();
   const showHapticFeedback = isMacOS();
@@ -111,6 +114,52 @@ export default function PreferencesPanel() {
     <div className={cn('preferences-panel')}>
       <SimpleBar className={cn('preferences-scroll')} style={{ height: '100%' }}>
         <div className={cn('preferences-body')}>
+      <details className={cn('preferences-section')} open>
+        <summary id="prefs-workspace-heading" className={cn('preferences-section-title')}>
+          Workspace
+        </summary>
+        <div
+          className={cn('param-group')}
+          role="radiogroup"
+          aria-labelledby="prefs-workspace-heading"
+          data-testid="workspace-radios"
+        >
+          {(
+            [
+              {
+                id: 'general' as Workspace,
+                label: 'General',
+                desc: 'Dither images for web, print, and general graphics.',
+              },
+              {
+                id: 'gamedev' as Workspace,
+                label: 'Gamedev',
+                desc: 'Create seamless textures, tiles, and sprites. Enables tiling tools.',
+              },
+            ] as const
+          ).map((opt) => (
+            <label
+              key={opt.id}
+              className={cn('preferences-checkbox-row')}
+              style={{ alignItems: 'flex-start', marginBottom: 10 }}
+            >
+              <input
+                type="radio"
+                name="workspace"
+                value={opt.id}
+                checked={workspace === opt.id}
+                onChange={() => void setWorkspacePreference(opt.id)}
+              />
+              <span>
+                <strong>{opt.label}</strong>
+                <br />
+                <span className={cn('preferences-hint')}>{opt.desc}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </details>
+
       <details className={cn('preferences-section')} open>
         <summary id="prefs-color-heading" className={cn('preferences-section-title')}>
           Color / Palettes

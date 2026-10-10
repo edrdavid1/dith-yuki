@@ -183,6 +183,14 @@ fn is_ascii_filter(filter: &FilterInstance) -> bool {
         || resolve_algorithm_id(filter).as_deref() == Some("ascii")
 }
 
+/// True when an enabled ED filter has approximate wrap-padding on.
+pub fn filter_uses_ed_wrap_padding(filter: &FilterInstance) -> bool {
+    match &filter.params {
+        FilterParams::DitherV2(p) => p.wrap_padding && p.mode.diffusion_kernel().is_some(),
+        _ => false,
+    }
+}
+
 /// Whether any enabled filter on `layer` needs a full-document pass.
 pub fn layer_has_full_document_filter(layer: &Layer) -> bool {
     layer_has_full_document_filter_ex(layer, true)
@@ -190,6 +198,9 @@ pub fn layer_has_full_document_filter(layer: &Layer) -> bool {
 
 /// Like [`layer_has_full_document_filter`], optionally ignoring Ascii filters
 /// (Image preview mode still needs this when Riemersma etc. remain).
+///
+/// Also true when any enabled ED filter has [`DitherParamsV2::wrap_padding`] —
+/// that path pads the whole document, runs ED, and crops (approximate seamless).
 pub fn layer_has_full_document_filter_ex(layer: &Layer, include_ascii: bool) -> bool {
     let reg = builtin_registry();
     layer.filters.iter().any(|f| {
@@ -198,6 +209,9 @@ pub fn layer_has_full_document_filter_ex(layer: &Layer, include_ascii: bool) -> 
         }
         if !include_ascii && is_ascii_filter(f) {
             return false;
+        }
+        if filter_uses_ed_wrap_padding(f) {
+            return true;
         }
         resolve_algorithm_id(f)
             .and_then(|id| reg.get_by_str(&id).map(|a| a.execution_scope()))
@@ -275,6 +289,19 @@ pub fn compute_full_document_rgba_ex(
             return Err(EngineError::unknown_algorithm(id));
         };
 
+        if filter_uses_ed_wrap_padding(filter) {
+            apply_ed_wrap_padding_filter(
+                &mut rgba,
+                w,
+                h,
+                filter,
+                should_cancel,
+                layer,
+                doc,
+                cache,
+            )?;
+            continue;
+        }
         match algo.execution_scope() {
             ExecutionScope::FullDocument => {
                 apply_full_document_algorithm(&mut rgba, w, h, filter, should_cancel)?;
@@ -325,6 +352,19 @@ pub fn compute_ascii_job(
                 })?);
             break;
         }
+        if filter_uses_ed_wrap_padding(filter) {
+            apply_ed_wrap_padding_filter(
+                &mut rgba,
+                w,
+                h,
+                filter,
+                should_cancel,
+                layer,
+                doc,
+                cache,
+            )?;
+            continue;
+        }
         let Some(id) = resolve_algorithm_id(filter) else {
             continue;
         };
@@ -344,6 +384,40 @@ pub fn compute_ascii_job(
     let params = ascii_params
         .ok_or_else(|| EngineError::invalid_state("no Ascii filter on layer for ASCII export"))?;
     run_ascii_job(&rgba, w, h, &params, should_cancel)
+}
+
+fn apply_ed_wrap_padding_filter(
+    rgba: &mut [f32],
+    width: u32,
+    height: u32,
+    filter: &FilterInstance,
+    should_cancel: &AtomicBool,
+    layer: &Layer,
+    doc: &Document,
+    cache: &TileCache,
+) -> Result<(), EngineError> {
+    use crate::filters::ed_wrap_padding::{apply_ed_with_wrap_padding, EdWrapError};
+
+    let params = match &filter.params {
+        FilterParams::DitherV2(p) => p.clone(),
+        other => {
+            let json = filter_params_to_json(other)?;
+            serde_json::from_value::<DitherParamsV2>(json).map_err(|e| {
+                EngineError::invalid_filter_params(format!("wrap-padding ED params: {e}"))
+            })?
+        }
+    };
+    match apply_ed_with_wrap_padding(rgba, width, height, &params, should_cancel, None) {
+        Ok(()) => Ok(()),
+        // Size / overflow: fall back to tile-strip for this filter (§8).
+        Err(EdWrapError::SizeLimitExceeded { .. }) | Err(EdWrapError::Overflow) => {
+            apply_tiled_filters_on_buffer(rgba, width, height, layer, filter, doc, cache)
+        }
+        Err(EdWrapError::Cancelled) => Err(EngineError::invalid_state("ed wrap-padding cancelled")),
+        Err(EdWrapError::UnsupportedKernel) => {
+            apply_tiled_filters_on_buffer(rgba, width, height, layer, filter, doc, cache)
+        }
+    }
 }
 
 fn apply_full_document_algorithm(

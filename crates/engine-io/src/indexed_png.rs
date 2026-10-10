@@ -65,7 +65,7 @@ pub fn encode_indexed_png(
     }
 
     // Transparent index: reuse palette index 0 via tRNS, or append if room.
-    let needs_transparency = rgba.chunks_exact(4).any(|p| p[3] == 0);
+    let needs_transparency = rgba.as_chunks::<4>().0.iter().any(|p| p[3] == 0);
     let (transparent_index, trns): (Option<u8>, Option<Vec<u8>>) = if needs_transparency {
         // Prefer a dedicated transparent slot so opaque uses of color 0 stay opaque.
         if plte.len() / 3 < 256 {

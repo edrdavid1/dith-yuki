@@ -155,9 +155,8 @@ pub fn run_headless_job_cancellable(
     let live_gen = 1u64;
 
     // Budget: roughly enough for one full-resolution document worth of tiles.
-    let budget = ((width as usize).saturating_mul(height as usize).saturating_mul(16))
-        .max(50_000_000)
-        .min(512_000_000);
+      let budget = ((width as usize).saturating_mul(height as usize).saturating_mul(16))
+        .clamp(50_000_000, 512_000_000);
     let cache = TileCache::new(budget);
 
     decompose_image_to_tiles_at_generation(
