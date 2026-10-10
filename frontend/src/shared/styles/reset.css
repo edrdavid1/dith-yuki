@@ -87,17 +87,19 @@ input[type='radio'] {
   border: var(--border-width) solid var(--color-black);
   border-radius: 50%;
   background-color: var(--color-gray);
-  background-image: radial-gradient(circle, var(--color-primary) 0%, var(--color-primary) 100%);
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: 0 0;
+  background-image: none;
   cursor: pointer;
   vertical-align: middle;
 }
 
 input[type='radio']:checked {
-  /* Inner dot inset from the border (~same visual weight as checkbox fill). */
-  background-size: 6px 6px;
+  /* Round inner dot (not a square fill like checkbox). */
+  background-image: radial-gradient(
+    circle at center,
+    var(--color-primary) 0,
+    var(--color-primary) 3px,
+    transparent 3.5px
+  );
 }
 
 input[type='radio']:focus-visible {
