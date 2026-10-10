@@ -5,6 +5,7 @@ import type { ZoomMode } from '../features/preview/zoomSnap';
 import WindowTitlebar from '../shared/ui/WindowTitlebar';
 import Icon from '../icons/iconRegistry';
 import Tooltip from '../shared/ui/Tooltip';
+import SoftProofControls from '../features/soft-proof/SoftProofControls';
 import { useShell } from '../app/shell/ShellContext';
 import { useAppSelector } from '../app/hooks';
 import { selectFiltersList } from '../app/slices/filtersSlice';
@@ -337,6 +338,7 @@ export default function PreviewWindow({
           </Tooltip>
         </div>
         <div className={cn('pv-footer-actions')}>
+          <SoftProofControls docId={docId} layout="footer" />
           <Tooltip label="Actual size — 1 document pixel = 1 screen pixel (100%)">
             <button
               type="button"

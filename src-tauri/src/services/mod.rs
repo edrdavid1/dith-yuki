@@ -38,3 +38,6 @@ pub use palette_service::PaletteService;
 
 pub mod document_service;
 pub use document_service::DocumentService;
+
+pub mod proof_service;
+pub use proof_service::ProofService;

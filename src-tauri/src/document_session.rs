@@ -117,6 +117,11 @@ impl AppState {
             pending_preview_refresh: Mutex::new(None),
             ascii_preview: std::sync::atomic::AtomicBool::new(true),
             full_document_busy: AtomicUsize::new(0),
+            proof: Mutex::new(
+                crate::services::ProofService::new(&std::env::temp_dir().join("dither-proof"))
+                    .ok()
+                    .map(std::sync::Arc::new),
+            ),
             // B3: FlexLayout persistence (initialized with temp dir, updated in main.rs)
             flexlayout_persistence: Mutex::new(
                 crate::flexlayout_persistence::FlexLayoutPersistence::new(std::env::temp_dir()),

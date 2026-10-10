@@ -314,6 +314,13 @@ fn restore_and_invalidate(
     kind: &str,
 ) -> Result<UndoStateDto, String> {
     let session = state.require_session(doc_id)?;
+    // Soft proof is view state: keep the live toggle/settings across undo/redo.
+    let live_soft_proof = session.document_handle.snapshot().soft_proof.clone();
+    let restored = {
+        let mut doc = (*restored).clone();
+        doc.soft_proof = live_soft_proof;
+        Arc::new(doc)
+    };
     session.document_handle.store(restored);
     bump_live_document_gen(state, doc_id);
     let live = session.document_handle.snapshot();

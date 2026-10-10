@@ -4,6 +4,7 @@ use crate::error::EngineError;
 use crate::filter::FilterParams;
 use crate::layer::LayerNode;
 use crate::types::{ColorProfileRef, DocumentId, FilterInstanceId, PaletteId};
+use engine_color::SoftProofConfig;
 use arc_swap::ArcSwap;
 use engine_color::palette::{LinearColor, Palette};
 use engine_tiles::generation::GenerationTracker;
@@ -29,6 +30,9 @@ pub struct Document {
 
     /// Color profile reference (placeholder for Phase 5)
     pub color_profile: ColorProfileRef,
+
+    /// Soft-proof view settings (display-only; not applied to export).
+    pub soft_proof: SoftProofConfig,
 
     /// Top-level layers/groups, bottom-to-top order
     pub root: Vec<LayerNode>,
@@ -68,11 +72,12 @@ impl Serialize for Document {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("Document", 8)?;
+        let mut state = serializer.serialize_struct("Document", 9)?;
         state.serialize_field("id", &self.id)?;
         state.serialize_field("width", &self.width)?;
         state.serialize_field("height", &self.height)?;
         state.serialize_field("color_profile", &self.color_profile)?;
+        state.serialize_field("soft_proof", &self.soft_proof)?;
         state.serialize_field("root", &self.root)?;
         state.serialize_field("palettes", &self.palettes)?;
         state.serialize_field("revision", &self.revision)?;
@@ -92,6 +97,8 @@ impl<'de> Deserialize<'de> for Document {
             width: u32,
             height: u32,
             color_profile: ColorProfileRef,
+            #[serde(default)]
+            soft_proof: SoftProofConfig,
             root: Vec<LayerNode>,
             palettes: Vec<Palette>,
             revision: u64,
@@ -105,6 +112,7 @@ impl<'de> Deserialize<'de> for Document {
             width: helper.width,
             height: helper.height,
             color_profile: helper.color_profile,
+            soft_proof: helper.soft_proof,
             root: helper.root,
             palettes: helper.palettes,
             revision: helper.revision,
@@ -123,6 +131,7 @@ impl Document {
             width,
             height,
             color_profile: ColorProfileRef::default(),
+            soft_proof: SoftProofConfig::default(),
             root: Vec::new(),
             palettes: Vec::new(),
             revision: 0,

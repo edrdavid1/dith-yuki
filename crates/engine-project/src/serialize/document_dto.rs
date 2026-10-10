@@ -11,6 +11,7 @@ use crate::filter::{FilterInstance, FilterKind, FilterParams};
 use crate::layer::{Layer, LayerGroup, LayerNode, FORWARD_COMPAT_NODE_KEY};
 use crate::mask::MaskRef;
 use crate::types::{BlendMode, ColorProfileRef, LayerId, LayerKind, TileBounds};
+use engine_color::SoftProofConfig;
 use engine_color::palette::{LinearColor, Palette};
 use engine_registry::AlgorithmRegistry;
 use serde::{Deserialize, Serialize};
@@ -37,11 +38,17 @@ pub struct DocumentFile {
     pub width: u32,
     pub height: u32,
     pub color_profile: ColorProfileRef,
+    #[serde(default, skip_serializing_if = "soft_proof_is_default")]
+    pub soft_proof: SoftProofConfig,
     pub root: Vec<LayerNodeFile>,
     pub palettes: Vec<PaletteFile>,
     #[serde(default = "empty_extra", skip_serializing_if = "is_empty_extra")]
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+fn soft_proof_is_default(cfg: &SoftProofConfig) -> bool {
+    *cfg == SoftProofConfig::default()
 }
 
 /// Palette without relying on live revision semantics (always rewritten to 1 on load).
@@ -243,6 +250,7 @@ impl DocumentFile {
             width: doc.width,
             height: doc.height,
             color_profile: doc.color_profile.clone(),
+            soft_proof: doc.soft_proof.clone(),
             root: doc
                 .root
                 .iter()
@@ -618,6 +626,7 @@ mod tests {
             width: 8,
             height: 8,
             color_profile: ColorProfileRef::SRgb,
+            soft_proof: Default::default(),
             root: vec![],
             palettes: vec![],
             extra: Map::new(),

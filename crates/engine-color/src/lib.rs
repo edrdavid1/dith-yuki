@@ -20,7 +20,19 @@ pub mod palette_cache;
 pub mod palette_guided;
 pub mod palette_lut;
 pub mod ramps;
+pub mod preview_encode;
+pub mod soft_proof;
 pub mod threshold_map;
+
+pub use preview_encode::{
+    delta_e2000, delta_e2000_srgb8, encode_preview_rgb, encode_preview_rgba, linear_to_srgb_f32,
+    srgb_f32_to_linear, SrgbEncodeLut,
+};
+pub use soft_proof::{
+    soft_proof_config_hash, SoftProofConfig, SoftProofError, SoftProofIntent, SoftProofLut3D,
+    SoftProofTransform, BUILTIN_FOGRA51_ID, BUILTIN_FOGRA51_ICC, BUILTIN_FOGRA52_ID,
+    DEFAULT_PROOF_LUT_SIZE, LUT_MAX_DELTA_E2000,
+};
 
 pub use auto_interpolate::{auto_interpolate, would_auto_interpolate, AutoInterpolateResult};
 pub use brightness_sorted::BrightnessSortedPalette;

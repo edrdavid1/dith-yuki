@@ -684,6 +684,16 @@ impl DocumentService {
         let width = opened.document.width;
         let height = opened.document.height;
         let mut new_doc = opened.document;
+        if let Ok(guard) = self.state.proof.lock() {
+            if let Some(svc) = guard.as_ref() {
+                if svc.sanitize_config(&mut new_doc.soft_proof) {
+                    log::info!(
+                        "soft-proof disabled: profile {} not available locally",
+                        new_doc.soft_proof.profile_id
+                    );
+                }
+            }
+        }
         new_doc.increment_generation();
         new_doc.generations.set_document_gen(live_gen);
         let session = self.state.spawn_session(new_doc);

@@ -506,6 +506,7 @@ export default function ColorLabFeature({
   const body = (
     <ColorLabBody
       variant={variant}
+      docId={docId}
       name={name}
       onNameChange={(v) => {
         dispatch(setName(v));

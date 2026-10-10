@@ -173,6 +173,7 @@ export const DOCUMENT_SOURCE_REPLACE_KINDS = new Set([
   'document_redone',
   'document_activated',
   'document_closed',
+  // soft_proof_changed: keep old bitmaps until new rev arrives (no flash).
 ]);
 
 export function isDocumentSourceReplace(kind: string): boolean {
@@ -373,6 +374,14 @@ export default function TileCanvas({
   const lastDrawnViewportRef = useRef(viewport);
   const docSizeRef = useRef({ docWidth, docHeight });
   const tileRevRef = useRef(0);
+  /** Soft-proof latency: click→first/last visible tile (p50/p95 via console samples). */
+  const softProofMetricRef = useRef<{
+    rev: number;
+    t0: number;
+    expected: Set<string>;
+    firstMs: number | null;
+    samples: number[];
+  } | null>(null);
   const commitTimerRef = useRef<number | null>(null);
   const handleWorkerMessageRef = useRef<(e: MessageEvent) => void>(() => {});
 
@@ -539,6 +548,34 @@ export default function TileCanvas({
       if (!shouldAcceptDecodedRev(decodedRev, tileRevRef.current)) {
         bitmap.close();
         return;
+      }
+
+      const metric = softProofMetricRef.current;
+      if (metric && decodedRev === metric.rev && metric.expected.has(key)) {
+        const elapsed = performance.now() - metric.t0;
+        if (metric.firstMs == null) {
+          metric.firstMs = elapsed;
+          performance.mark('soft_proof_first_tile');
+          console.debug(`[soft_proof] click→first_tile ${elapsed.toFixed(1)}ms`);
+        }
+        metric.expected.delete(key);
+        if (metric.expected.size === 0) {
+          performance.mark('soft_proof_last_tile');
+          metric.samples.push(elapsed);
+          const sorted = [...metric.samples].sort((a, b) => a - b);
+          const p50 = sorted[Math.floor(sorted.length * 0.5)] ?? elapsed;
+          const p95 = sorted[Math.floor(sorted.length * 0.95)] ?? elapsed;
+          console.debug(
+            `[soft_proof] click→last_tile ${elapsed.toFixed(1)}ms (first=${metric.firstMs.toFixed(1)}ms) samples=${sorted.length} p50=${p50.toFixed(1)} p95=${p95.toFixed(1)}`,
+          );
+          softProofMetricRef.current = {
+            ...metric,
+            expected: new Set(),
+            firstMs: null,
+            t0: metric.t0,
+            rev: -1,
+          };
+        }
       }
 
       const displayed = tileMapRef.current;
@@ -721,6 +758,16 @@ export default function TileCanvas({
         docHeight,
       );
       if (visible.length === 0) return;
+      if (event.payload.kind === 'soft_proof_changed') {
+        const prev = softProofMetricRef.current;
+        softProofMetricRef.current = {
+          rev: tileRevRef.current,
+          t0: performance.now(),
+          expected: new Set(visible.map(tileKey)),
+          firstMs: null,
+          samples: prev?.samples ?? [],
+        };
+      }
       workerRef.current.postMessage({
         type: 'request-tiles',
         tiles: visible,

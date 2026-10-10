@@ -54,12 +54,9 @@ pub struct FeatureDef {
 
 /// Highest format version this build can open (major+minor).
 ///
-/// With `version-drill`, the canary features raise support to `1.1`. Release /
-/// alpha builds keep `1.0` so files that require `min_reader 1.1` are refused.
-#[cfg(feature = "version-drill")]
+/// Soft-proof settings in `.dyproj` use format `1.1`. Canary drill features
+/// share the same minor lane under `--features version-drill`.
 pub const SUPPORTED_FORMAT: FormatVersion = FormatVersion::new(1, 1);
-#[cfg(not(feature = "version-drill"))]
-pub const SUPPORTED_FORMAT: FormatVersion = FormatVersion::V1_0;
 
 /// Highest format major this build can open (per kind still uses migrate ladders).
 pub const SUPPORTED_FORMAT_MAJOR: u32 = SUPPORTED_FORMAT.major;
@@ -80,6 +77,12 @@ pub fn feature_registry() -> &'static [FeatureDef] {
                 description: "Reserved: per-layer tile stores instead of full-frame PNG",
             },
             FeatureDef {
+                id: "soft-proof",
+                since: FormatVersion::new(1, 1),
+                required: true,
+                description: "Per-document soft-proof settings in document.json",
+            },
+            FeatureDef {
                 id: "canary-optional",
                 since: FormatVersion::new(1, 1),
                 required: false,
@@ -96,12 +99,20 @@ pub fn feature_registry() -> &'static [FeatureDef] {
     }
     #[cfg(not(feature = "version-drill"))]
     {
-        const REG: &[FeatureDef] = &[FeatureDef {
-            id: "tiled-layers",
-            since: FormatVersion::new(2, 0),
-            required: true,
-            description: "Reserved: per-layer tile stores instead of full-frame PNG",
-        }];
+        const REG: &[FeatureDef] = &[
+            FeatureDef {
+                id: "tiled-layers",
+                since: FormatVersion::new(2, 0),
+                required: true,
+                description: "Reserved: per-layer tile stores instead of full-frame PNG",
+            },
+            FeatureDef {
+                id: "soft-proof",
+                since: FormatVersion::new(1, 1),
+                required: true,
+                description: "Per-document soft-proof settings in document.json",
+            },
+        ];
         REG
     }
 }
@@ -168,12 +179,15 @@ pub fn format_versions_for_used_features(
 
 /// Scan a live document for format features that must be declared on Save.
 ///
-/// Default build: always empty (write `1.0`). With `version-drill`, detects
-/// canary markers. Writers emit the **minimum** version needed (§2.6).
+/// Writers emit the **minimum** version needed (§2.6). Soft-proof is declared
+/// only when settings differ from the default (disabled FOGRA51 Relative+BPC).
 pub fn collect_used_format_features(doc: &Document) -> (Vec<String>, Vec<String>) {
+    let mut required = Vec::new();
+    if doc.soft_proof.requires_format_feature() {
+        required.push("soft-proof".into());
+    }
     #[cfg(feature = "version-drill")]
     {
-        let mut required = Vec::new();
         let mut optional = Vec::new();
         if doc
             .extra
@@ -186,12 +200,11 @@ pub fn collect_used_format_features(doc: &Document) -> (Vec<String>, Vec<String>
         if root_has_canary_drill(&doc.root) {
             required.push("canary-required".into());
         }
-        (required, optional)
+        return (required, optional);
     }
     #[cfg(not(feature = "version-drill"))]
     {
-        let _ = doc;
-        (Vec::new(), Vec::new())
+        (required, Vec::new())
     }
 }
 
@@ -287,6 +300,15 @@ mod tests {
     fn release_build_has_no_canary_ids() {
         assert!(feature_by_id("canary-optional").is_none());
         assert!(feature_by_id("canary-required").is_none());
-        assert_eq!(SUPPORTED_FORMAT, FormatVersion::V1_0);
+        assert!(feature_by_id("soft-proof").is_some());
+        assert_eq!(SUPPORTED_FORMAT, FormatVersion::new(1, 1));
+    }
+
+    #[test]
+    fn soft_proof_feature_bumps_to_v1_1() {
+        assert_eq!(
+            required_version_for_features(["soft-proof"]),
+            FormatVersion::new(1, 1)
+        );
     }
 }

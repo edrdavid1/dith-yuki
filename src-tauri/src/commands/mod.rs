@@ -18,6 +18,8 @@ pub mod color_lab;
 pub use color_lab::*;
 pub mod document;
 pub use document::*;
+pub mod proof;
+pub use proof::*;
 pub mod pattern_library;
 pub use pattern_library::*;
 
@@ -79,6 +81,8 @@ pub struct AppState {
     pub ram_budget_source: crate::memory_budget::RamBudgetSource,
     /// Crash-recovery journal (Phase 2). `recovery_dir` set from app_data in setup.
     pub journal: Mutex<crate::journal::JournalRuntime>,
+    /// Soft-proof ICC catalog + transform cache (`None` until app_data init).
+    pub proof: Mutex<Option<Arc<crate::services::ProofService>>>,
 }
 
 pub struct QuitGuard {

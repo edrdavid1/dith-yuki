@@ -365,6 +365,15 @@ fn main() {
                 );
                 crate::journal::start_heartbeat(app_handle.clone());
                 crate::journal::signals::install_signal_flush(app_handle.clone());
+
+                match crate::services::ProofService::new(&app_data_dir) {
+                    Ok(svc) => {
+                        if let Ok(mut slot) = state.proof.lock() {
+                            *slot = Some(std::sync::Arc::new(svc));
+                        }
+                    }
+                    Err(e) => log::warn!("soft-proof catalog init failed: {e}"),
+                }
             }
 
             // decorations stay true so traffic lights exist; Overlay+fullSize
@@ -441,6 +450,11 @@ fn main() {
             commands::ascii_clipboard_text,
             commands::set_ascii_preview,
             commands::get_ascii_preview,
+            commands::proof_list_profiles,
+            commands::proof_import_profile,
+            commands::proof_remove_profile,
+            commands::proof_get_config,
+            commands::proof_set_config,
             commands::save_project,
             commands::save_project_as,
             commands::share_project_copy,
@@ -638,7 +652,24 @@ fn handle_tile_request(
     };
 
     let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
-    let served = tile_serve::resolve_preview_tile(&state.tiles.tile_cache, key, doc_gen);
+    let proof_cfg_hash = tile_serve::preview_config_hash(&snapshot.soft_proof);
+    let proof_xform = if snapshot.soft_proof.enabled {
+        state
+            .proof
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .and_then(|svc| svc.transform_for(&snapshot.soft_proof).ok().flatten())
+    } else {
+        None
+    };
+    let served = tile_serve::resolve_preview_tile_proofed(
+        &state.tiles.tile_cache,
+        key,
+        doc_gen,
+        proof_xform.as_ref(),
+        proof_cfg_hash,
+    );
     let ready = matches!(served, tile_serve::PreviewServe::Fresh { .. });
     if !ready {
         let layer_gen = snapshot.generations.get_layer_gen(layer_id);

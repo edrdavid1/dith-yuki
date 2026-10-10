@@ -256,6 +256,9 @@ pub fn parse_tile_url(uri: &str) -> Result<ParsedTileUrl, TileProtocolError> {
 /// assert_eq!(buf.len(), 262_144);
 /// assert!(buf.iter().all(|&b| b == 0));
 /// ```
+/// Linear→u8 (no sRGB). Kept for export-adjacent / reference tests.
+/// Preview uses [`encode_preview_tile`] instead.
+#[allow(dead_code)]
 pub fn f32_tile_to_rgba8(tile: &PixelTile) -> Vec<u8> {
     use engine_project::f32_to_rgba8_row_simd;
 
@@ -271,6 +274,47 @@ pub fn f32_tile_to_rgba8(tile: &PixelTile) -> Vec<u8> {
         f32_to_rgba8_row_simd(&mut buf[dst_start..dst_end], &tile.data[src_start..src_end]);
     }
     buf
+}
+
+/// Extract the 256×256 interior of a tile as interleaved linear RGBA f32.
+fn tile_interior_linear_rgba(tile: &PixelTile) -> Vec<f32> {
+    let pixel_count = (TILE_SIZE * TILE_SIZE) as usize;
+    let size = (TILE_SIZE + 2 * HALO) as usize;
+    let mut linear = vec![0f32; pixel_count * 4];
+    for row in 0..TILE_SIZE as usize {
+        let src_start = ((HALO as usize + row) * size + HALO as usize) * 4;
+        let dst_start = row * (TILE_SIZE as usize) * 4;
+        linear[dst_start..dst_start + TILE_SIZE as usize * 4]
+            .copy_from_slice(&tile.data[src_start..src_start + TILE_SIZE as usize * 4]);
+    }
+    linear
+}
+
+/// Unified preview encode: Composite RGBA f32 → optional soft-proof CMS → RGBA8.
+///
+/// Composite stores `u8/255` (encoded), not optical linear. Proof-off is a
+/// passthrough cast; proof-on runs CMS on those encoded values. Toggle differs
+/// only by the CMS block.
+pub fn encode_preview_tile(
+    tile: &PixelTile,
+    proof: Option<&engine_color::SoftProofTransform>,
+) -> Vec<u8> {
+    let linear = tile_interior_linear_rgba(tile);
+    let mut buf = vec![0u8; linear.len()];
+    if engine_color::encode_preview_rgba(&linear, &mut buf, proof).is_err() {
+        // Fallback: proof-off sRGB encode without CMS.
+        let _ = engine_color::encode_preview_rgba(&linear, &mut buf, None);
+    }
+    buf
+}
+
+/// Soft-proof a Composite tile: linear RGBA f32 (interior) → display RGBA8.
+#[allow(dead_code)]
+pub fn f32_tile_to_rgba8_soft_proof(
+    tile: &PixelTile,
+    xform: &engine_color::SoftProofTransform,
+) -> Vec<u8> {
+    encode_preview_tile(tile, Some(xform))
 }
 
 // ============================================================================

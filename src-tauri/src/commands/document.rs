@@ -260,6 +260,7 @@ pub fn close_document(
     state: State<'_, Arc<AppState>>,
 ) -> Result<OpenDocumentsPayload, String> {
     state.close_session(doc_id)?;
+    crate::tile_serve::preview_rgba8_cache().clear_doc(doc_id);
     emit_document_changed(&app_handle, "document_closed", None, Some(doc_id));
     emit_tabs_changed(Some(&app_handle), &state);
     Ok(state.tab_list())
