@@ -14,7 +14,6 @@ import type { EffectType } from '../../types/effects';
 import type { FilterInfo } from '../../types';
 import type { PanelChromeProps } from '../panels/PanelChrome';
 import { usePatternsUi } from '../patterns/PatternsUiContext';
-import { usePresetsUi } from '../presets/PresetsUiContext';
 
 function findLayerById(
   layers: { id: number; name: string; children?: unknown[] }[],
@@ -51,7 +50,6 @@ export default function EffectsFeature({
   const docId = useAppSelector((s) => s.document.docId);
   const doc = useDocument();
   const { openPatternManager } = usePatternsUi();
-  const { openPresetManager } = usePresetsUi();
   const addingRef = useRef(false);
 
   const imageSourceLayer = layers.length > 0 ? layers[0] : null;
@@ -297,8 +295,6 @@ export default function EffectsFeature({
       }
       onSavePattern={() => openPatternManager('save')}
       onLoadPattern={() => openPatternManager('browse')}
-      onSavePreset={() => openPresetManager('save')}
-      onLoadPreset={() => openPresetManager('browse')}
     />
   );
 }

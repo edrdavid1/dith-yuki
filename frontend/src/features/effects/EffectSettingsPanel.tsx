@@ -60,8 +60,6 @@ export interface EffectSettingsPanelProps {
   onImportPattern?: () => void;
   onSavePattern?: () => void;
   onLoadPattern?: () => void;
-  onSavePreset?: () => void;
-  onLoadPreset?: () => void;
 }
 
 function filterKindToEffectType(kind: FilterKind): EffectType | null {
@@ -148,8 +146,6 @@ export default function EffectSettingsPanel({
   onImportPattern,
   onSavePattern,
   onLoadPattern,
-  onSavePreset,
-  onLoadPreset,
 }: EffectSettingsPanelProps) {
   const catalog = useAlgorithmCatalog();
   const canUsePattern = targetLayerId != null;
@@ -197,28 +193,6 @@ export default function EffectSettingsPanel({
           aria-label="Apply pattern"
         >
           <Icon name="layers" width={16} height={16} />
-        </button>
-      </Tooltip>
-      <Tooltip label="Save filter preset from stack">
-        <button
-          type="button"
-          className={cn('pattern-action-btn')}
-          disabled={!canUsePattern}
-          onClick={() => onSavePreset?.()}
-          aria-label="Save filter preset"
-        >
-          <Icon name="auto-interpolate" width={16} height={16} />
-        </button>
-      </Tooltip>
-      <Tooltip label="Preset Manager">
-        <button
-          type="button"
-          className={cn('pattern-action-btn')}
-          disabled={!canUsePattern}
-          onClick={() => onLoadPreset?.()}
-          aria-label="Open Preset Manager"
-        >
-          <Icon name="preferences" width={16} height={16} />
         </button>
       </Tooltip>
     </div>

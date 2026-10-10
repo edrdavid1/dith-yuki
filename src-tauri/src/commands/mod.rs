@@ -26,8 +26,6 @@ pub mod batch_export;
 pub use batch_export::*;
 pub mod pattern_library;
 pub use pattern_library::*;
-pub mod presets;
-pub use presets::*;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};

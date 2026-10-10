@@ -20,7 +20,6 @@ pub mod error;
 pub mod filter;
 pub mod filters;
 pub mod headless;
-pub mod preset;
 pub mod seamless;
 pub mod sprite_sheet;
 pub mod invalidation;
@@ -47,7 +46,6 @@ pub use headless::{
     run_headless_job_cancellable, HeadlessError, HeadlessJob, HeadlessJobResult,
     HeadlessOutputFormat,
 };
-pub use preset::{FilterPreset, PresetApplyResult, PresetError, PRESET_VERSION};
 pub use seamless::{
     check_seamless, nearest_multiples, ordered_matrix_side, pattern_angle_breaks_periodicity,
     pattern_period_px, seamless_warning_lines, SeamlessKind, SeamlessReport,

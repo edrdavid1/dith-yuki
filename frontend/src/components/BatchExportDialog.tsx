@@ -12,7 +12,7 @@ import {
   type BatchExportSummary,
   type BatchOutputFormat,
 } from '../shared/ipc/batchExport';
-import { usePresetsUi } from '../features/presets/PresetsUiContext';
+import { usePatternsUi } from '../features/patterns/PatternsUiContext';
 
 const cn = bind(styles);
 
@@ -39,7 +39,7 @@ export default function BatchExportDialog({
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<BatchExportProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const { openPresetManager } = usePresetsUi();
+  const { openPatternManager } = usePatternsUi();
 
   useEffect(() => {
     if (!isOpen) return;
@@ -138,16 +138,16 @@ export default function BatchExportDialog({
         <div className={cn('new-project-body')} style={{ padding: '14px 12px 12px' }}>
           <p style={{ margin: 0, fontSize: 12, lineHeight: 1.4 }}>
             Apply this document’s filter stack and palettes to every image in a folder.
-            Save or reuse a named recipe via Preset Manager (export format stays here).
+            Save or reuse a named recipe via Pattern Manager (export format stays here).
           </p>
           <button
             type="button"
             className={cn('new-project-btn')}
             disabled={running}
-            onClick={() => openPresetManager('browse')}
+            onClick={() => openPatternManager('browse')}
             style={{ alignSelf: 'flex-start' }}
           >
-            Preset Manager…
+            Pattern Manager…
           </button>
 
           <div className={cn('new-project-field')}>

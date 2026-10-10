@@ -1,36 +1,20 @@
 # Gamedev toolkit — as-built (polish track)
 
 Notes for the Phase 1–3 gamedev toolkit plus the polish items on
-`feature/gamedev-toolkit`: **Preset Manager**, **ED approximate wrap-padding**,
-and **hex/jasc palette fuzz**.
+`feature/gamedev-toolkit`: **Pattern Manager** (reusable recipes), **ED
+approximate wrap-padding**, and **hex/jasc palette fuzz**.
 
-## Preset Manager
+## Pattern Manager (reusable recipes)
 
-**What a preset stores:** filter stack (all instances, params, order) + palette
-**bindings by id** + dither/algorithm settings. It does **not** store export
-format, PNG8 vs PNG, output paths, or DPI.
+Named filter/pattern recipes live in **Pattern Manager** (`.dyuki` library under
+`{app_data_dir}/patterns/`). There is no separate Preset Manager dialog.
 
-**On disk:** `{app_data_dir}/presets/*.json` (user-scoped, not inside `.dyproj`).
-Wire shape: `preset_version: 1`, `id`, `name`, `created_at`, `filters`
-(`FilterInstanceFile[]`), `palette_ids`. Schema:
-[`schema/filter-preset.schema.json`](./schema/filter-preset.schema.json).
+**UI:** Pattern Manager — list / save / rename / delete / apply / import /
+export. Entry points: Effect panel pattern-action row, Batch Export dialog
+(“Pattern Manager…”).
 
-**Tauri commands:** `preset_list`, `preset_save`, `preset_load`, `preset_delete`,
-`preset_rename`, `preset_apply_to_doc(doc_id, preset_id, layer_id?)`.
-
-**Validation / migration:**
-
-| Case | Behavior |
-|------|----------|
-| Unknown `algorithm_id` on **save** | Typed error — refuse to persist |
-| Retired `algorithm_id` on **load/apply** | Skip that filter; surface a warning; never panic |
-| Missing palette id on apply | Keep `palette_id` in params; warn `Palette N not found — pick another` |
-
-**UI:** Preset Manager dialog (list / save-from-current-stack / rename / delete /
-apply). Entry points: Effect panel pattern-action row, Batch Export dialog.
-
-**Engine types:** `engine_project::preset::{FilterPreset, PresetError, …}`.
-Storage helper: `src-tauri/src/preset_library.rs`.
+**Batch export** still snapshots the live document filter stack + palettes at
+run time; use Pattern Manager beforehand to apply a saved recipe to the doc.
 
 ## ED approximate wrap-padding
 
