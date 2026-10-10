@@ -101,6 +101,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "halftone_screen_angled",
         "jarvis_judice_ninke",
         "line_screen",
+        "nearest_color",
         "ostromoukhov",
         "palette_quantize",
         "random_dot_stipple",
@@ -253,10 +254,14 @@ fn register_all_ids_unique() {
         registry.get_by_str("palette_quantize").is_some(),
         "Phase 2.2 must register palette_quantize"
     );
+    assert!(
+        registry.get_by_str("nearest_color").is_some(),
+        "gamedev toolkit must register nearest_color"
+    );
     assert_eq!(
         all_ids.len(),
-        35,
-        "must register all 35 built-in algorithms"
+        36,
+        "must register all 36 built-in algorithms"
     );
 }
 
@@ -303,7 +308,7 @@ fn migration_corpus() {
         );
     }
     assert_eq!(
-        count, 35,
+        count, 36,
         "expected one migration fixture per built-in algorithm"
     );
 }

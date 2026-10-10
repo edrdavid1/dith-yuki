@@ -46,7 +46,7 @@ export default function ImportExportSection({
         </button>
       </Tooltip>
 
-      <div className={cn("color-lab-hint")}>formats: ASE, GPL, HEH/TXT, JSON</div>
+      <div className={cn("color-lab-hint")}>formats: ASE, GPL, HEX, JASC/PAL, JSON</div>
     </div>
   );
 }

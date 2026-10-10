@@ -252,6 +252,22 @@ pub enum ParamField {
 // AlgorithmInfo — lightweight descriptor for UI lists
 // ---------------------------------------------------------------------------
 
+/// Whether an algorithm's output is temporally coherent across animation frames.
+///
+/// Ordered (matrix) dithering is coordinate-driven and stable; error diffusion
+/// propagates residuals and can flicker between frames. Shown as a UI hint for
+/// game-asset / sprite workflows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TemporalStability {
+    /// Output depends only on input + global coords (ordered / nearest).
+    Stable,
+    /// Small input changes can alter noise elsewhere (error diffusion).
+    Unstable,
+    /// Not relevant for animation (adjust, curves, glitch, …).
+    NotApplicable,
+}
+
 /// Lightweight descriptor returned by [`AlgorithmRegistry::list_for_category`].
 ///
 /// Serialised and sent to the frontend via the `list_algorithms_for_category`
@@ -268,6 +284,8 @@ pub struct AlgorithmInfo {
     pub deprecated: bool,
     /// How the algorithm is scheduled (tiled vs full-document monolith).
     pub execution_scope: ExecutionScope,
+    /// Animation-frame stability hint for game-asset workflows.
+    pub temporal_stability: TemporalStability,
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +367,7 @@ impl AlgorithmRegistry {
                 category: a.category(),
                 deprecated: false,
                 execution_scope: a.execution_scope(),
+                temporal_stability: a.temporal_stability(),
             })
             .collect()
     }
@@ -495,6 +514,15 @@ pub trait FilterAlgorithm: Send + Sync {
     /// algorithms) return [`ExecutionScope::FullDocument`].
     fn execution_scope(&self) -> ExecutionScope {
         ExecutionScope::Tiled
+    }
+
+    /// Temporal coherence across animation frames (game-asset hint).
+    ///
+    /// Default: [`TemporalStability::NotApplicable`]. Ordered matrix algorithms
+    /// return [`TemporalStability::Stable`]; error diffusion returns
+    /// [`TemporalStability::Unstable`].
+    fn temporal_stability(&self) -> TemporalStability {
+        TemporalStability::NotApplicable
     }
 
     // ── Categorisation ────────────────────────────────────────────────────

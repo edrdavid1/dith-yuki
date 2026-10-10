@@ -18,7 +18,7 @@ import { refreshLayers } from '../app/slices/layersSlice';
 import { refreshFilters } from '../app/slices/filtersSlice';
 import { maybeAutoExtractPalette } from '../app/autoExtract';
 import { useShell } from '../app/shell/ShellContext';
-import { openDialog, saveDialog } from '../shared/ipc';
+import { formatIpcError, openDialog, saveDialog } from '../shared/ipc';
 import { shareProjectCopy as shareProjectCopyIPC } from '../shared/ipc/project';
 import { listOpenDocuments } from '../shared/ipc/document';
 import type { BlankBackground } from '../shared/ipc/document';
@@ -30,7 +30,9 @@ import ExportImageDialog, {
   extensionForFormat,
   type ImageExportOptions,
 } from '../components/ExportImageDialog';
+import ExportPrintDialog from '../components/ExportPrintDialog';
 import AsciiExportDialog from '../components/AsciiExportDialog';
+import BatchExportDialog from '../components/BatchExportDialog';
 import ShareCopyDialog from '../components/ShareCopyDialog';
 import type { ShareProjectCopyOptions } from '../shared/ipc/project';
 import {
@@ -38,6 +40,8 @@ import {
   exportAscii,
   type AsciiExportFormat,
 } from '../shared/ipc/ascii';
+import { printExportRun, type PrintExportConfig } from '../shared/ipc/printExport';
+import type { BatchExportSummary } from '../shared/ipc/batchExport';
 import { copyTextToClipboard } from '../shared/clipboard';
 import { suggestedSaveDefaultPath } from '../shared/unsavedGuard';
 
@@ -51,9 +55,12 @@ export function useDocument() {
   const { autoExtractPalettes } = useShell();
   const [imageExportOpen, setImageExportOpen] = useState(false);
   const imageExportResolver = useRef<((opts: ImageExportOptions | null) => void) | null>(null);
+  const [printExportOpen, setPrintExportOpen] = useState(false);
+  const printExportResolver = useRef<((cfg: PrintExportConfig | null) => void) | null>(null);
   const [shareCopyOpen, setShareCopyOpen] = useState(false);
   const [asciiExportOpen, setAsciiExportOpen] = useState(false);
   const asciiResolver = useRef<((format: AsciiExportFormat | null) => void) | null>(null);
+  const [batchExportOpen, setBatchExportOpen] = useState(false);
 
   const maybeWarnMemory = useCallback(async () => {
     try {
@@ -142,12 +149,97 @@ export function useDocument() {
           quality: options.quality,
           filename,
           svg_algorithm: options.svg_algorithm,
+          sprite_cell_w: options.sprite_cell_w,
+          sprite_cell_h: options.sprite_cell_h,
+          layer_id: selectedLayerId ?? undefined,
         })
       );
     } catch {
       // Dialog cancel / IPC errors handled in thunk
     }
+  }, [dispatch, selectedLayerId, state.docId, state.projectPath, state.sourcePath]);
+
+  const exportPrintFn = useCallback(async () => {
+    if (!state.docId) return;
+    try {
+      const config = await new Promise<PrintExportConfig | null>((resolve) => {
+        printExportResolver.current = resolve;
+        setPrintExportOpen(true);
+      });
+      setPrintExportOpen(false);
+      printExportResolver.current = null;
+      if (!config) return;
+
+      const defaultPath = suggestedSaveDefaultPath({
+        projectPath: state.projectPath,
+        sourcePath: state.sourcePath,
+        extension: 'tif',
+      });
+      const filePath = await saveDialog({
+        filters: [{ name: 'CMYK TIFF', extensions: ['tif', 'tiff'] }],
+        ...(defaultPath ? { defaultPath } : {}),
+      });
+      if (!filePath) return;
+      const lower = filePath.toLowerCase();
+      const hasExt = lower.endsWith('.tif') || lower.endsWith('.tiff');
+      const withExt = hasExt ? filePath : `${filePath}.tif`;
+      const filename = withExt.split(/[/\\]/).pop() ?? withExt;
+
+      dispatch(setSaving(true));
+      try {
+        await printExportRun(state.docId, config, withExt);
+        dispatch(setDocumentMeta({ notification: `Print export: ${filename}` }));
+      } catch (err) {
+        dispatch(
+          setDocumentMeta({
+            error: formatIpcError(err),
+          })
+        );
+      } finally {
+        dispatch(setSaving(false));
+      }
+    } catch {
+      // Dialog cancel
+    }
   }, [dispatch, state.docId, state.projectPath, state.sourcePath]);
+
+  const exportBatchFn = useCallback(() => {
+    if (!state.docId) return;
+    setBatchExportOpen(true);
+  }, [state.docId]);
+
+  const handleBatchDone = useCallback(
+    (summary: BatchExportSummary) => {
+      setBatchExportOpen(false);
+      if (summary.cancelled) {
+        dispatch(
+          setDocumentMeta({
+            notification: `Batch export cancelled (${summary.succeeded} ok, ${summary.failed} failed)`,
+          })
+        );
+        return;
+      }
+      const msg =
+        summary.failed === 0
+          ? `Batch export: ${summary.succeeded} file(s) written`
+          : `Batch export: ${summary.succeeded} ok, ${summary.failed} failed`;
+      dispatch(
+        setDocumentMeta({
+          notification: msg,
+          ...(summary.failed > 0
+            ? {
+                error: summary.results
+                  .filter((r) => r.error)
+                  .slice(0, 3)
+                  .map((r) => `${r.input.split(/[/\\]/).pop()}: ${r.error}`)
+                  .join('; '),
+              }
+            : {}),
+        })
+      );
+    },
+    [dispatch]
+  );
 
   const exportAsciiFn = useCallback(async () => {
     if (!state.docId) return;
@@ -458,6 +550,8 @@ export function useDocument() {
     exportPattern: exportPatternFn,
     importPattern: importPatternFn,
     exportAscii: exportAsciiFn,
+    exportPrint: exportPrintFn,
+    exportBatch: exportBatchFn,
     copyAsciiText: copyAsciiTextFn,
     clearNotification: clearNotificationFn,
     svgDialog: (
@@ -466,6 +560,14 @@ export function useDocument() {
           isOpen={imageExportOpen}
           onExport={(opts) => imageExportResolver.current?.(opts)}
           onClose={() => imageExportResolver.current?.(null)}
+        />
+        <ExportPrintDialog
+          isOpen={printExportOpen}
+          docId={state.docId}
+          docWidth={state.width ?? 0}
+          docHeight={state.height ?? 0}
+          onExport={(cfg) => printExportResolver.current?.(cfg)}
+          onClose={() => printExportResolver.current?.(null)}
         />
         <AsciiExportDialog
           isOpen={asciiExportOpen}
@@ -476,6 +578,13 @@ export function useDocument() {
           isOpen={shareCopyOpen}
           onExport={(opts) => void runShareCopyExport(opts)}
           onCancel={() => setShareCopyOpen(false)}
+        />
+        <BatchExportDialog
+          isOpen={batchExportOpen}
+          docId={state.docId}
+          layerId={selectedLayerId}
+          onClose={() => setBatchExportOpen(false)}
+          onDone={handleBatchDone}
         />
       </>
     ),

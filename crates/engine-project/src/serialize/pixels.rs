@@ -1250,4 +1250,49 @@ mod tests {
         assert!(soft_size_warning(8192, 8192, 1));
         assert!(!soft_size_warning(64, 64, 1));
     }
+
+    /// Export must be byte-identical with Soft proof on vs off (display-only).
+    #[test]
+    fn export_identity_ignores_soft_proof() {
+        use crate::document::Document;
+        use crate::types::DocumentId;
+        use engine_color::{SoftProofConfig, SoftProofIntent};
+        use sha2::{Digest, Sha256};
+
+        let w = 64u32;
+        let h = 64u32;
+        let buf = solid_f32(w, h, [0.3, 0.5, 0.7, 1.0]);
+        let cache = TileCache::new(50_000_000);
+        decompose_image_to_tiles(&buf, w, h, 1, 1, &cache).unwrap();
+
+        let layer = Layer::new(LayerId::new(1), LayerKind::Raster, w, h);
+        let mut doc = Document::new(DocumentId::new(1), w, h);
+        doc.root.push(LayerNode::Leaf(layer));
+
+        doc.soft_proof = SoftProofConfig {
+            enabled: false,
+            ..SoftProofConfig::default()
+        };
+        let off = build_processed_composite_rgba8(&cache, &doc).unwrap();
+
+        doc.soft_proof = SoftProofConfig {
+            enabled: true,
+            profile_id: "builtin:fogra51".into(),
+            intent: SoftProofIntent::Relative,
+            bpc: true,
+            profile_display_name: Some("PSO Coated v3".into()),
+        };
+        let on = build_processed_composite_rgba8(&cache, &doc).unwrap();
+
+        let hash = |b: &[u8]| {
+            let mut h = Sha256::new();
+            h.update(b);
+            format!("{:x}", h.finalize())
+        };
+        assert_eq!(
+            hash(&off),
+            hash(&on),
+            "export bytes must be identical with soft proof on vs off"
+        );
+    }
 }

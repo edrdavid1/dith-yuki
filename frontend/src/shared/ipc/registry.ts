@@ -34,6 +34,9 @@ export type ParamField =
       default: string;
     };
 
+/** Mirrors `engine_registry::TemporalStability`. */
+export type TemporalStability = 'stable' | 'unstable' | 'not_applicable';
+
 /** Mirrors `engine_registry::AlgorithmInfo`. */
 export interface AlgorithmInfo {
   id: string;
@@ -42,6 +45,8 @@ export interface AlgorithmInfo {
   deprecated: boolean;
   /** `tiled` (default progressive) or `full_document` (monolithic pass). */
   execution_scope: 'tiled' | 'full_document';
+  /** Animation-frame stability hint for game-asset workflows. */
+  temporal_stability: TemporalStability;
 }
 
 export async function getAlgorithmSchema(id: string): Promise<ParamField[]> {

@@ -2,7 +2,7 @@
 
 use engine_registry::{
     AlgorithmId, CpuCheckpointKind, EffectCategory, FilterAlgorithm, FilterCtx, FilterError,
-    GpuEligibility, ParamField,
+    GpuEligibility, ParamField, TemporalStability,
 };
 use engine_tiles::PixelTile;
 
@@ -165,6 +165,10 @@ impl FilterAlgorithm for Bayer2x2 {
     fn requires_full_row(&self) -> bool {
         false
     }
+
+    fn temporal_stability(&self) -> TemporalStability {
+        TemporalStability::Stable
+    }
 }
 
 impl FilterAlgorithm for Bayer4x4 {
@@ -204,6 +208,10 @@ impl FilterAlgorithm for Bayer4x4 {
 
     fn requires_full_row(&self) -> bool {
         false
+    }
+
+    fn temporal_stability(&self) -> TemporalStability {
+        TemporalStability::Stable
     }
 }
 
@@ -245,6 +253,10 @@ impl FilterAlgorithm for Bayer8x8 {
     fn requires_full_row(&self) -> bool {
         false
     }
+
+    fn temporal_stability(&self) -> TemporalStability {
+        TemporalStability::Stable
+    }
 }
 
 impl FilterAlgorithm for Bayer16x16 {
@@ -284,5 +296,9 @@ impl FilterAlgorithm for Bayer16x16 {
 
     fn requires_full_row(&self) -> bool {
         false
+    }
+
+    fn temporal_stability(&self) -> TemporalStability {
+        TemporalStability::Stable
     }
 }

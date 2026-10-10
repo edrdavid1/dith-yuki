@@ -1,6 +1,6 @@
 DITHER YUKI — END USER LICENSE AGREEMENT
 
-Last updated: September 28, 2026
+Last updated: October 10, 2026
 
 This End User License Agreement ("Agreement") is between you and David Murashka, an independent developer operating under the name "L'eco non di Bergamo" ("we", "us"), and governs your use of the Dither Yuki application ("the Software"), including beta versions.
 
@@ -33,6 +33,8 @@ Mandatory Consumer Protections: Nothing in this Agreement limits or excludes our
 6. YOUR CONTENT AND DATA PRIVACY
 
 You retain all rights, copyright, and ownership to images, projects, media, and files you create or process using the Software (including .dyproj and .dyuki files). You may freely sell and monetize these files.
+
+Sprites, textures and other images you create with Dither Yuki may be used in commercial games and products without restriction or royalties.
 
 We respect your privacy. The Software operates locally. We do not access, collect, transmit, or store your files, project data, or personal usage analytics (telemetry) unless you explicitly opt-in to use a specific feature that requires it (e.g., submitting a voluntary crash report or feedback).
 

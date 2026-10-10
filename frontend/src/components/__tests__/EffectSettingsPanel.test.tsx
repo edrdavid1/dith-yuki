@@ -31,12 +31,16 @@ vi.mock('../../shared/ipc/registry', () => ({
           display_name: 'Floyd–Steinberg',
           category: 'dithering',
           deprecated: false,
+          execution_scope: 'tiled',
+          temporal_stability: 'unstable',
         },
         {
           id: 'bayer_4x4',
           display_name: 'Bayer 4×4',
           category: 'dithering',
           deprecated: false,
+          execution_scope: 'tiled',
+          temporal_stability: 'stable',
         },
       ];
     }
@@ -47,6 +51,8 @@ vi.mock('../../shared/ipc/registry', () => ({
           display_name: 'ASCII',
           category: 'ascii',
           deprecated: false,
+          execution_scope: 'full_document',
+          temporal_stability: 'not_applicable',
         },
       ];
     }

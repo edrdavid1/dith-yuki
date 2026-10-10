@@ -69,6 +69,8 @@ export default function AppLayout() {
     closeNewProject,
     handleCreate,
     onSaveImage,
+    onExportPrint,
+    onBatchExport,
     onSaveProject,
     onSaveProjectAs,
     onShareProjectCopy,
@@ -401,6 +403,9 @@ export default function AppLayout() {
         case 'export-ascii':
           if (doc.hasDocument) void doc.exportAscii();
           break;
+        case 'batch-export':
+          if (doc.hasDocument) onBatchExport();
+          break;
         case 'undo':
           if (canUndo && doc.docId != null) void dispatch(undoDocument(doc.docId));
           break;
@@ -452,6 +457,8 @@ export default function AppLayout() {
     handleOpenHelp,
     handleOpenPreferences,
     onSaveImage,
+    onExportPrint,
+    onBatchExport,
     onSaveProject,
     onSaveProjectAs,
     onShareProjectCopy,
@@ -513,7 +520,9 @@ export default function AppLayout() {
               onNewProject={welcome.onNewProject}
               onOpenImage={welcome.onOpenImage}
               onSaveImage={onSaveImage}
+              onExportPrint={onExportPrint}
               onExportAscii={() => void doc.exportAscii()}
+              onBatchExport={onBatchExport}
               onCopyAsciiText={() => void doc.copyAsciiText('txt')}
               onCopyAsciiAnsi={() => void doc.copyAsciiText('ansi')}
               onOpenProject={welcome.onOpenProject}

@@ -18,6 +18,12 @@ pub mod color_lab;
 pub use color_lab::*;
 pub mod document;
 pub use document::*;
+pub mod proof;
+pub use proof::*;
+pub mod print_export;
+pub use print_export::*;
+pub mod batch_export;
+pub use batch_export::*;
 pub mod pattern_library;
 pub use pattern_library::*;
 
@@ -79,6 +85,12 @@ pub struct AppState {
     pub ram_budget_source: crate::memory_budget::RamBudgetSource,
     /// Crash-recovery journal (Phase 2). `recovery_dir` set from app_data in setup.
     pub journal: Mutex<crate::journal::JournalRuntime>,
+    /// Soft-proof ICC catalog + transform cache (`None` until app_data init).
+    pub proof: Mutex<Option<Arc<crate::services::ProofService>>>,
+    /// Cancel flag for an in-flight print export (cleared when the job ends).
+    pub print_export_cancel: Mutex<Option<Arc<AtomicBool>>>,
+    /// Cancel flag for an in-flight batch export (cleared when the job ends).
+    pub batch_export_cancel: Mutex<Option<Arc<AtomicBool>>>,
 }
 
 pub struct QuitGuard {

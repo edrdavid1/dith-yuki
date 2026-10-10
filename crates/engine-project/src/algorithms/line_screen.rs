@@ -1,6 +1,6 @@
 //! Line screen (`line_screen`) — parallel-stripe halftone.
 
-use engine_registry::{
+use engine_registry::{TemporalStability, 
     AlgorithmId, CpuCheckpointKind, EffectCategory, FilterAlgorithm, FilterCtx, FilterError,
     GpuEligibility, ParamField,
 };
@@ -100,5 +100,9 @@ impl FilterAlgorithm for LineScreen {
 
     fn category(&self) -> EffectCategory {
         EffectCategory::Dithering
+    }
+
+    fn temporal_stability(&self) -> TemporalStability {
+        TemporalStability::Stable
     }
 }

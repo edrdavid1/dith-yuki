@@ -31,9 +31,11 @@ describe('MenuBar', () => {
     expect(labels).toContain('File');
     expect(labels).toContain('Edit');
     expect(labels).toContain('Patterns');
+    expect(labels).toContain('Batch');
     expect(labels).not.toContain('Color Lab');
     expect(labels).toContain('Preferences');
     expect(labels).toContain('Help');
+    expect(labels.indexOf('Patterns')).toBeLessThan(labels.indexOf('Batch'));
   });
 
   it('opens File dropdown on click with correct items', () => {
@@ -44,7 +46,9 @@ describe('MenuBar', () => {
     expect(screen.getByText('Open Project…')).toBeInTheDocument();
     expect(screen.getByText('Save Project')).toBeInTheDocument();
     expect(screen.getByText('Save Project As…')).toBeInTheDocument();
-    expect(screen.getByText('Save/Export')).toBeInTheDocument();
+    expect(screen.getByText('Export')).toBeInTheDocument();
+    expect(screen.getByText('Export for Print…')).toBeInTheDocument();
+    expect(screen.queryByText('Batch Export…')).not.toBeInTheDocument();
   });
 
   it('Patterns click calls onOpenPatterns directly (no dropdown)', () => {
@@ -52,6 +56,19 @@ describe('MenuBar', () => {
     fireEvent.click(screen.getByText('Patterns'));
     expect(props.onOpenPatterns).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('Batch click calls onBatchExport directly (no dropdown)', () => {
+    const onBatchExport = vi.fn();
+    renderMenuBar({ onBatchExport });
+    fireEvent.click(screen.getByText('Batch'));
+    expect(onBatchExport).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('disables Batch when hasDocument is false', () => {
+    renderMenuBar({ hasDocument: false, onBatchExport: vi.fn() });
+    expect(screen.getByRole('menuitem', { name: 'Batch' })).toBeDisabled();
   });
 
   it('opens Edit dropdown with disabled Undo/Redo by default', () => {
@@ -148,10 +165,10 @@ describe('MenuBar', () => {
     expect(props.onImportPattern).toHaveBeenCalledTimes(1);
   });
 
-  it('disables Save/Export when hasDocument is false', () => {
+  it('disables Export when hasDocument is false', () => {
     renderMenuBar({ hasDocument: false });
     fireEvent.click(screen.getByText('File'));
-    expect(screen.getByRole('menuitem', { name: /Save\/Export/ })).toBeDisabled();
+    expect(screen.getByRole('menuitem', { name: /^Export$/ })).toBeDisabled();
     expect(screen.getByRole('menuitem', { name: /^Save Project\b/ })).toBeDisabled();
     expect(screen.getByRole('menuitem', { name: /Save Project As/ })).toBeDisabled();
   });

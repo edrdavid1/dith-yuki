@@ -1046,6 +1046,7 @@ mod tests {
             FilterParams::PaletteQuantize {
                 palette_id: crate::types::PaletteId::new(999),
                 diffusion: None,
+                    metric: "oklab".to_string(),
             },
         );
         let coord = TileCoord {
@@ -1125,6 +1126,7 @@ mod tests {
             FilterParams::PaletteQuantize {
                 palette_id,
                 diffusion: None,
+                metric: "oklab".to_string(),
             },
         );
         let coord = TileCoord {

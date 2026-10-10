@@ -17,4 +17,6 @@ export * from './errors';
 export * from './updates';
 export * from './recovery';
 export * from './ascii';
+export * from './proof';
 export * from './patternLibrary';
+export * from './batchExport';

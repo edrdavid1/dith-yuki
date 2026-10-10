@@ -170,6 +170,16 @@ export function specForAlgorithm(
         params: {
           palette_id: lastCreatedPaletteId,
           diffusion: null,
+          metric: 'oklab',
+        },
+      };
+    case 'nearest_color':
+      return {
+        kind: 'PaletteQuantize',
+        params: {
+          palette_id: lastCreatedPaletteId,
+          diffusion: null,
+          metric: 'oklab',
         },
       };
     case 'crt':

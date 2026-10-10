@@ -1,6 +1,6 @@
 //! Crosshatch dither (`crosshatch_dither`).
 
-use engine_registry::{
+use engine_registry::{TemporalStability, 
     AlgorithmId, CpuCheckpointKind, EffectCategory, FilterAlgorithm, FilterCtx, FilterError,
     GpuEligibility, ParamField,
 };
@@ -100,5 +100,9 @@ impl FilterAlgorithm for CrosshatchDither {
 
     fn category(&self) -> EffectCategory {
         EffectCategory::Dithering
+    }
+
+    fn temporal_stability(&self) -> TemporalStability {
+        TemporalStability::Stable
     }
 }

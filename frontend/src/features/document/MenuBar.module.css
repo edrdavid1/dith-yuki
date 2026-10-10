@@ -43,9 +43,14 @@
   box-sizing: border-box;
 }
 
-.sidebar-changer-icon-btn:hover {
+.sidebar-changer-icon-btn:hover:not(:disabled) {
   background: transparent;
   color: var(--color-primary);
+}
+
+.sidebar-changer-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .sidebar-changer-icon-btn-active {
@@ -154,6 +159,14 @@
 .menubar-dropdown-item:disabled {
   color: var(--color-dark-gray);
   cursor: not-allowed;
+}
+
+.menubar-separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--color-dark-gray);
+  opacity: 0.45;
+  pointer-events: none;
 }
 
 .menubar-submenu-wrap {

@@ -1,6 +1,6 @@
 //! Random-dot stipple (`random_dot_stipple`) — Bernoulli tone stippling.
 
-use engine_registry::{
+use engine_registry::{TemporalStability, 
     AlgorithmId, CpuCheckpointKind, EffectCategory, FilterAlgorithm, FilterCtx, FilterError,
     GpuEligibility, ParamField,
 };
@@ -87,5 +87,9 @@ impl FilterAlgorithm for RandomDotStipple {
 
     fn category(&self) -> EffectCategory {
         EffectCategory::Dithering
+    }
+
+    fn temporal_stability(&self) -> TemporalStability {
+        TemporalStability::Stable
     }
 }

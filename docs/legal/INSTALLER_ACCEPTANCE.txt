@@ -82,6 +82,8 @@ User-Generated Content and Ownership
 
 All content, projects, media, and files created by you using the Software, including specifically files with the extensions .dyproj and .dyuki, are your sole property. We claim no ownership, copyright, or intellectual property rights over the content you create. You are fully permitted to commercially exploit, sell, distribute, and monetize your original project files and content.
 
+Sprites, textures and other images you create with Dither Yuki may be used in commercial games and products without restriction or royalties.
+
 Strict Prohibition on Resale and Code Distribution
 
 While commercial use of the Software's features is permitted, you are strictly prohibited from:

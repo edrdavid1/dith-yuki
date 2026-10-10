@@ -1,9 +1,11 @@
+import { useMemo } from 'react';
 import type { DitherModeV2 } from '../../../types';
 import { clampParam } from '../../../types/effects';
 import Slider from '../../../components/common/Slider';
 import DropdownMenu from '../../../components/common/DropdownMenu';
 import { useAppSelector } from '../../../app/hooks';
 import { openDialog } from '../../../shared/ipc';
+import { checkSeamless, seamlessWarningLines } from '../../../shared/seamless';
 import panelStyles from '../EffectSettingsPanel.module.css';
 import paramStyles from '../../../shared/ui/ParamControls.module.css';
 import inputStyles from '../../../shared/ui/ParamInput.module.css';
@@ -49,6 +51,25 @@ type SimpleDitherMode =
   | 'random_dot_stipple'
   | 'cmyk_halftone'
   | 'wave';
+
+/** Ordered / matrix algorithms keep the same noise on static areas across frames. */
+const ANIMATION_STABLE_MODES = new Set<string>([
+  'bayer_2x2',
+  'bayer_4x4',
+  'bayer_8x8',
+  'bayer_16x16',
+  'clustered_dot_ordered',
+  'dispersed_dot_ordered',
+  'void_and_cluster',
+  'crosshatch_dither',
+  'line_screen',
+  'voronoi_stipple',
+  'random_dot_stipple',
+  'cmyk_halftone',
+  'halftone_screen_angled',
+  'wave',
+  'custom_png',
+]);
 
 const SIMPLE_MODES: SimpleDitherMode[] = [
   'bayer_2x2',
@@ -156,6 +177,8 @@ function guidedChannelLevels(mode: unknown): number | null {
  */
 function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
   const lastCreatedId = useAppSelector((s) => s.palettes.lastCreatedId);
+  const docWidth = useAppSelector((s) => s.document.width) ?? 0;
+  const docHeight = useAppSelector((s) => s.document.height) ?? 0;
   const boundPaletteId =
     lastCreatedId ?? (typeof params.palette_id === 'number' ? params.palette_id : null);
   const mode = params.mode ?? 'floyd_steinberg';
@@ -171,6 +194,17 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
   const patternAngle = Number(params.pattern_angle ?? 0);
   const simpleMode = modeToSimple(mode);
   const customPath = modeToCustomPath(mode);
+  const seamlessLines = useMemo(() => {
+    if (docWidth <= 0 || docHeight <= 0) return [];
+    const report = checkSeamless({
+      mode: simpleMode,
+      pixelSize,
+      patternAngle,
+      width: docWidth,
+      height: docHeight,
+    });
+    return seamlessWarningLines(report, docWidth, docHeight);
+  }, [simpleMode, pixelSize, patternAngle, docWidth, docHeight]);
 
   const isOrderedMode = [
     'bayer_2x2',
@@ -317,6 +351,22 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
           void handleModeSelect(v);
         }}
       />
+
+      <p className={cn('effect-palette-hint')} title="Temporal stability for animation frames">
+        {ANIMATION_STABLE_MODES.has(simpleMode)
+          ? 'Suitable for animation — pattern stays stable across frames.'
+          : 'May flicker between frames — error diffusion is not temporally stable.'}
+      </p>
+
+      {seamlessLines.map((line) => (
+        <p
+          key={line.slice(0, 48)}
+          className={cn('effect-palette-hint')}
+          title="Seamless / tileable texture check"
+        >
+          {line}
+        </p>
+      ))}
 
       {simpleMode === 'custom_png' && (
         <div className={cn('threshold-map-row')}>

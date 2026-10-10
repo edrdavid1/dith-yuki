@@ -324,7 +324,8 @@ impl PaletteService {
             "ase" => PaletteFormat::Ase,
             "aco" => PaletteFormat::Aco,
             "gpl" => PaletteFormat::Gpl,
-            "pal" => PaletteFormat::Pal,
+            "pal" => PaletteFormat::Pal, // RIFF or JASC (auto-detected)
+            "hex" => PaletteFormat::Hex,
             "csv" => PaletteFormat::Csv,
             "json" => PaletteFormat::Json,
             _ => {
@@ -634,6 +635,8 @@ impl PaletteService {
             "aco" => PaletteFormat::Aco,
             "gpl" => PaletteFormat::Gpl,
             "pal" => PaletteFormat::Pal,
+            "jasc" => PaletteFormat::Jasc,
+            "hex" => PaletteFormat::Hex,
             "csv" => PaletteFormat::Csv,
             "json" => PaletteFormat::Json,
             _ => {

@@ -202,7 +202,11 @@ export const addLayerWithAlgorithm = createAsyncThunk(
         return rejectWithValue(`Unknown algorithm: ${args.algorithmId}`);
       }
       if (spec.kind === 'PaletteQuantize' && spec.params.palette_id == null) {
-        return rejectWithValue('A palette is required for Palette Quantize');
+        return rejectWithValue(
+          args.algorithmId === 'nearest_color'
+            ? 'A palette is required for Nearest Color'
+            : 'A palette is required for Palette Quantize'
+        );
       }
       const { filter_id } = await addFilter(
         args.docId,

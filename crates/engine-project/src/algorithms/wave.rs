@@ -1,6 +1,6 @@
 //! Wave ordered dither (`wave`).
 
-use engine_registry::{
+use engine_registry::{TemporalStability, 
     AlgorithmId, CpuCheckpointKind, EffectCategory, FilterAlgorithm, FilterCtx, FilterError,
     GpuEligibility, ParamField,
 };
@@ -116,5 +116,9 @@ impl FilterAlgorithm for Wave {
 
     fn category(&self) -> EffectCategory {
         EffectCategory::Dithering
+    }
+
+    fn temporal_stability(&self) -> TemporalStability {
+        TemporalStability::Stable
     }
 }

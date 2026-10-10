@@ -98,6 +98,7 @@ fn assert_parity(
         FilterParams::PaletteQuantize {
             palette_id,
             diffusion,
+            metric: "oklab".to_string(),
         },
     );
     filter.algorithm_id = Some("palette_quantize".into());

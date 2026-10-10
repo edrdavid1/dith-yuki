@@ -38,6 +38,7 @@ base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
 rayon = "1.7"
 sysinfo = "0.33"
+sha2 = "0.10"
 
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"

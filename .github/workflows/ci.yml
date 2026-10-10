@@ -42,6 +42,15 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
+      - name: Soft-proof hostile ICC + golden (release)
+        # Release + panic=unwind: corrupt ICC must become SoftProofError, not abort.
+        # Seeded mutation corpus lives in this test; full libFuzzer campaigns:
+        #   cd fuzz && cargo fuzz run fuzz_soft_proof_icc -- -max_total_time=60
+        # with seeds under fuzz/corpus/fuzz_soft_proof_icc/.
+        run: >
+          cargo test -p engine-color --release
+          --test icc_hostile --test lcms_golden --test sat_behavior
+
       - name: Version drill matrix (new engine)
         run: >
           cargo test -p engine-project --features version-drill

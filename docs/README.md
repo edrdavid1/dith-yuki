@@ -30,6 +30,8 @@ Working agent specs stay local only (not in this repo on GitHub).
 | [FLEXLAYOUT_DOCKING.md](./FLEXLAYOUT_DOCKING.md) | Layers / Effect / Color Lab / Preview docking |
 | [palette-dither.md](./palette-dither.md) | Bound palette vs dither filter |
 | [color-lab.md](./color-lab.md) | Palettes, Oklab, Color Lab UI |
+| [soft-proof-cmyk.md](./soft-proof-cmyk.md) | Soft proof: ICC CMYK preview, BPC, encode path |
+| [print-export-cmyk.md](./print-export-cmyk.md) | CMYK TIFF print export (lcms2, pure-K, gamut report) |
 
 ## Formats, previews, security
 

@@ -84,6 +84,7 @@ pub fn remap_document_file(file: &DocumentFile, runtime_doc_id: DocumentId) -> R
         width: file.width,
         height: file.height,
         color_profile: file.color_profile.clone(),
+        soft_proof: file.soft_proof.clone(),
         root: remapped_root.iter().map(layer_node_from_file).collect(),
         palettes: palettes_from_file(&remapped_palettes),
         revision: 1,
@@ -245,10 +246,12 @@ fn remap_filter_params(params: &serde_json::Value, tables: &IdRemapTables) -> se
         FilterParams::PaletteQuantize {
             palette_id,
             diffusion,
+            metric,
         } => match tables.palettes.get(&palette_id).copied() {
             Some(new_id) => FilterParams::PaletteQuantize {
                 palette_id: new_id,
                 diffusion,
+                metric,
             },
             // Dangling ref (e.g. Color Lab lastCreatedId synced into a doc with
             // no palettes). Do not keep the file-local id — it can collide with
@@ -297,6 +300,7 @@ mod tests {
             width: 64,
             height: 64,
             color_profile: crate::types::ColorProfileRef::SRgb,
+            soft_proof: Default::default(),
             palettes: vec![PaletteFile {
                 id: pal_old,
                 name: "P".into(),
@@ -441,6 +445,7 @@ mod tests {
             width: 64,
             height: 64,
             color_profile: crate::types::ColorProfileRef::SRgb,
+            soft_proof: Default::default(),
             palettes: vec![],
             root: vec![LayerNodeFile::Leaf(LayerFile {
                 id: LayerId::new(1),

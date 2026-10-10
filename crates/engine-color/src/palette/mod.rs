@@ -51,8 +51,12 @@ pub enum PaletteFormat {
     Aco,
     /// GIMP Palette
     Gpl,
-    /// Microsoft RIFF Palette
+    /// Microsoft RIFF Palette (`.pal`); import also accepts JASC-PAL text
     Pal,
+    /// JASC-PAL / Paint Shop Pro text palette (`.pal`)
+    Jasc,
+    /// Lospec hex list (`.hex`)
+    Hex,
     /// Comma-separated values
     Csv,
     /// JSON array of {r, g, b}
@@ -125,7 +129,8 @@ fn allowed_extensions(format: PaletteFormat) -> &'static [&'static str] {
         PaletteFormat::Ase => &["ase"],
         PaletteFormat::Aco => &["aco"],
         PaletteFormat::Gpl => &["gpl"],
-        PaletteFormat::Pal => &["pal"],
+        PaletteFormat::Pal | PaletteFormat::Jasc => &["pal"],
+        PaletteFormat::Hex => &["hex"],
         PaletteFormat::Csv => &["csv"],
         PaletteFormat::Json => &["json"],
     }
@@ -309,6 +314,8 @@ mod tests {
             PaletteFormat::Ase,
             PaletteFormat::Aco,
             PaletteFormat::Pal,
+            PaletteFormat::Jasc,
+            PaletteFormat::Hex,
         ] {
             let result = export_palette(&palette, format);
             assert!(

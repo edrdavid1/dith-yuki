@@ -14,6 +14,7 @@
 }
 
 .preview-window {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -183,7 +184,8 @@
   flex-wrap: nowrap;
   align-items: stretch;
   height: 100%;
-  min-width: 0;
+  flex-shrink: 0;
+  min-width: max-content;
 }
 
 .pv-fit-btn {
@@ -240,4 +242,105 @@
 .pv-zoom-mode-btn-active {
   background: var(--bg-hover-accent);
   color: var(--color-hover-inverted);
+}
+
+.pv-soft-proof {
+  display: inline-flex;
+  align-items: stretch;
+  height: 100%;
+  flex-shrink: 0;
+  border-right: var(--border);
+  box-sizing: border-box;
+}
+
+.pv-soft-proof-btn,
+.pv-soft-proof-gear {
+  border: none;
+  border-radius: 0;
+  border-right: var(--border);
+  background: var(--color-gray);
+  color: var(--text-color);
+  font-family: var(--font-family);
+  font-size: 9px;
+  line-height: 1;
+  padding: 0 6px;
+  cursor: pointer;
+  height: 100%;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.pv-soft-proof-gear {
+  border-right: none;
+  padding: 0 4px;
+}
+
+.pv-soft-proof-btn:hover,
+.pv-soft-proof-gear:hover,
+.pv-soft-proof-btn-active {
+  background: var(--bg-hover-accent);
+  color: var(--color-hover-inverted);
+}
+
+.pv-soft-proof-chip,
+.pv-soft-proof-warn {
+  align-self: center;
+  font-size: 9px;
+  color: var(--text-color);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pv-soft-proof-warn {
+  color: var(--color-hover-inverted, #600);
+  background: var(--bg-hover-accent, #fc0);
+  padding: 0 4px;
+}
+
+.pv-soft-proof-panel {
+  position: absolute;
+  right: 8px;
+  bottom: 28px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 240px;
+  padding: 10px;
+  background: var(--color-gray, #cdcdcd);
+  border: var(--border);
+  font-family: var(--font-family);
+  font-size: 11px;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.2);
+}
+
+.pv-soft-proof-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pv-soft-proof-field select {
+  font: inherit;
+}
+
+.pv-soft-proof-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0.7;
+}
+
+.pv-soft-proof-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.pv-soft-proof-actions button {
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
 }

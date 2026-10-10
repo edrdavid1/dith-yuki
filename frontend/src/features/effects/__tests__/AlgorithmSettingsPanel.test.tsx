@@ -33,6 +33,7 @@ const REGISTRY_IDS = [
   'halftone_screen_angled',
   'jarvis_judice_ninke',
   'line_screen',
+  'nearest_color',
   'ostromoukhov',
   'palette_quantize',
   'random_dot_stipple',

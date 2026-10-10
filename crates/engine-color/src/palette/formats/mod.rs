@@ -1,6 +1,6 @@
 //! Palette format parsers and exporters.
 //!
-//! Supported formats: ASE, ACO, GPL, PAL, CSV, JSON.
+//! Supported formats: ASE, ACO, GPL, PAL (RIFF + JASC import), JASC, HEX, CSV, JSON.
 //! Each parser returns `Vec<(u8, u8, u8)>` (sRGB) or a descriptive error.
 //! Each exporter takes `&[LinearColor]` and produces format bytes.
 
@@ -8,6 +8,8 @@ pub mod aco;
 pub mod ase;
 pub mod csv_json;
 pub mod gpl;
+pub mod hex;
+pub mod jasc;
 pub mod pal;
 
 use super::{LinearColor, PaletteError, PaletteFormat};
@@ -22,6 +24,8 @@ pub fn parse_format(data: &[u8], format: PaletteFormat) -> Result<Vec<(u8, u8, u
         PaletteFormat::Aco => aco::parse(data)?,
         PaletteFormat::Gpl => gpl::parse(data)?,
         PaletteFormat::Pal => pal::parse(data)?,
+        PaletteFormat::Jasc => jasc::parse(data)?,
+        PaletteFormat::Hex => hex::parse(data)?,
         PaletteFormat::Csv => csv_json::parse_csv(data)?,
         PaletteFormat::Json => csv_json::parse_json(data)?,
     };
@@ -47,6 +51,8 @@ pub fn export_format(
         PaletteFormat::Aco => aco::export(colors, name),
         PaletteFormat::Gpl => gpl::export(colors, name),
         PaletteFormat::Pal => pal::export(colors, name),
+        PaletteFormat::Jasc => jasc::export(colors, name),
+        PaletteFormat::Hex => hex::export(colors, name),
         PaletteFormat::Csv => csv_json::export_csv(colors),
         PaletteFormat::Json => csv_json::export_json(colors),
     }

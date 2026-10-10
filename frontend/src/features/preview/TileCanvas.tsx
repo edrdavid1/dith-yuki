@@ -39,6 +39,8 @@ export interface TileCanvasProps {
   docHeight: number;
   viewport: ViewportState;
   onViewportChange: (vp: ViewportState) => void;
+  /** Draw the document repeated in a 3×3 grid to inspect tile seams. */
+  tileRepeat3x3?: boolean;
 }
 
 interface TileReadyPayload {
@@ -98,6 +100,43 @@ export function computeVisibleTiles(
     }
   }
   return tiles;
+}
+
+/** Visible tiles when previewing a 3×3 wrap (Phase 3.1). */
+export function computeVisibleTilesRepeat3x3(
+  viewport: ViewportState,
+  docWidth: number,
+  docHeight: number,
+): TileCoord[] {
+  const seen = new Set<string>();
+  const out: TileCoord[] = [];
+  for (let oy = -1; oy <= 1; oy++) {
+    for (let ox = -1; ox <= 1; ox++) {
+      const shifted: ViewportState = {
+        ...viewport,
+        panX: viewport.panX - ox * docWidth,
+        panY: viewport.panY - oy * docHeight,
+      };
+      for (const t of computeVisibleTiles(shifted, docWidth, docHeight)) {
+        const k = `${t.level}:${t.x}:${t.y}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push(t);
+      }
+    }
+  }
+  return out;
+}
+
+function visibleTilesForPreview(
+  viewport: ViewportState,
+  docWidth: number,
+  docHeight: number,
+  repeat3x3: boolean,
+): TileCoord[] {
+  return repeat3x3
+    ? computeVisibleTilesRepeat3x3(viewport, docWidth, docHeight)
+    : computeVisibleTiles(viewport, docWidth, docHeight);
 }
 
 /**
@@ -173,6 +212,7 @@ export const DOCUMENT_SOURCE_REPLACE_KINDS = new Set([
   'document_redone',
   'document_activated',
   'document_closed',
+  // soft_proof_changed: keep old bitmaps until new rev arrives (no flash).
 ]);
 
 export function isDocumentSourceReplace(kind: string): boolean {
@@ -359,6 +399,7 @@ export default function TileCanvas({
   docHeight,
   viewport,
   onViewportChange: _onViewportChange,
+  tileRepeat3x3 = false,
 }: TileCanvasProps) {
   const { previewBackground } = useShell();
   const documentEpoch = useAppSelector((s) => s.document.documentEpoch);
@@ -373,6 +414,14 @@ export default function TileCanvas({
   const lastDrawnViewportRef = useRef(viewport);
   const docSizeRef = useRef({ docWidth, docHeight });
   const tileRevRef = useRef(0);
+  /** Soft-proof latency: click→first/last visible tile (p50/p95 via console samples). */
+  const softProofMetricRef = useRef<{
+    rev: number;
+    t0: number;
+    expected: Set<string>;
+    firstMs: number | null;
+    samples: number[];
+  } | null>(null);
   const commitTimerRef = useRef<number | null>(null);
   const handleWorkerMessageRef = useRef<(e: MessageEvent) => void>(() => {});
 
@@ -380,6 +429,9 @@ export default function TileCanvas({
   docSizeRef.current = { docWidth, docHeight };
 
   // ─── Draw tiles to canvas ──────────────────────────────────────────────
+
+  const tileRepeatRef = useRef(tileRepeat3x3);
+  tileRepeatRef.current = tileRepeat3x3;
 
   const drawTiles = useCallback(() => {
     const canvas = canvasRef.current;
@@ -389,6 +441,7 @@ export default function TileCanvas({
 
     const vp = viewportRef.current;
     lastDrawnViewportRef.current = vp;
+    const repeat = tileRepeatRef.current;
 
     const dpr = devicePixelRatio();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -402,35 +455,49 @@ export default function TileCanvas({
     ctx.imageSmoothingEnabled = false;
 
     const currentLevel = computePyramidLevel(vp.zoom, docWidth, docHeight);
-    const visible = computeVisibleTiles(vp, docWidth, docHeight);
+    const visible = visibleTilesForPreview(vp, docWidth, docHeight, repeat);
     const haveCurrent = new Set(
       [...tileMapRef.current.keys()].filter(
         (k) => parseTileKey(k).level === currentLevel,
       ),
     );
 
+    const docDevice = vp.zoom * dpr;
+    const dc = almostInt(docDevice);
+    const stepX = (dc !== null ? docWidth * dc : docWidth * docDevice);
+    const stepY = (dc !== null ? docHeight * dc : docHeight * docDevice);
+
     const blitOne = (x: number, y: number, level: number, bitmap: ImageBitmap) => {
       const blit = computeTileBlit(x, y, level, vp, docWidth, docHeight, dpr);
       if (!blit) return;
-      if (
-        blit.dx + blit.dw < 0 ||
-        blit.dy + blit.dh < 0 ||
-        blit.dx > canvas.width ||
-        blit.dy > canvas.height
-      ) {
-        return;
+      const offsets = repeat
+        ? ([-1, 0, 1] as const).flatMap((ox) =>
+            ([-1, 0, 1] as const).map((oy) => [ox, oy] as const)
+          )
+        : ([[0, 0]] as const);
+      for (const [ox, oy] of offsets) {
+        const dx = blit.dx + ox * stepX;
+        const dy = blit.dy + oy * stepY;
+        if (
+          dx + blit.dw < 0 ||
+          dy + blit.dh < 0 ||
+          dx > canvas.width ||
+          dy > canvas.height
+        ) {
+          continue;
+        }
+        ctx.drawImage(
+          bitmap,
+          blit.sx,
+          blit.sy,
+          blit.sw,
+          blit.sh,
+          dx,
+          dy,
+          blit.dw,
+          blit.dh,
+        );
       }
-      ctx.drawImage(
-        bitmap,
-        blit.sx,
-        blit.sy,
-        blit.sw,
-        blit.sh,
-        blit.dx,
-        blit.dy,
-        blit.dw,
-        blit.dh,
-      );
     };
 
     // Other LOD first (holes), then the active level on top.
@@ -449,17 +516,34 @@ export default function TileCanvas({
       const blit = computeTileBlit(vis.x, vis.y, vis.level, vp, docWidth, docHeight, dpr);
       if (!blit) continue;
       ctx.imageSmoothingEnabled = true;
-      ctx.drawImage(
-        bitmap,
-        fb.srcX,
-        fb.srcY,
-        fb.srcSize,
-        fb.srcSize,
-        blit.dx,
-        blit.dy,
-        blit.dw,
-        blit.dh,
-      );
+      const offsets = repeat
+        ? ([-1, 0, 1] as const).flatMap((ox) =>
+            ([-1, 0, 1] as const).map((oy) => [ox, oy] as const)
+          )
+        : ([[0, 0]] as const);
+      for (const [ox, oy] of offsets) {
+        const dx = blit.dx + ox * stepX;
+        const dy = blit.dy + oy * stepY;
+        if (
+          dx + blit.dw < 0 ||
+          dy + blit.dh < 0 ||
+          dx > canvas.width ||
+          dy > canvas.height
+        ) {
+          continue;
+        }
+        ctx.drawImage(
+          bitmap,
+          fb.srcX,
+          fb.srcY,
+          fb.srcSize,
+          fb.srcSize,
+          dx,
+          dy,
+          blit.dw,
+          blit.dh,
+        );
+      }
       ctx.imageSmoothingEnabled = false;
     }
     for (const [key, bitmap] of tileMapRef.current) {
@@ -491,6 +575,10 @@ export default function TileCanvas({
     }
     scheduleRedraw();
   }, [previewBackground, scheduleRedraw]);
+
+  useEffect(() => {
+    scheduleRedraw();
+  }, [tileRepeat3x3, scheduleRedraw]);
 
   const flushPendingCommit = useCallback(() => {
     const displayed = tileMapRef.current;
@@ -541,6 +629,34 @@ export default function TileCanvas({
         return;
       }
 
+      const metric = softProofMetricRef.current;
+      if (metric && decodedRev === metric.rev && metric.expected.has(key)) {
+        const elapsed = performance.now() - metric.t0;
+        if (metric.firstMs == null) {
+          metric.firstMs = elapsed;
+          performance.mark('soft_proof_first_tile');
+          console.debug(`[soft_proof] click→first_tile ${elapsed.toFixed(1)}ms`);
+        }
+        metric.expected.delete(key);
+        if (metric.expected.size === 0) {
+          performance.mark('soft_proof_last_tile');
+          metric.samples.push(elapsed);
+          const sorted = [...metric.samples].sort((a, b) => a - b);
+          const p50 = sorted[Math.floor(sorted.length * 0.5)] ?? elapsed;
+          const p95 = sorted[Math.floor(sorted.length * 0.95)] ?? elapsed;
+          console.debug(
+            `[soft_proof] click→last_tile ${elapsed.toFixed(1)}ms (first=${metric.firstMs.toFixed(1)}ms) samples=${sorted.length} p50=${p50.toFixed(1)} p95=${p95.toFixed(1)}`,
+          );
+          softProofMetricRef.current = {
+            ...metric,
+            expected: new Set(),
+            firstMs: null,
+            t0: metric.t0,
+            rev: -1,
+          };
+        }
+      }
+
       const displayed = tileMapRef.current;
       const pending = refreshPendingRef.current;
 
@@ -557,7 +673,12 @@ export default function TileCanvas({
       armCommitTimeout();
 
       const { docWidth: w, docHeight: h } = docSizeRef.current;
-      const visibleKeys = computeVisibleTiles(viewportRef.current, w, h).map(tileKey);
+      const visibleKeys = visibleTilesForPreview(
+        viewportRef.current,
+        w,
+        h,
+        tileRepeatRef.current,
+      ).map(tileKey);
       if (!shouldCommitTileRefresh(displayed.keys(), pending.keys(), visibleKeys)) {
         return;
       }
@@ -612,7 +733,12 @@ export default function TileCanvas({
     const lastVp = lastDrawnViewportRef.current;
 
     const currentLevel = computePyramidLevel(viewport.zoom, docWidth, docHeight);
-    const visibleNow = computeVisibleTiles(viewport, docWidth, docHeight);
+    const visibleNow = visibleTilesForPreview(
+      viewport,
+      docWidth,
+      docHeight,
+      tileRepeatRef.current,
+    );
     const haveCurrent = new Set(
       [...tileMapRef.current.keys()].filter(
         (k) => parseTileKey(k).level === currentLevel,
@@ -646,7 +772,12 @@ export default function TileCanvas({
 
     // Request missing tiles
     if (workerRef.current) {
-      const visible = computeVisibleTiles(viewport, docWidth, docHeight);
+      const visible = visibleTilesForPreview(
+        viewport,
+        docWidth,
+        docHeight,
+        tileRepeatRef.current,
+      );
       const needed = visible.filter(t => !tileMapRef.current.has(`${t.level}/${t.x}/${t.y}`));
       const ancestors = coveringAncestorTiles(
         needed,
@@ -715,12 +846,23 @@ export default function TileCanvas({
         tileMapRef.current.clear();
       }
       if (!workerRef.current) return;
-      const visible = computeVisibleTiles(
+      const visible = visibleTilesForPreview(
         viewportRef.current,
         docWidth,
         docHeight,
+        tileRepeatRef.current,
       );
       if (visible.length === 0) return;
+      if (event.payload.kind === 'soft_proof_changed') {
+        const prev = softProofMetricRef.current;
+        softProofMetricRef.current = {
+          rev: tileRevRef.current,
+          t0: performance.now(),
+          expected: new Set(visible.map(tileKey)),
+          firstMs: null,
+          samples: prev?.samples ?? [],
+        };
+      }
       workerRef.current.postMessage({
         type: 'request-tiles',
         tiles: visible,
@@ -758,7 +900,12 @@ export default function TileCanvas({
       docWidth > 0 &&
       docHeight > 0
     ) {
-      const visible = computeVisibleTiles(vp, docWidth, docHeight);
+      const visible = visibleTilesForPreview(
+        vp,
+        docWidth,
+        docHeight,
+        tileRepeatRef.current,
+      );
       if (visible.length > 0) {
         workerRef.current.postMessage({
           type: 'request-tiles',
@@ -780,7 +927,12 @@ export default function TileCanvas({
     // that were computed by the backend after our initial request
     const timer = setTimeout(() => {
       if (!workerRef.current) return;
-      const visible = computeVisibleTiles(viewportRef.current, docWidth, docHeight);
+      const visible = visibleTilesForPreview(
+        viewportRef.current,
+        docWidth,
+        docHeight,
+        tileRepeatRef.current,
+      );
       workerRef.current.postMessage({
         type: 'request-tiles',
         tiles: visible,

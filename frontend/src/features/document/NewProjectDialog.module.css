@@ -86,6 +86,23 @@
   cursor: pointer;
 }
 
+.new-project-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.35;
+  font-family: var(--font-family);
+  cursor: pointer;
+}
+
+.new-project-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  font-family: var(--font-family);
+  color: var(--text-color);
+}
+
 .new-project-path {
   font-size: 12px;
   line-height: 1.35;

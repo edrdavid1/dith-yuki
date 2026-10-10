@@ -1485,6 +1485,7 @@ fn make_palette_fs_state(gpu: Option<Arc<engine_gpu::GpuContext>>) -> Arc<AppSta
         FilterParams::PaletteQuantize {
             palette_id: pid,
             diffusion: None,
+                    metric: "oklab".to_string(),
         },
     ));
     layer.filters.push(FilterInstance::new(

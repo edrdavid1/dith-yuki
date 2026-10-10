@@ -550,6 +550,10 @@ fn default_dither_alpha() -> bool {
     true
 }
 
+fn default_nearest_metric() -> String {
+    "oklab".to_string()
+}
+
 impl Default for DitherParamsV2 {
     fn default() -> Self {
         Self {
@@ -772,12 +776,16 @@ pub enum FilterParams {
         /// Target color depth (bits per channel, 1-8)
         color_depth: u8,
     },
-    /// PaletteQuantize: Oklab-based palette quantization
+    /// PaletteQuantize / NearestColor: palette remap
     PaletteQuantize {
         /// Reference to the palette to quantize against
         palette_id: PaletteId,
         /// Optional error diffusion kernel (None = nearest-only)
         diffusion: Option<DiffusionKernel>,
+        /// Distance metric for `nearest_color` (`oklab` | `brightness` | `srgb`).
+        /// Ignored by `palette_quantize`. Missing JSON → `"oklab"`.
+        #[serde(default = "default_nearest_metric")]
+        metric: String,
     },
     /// Glitch: creative distortion effects
     Glitch {
@@ -1395,7 +1403,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         | "cmyk_halftone"
         | "halftone_screen_angled"
         | "wave" => Some(FilterKind::Dither),
-        "palette_quantize" => Some(FilterKind::PaletteQuantize),
+        "palette_quantize" | "nearest_color" => Some(FilterKind::PaletteQuantize),
         "crt" => Some(FilterKind::Crt),
         "glow" => Some(FilterKind::Glow),
         "adjust" => Some(FilterKind::Adjust),
@@ -1433,9 +1441,11 @@ pub fn filter_params_to_json(params: &FilterParams) -> Result<serde_json::Value,
         FilterParams::PaletteQuantize {
             palette_id,
             diffusion,
+            metric,
         } => Ok(serde_json::json!({
             "palette_id": palette_id,
             "diffusion": diffusion,
+            "metric": metric,
         })),
         FilterParams::Crt {
             period,
@@ -1718,6 +1728,7 @@ mod tests {
             FilterParams::PaletteQuantize {
                 palette_id: PaletteId::new(1),
                 diffusion: Some(DiffusionKernel::Atkinson),
+                    metric: "oklab".to_string(),
             },
         );
         assert!(filter.validate().is_ok());
@@ -1727,6 +1738,7 @@ mod tests {
             FilterParams::PaletteQuantize {
                 palette_id: PaletteId::new(1),
                 diffusion: None,
+                    metric: "oklab".to_string(),
             },
         );
         assert!(filter_no_diffusion.validate().is_ok());

@@ -9,23 +9,46 @@
 //! - 2 bytes: version (always 0x0300)
 //! - 2 bytes: number of entries (u16 LE)
 //! - entries: 4 bytes each (R, G, B, flags)
+//!
+//! Import also accepts JASC-PAL text (auto-detected). Export of
+//! [`PaletteFormat::Pal`](crate::palette::PaletteFormat::Pal) remains RIFF;
+//! use [`PaletteFormat::Jasc`](crate::palette::PaletteFormat::Jasc) for JASC text.
 
 use super::parse_error;
 use crate::palette::{linear_to_srgb, LinearColor, PaletteError};
 
 /// Parse Microsoft RIFF Palette format bytes into sRGB color triples.
+///
+/// If the file is JASC-PAL text (common for pixel-art `.pal` files), parses that
+/// instead so a single `.pal` extension covers both community formats.
 pub fn parse(data: &[u8]) -> Result<Vec<(u8, u8, u8)>, PaletteError> {
+    if super::jasc::looks_like_jasc(data) {
+        return super::jasc::parse(data);
+    }
+
+    // Some tools write JASC with a BOM or odd preamble that failed the quick
+    // probe — try a full JASC parse before giving up on non-RIFF bytes.
+    if !data.starts_with(b"RIFF") {
+        if let Ok(colors) = super::jasc::parse(data) {
+            return Ok(colors);
+        }
+        // GIMP palettes are occasionally saved with a `.pal` extension.
+        if let Ok(colors) = super::gpl::parse(data) {
+            return Ok(colors);
+        }
+        return Err(parse_error(
+            "PAL",
+            "byte 0",
+            "expected RIFF 'PAL ' container, JASC-PAL text, or GIMP Palette",
+        ));
+    }
+
     if data.len() < 24 {
         return Err(parse_error(
             "PAL",
             "byte 0",
             "file too short for RIFF PAL header",
         ));
-    }
-
-    // Check RIFF magic
-    if &data[0..4] != b"RIFF" {
-        return Err(parse_error("PAL", "byte 0", "expected 'RIFF' magic"));
     }
 
     // Check PAL form type
@@ -152,6 +175,20 @@ mod tests {
     fn parse_invalid_magic_errors() {
         let data = b"NOT_RIFF_FORMATTED_DATA_12345678";
         assert!(parse(data).is_err());
+    }
+
+    #[test]
+    fn parse_jasc_with_bom_via_pal_extension() {
+        let data = b"\xEF\xBB\xBFJASC-PAL\r\n0100\r\n2\r\n255 0 0\r\n0 255 0\r\n";
+        let colors = parse(data).unwrap();
+        assert_eq!(colors, vec![(255, 0, 0), (0, 255, 0)]);
+    }
+
+    #[test]
+    fn parse_gpl_misnamed_as_pal() {
+        let data = b"GIMP Palette\nName: test\n#\n255 0 0 Red\n0 0 255 Blue\n";
+        let colors = parse(data).unwrap();
+        assert_eq!(colors, vec![(255, 0, 0), (0, 0, 255)]);
     }
 
     #[test]

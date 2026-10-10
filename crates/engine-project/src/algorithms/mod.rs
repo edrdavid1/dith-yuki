@@ -21,6 +21,7 @@ mod glitch;
 mod glow;
 mod halftone_screen_angled;
 mod line_screen;
+mod nearest_color;
 mod palette_quantize;
 mod random_dot_stipple;
 mod riemersma;
@@ -58,6 +59,7 @@ pub fn register_all(registry: &mut AlgorithmRegistry) {
     registry.register(Box::new(voronoi_stipple::VoronoiStipple));
     registry.register(Box::new(random_dot_stipple::RandomDotStipple));
     registry.register(Box::new(palette_quantize::PaletteQuantizeAlgo));
+    registry.register(Box::new(nearest_color::NearestColorAlgo));
     registry.register(Box::new(cmyk_halftone::CmykHalftone));
     registry.register(Box::new(halftone_screen_angled::HalftoneScreenAngled));
     registry.register(Box::new(line_screen::LineScreen));

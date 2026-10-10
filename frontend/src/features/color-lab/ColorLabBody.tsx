@@ -6,6 +6,7 @@ import PaletteManagerSection from './PaletteManagerSection';
 import PaletteVolumeViewer from './PaletteVolumeViewer';
 import RampGeneratorSection from './RampGeneratorSection';
 import ColorLabFooter from './ColorLabFooter';
+import SoftProofControls from '../soft-proof/SoftProofControls';
 import type { ColorEntry, ExtractMethod } from './types';
 import type { BuiltinPaletteDto, PaletteDto } from '../../shared/ipc';
 import styles from './ColorLabWindow.module.css';
@@ -18,6 +19,7 @@ export type ColorLabVariant = 'sidebar' | 'full';
 
 export interface ColorLabBodyProps {
   variant: ColorLabVariant;
+  docId: number | null;
   name: string;
   onNameChange: (name: string) => void;
   palettes: PaletteDto[];
@@ -134,6 +136,8 @@ export default function ColorLabBody(props: ColorLabBodyProps) {
         onCancel={props.onReset}
         onApply={props.onApply}
       />
+
+      <SoftProofControls docId={props.docId} layout="panel" showStrictWarn />
 
       <div className={cn('color-lab-stack')}>
         <RampGeneratorSection
