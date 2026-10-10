@@ -79,4 +79,8 @@ Targets live in `fuzz/` (excluded from the workspace; see `fuzz/README.md`):
   `crates/engine-project/tests/`.
 - **CI (every PR):** `cargo test -p engine-project --test fuzz_mutation`
   (byte mutations of goldens + proptest random bytes — typed error, no panic).
+- **CI (every PR):** `cargo test -p engine-color --test palette_fuzz_mutation`
+  (Lospec `.hex` + JASC/RIFF `.pal` seeds + mutations — typed `PaletteError`, no panic).
+  Optional libFuzzer: `fuzz_palette_hex` / `fuzz_palette_pal` (seed from
+  `crates/engine-color/tests/fixtures/palettes/`).
 - **Nightly CI job** that runs the full 30‑minute schedule: still deferred.

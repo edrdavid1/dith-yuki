@@ -434,26 +434,20 @@ mod tests {
     }
 
     #[test]
-    fn min_reader_minor_too_new_errors_on_v1_0_build() {
+    fn min_reader_minor_too_new_errors_when_above_supported() {
+        // SUPPORTED_FORMAT is 1.1 — ask for 1.2 so a current build still rejects.
         let v = json!({
             "format_version": 1,
             "kind": "dyproj",
             "app_version": "0.2.0",
             "created_at": "t",
             "modified_at": "t",
-            "format": { "major": 1, "minor": 1 },
-            "min_reader": { "major": 1, "minor": 1 }
+            "format": { "major": 1, "minor": 2 },
+            "min_reader": { "major": 1, "minor": 2 }
         });
         let n = normalize_manifest_value(v).unwrap();
-        #[cfg(not(feature = "version-drill"))]
-        {
-            let err = check_open_gate(&n).unwrap_err();
-            assert!(matches!(err, ProjectError::NeedsNewerApp { .. }), "{err:?}");
-        }
-        #[cfg(feature = "version-drill")]
-        {
-            check_open_gate(&n).unwrap();
-        }
+        let err = check_open_gate(&n).unwrap_err();
+        assert!(matches!(err, ProjectError::NeedsNewerApp { .. }), "{err:?}");
     }
 
     #[test]

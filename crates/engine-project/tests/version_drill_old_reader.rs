@@ -28,9 +28,10 @@ fn open_bytes(bytes: &[u8]) -> Result<(), ProjectError> {
 /// §2.5 #1 — v1.0 golden opens on this (non-drill) engine.
 #[test]
 fn matrix_1_v1_minimal_opens_on_old_reader() {
-    assert_eq!(
-        SUPPORTED_FORMAT,
-        engine_project::serialize::FormatVersion::V1_0
+    // Soft-proof bumped the openable format to 1.1; v1.0 archives must still open.
+    assert!(
+        SUPPORTED_FORMAT.major == 1 && SUPPORTED_FORMAT.minor >= 1,
+        "expected format 1.x with minor ≥ 1, got {SUPPORTED_FORMAT}"
     );
     let bytes = read_fixture("dyproj/v1/minimal.dyproj");
     open_bytes(&bytes).expect("v1.0 must open");

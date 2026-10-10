@@ -32,6 +32,7 @@ Working agent specs stay local only (not in this repo on GitHub).
 | [color-lab.md](./color-lab.md) | Palettes, Oklab, Color Lab UI |
 | [soft-proof-cmyk.md](./soft-proof-cmyk.md) | Soft proof: ICC CMYK preview, BPC, encode path |
 | [print-export-cmyk.md](./print-export-cmyk.md) | CMYK TIFF print export (lcms2, pure-K, gamut report) |
+| [gamedev-toolkit.md](./gamedev-toolkit.md) | Presets, ED wrap-padding, hex/jasc fuzz (gamedev polish) |
 
 ## Formats, previews, security
 

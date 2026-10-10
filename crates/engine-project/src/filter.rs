@@ -520,6 +520,11 @@ pub struct DitherParamsV2 {
     /// copied per pixel. Default true; missing JSON field deserializes as true.
     #[serde(default = "default_dither_alpha")]
     pub dither_alpha: bool,
+    /// Approximate seamless for error diffusion: wrap-pad opposite edges by
+    /// `pixel_size × kernel.max_offset()`, run ED, crop. Ordered modes ignore
+    /// this flag. Default false; result is approximate only.
+    #[serde(default)]
+    pub wrap_padding: bool,
 }
 
 fn default_threshold_scale() -> f32 {
@@ -574,6 +579,7 @@ impl Default for DitherParamsV2 {
             pattern_angle: 0.0,
             serpentine: false,
             dither_alpha: true,
+            wrap_padding: false,
         }
     }
 }
@@ -627,6 +633,7 @@ impl From<(DitherMode, u8)> for DitherParamsV2 {
             pattern_angle: 0.0,
             serpentine: false,
             dither_alpha: true,
+            wrap_padding: false,
         }
     }
 }

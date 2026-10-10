@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dither.yuki/schema/filter-preset.schema.json",
+  "title": "FilterPreset",
+  "description": "User-scoped filter-stack preset (app-data presets/*.json). Palette refs by id only — no embedded colors. Export format/DPI/paths are not stored.",
+  "type": "object",
+  "required": ["preset_version", "id", "name", "created_at", "filters"],
+  "additionalProperties": false,
+  "properties": {
+    "preset_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "created_at": {
+      "type": "string",
+      "description": "Creation timestamp (ISO-8601 preferred; unix seconds accepted)."
+    },
+    "filters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "description": "Same shape as document.json FilterInstanceFile (algorithm_id + params)."
+      }
+    },
+    "palette_ids": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 0 },
+      "description": "Palette ids referenced by filter params (not embedded bytes)."
+    }
+  }
+}

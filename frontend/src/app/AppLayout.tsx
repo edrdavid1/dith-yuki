@@ -10,6 +10,8 @@ import HelpDialog from '../components/HelpDialog';
 import PreferencesDialog from '../features/preferences/PreferencesDialog';
 import PatternManagerDialog from '../features/patterns/PatternManagerDialog';
 import { usePatternsUi } from '../features/patterns/PatternsUiContext';
+import PresetManagerDialog from '../features/presets/PresetManagerDialog';
+import { usePresetsUi } from '../features/presets/PresetsUiContext';
 import { useWelcomeScreen } from '../hooks/useWelcomeScreen';
 import { registerDocumentCommands, registerLayoutCommands } from '../features/shortcuts/commandRegistry';
 import { useAppUpdates } from '../hooks/useAppUpdates';
@@ -243,6 +245,12 @@ export default function AppLayout() {
     openPatternManager,
     closePatternManager,
   } = usePatternsUi();
+  const {
+    isOpen: presetsOpen,
+    intent: presetsIntent,
+    intentNonce: presetsIntentNonce,
+    closePresetManager,
+  } = usePresetsUi();
   const [focusMode, setFocusMode] = useState(false);
   const [affinity, setAffinity] = useState<DockAffinityEvent | null>(null);
   const leftHitRef = useRef<HTMLElement | null>(null);
@@ -783,6 +791,12 @@ export default function AppLayout() {
         intent={patternsIntent}
         intentNonce={patternsIntentNonce}
         onClose={closePatternManager}
+      />
+      <PresetManagerDialog
+        isOpen={presetsOpen}
+        intent={presetsIntent}
+        intentNonce={presetsIntentNonce}
+        onClose={closePresetManager}
       />
       <HelpDialog
         isOpen={helpOpen}

@@ -203,8 +203,14 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
       width: docWidth,
       height: docHeight,
     });
-    return seamlessWarningLines(report, docWidth, docHeight);
-  }, [simpleMode, pixelSize, patternAngle, docWidth, docHeight]);
+    const lines = seamlessWarningLines(report, docWidth, docHeight);
+    if (report.kind === 'approximate_only' && Boolean(params.wrap_padding)) {
+      return [
+        'Approximate wrap-padding is on — edges are seeded from opposite sides. Result is approximate only (not bit-periodic).',
+      ];
+    }
+    return lines;
+  }, [simpleMode, pixelSize, patternAngle, docWidth, docHeight, params.wrap_padding]);
 
   const isOrderedMode = [
     'bayer_2x2',
@@ -245,6 +251,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
     'zhou_fang',
   ].includes(simpleMode);
   const serpentine = Boolean(params.serpentine);
+  const wrapPadding = Boolean(params.wrap_padding);
   const ditherAlpha = params.dither_alpha !== false;
   const matchByBrightness = Boolean(params.match_by_brightness);
   const paletteDitherMode = params.palette_dither_mode;
@@ -274,6 +281,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
       threshold_bias: overrides.threshold_bias ?? thresholdBias,
       pattern_angle: overrides.pattern_angle ?? patternAngle,
       serpentine: overrides.serpentine ?? serpentine,
+      wrap_padding: overrides.wrap_padding ?? wrapPadding,
       dither_alpha: overrides.dither_alpha ?? ditherAlpha,
       match_by_brightness: overrides.match_by_brightness ?? matchByBrightness,
     });
@@ -515,6 +523,17 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
             onChange={(e) => emit({ serpentine: e.target.checked })}
           />
           Serpentine
+        </label>
+      )}
+
+      {isEdMode && (
+        <label className={cn('param-checkbox-row')}>
+          <input
+            type="checkbox"
+            checked={wrapPadding}
+            onChange={(e) => emit({ wrap_padding: e.target.checked })}
+          />
+          Approximate wrap-padding (seamless)
         </label>
       )}
 

@@ -184,9 +184,8 @@ fn process_cell(
     let doc_id = 1u32;
     let layer_id = 1u32;
     let live_gen = 1u64;
-    let budget = ((width as usize).saturating_mul(height as usize).saturating_mul(16))
-        .max(4_000_000)
-        .min(128_000_000);
+      let budget = ((width as usize).saturating_mul(height as usize).saturating_mul(16))
+        .clamp(4_000_000, 128_000_000);
     let cache = TileCache::new(budget);
     decompose_image_to_tiles_at_generation(
         rgba_f32,

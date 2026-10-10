@@ -23,6 +23,7 @@ mod macos_title;
 mod memory_budget;
 mod native_menu;
 mod pattern_library;
+mod preset_library;
 #[cfg(test)]
 mod preview_latency_diag;
 mod recent_files;
@@ -162,7 +163,7 @@ fn main() {
                 // Attention only — never show from here (finishBoot owns reveal).
                 WindowEvent::Focused(true) if label == "main" => {
                     #[cfg(target_os = "macos")]
-                    macos_dock_bounce::stop(&window.app_handle());
+                    macos_dock_bounce::stop(window.app_handle());
                 }
                 _ => {}
             }
@@ -474,6 +475,12 @@ fn main() {
             commands::rename_pattern_in_library,
             commands::import_pattern_to_library,
             commands::export_pattern_from_library,
+            commands::preset_list,
+            commands::preset_save,
+            commands::preset_load,
+            commands::preset_delete,
+            commands::preset_rename,
+            commands::preset_apply_to_doc,
             recent_files::get_recent_files,
             recent_files::clear_recent_files,
             macos_app_icon::list_app_icons,

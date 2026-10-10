@@ -18,6 +18,7 @@ pub mod dither;
 pub mod dither_diffusion;
 pub mod dither_ordered;
 pub mod dither_residuals;
+pub mod ed_wrap_padding;
 pub mod full_document;
 pub mod glitch;
 pub mod glow;
@@ -50,8 +51,9 @@ pub use curves::{CurveChannel, CurvesFilter};
 pub use dither::{DitherAlgorithm, DitherFilter};
 pub use full_document::{
     compute_ascii_job, ensure_full_document, ensure_full_document_ex,
-    layer_has_full_document_filter, layer_has_full_document_filter_ex, publish_processed_tiles,
-    slice_processed_tile, FullDocumentCache, FullDocumentResult,
+    filter_uses_ed_wrap_padding, layer_has_full_document_filter,
+    layer_has_full_document_filter_ex, publish_processed_tiles, slice_processed_tile,
+    FullDocumentCache, FullDocumentResult,
 };
 pub use glitch::{GlitchFilter, GlitchType};
 pub use levels::LevelsFilter;
@@ -66,6 +68,9 @@ pub use dither_residuals::{ErrorResiduals, ErrorResidualsStore, CORNER_PATCH};
 // Re-export error diffusion engine
 pub use dither_diffusion::{
     apply_error_diffusion, apply_error_diffusion_tile_row_strip, apply_error_diffusion_with_cache,
+};
+pub use ed_wrap_padding::{
+    apply_ed_with_wrap_padding, wrap_pad_rgba_f32, wrap_padding_margin,
 };
 
 // Re-export FilterContext

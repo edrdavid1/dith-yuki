@@ -67,7 +67,7 @@ mod native {
 
         // Critical = bounce until cancelled or the app becomes active again.
         let req_id = ns_app.requestUserAttention(NSRequestUserAttentionType::CriticalRequest);
-        ATTENTION_ID.store(req_id as isize, Ordering::SeqCst);
+        ATTENTION_ID.store(req_id, Ordering::SeqCst);
         BOUNCING.store(true, Ordering::SeqCst);
 
         if let Some(win) = app.get_webview_window("main") {
