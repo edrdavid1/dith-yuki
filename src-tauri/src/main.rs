@@ -6,6 +6,7 @@
 #![cfg_attr(target_os = "macos", allow(deprecated, unexpected_cfgs))]
 
 mod commands;
+mod config;
 mod dock_affinity;
 mod document_session;
 mod file_log;
@@ -374,6 +375,9 @@ fn main() {
                     }
                     Err(e) => log::warn!("soft-proof catalog init failed: {e}"),
                 }
+
+                // Workspace / AppConfig (`config.json`) — FR-2 / NFR-2.
+                state.config.rebind_app_data(&app_data_dir);
             }
 
             // decorations stay true so traffic lights exist; Overlay+fullSize
@@ -529,6 +533,16 @@ fn main() {
             commands::flexlayout::save_layout_right,
             commands::flexlayout::load_layout_center,
             commands::flexlayout::save_layout_center,
+            // Workspace / AppConfig
+            commands::get_app_config,
+            commands::get_ui_visibility,
+            commands::set_workspace,
+            commands::set_tiling_advanced,
+            commands::resolve_workspace_prompt,
+            commands::note_workspace_prompt_shown,
+            commands::evaluate_workspace_hint,
+            commands::resolve_workspace_hint,
+            commands::note_tile_export,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
