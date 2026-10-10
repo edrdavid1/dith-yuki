@@ -75,6 +75,8 @@ Use Help → **Report a bug** in the app (Web3Forms email; version/OS prefilled)
 
 Built with **Rust** (Tauri 2) and **React**. Source is under the L'eco non di Bergamo Software License — see [LICENSE](./LICENSE). The desktop app is governed by [docs/legal/USER_AGREEMENT.txt](./docs/legal/USER_AGREEMENT.txt).
 
+Sprites, textures and other images you create with Dither Yuki may be used in commercial games and products without restriction or royalties.
+
 ### Run from source
 
 - Rust (stable) via [rustup](https://rustup.rs/)

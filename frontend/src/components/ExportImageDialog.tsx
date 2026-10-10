@@ -6,7 +6,7 @@ import { DialogTitlebar } from '../shared/ui/WindowTitlebar';
 
 const cn = bind(styles);
 
-export type ImageExportFormat = 'PNG' | 'JPEG' | 'WEBP' | 'BMP' | 'TIFF' | 'SVG';
+export type ImageExportFormat = 'PNG' | 'PNG8' | 'JPEG' | 'WEBP' | 'BMP' | 'TIFF' | 'SVG';
 export type SvgExportAlgorithm = 'greedy_meshing' | 'contour_tracing';
 
 export interface ImageExportOptions {
@@ -23,6 +23,10 @@ export interface ExportImageDialogProps {
 
 const FORMATS: { value: ImageExportFormat; label: string }[] = [
   { value: 'PNG', label: 'PNG (.png) — lossless, transparency' },
+  {
+    value: 'PNG8',
+    label: 'PNG8 indexed (.png) — palette in file (Strict / Mixed / Simple)',
+  },
   { value: 'JPEG', label: 'JPEG (.jpg) — lossy, no transparency' },
   { value: 'WEBP', label: 'WebP (.webp) — lossless, transparency' },
   { value: 'BMP', label: 'BMP (.bmp)' },
@@ -43,6 +47,7 @@ export function extensionForFormat(format: ImageExportFormat): string {
     case 'SVG':
       return 'svg';
     case 'PNG':
+    case 'PNG8':
     default:
       return 'png';
   }

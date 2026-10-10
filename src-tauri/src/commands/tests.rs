@@ -481,6 +481,7 @@ fn find_layers_referencing_palette_palette_quantize_match() {
                 FilterParams::PaletteQuantize {
                     palette_id,
                     diffusion: None,
+                    metric: "oklab".to_string(),
                 },
             ));
         }
@@ -505,6 +506,7 @@ fn find_layers_referencing_palette_wrong_palette_id() {
                 FilterParams::PaletteQuantize {
                     palette_id: PaletteId::new(10),
                     diffusion: None,
+                    metric: "oklab".to_string(),
                 },
             ));
         }
@@ -538,6 +540,7 @@ fn find_layers_referencing_palette_recursive_group() {
             FilterParams::PaletteQuantize {
                 palette_id,
                 diffusion: None,
+                    metric: "oklab".to_string(),
             },
         )];
         children.push(LayerNode::Leaf(leaf));
@@ -585,6 +588,7 @@ fn find_layers_referencing_palette_multiple_filters_on_one_layer() {
                 FilterParams::PaletteQuantize {
                     palette_id: palette_id2,
                     diffusion: None,
+                    metric: "oklab".to_string(),
                 },
             ));
         }
@@ -734,6 +738,7 @@ fn integration_invalidation_cascade_on_palette_modify() {
                 FilterParams::PaletteQuantize {
                     palette_id,
                     diffusion: None,
+                    metric: "oklab".to_string(),
                 },
             ));
         }
@@ -805,6 +810,7 @@ fn integration_force_delete_palette_clears_references() {
                 FilterParams::PaletteQuantize {
                     palette_id,
                     diffusion: None,
+                    metric: "oklab".to_string(),
                 },
             ));
         }

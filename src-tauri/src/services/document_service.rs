@@ -91,6 +91,9 @@ pub struct ExportImageRequest {
     pub quality: Option<u8>,
     #[serde(default)]
     pub svg_algorithm: Option<String>,
+    /// Palette used for indexed PNG8 export. Defaults to the document's first palette.
+    #[serde(default)]
+    pub palette_id: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -325,6 +328,54 @@ pub fn encode_rgba_to_png(buffer: &[u8], width: u32, height: u32) -> Result<Vec<
         .map_err(|e| format!("PNG encoding error: {}", e))?;
 
     Ok(png_data)
+}
+
+fn document_has_guided_palette_dither(doc: &engine_project::Document) -> bool {
+    use engine_project::filter::{FilterParams, PaletteDitherMode};
+    use engine_project::layer::LayerNode;
+
+    fn walk(nodes: &[LayerNode]) -> bool {
+        for node in nodes {
+            match node {
+                LayerNode::Leaf(layer) => {
+                    for filter in &layer.filters {
+                        if !filter.enabled {
+                            continue;
+                        }
+                        if let FilterParams::DitherV2(p) = &filter.params {
+                            if matches!(p.palette_dither_mode, PaletteDitherMode::Guided { .. }) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                LayerNode::Group(group) => {
+                    if walk(&group.children) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+    walk(&doc.root)
+}
+
+fn resolve_export_palette(
+    doc: &engine_project::Document,
+    palette_id: Option<u32>,
+) -> Result<&engine_color::palette::Palette, AppError> {
+    if let Some(id) = palette_id {
+        return doc.get_palette(engine_project::PaletteId::new(id)).ok_or_else(|| {
+            AppError::Generic(format!("Palette {id} not found for PNG8 export"))
+        });
+    }
+    doc.palettes.first().ok_or_else(|| {
+        AppError::Generic(
+            "Indexed PNG (PNG8) export requires a document palette — create or import one in Color Lab"
+                .to_string(),
+        )
+    })
 }
 
 fn find_ascii_layer(
@@ -898,10 +949,10 @@ impl DocumentService {
         use std::path::Path;
 
         match req.format.as_str() {
-            "PNG" | "JPEG" | "WEBP" | "BMP" | "TIFF" | "SVG" => {}
+            "PNG" | "PNG8" | "JPEG" | "WEBP" | "BMP" | "TIFF" | "SVG" => {}
             _ => {
                 return Err(AppError::Generic(
-                    "Invalid parameters: format must be PNG, JPEG, WEBP, BMP, TIFF, or SVG"
+                    "Invalid parameters: format must be PNG, PNG8, JPEG, WEBP, BMP, TIFF, or SVG"
                         .to_string(),
                 ));
             }
@@ -924,6 +975,7 @@ impl DocumentService {
         let req_path = req.path.clone();
         let req_quality = req.quality;
         let req_svg_algorithm = req.svg_algorithm.clone();
+        let req_palette_id = req.palette_id;
         let state_clone = Arc::clone(&self.state);
 
         tauri::async_runtime::spawn_blocking(move || {
@@ -942,6 +994,36 @@ impl DocumentService {
             match req_format.as_str() {
                 "PNG" => {
                     let png_bytes = encode_rgba_to_png(&rgba_buffer, img_width, img_height)?;
+                    engine_io::atomic_write(Path::new(&req_path), &png_bytes)
+                        .map_err(|e| format!("IO error: {}", e))?;
+                }
+                "PNG8" => {
+                    if document_has_guided_palette_dither(&doc_snapshot) {
+                        return Err(AppError::Generic(
+                            "Indexed PNG (PNG8) export is disabled for Guided palette dither — \
+                             Guided produces colors outside the palette. Use Strict, Mixed, or Simple."
+                                .to_string(),
+                        ));
+                    }
+                    let palette = resolve_export_palette(&doc_snapshot, req_palette_id)?;
+                    let palette_srgb: Vec<(u8, u8, u8)> = palette
+                        .colors
+                        .iter()
+                        .map(|c| {
+                            (
+                                engine_color::palette::linear_to_srgb(c.r),
+                                engine_color::palette::linear_to_srgb(c.g),
+                                engine_color::palette::linear_to_srgb(c.b),
+                            )
+                        })
+                        .collect();
+                    let png_bytes = engine_io::encode_indexed_png(
+                        &rgba_buffer,
+                        img_width,
+                        img_height,
+                        &palette_srgb,
+                    )
+                    .map_err(|e| AppError::Generic(e.to_string()))?;
                     engine_io::atomic_write(Path::new(&req_path), &png_bytes)
                         .map_err(|e| format!("IO error: {}", e))?;
                 }

@@ -1566,6 +1566,7 @@ version = "0.1.0"
 dependencies = [
  "dirs 5.0.1",
  "engine-core",
+ "png 0.17.16",
  "proptest",
  "roxmltree",
  "tempfile",

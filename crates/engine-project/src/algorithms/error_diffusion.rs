@@ -2,7 +2,7 @@
 
 use engine_registry::{
     AlgorithmId, CpuCheckpointKind, EffectCategory, FilterAlgorithm, FilterCtx, FilterError,
-    GpuEligibility, ParamField,
+    GpuEligibility, ParamField, TemporalStability,
 };
 use engine_tiles::PixelTile;
 
@@ -124,6 +124,10 @@ macro_rules! impl_error_diffusion {
 
             fn requires_full_row(&self) -> bool {
                 true
+            }
+
+            fn temporal_stability(&self) -> TemporalStability {
+                TemporalStability::Unstable
             }
         }
     };

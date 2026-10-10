@@ -306,9 +306,16 @@ impl FilterService {
                             DiffusionKernel::from_ui_name(s)
                                 .unwrap_or(DiffusionKernel::FloydSteinberg)
                         });
+                    let metric = req
+                        .params
+                        .get("metric")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("oklab")
+                        .to_string();
                     FilterParams::PaletteQuantize {
                         palette_id: engine_project::PaletteId::new(palette_id),
                         diffusion,
+                        metric,
                     }
                 }
                 FilterKind::Glitch => {
@@ -926,9 +933,16 @@ impl FilterService {
                             DiffusionKernel::from_ui_name(s)
                                 .unwrap_or(DiffusionKernel::FloydSteinberg)
                         });
+                    let metric = req
+                        .params
+                        .get("metric")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("oklab")
+                        .to_string();
                     FilterParams::PaletteQuantize {
                         palette_id: engine_project::PaletteId::new(palette_id),
                         diffusion,
+                        metric,
                     }
                 }
                 FilterKind::Glitch => {

@@ -4,7 +4,7 @@
 //! `pattern_angle` rotating the classic plate set. At angle 0 the output is
 //! byte-identical to `cmyk_halftone`.
 
-use engine_registry::{
+use engine_registry::{TemporalStability, 
     AlgorithmId, CpuCheckpointKind, EffectCategory, FilterAlgorithm, FilterCtx, FilterError,
     GpuEligibility, ParamField,
 };
@@ -112,5 +112,9 @@ impl FilterAlgorithm for HalftoneScreenAngled {
 
     fn category(&self) -> EffectCategory {
         EffectCategory::Dithering
+    }
+
+    fn temporal_stability(&self) -> TemporalStability {
+        TemporalStability::Stable
     }
 }

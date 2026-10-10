@@ -110,16 +110,20 @@ function PalettePanel({ layerId }: PalettePanelProps) {
   const handleImport = async () => {
     setError(null);
     try {
+      if (docId == null) {
+        setError('Open or create a document before importing a palette.');
+        return;
+      }
       const selected = await open({
         filters: [{
           name: 'Palettes',
-          extensions: ['ase', 'aco', 'gpl', 'pal', 'csv', 'json'],
+          extensions: ['ase', 'aco', 'gpl', 'pal', 'hex', 'csv', 'json'],
         }],
         multiple: false,
       });
-      if (selected && typeof selected === 'string') {
-        if (docId == null) return;
-        await importPalette(docId, selected);
+      const path = Array.isArray(selected) ? selected[0] : selected;
+      if (typeof path === 'string' && path) {
+        await importPalette(docId, path);
         refresh();
       }
     } catch (e) {
@@ -138,6 +142,8 @@ function PalettePanel({ layerId }: PalettePanelProps) {
           { name: 'GIMP Palette', extensions: ['gpl'] },
           { name: 'JSON', extensions: ['json'] },
           { name: 'Adobe Color', extensions: ['aco'] },
+          { name: 'JASC Palette', extensions: ['pal'] },
+          { name: 'Lospec HEX', extensions: ['hex'] },
           { name: 'Microsoft RIFF', extensions: ['pal'] },
           { name: 'CSV', extensions: ['csv'] },
         ],
@@ -147,8 +153,8 @@ function PalettePanel({ layerId }: PalettePanelProps) {
 
       // Derive format from file extension
       const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
-      const supportedFormats = ['ase', 'gpl', 'json', 'aco', 'pal', 'csv'];
-      const format = supportedFormats.includes(ext) ? ext : 'json';
+      let format = ['ase', 'gpl', 'json', 'aco', 'hex', 'csv'].includes(ext) ? ext : 'json';
+      if (ext === 'pal') format = 'jasc';
 
       if (docId == null) return;
       await exportPalette(docId, paletteId, filePath, format);

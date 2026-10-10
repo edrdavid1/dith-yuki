@@ -50,6 +50,25 @@ type SimpleDitherMode =
   | 'cmyk_halftone'
   | 'wave';
 
+/** Ordered / matrix algorithms keep the same noise on static areas across frames. */
+const ANIMATION_STABLE_MODES = new Set<string>([
+  'bayer_2x2',
+  'bayer_4x4',
+  'bayer_8x8',
+  'bayer_16x16',
+  'clustered_dot_ordered',
+  'dispersed_dot_ordered',
+  'void_and_cluster',
+  'crosshatch_dither',
+  'line_screen',
+  'voronoi_stipple',
+  'random_dot_stipple',
+  'cmyk_halftone',
+  'halftone_screen_angled',
+  'wave',
+  'custom_png',
+]);
+
 const SIMPLE_MODES: SimpleDitherMode[] = [
   'bayer_2x2',
   'bayer_4x4',
@@ -317,6 +336,12 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
           void handleModeSelect(v);
         }}
       />
+
+      <p className={cn('effect-palette-hint')} title="Temporal stability for animation frames">
+        {ANIMATION_STABLE_MODES.has(simpleMode)
+          ? 'Suitable for animation — pattern stays stable across frames.'
+          : 'May flicker between frames — error diffusion is not temporally stable.'}
+      </p>
 
       {simpleMode === 'custom_png' && (
         <div className={cn('threshold-map-row')}>

@@ -618,6 +618,17 @@ pub fn apply_error_diffusion_with_cache_into(
                 continue;
             }
 
+            // Fully transparent: normalize RGB, do not quantize or diffuse error
+            // (neither as source nor effective recipient — residual in the buffer
+            // is dropped). Prevents sprite-edge halos from error diffusion.
+            if src_a <= 0.0 || dst.at(tile_x, tile_y, 3) <= 0.0 {
+                dst.set(tile_x, tile_y, 0, 0.0);
+                dst.set(tile_x, tile_y, 1, 0.0);
+                dst.set(tile_x, tile_y, 2, 0.0);
+                dst.set(tile_x, tile_y, 3, 0.0);
+                continue;
+            }
+
             // ─── Block representative (or pixel_size == 1) processing ───
 
             // Prefer cached raw representative when the source would otherwise
@@ -1082,6 +1093,15 @@ pub fn apply_error_diffusion_tile_row_strip(
                     out[si + 1] = 0.0;
                     out[si + 2] = 0.0;
                 }
+                continue;
+            }
+
+            // Fully transparent: normalize RGB; skip quantization and diffusion.
+            if src[si + 3] <= 0.0 || out[si + 3] <= 0.0 {
+                out[si] = 0.0;
+                out[si + 1] = 0.0;
+                out[si + 2] = 0.0;
+                out[si + 3] = 0.0;
                 continue;
             }
 

@@ -246,10 +246,12 @@ fn remap_filter_params(params: &serde_json::Value, tables: &IdRemapTables) -> se
         FilterParams::PaletteQuantize {
             palette_id,
             diffusion,
+            metric,
         } => match tables.palettes.get(&palette_id).copied() {
             Some(new_id) => FilterParams::PaletteQuantize {
                 palette_id: new_id,
                 diffusion,
+                metric,
             },
             // Dangling ref (e.g. Color Lab lastCreatedId synced into a doc with
             // no palettes). Do not keep the file-local id — it can collide with

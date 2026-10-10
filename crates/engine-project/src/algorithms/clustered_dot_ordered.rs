@@ -2,7 +2,7 @@
 
 use engine_registry::{
     AlgorithmId, CpuCheckpointKind, EffectCategory, FilterAlgorithm, FilterCtx, FilterError,
-    GpuEligibility, ParamField,
+    GpuEligibility, ParamField, TemporalStability,
 };
 use engine_tiles::PixelTile;
 
@@ -129,5 +129,9 @@ impl FilterAlgorithm for ClusteredDotOrdered {
 
     fn requires_full_row(&self) -> bool {
         false
+    }
+
+    fn temporal_stability(&self) -> TemporalStability {
+        TemporalStability::Stable
     }
 }

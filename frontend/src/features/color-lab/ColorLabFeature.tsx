@@ -252,24 +252,34 @@ export default function ColorLabFeature({
 
   const handleImport = useCallback(async () => {
     try {
+      if (docId == null) {
+        dispatch(setError('Open or create a document before importing a palette.'));
+        return;
+      }
       const filePath = await openDialog({
         multiple: false,
-        filters: [{ name: 'Palettes', extensions: ['ase', 'aco', 'gpl', 'pal', 'csv', 'json'] }],
+        filters: [
+          { name: 'Palettes', extensions: ['ase', 'aco', 'gpl', 'pal', 'hex', 'csv', 'json'] },
+        ],
       });
       if (!filePath) return;
-      if (docId == null) return;
-      const dto = await importPalette(docId, filePath as string);
+      const path = Array.isArray(filePath) ? filePath[0] : filePath;
+      if (typeof path !== 'string' || !path) return;
+      const dto = await importPalette(docId, path);
       dispatch(setColors(dto.colors.map(([r, g, b]) => createColorEntry(toHex(r, g, b)))));
       if (dto.name) dispatch(setName(dto.name));
       dispatch(setSelectedPaletteId(dto.id ?? null));
       dispatch(bumpVersion({ lastCreatedId: dto.id }));
       publishPaletteBinding(dto.id ?? null);
+      void emitPaletteChanged();
       dispatch(setError(null));
+      dispatch(setSuccessMessage(`Imported “${dto.name || 'palette'}” (${dto.colors.length} colors).`));
+      window.setTimeout(() => dispatch(setSuccessMessage(null)), 3000);
     } catch (err: unknown) {
       dispatch(setError(formatIpcError(err)));
       logIpcError('ColorLabFeature.import', err);
     }
-  }, [dispatch]);
+  }, [dispatch, docId]);
 
   const handleSelectBuiltin = useCallback(
     async (id: string) => {
@@ -338,13 +348,17 @@ export default function ColorLabFeature({
             { name: 'Adobe Swatch Exchange', extensions: ['ase'] },
             { name: 'JSON', extensions: ['json'] },
             { name: 'Adobe Color', extensions: ['aco'] },
+            { name: 'JASC Palette', extensions: ['pal'] },
+            { name: 'Lospec HEX', extensions: ['hex'] },
             { name: 'Microsoft RIFF', extensions: ['pal'] },
             { name: 'CSV', extensions: ['csv'] },
           ],
         });
         if (!savePath) return;
         const ext = savePath.split('.').pop()?.toLowerCase() ?? 'gpl';
-        const format = ['ase', 'gpl', 'json', 'aco', 'pal', 'csv'].includes(ext) ? ext : 'gpl';
+        // Prefer JASC for `.pal` (pixel-art community default); RIFF via format "pal" still works.
+        let format = ['ase', 'gpl', 'json', 'aco', 'hex', 'csv'].includes(ext) ? ext : 'gpl';
+        if (ext === 'pal') format = 'jasc';
         await exportPalette(docId, paletteId, savePath, format);
         dispatch(setError(null));
         dispatch(setSuccessMessage('Palette exported successfully.'));
@@ -382,7 +396,8 @@ export default function ColorLabFeature({
         return;
       }
       const formatLower = (format || 'gpl').toLowerCase();
-      const extension = formatLower === 'hex' ? 'pal' : formatLower;
+      const extension =
+        formatLower === 'jasc' ? 'pal' : formatLower === 'hex' ? 'hex' : formatLower;
       try {
         const savePath = await saveDialog({
           filters: [{ name: format.toUpperCase() || 'GPL', extensions: [extension] }],

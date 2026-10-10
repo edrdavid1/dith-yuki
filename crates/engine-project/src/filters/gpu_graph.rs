@@ -98,6 +98,7 @@ fn build_gpu_layer_filter(
         FilterParams::PaletteQuantize {
             palette_id,
             diffusion,
+            metric: _,
         } => {
             if diffusion.is_some() {
                 return GraphLayerFilter::CpuCheckpoint(CpuCheckpointKind::ErrorDiffusion);
@@ -639,6 +640,7 @@ mod tests {
             FilterParams::PaletteQuantize {
                 palette_id: crate::types::PaletteId::new(1),
                 diffusion: None,
+                    metric: "oklab".to_string(),
             },
         );
         let g = compile_layer_graph_with_palettes(&[f], Some(&ctx)).unwrap();

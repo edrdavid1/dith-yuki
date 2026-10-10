@@ -2,7 +2,7 @@
 
 use engine_registry::{
     AlgorithmId, CpuCheckpointKind, EffectCategory, ExecutionScope, FilterAlgorithm, FilterCtx,
-    FilterError, GpuEligibility, ParamField,
+    FilterError, GpuEligibility, ParamField, TemporalStability,
 };
 use engine_tiles::{PixelTile, HALO, TILE_SIZE};
 
@@ -111,6 +111,10 @@ impl FilterAlgorithm for Riemersma {
 
     fn requires_full_row(&self) -> bool {
         false
+    }
+
+    fn temporal_stability(&self) -> TemporalStability {
+        TemporalStability::Unstable
     }
 
     fn execution_scope(&self) -> ExecutionScope {

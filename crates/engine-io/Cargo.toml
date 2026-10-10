@@ -9,6 +9,7 @@ engine-core = { path = "../engine-core" }
 thiserror = "1"
 dirs = "5"
 tiff = "0.11"
+png = "0.17"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
