@@ -58,6 +58,8 @@ objc2-foundation = { version = "0.3", features = ["NSString", "NSBundle"] }
 [dev-dependencies]
 proptest = "1.4"
 tempfile = "3.10"
+# Unlocks `tauri::test` (mock_builder / get_ipc_response) for IPC smoke tests.
+tauri = { version = "2", features = ["test"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

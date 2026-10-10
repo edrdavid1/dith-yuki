@@ -336,3 +336,5 @@ pub(crate) fn make_test_app_state() -> Arc<AppState> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod workspace_ipc_tests;
