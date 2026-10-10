@@ -394,11 +394,12 @@ impl ConfigStore {
 
     pub fn mark_exported_tiles(self: &Arc<Self>) {
         let mut guard = self.inner.lock().expect("config lock");
-        if !guard.config.has_exported_tiles {
-            guard.config.has_exported_tiles = true;
-            drop(guard);
-            self.schedule_flush();
+        if guard.config.has_exported_tiles {
+            return;
         }
+        guard.config.has_exported_tiles = true;
+        drop(guard);
+        self.schedule_flush();
     }
 }
 

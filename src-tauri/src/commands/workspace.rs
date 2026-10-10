@@ -18,13 +18,13 @@ fn store(state: &AppState) -> Arc<ConfigStore> {
 
 /// Full config + visibility snapshot for the UI.
 #[tauri::command]
-pub fn get_app_config(state: State<'_, AppState>) -> AppConfigDto {
+pub fn get_app_config(state: State<'_, Arc<AppState>>) -> AppConfigDto {
     AppConfigDto::from_store(&store(&state))
 }
 
 /// Pure visibility for the current config (FR-4).
 #[tauri::command]
-pub fn get_ui_visibility(state: State<'_, AppState>) -> UiVisibility {
+pub fn get_ui_visibility(state: State<'_, Arc<AppState>>) -> UiVisibility {
     store(&state).visibility()
 }
 
@@ -42,7 +42,7 @@ fn default_settings_source() -> WorkspaceSwitchSource {
 
 #[tauri::command]
 pub fn set_workspace(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     req: SetWorkspaceRequest,
 ) -> AppConfigDto {
     let s = store(&state);
@@ -58,7 +58,7 @@ pub struct SetTilingAdvancedRequest {
 
 #[tauri::command]
 pub fn set_tiling_advanced(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     req: SetTilingAdvancedRequest,
 ) -> AppConfigDto {
     let s = store(&state);
@@ -75,7 +75,7 @@ pub struct ResolveWorkspacePromptRequest {
 
 #[tauri::command]
 pub fn resolve_workspace_prompt(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     req: ResolveWorkspacePromptRequest,
 ) -> AppConfigDto {
     let s = store(&state);
@@ -85,7 +85,7 @@ pub fn resolve_workspace_prompt(
 
 /// Increment prompt-shown metric; call when modal is displayed (NFR-4).
 #[tauri::command]
-pub fn note_workspace_prompt_shown(state: State<'_, AppState>) {
+pub fn note_workspace_prompt_shown(state: State<'_, Arc<AppState>>) {
     store(&state).note_prompt_shown();
 }
 
@@ -114,7 +114,7 @@ pub struct WorkspaceHintDecision {
 /// Evaluate whether the General→Gamedev hint banner should appear (FR-9).
 #[tauri::command]
 pub fn evaluate_workspace_hint(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     req: WorkspaceHintTriggerRequest,
 ) -> WorkspaceHintDecision {
     let cfg = store(&state).snapshot();
@@ -161,7 +161,7 @@ pub struct WorkspaceHintActionRequest {
 
 #[tauri::command]
 pub fn resolve_workspace_hint(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     req: WorkspaceHintActionRequest,
 ) -> AppConfigDto {
     WORKSPACE_METRICS
@@ -175,6 +175,6 @@ pub fn resolve_workspace_hint(
 }
 
 #[tauri::command]
-pub fn note_tile_export(state: State<'_, AppState>) {
+pub fn note_tile_export(state: State<'_, Arc<AppState>>) {
     store(&state).mark_exported_tiles();
 }

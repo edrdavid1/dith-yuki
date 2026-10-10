@@ -63,13 +63,13 @@ function applyDto(dto: AppConfigDto): {
   tilingAdvanced: boolean;
   showWorkspacePrompt: boolean;
 } {
+  const workspace = dto.workspace ?? 'general';
+  const advanced = dto.advanced ?? { tiling_advanced: false };
+  // Prefer local from_config so UI stays correct even if IPC field names drift.
   return {
-    workspace: dto.workspace,
-    visibility: dto.visibility ?? uiVisibilityFromConfig({
-      workspace: dto.workspace,
-      advanced: dto.advanced,
-    }),
-    tilingAdvanced: Boolean(dto.advanced?.tiling_advanced),
+    workspace,
+    visibility: uiVisibilityFromConfig({ workspace, advanced }),
+    tilingAdvanced: Boolean(advanced.tiling_advanced),
     showWorkspacePrompt: Boolean(dto.showWorkspacePrompt),
   };
 }
@@ -106,7 +106,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         }
         setReady(true);
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error('get_app_config failed', err);
         if (!cancelled) {
           setReady(true);
         }
@@ -118,26 +119,38 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const setWorkspacePreference = useCallback(
     async (w: Workspace) => {
-      const dto = await setWorkspace(w, 'settings');
-      ingest(dto);
-      if (w === 'gamedev') setHintVisible(false);
+      try {
+        const dto = await setWorkspace(w, 'settings');
+        ingest(dto);
+        if (w === 'gamedev') setHintVisible(false);
+      } catch (err) {
+        console.error('set_workspace failed', err);
+      }
     },
     [ingest],
   );
 
   const setTilingAdvancedPreference = useCallback(
     async (enabled: boolean) => {
-      const dto = await setTilingAdvanced(enabled);
-      ingest(dto);
+      try {
+        const dto = await setTilingAdvanced(enabled);
+        ingest(dto);
+      } catch (err) {
+        console.error('set_tiling_advanced failed', err);
+      }
     },
     [ingest],
   );
 
   const resolvePrompt = useCallback(
     async (choice: Workspace, remember: boolean) => {
-      const dto = await resolveWorkspacePrompt(choice, remember);
-      ingest(dto);
-      setShowPrompt(false);
+      try {
+        const dto = await resolveWorkspacePrompt(choice, remember);
+        ingest(dto);
+        setShowPrompt(false);
+      } catch (err) {
+        console.error('resolve_workspace_prompt failed', err);
+      }
     },
     [ingest],
   );
