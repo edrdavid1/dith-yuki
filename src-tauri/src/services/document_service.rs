@@ -94,6 +94,16 @@ pub struct ExportImageRequest {
     /// Palette used for indexed PNG8 export. Defaults to the document's first palette.
     #[serde(default)]
     pub palette_id: Option<u32>,
+    /// Sprite-sheet cell width (px). When set with `sprite_cell_h`, export
+    /// processes each cell independently (ordered dither only; Phase 3.2).
+    #[serde(default)]
+    pub sprite_cell_w: Option<u32>,
+    /// Sprite-sheet cell height (px).
+    #[serde(default)]
+    pub sprite_cell_h: Option<u32>,
+    /// Layer whose raw pixels + filter stack drive sprite-sheet export.
+    #[serde(default)]
+    pub layer_id: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -328,6 +338,98 @@ pub fn encode_rgba_to_png(buffer: &[u8], width: u32, height: u32) -> Result<Vec<
         .map_err(|e| format!("PNG encoding error: {}", e))?;
 
     Ok(png_data)
+}
+
+/// Export with per-cell ordered dither (sprite sheet). PNG / PNG8 only.
+fn export_sprite_sheet_cells(
+    state: &AppState,
+    doc: &engine_project::Document,
+    width: u32,
+    height: u32,
+    cell_w: u32,
+    cell_h: u32,
+    layer_id: Option<u32>,
+    format: &str,
+    path: &str,
+    palette_id: Option<u32>,
+) -> Result<(), AppError> {
+    use engine_project::layer::LayerRef;
+    use engine_project::serialize::pixels::assemble_layer_rgba8;
+    use engine_project::{
+        flatten_bottom_to_top, process_sprite_sheet_rgba_f32, rgba8_to_f32, HeadlessOutputFormat,
+        SpriteSheetError,
+    };
+    use std::path::Path;
+    use std::sync::atomic::AtomicBool;
+
+    if !matches!(format, "PNG" | "PNG8") {
+        return Err(AppError::Generic(
+            "Sprite-sheet cell export supports PNG and PNG8 only".into(),
+        ));
+    }
+
+    let leaves: Vec<&engine_project::Layer> = flatten_bottom_to_top(&doc.root)
+        .into_iter()
+        .filter_map(|r| match r {
+            LayerRef::Leaf(l) if l.kind == engine_project::LayerKind::Raster => Some(l),
+            _ => None,
+        })
+        .collect();
+
+    let layer = if let Some(id) = layer_id {
+        leaves
+            .iter()
+            .find(|l| l.id.0 == id)
+            .copied()
+            .ok_or_else(|| AppError::Generic(format!("Layer {id} not found")))?
+    } else {
+        leaves
+            .iter()
+            .find(|l| !l.filters.is_empty())
+            .or_else(|| leaves.first())
+            .copied()
+            .ok_or_else(|| AppError::Generic("No raster layer for sprite-sheet export".into()))?
+    };
+
+    let raw = assemble_layer_rgba8(
+        &state.tiles.tile_cache,
+        layer,
+        width,
+        height,
+        doc.id.0,
+    )
+    .map_err(|e| AppError::Generic(format!("Sprite-sheet raw assemble: {e}")))?;
+    let rgba_f32 = rgba8_to_f32(&raw);
+
+    let out_format = match format {
+        "PNG8" => HeadlessOutputFormat::Png8,
+        _ => HeadlessOutputFormat::Png,
+    };
+    let cancel = AtomicBool::new(false);
+    let bytes = process_sprite_sheet_rgba_f32(
+        &rgba_f32,
+        width,
+        height,
+        cell_w,
+        cell_h,
+        &layer.filters,
+        &doc.palettes,
+        out_format,
+        palette_id,
+        &cancel,
+    )
+    .map_err(|e| match e {
+        SpriteSheetError::ErrorDiffusionNotSupported => AppError::Generic(
+            "Sprite-sheet cell export supports ordered dither only \
+             (error diffusion across cell boundaries is not available yet)."
+                .into(),
+        ),
+        other => AppError::Generic(other.to_string()),
+    })?;
+
+    engine_io::atomic_write(Path::new(path), &bytes)
+        .map_err(|e| AppError::Generic(format!("IO error: {e}")))?;
+    Ok(())
 }
 
 fn document_has_guided_palette_dither(doc: &engine_project::Document) -> bool {
@@ -976,9 +1078,28 @@ impl DocumentService {
         let req_quality = req.quality;
         let req_svg_algorithm = req.svg_algorithm.clone();
         let req_palette_id = req.palette_id;
+        let req_sprite_cell_w = req.sprite_cell_w;
+        let req_sprite_cell_h = req.sprite_cell_h;
+        let req_layer_id = req.layer_id;
         let state_clone = Arc::clone(&self.state);
 
         tauri::async_runtime::spawn_blocking(move || {
+            // Sprite-sheet cell export (Phase 3.2): ordered filters only, per-cell phase.
+            if let (Some(cell_w), Some(cell_h)) = (req_sprite_cell_w, req_sprite_cell_h) {
+                return export_sprite_sheet_cells(
+                    &state_clone,
+                    &doc_snapshot,
+                    img_width,
+                    img_height,
+                    cell_w,
+                    cell_h,
+                    req_layer_id,
+                    &req_format,
+                    &req_path,
+                    req_palette_id,
+                );
+            }
+
             // True multi-layer composite (same path as project thumbnails / Space Quick Look).
             let rgba_buffer = build_processed_composite_rgba8(
                 &state_clone.tiles.tile_cache,

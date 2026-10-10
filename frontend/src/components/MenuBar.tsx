@@ -34,7 +34,7 @@ interface MenuBarProps {
   onRedo?: () => void;
 }
 
-type MenuId = 'file' | 'edit' | 'patterns' | 'preferences' | 'help';
+type MenuId = 'file' | 'edit' | 'patterns' | 'batch' | 'preferences' | 'help';
 
 interface MenuItem {
   id: MenuId;
@@ -45,12 +45,18 @@ const MENU_ITEMS: MenuItem[] = [
   { id: 'file', label: 'File' },
   { id: 'edit', label: 'Edit' },
   { id: 'patterns', label: 'Patterns' },
+  { id: 'batch', label: 'Batch' },
   { id: 'preferences', label: 'Preferences' },
   { id: 'help', label: 'Help' },
 ];
 
 /** Top-level items that open a window directly (no dropdown). */
-const DIRECT_OPEN_MENUS: ReadonlySet<MenuId> = new Set(['patterns', 'preferences', 'help']);
+const DIRECT_OPEN_MENUS: ReadonlySet<MenuId> = new Set([
+  'patterns',
+  'batch',
+  'preferences',
+  'help',
+]);
 
 function MenuBar({
   hasDocument,
@@ -113,6 +119,11 @@ function MenuBar({
       setOpenMenu(null);
       return;
     }
+    if (id === 'batch') {
+      if (hasDocument && onBatchExport) onBatchExport();
+      setOpenMenu(null);
+      return;
+    }
     if (id === 'preferences') {
       onOpenPreferences();
       setOpenMenu(null);
@@ -124,7 +135,7 @@ function MenuBar({
       return;
     }
     setOpenMenu(prev => (prev === id ? null : id));
-  }, [onOpenPatterns, onOpenPreferences, onOpenHelp]);
+  }, [hasDocument, onBatchExport, onOpenPatterns, onOpenPreferences, onOpenHelp]);
 
   const handleMenuHover = useCallback((id: MenuId) => {
     // Only switch on hover if a dropdown is already open
@@ -198,6 +209,7 @@ function MenuBar({
                 </div>
               </div>
             )}
+            <div className={cn('menubar-separator')} role="separator" />
             <button
               className={cn("menubar-dropdown-item")}
               role="menuitem"
@@ -224,13 +236,14 @@ function MenuBar({
             >
               <span>Share Copy…</span>
             </button>
+            <div className={cn('menubar-separator')} role="separator" />
             <button
               className={cn("menubar-dropdown-item")}
               role="menuitem"
               onClick={() => handleAction(onSaveImage)}
               disabled={!hasDocument}
             >
-              Save/Export
+              Export
             </button>
             <button
               className={cn('menubar-dropdown-item')}
@@ -248,14 +261,7 @@ function MenuBar({
             >
               Export ASCII…
             </button>
-            <button
-              className={cn('menubar-dropdown-item')}
-              role="menuitem"
-              onClick={() => onBatchExport && handleAction(onBatchExport)}
-              disabled={!hasDocument || !onBatchExport}
-            >
-              Batch Export…
-            </button>
+            <div className={cn('menubar-separator')} role="separator" />
             <button
               className={cn('menubar-dropdown-item')}
               role="menuitem"
@@ -329,21 +335,26 @@ function MenuBar({
 
   return (
     <div className={cn("menubar")} ref={menuBarRef} role="menubar">
-      {MENU_ITEMS.map((item) => (
-        <div className={cn("menubar-item")} key={item.id}>
-          <button
-            className={cn('toolbar-btn', openMenu === item.id && 'toolbar-btn-active')}
-            onClick={() => handleMenuClick(item.id)}
-            onMouseEnter={() => handleMenuHover(item.id)}
-            role="menuitem"
-            aria-haspopup={!DIRECT_OPEN_MENUS.has(item.id)}
-            aria-expanded={openMenu === item.id}
-          >
-            {item.label}
-          </button>
-          {renderDropdown(item.id)}
-        </div>
-      ))}
+      {MENU_ITEMS.map((item) => {
+        const disabled =
+          item.id === 'batch' && (!hasDocument || !onBatchExport);
+        return (
+          <div className={cn("menubar-item")} key={item.id}>
+            <button
+              className={cn('toolbar-btn', openMenu === item.id && 'toolbar-btn-active')}
+              onClick={() => handleMenuClick(item.id)}
+              onMouseEnter={() => handleMenuHover(item.id)}
+              role="menuitem"
+              aria-haspopup={!DIRECT_OPEN_MENUS.has(item.id)}
+              aria-expanded={openMenu === item.id}
+              disabled={disabled}
+            >
+              {item.label}
+            </button>
+            {renderDropdown(item.id)}
+          </div>
+        );
+      })}
     </div>
   );
 }

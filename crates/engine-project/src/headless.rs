@@ -111,7 +111,7 @@ fn filters_have_guided(filters: &[FilterInstance]) -> bool {
     })
 }
 
-fn encode_rgba_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, HeadlessError> {
+pub(crate) fn encode_rgba_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, HeadlessError> {
     use image::codecs::png::PngEncoder;
     use image::ImageEncoder;
     use std::io::Cursor;

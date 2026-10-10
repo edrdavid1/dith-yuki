@@ -1,9 +1,11 @@
+import { useMemo } from 'react';
 import type { DitherModeV2 } from '../../../types';
 import { clampParam } from '../../../types/effects';
 import Slider from '../../../components/common/Slider';
 import DropdownMenu from '../../../components/common/DropdownMenu';
 import { useAppSelector } from '../../../app/hooks';
 import { openDialog } from '../../../shared/ipc';
+import { checkSeamless, seamlessWarningLines } from '../../../shared/seamless';
 import panelStyles from '../EffectSettingsPanel.module.css';
 import paramStyles from '../../../shared/ui/ParamControls.module.css';
 import inputStyles from '../../../shared/ui/ParamInput.module.css';
@@ -175,6 +177,8 @@ function guidedChannelLevels(mode: unknown): number | null {
  */
 function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
   const lastCreatedId = useAppSelector((s) => s.palettes.lastCreatedId);
+  const docWidth = useAppSelector((s) => s.document.width) ?? 0;
+  const docHeight = useAppSelector((s) => s.document.height) ?? 0;
   const boundPaletteId =
     lastCreatedId ?? (typeof params.palette_id === 'number' ? params.palette_id : null);
   const mode = params.mode ?? 'floyd_steinberg';
@@ -190,6 +194,17 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
   const patternAngle = Number(params.pattern_angle ?? 0);
   const simpleMode = modeToSimple(mode);
   const customPath = modeToCustomPath(mode);
+  const seamlessLines = useMemo(() => {
+    if (docWidth <= 0 || docHeight <= 0) return [];
+    const report = checkSeamless({
+      mode: simpleMode,
+      pixelSize,
+      patternAngle,
+      width: docWidth,
+      height: docHeight,
+    });
+    return seamlessWarningLines(report, docWidth, docHeight);
+  }, [simpleMode, pixelSize, patternAngle, docWidth, docHeight]);
 
   const isOrderedMode = [
     'bayer_2x2',
@@ -342,6 +357,16 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
           ? 'Suitable for animation — pattern stays stable across frames.'
           : 'May flicker between frames — error diffusion is not temporally stable.'}
       </p>
+
+      {seamlessLines.map((line) => (
+        <p
+          key={line.slice(0, 48)}
+          className={cn('effect-palette-hint')}
+          title="Seamless / tileable texture check"
+        >
+          {line}
+        </p>
+      ))}
 
       {simpleMode === 'custom_png' && (
         <div className={cn('threshold-map-row')}>

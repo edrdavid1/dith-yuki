@@ -149,12 +149,15 @@ export function useDocument() {
           quality: options.quality,
           filename,
           svg_algorithm: options.svg_algorithm,
+          sprite_cell_w: options.sprite_cell_w,
+          sprite_cell_h: options.sprite_cell_h,
+          layer_id: selectedLayerId ?? undefined,
         })
       );
     } catch {
       // Dialog cancel / IPC errors handled in thunk
     }
-  }, [dispatch, state.docId, state.projectPath, state.sourcePath]);
+  }, [dispatch, selectedLayerId, state.docId, state.projectPath, state.sourcePath]);
 
   const exportPrintFn = useCallback(async () => {
     if (!state.docId) return;

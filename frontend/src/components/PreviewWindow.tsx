@@ -64,6 +64,7 @@ export default function PreviewWindow({
   const filters = useAppSelector(selectFiltersList);
   const hasAscii = filters.some((f) => f.kind === 'Ascii' && f.enabled);
   const [asciiPreview, setAsciiPreviewState] = useState(true);
+  const [tileRepeat3x3, setTileRepeat3x3] = useState(false);
   const [fullDocumentBusy, setFullDocumentBusy] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
@@ -251,6 +252,7 @@ export default function PreviewWindow({
           docHeight={docHeight}
           viewport={viewport}
           onViewportChange={handleViewportChange}
+          tileRepeat3x3={tileRepeat3x3}
         />
         {fullDocumentBusy && (
           <div className={cn('preview-loading')} role="status" aria-live="polite">
@@ -289,6 +291,16 @@ export default function PreviewWindow({
               </Tooltip>
             </span>
           )}
+          <Tooltip label="Repeat preview in a 3×3 grid to inspect tile seams">
+            <button
+              type="button"
+              className={cn('pv-ascii-mode-btn', tileRepeat3x3 && 'pv-ascii-mode-btn-active')}
+              aria-pressed={tileRepeat3x3}
+              onClick={() => setTileRepeat3x3((v) => !v)}
+            >
+              3×3
+            </button>
+          </Tooltip>
         </span>
         <div className={cn('pv-footer-zoom')}>
           <Tooltip label="Zoom out">

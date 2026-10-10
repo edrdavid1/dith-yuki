@@ -20,6 +20,8 @@ pub mod error;
 pub mod filter;
 pub mod filters;
 pub mod headless;
+pub mod seamless;
+pub mod sprite_sheet;
 pub mod invalidation;
 pub mod layer;
 pub mod mask;
@@ -43,6 +45,13 @@ pub use headless::{
     expand_output_name, palette_from_srgb, run_headless_batch, run_headless_job,
     run_headless_job_cancellable, HeadlessError, HeadlessJob, HeadlessJobResult,
     HeadlessOutputFormat,
+};
+pub use seamless::{
+    check_seamless, nearest_multiples, ordered_matrix_side, pattern_angle_breaks_periodicity,
+    pattern_period_px, seamless_warning_lines, SeamlessKind, SeamlessReport,
+};
+pub use sprite_sheet::{
+    process_sprite_sheet_rgba_f32, rgba8_to_f32, SpriteSheetError,
 };
 pub use invalidation::{
     invalidate_layer_filter_changed, invalidate_layer_props_changed,

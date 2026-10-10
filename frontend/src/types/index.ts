@@ -226,4 +226,7 @@ export interface ExportImageRequest {
   quality?: number;
   svg_algorithm?: 'greedy_meshing' | 'contour_tracing';
   palette_id?: number;
+  sprite_cell_w?: number;
+  sprite_cell_h?: number;
+  layer_id?: number;
 }
