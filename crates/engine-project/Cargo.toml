@@ -52,3 +52,7 @@ harness = false
 [[bench]]
 name = "filter_bench"
 harness = false
+
+[[bench]]
+name = "wrap_padding_false_bench"
+harness = false
