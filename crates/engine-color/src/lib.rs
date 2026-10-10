@@ -11,7 +11,9 @@
 
 pub mod auto_interpolate;
 pub mod brightness_sorted;
+pub mod display_rgb;
 pub mod harmony;
+pub mod icc_precheck;
 pub mod kdtree;
 pub mod oklab;
 pub mod oklch;
@@ -19,19 +21,21 @@ pub mod palette;
 pub mod palette_cache;
 pub mod palette_guided;
 pub mod palette_lut;
-pub mod ramps;
 pub mod preview_encode;
+pub mod ramps;
 pub mod soft_proof;
 pub mod threshold_map;
 
+pub use display_rgb::{DisplayRgbF32, LinearRgbF32};
+pub use icc_precheck::precheck_icc_bytes;
 pub use preview_encode::{
     delta_e2000, delta_e2000_srgb8, encode_preview_rgb, encode_preview_rgba, linear_to_srgb_f32,
     srgb_f32_to_linear, SrgbEncodeLut,
 };
 pub use soft_proof::{
     soft_proof_config_hash, SoftProofConfig, SoftProofError, SoftProofIntent, SoftProofLut3D,
-    SoftProofTransform, BUILTIN_FOGRA51_ID, BUILTIN_FOGRA51_ICC, BUILTIN_FOGRA52_ID,
-    DEFAULT_PROOF_LUT_SIZE, LUT_MAX_DELTA_E2000,
+    SoftProofTransform, BUILTIN_FOGRA51_ICC, BUILTIN_FOGRA51_ID, BUILTIN_FOGRA52_ID,
+    DEFAULT_PROOF_LUT_SIZE, FALLBACK_PROOF_LUT_SIZE, LUT_MAX_DELTA_E2000, LUT_SIZE_CANDIDATES,
 };
 
 pub use auto_interpolate::{auto_interpolate, would_auto_interpolate, AutoInterpolateResult};

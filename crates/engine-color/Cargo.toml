@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 description = "ICC profiles, LUT, linear color space conversions"
 
+[features]
+default = []
+# Expose SoftProofTransform::gpu_lut_volume for a future preview shader path.
+gpu-lut = []
+
 [dependencies]
 engine-core = { path = "../engine-core" }
 engine-io = { path = "../engine-io" }

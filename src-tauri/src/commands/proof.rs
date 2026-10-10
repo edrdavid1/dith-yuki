@@ -35,8 +35,10 @@ pub async fn proof_import_profile(
 ) -> Result<ProfileInfoDto, String> {
     let svc = proof_service(state.inner())?;
     let path = PathBuf::from(path);
-    // Import on a blocking pool with a soft timeout so a huge/hostile ICC cannot
-    // freeze the UI thread.
+    // Blocking pool + waiter timeout: UI unblocks, but the worker is NOT killed
+    // (silent CPU DoS until the job ends). Structural `precheck_icc_bytes` rejects
+    // most hostile files before moxcms; a killable subprocess is the stronger
+    // follow-up if import is exposed to untrusted batch paths.
     let import = tokio::task::spawn_blocking(move || svc.import_profile(path.as_path()));
     match tokio::time::timeout(std::time::Duration::from_secs(15), import).await {
         Ok(Ok(result)) => result.map_err(Into::into),
@@ -103,8 +105,7 @@ pub fn proof_set_config(
             .into_iter()
             .find(|p| p.id == config.profile_id)
         {
-            config.profile_display_name =
-                Some(SoftProofConfig::sanitize_display_name(&info.name));
+            config.profile_display_name = Some(SoftProofConfig::sanitize_display_name(&info.name));
         }
     }
 

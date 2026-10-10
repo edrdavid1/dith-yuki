@@ -98,7 +98,9 @@ fn stats(mox: &SoftProofTransform, bpc_for_lcms: bool) -> (f64, f64, usize) {
 fn fogra51_relative_no_bpc_max_delta_e2000() {
     let mox = moxcms_proof(SoftProofIntent::Relative, false);
     let (max_de, mean, n) = stats(&mox, false);
-    eprintln!("lcms golden FOGRA51 Relative (no BPC): n={n} maxΔE2000={max_de:.3} meanΔE2000={mean:.3}");
+    eprintln!(
+        "lcms golden FOGRA51 Relative (no BPC): n={n} maxΔE2000={max_de:.3} meanΔE2000={mean:.3}"
+    );
     assert!(
         max_de < MAX_DELTA_E2000_NO_BPC,
         "max ΔE2000={max_de:.3} exceeds {MAX_DELTA_E2000_NO_BPC}"

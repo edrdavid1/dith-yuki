@@ -44,7 +44,13 @@ opt-level = 2
 [profile.dev.package.dither]
 opt-level = 2
 
-# Preview / shell components: size-optimized, panic=unwind for catch_unwind across FFI.
+# Soft-proof / zip / shell use catch_unwind around hostile input. Do not set
+# panic = "abort" on the workspace release profile — that makes catch_unwind a
+# no-op and a moxcms panic would kill the app.
+[profile.release]
+panic = "unwind"
+
+# Preview / shell components: size-optimized (panic strategy inherits unwind above).
 [profile.release.package.dither-zip-safe]
 opt-level = "s"
 [profile.release.package.dither-thumb]

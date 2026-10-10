@@ -29,11 +29,71 @@ pub const BUILTIN_FOGRA52_ID: &str = "builtin:fogra52";
 pub static BUILTIN_FOGRA51_ICC: &[u8] =
     include_bytes!("../../../src-tauri/cmyk/pso-coated_v3/PSOcoated_v3.icc");
 
-/// Default 3D LUT grid (33³). Larger grids can be built via [`SoftProofTransform::with_lut_size`].
+/// Preferred 3D LUT grid. If the ΔE budget fails, build tries [`FALLBACK_PROOF_LUT_SIZE`].
 pub const DEFAULT_PROOF_LUT_SIZE: usize = 33;
+/// Fallback grid when 33³ fails the probe budget; if this also fails → exact f32 path.
+pub const FALLBACK_PROOF_LUT_SIZE: usize = 49;
 
-/// Max ΔE2000 vs exact f32 transform to accept a baked LUT.
+/// Max ΔE2000 vs exact f32 transform to accept a baked LUT (near-black + gamut probes).
 pub const LUT_MAX_DELTA_E2000: f64 = 1.0;
+
+/// LUT sizes tried in order when constructing a transform (exact path if all fail).
+pub const LUT_SIZE_CANDIDATES: &[usize] = &[DEFAULT_PROOF_LUT_SIZE, FALLBACK_PROOF_LUT_SIZE];
+
+/// Probe set for LUT ΔE budget: coarse grid + near-black + primaries / secondaries
+/// (CMYK gamut corners after proof tend to stress tetrahedral cells).
+const LUT_PROBE_POINTS: &[[f32; 3]] = &[
+    // Coarse lattice
+    [0.0, 0.0, 0.0],
+    [0.25, 0.25, 0.25],
+    [0.5, 0.5, 0.5],
+    [0.75, 0.75, 0.75],
+    [1.0, 1.0, 1.0],
+    // Near-black (worst tetrahedral cells)
+    [0.01, 0.01, 0.01],
+    [0.02, 0.0, 0.0],
+    [0.0, 0.02, 0.0],
+    [0.0, 0.0, 0.02],
+    [0.04, 0.03, 0.02],
+    // Primaries / secondaries (gamut boundary)
+    [1.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0],
+    [0.0, 0.0, 1.0],
+    [1.0, 1.0, 0.0],
+    [0.0, 1.0, 1.0],
+    [1.0, 0.0, 1.0],
+    // Mid-gamut skin / memory colors
+    [0.87, 0.64, 0.53],
+    [0.2, 0.4, 0.8],
+    [0.9, 0.2, 0.1],
+];
+
+/// Gray-axis / K-ramp: LUT luma must be non-decreasing as input gray rises
+/// (no “steps” that reverse tone). Compares adjacent samples on t∈[0,1].
+fn lut_gray_axis_monotone(lut: &SoftProofLut3D, exact: &SoftProofTransform) -> bool {
+    let mut prev_y = -1.0f32;
+    let n = 32;
+    for i in 0..=n {
+        let t = i as f32 / n as f32;
+        let approx = lut.lookup(t, t, t);
+        let y = 0.2126 * approx[0] + 0.7152 * approx[1] + 0.0722 * approx[2];
+        if i > 0 && y + 0.02 < prev_y {
+            // Allow tiny noise; reject clear reversals.
+            return false;
+        }
+        // Also stay close to exact on the gray ramp (banding / step guard).
+        let mut e = [0f32; 3];
+        if exact.apply_cms_exact(&[t, t, t], &mut e).is_err() {
+            return false;
+        }
+        let ye = 0.2126 * e[0] + 0.7152 * e[1] + 0.0722 * e[2];
+        if (y - ye).abs() > 0.04 {
+            return false;
+        }
+        prev_y = y;
+    }
+    true
+}
 
 /// Per-document soft-proof settings (persisted in `.dyproj` `document.json`).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -162,6 +222,10 @@ pub struct ProofProfile {
 
 impl ProofProfile {
     pub fn from_icc_bytes(bytes: &[u8]) -> Result<Self, SoftProofError> {
+        // Structural reject before moxcms (timeout on import does not kill the worker).
+        crate::icc_precheck::precheck_icc_bytes(bytes)?;
+
+        // Requires workspace `[profile.release] panic = "unwind"` — abort makes this a no-op.
         let profile = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             ColorProfile::new_from_slice(bytes)
         }))
@@ -191,13 +255,9 @@ impl ProofProfile {
     }
 
     pub fn black_point_xyz(&self) -> Option<[f32; 3]> {
-        self.profile.black_point.map(|bp| {
-            [
-                bp.x as f32,
-                bp.y as f32,
-                bp.z as f32,
-            ]
-        })
+        self.profile
+            .black_point
+            .map(|bp| [bp.x as f32, bp.y as f32, bp.z as f32])
     }
 }
 
@@ -318,45 +378,99 @@ impl SoftProofLut3D {
             if tg > tb {
                 // r > g > b
                 [
-                    c000[0] + tr * (c100[0] - c000[0]) + tg * (c110[0] - c100[0]) + tb * (c111[0] - c110[0]),
-                    c000[1] + tr * (c100[1] - c000[1]) + tg * (c110[1] - c100[1]) + tb * (c111[1] - c110[1]),
-                    c000[2] + tr * (c100[2] - c000[2]) + tg * (c110[2] - c100[2]) + tb * (c111[2] - c110[2]),
+                    c000[0]
+                        + tr * (c100[0] - c000[0])
+                        + tg * (c110[0] - c100[0])
+                        + tb * (c111[0] - c110[0]),
+                    c000[1]
+                        + tr * (c100[1] - c000[1])
+                        + tg * (c110[1] - c100[1])
+                        + tb * (c111[1] - c110[1]),
+                    c000[2]
+                        + tr * (c100[2] - c000[2])
+                        + tg * (c110[2] - c100[2])
+                        + tb * (c111[2] - c110[2]),
                 ]
             } else if tr > tb {
                 // r > b > g
                 [
-                    c000[0] + tr * (c100[0] - c000[0]) + tb * (c101[0] - c100[0]) + tg * (c111[0] - c101[0]),
-                    c000[1] + tr * (c100[1] - c000[1]) + tb * (c101[1] - c100[1]) + tg * (c111[1] - c101[1]),
-                    c000[2] + tr * (c100[2] - c000[2]) + tb * (c101[2] - c100[2]) + tg * (c111[2] - c101[2]),
+                    c000[0]
+                        + tr * (c100[0] - c000[0])
+                        + tb * (c101[0] - c100[0])
+                        + tg * (c111[0] - c101[0]),
+                    c000[1]
+                        + tr * (c100[1] - c000[1])
+                        + tb * (c101[1] - c100[1])
+                        + tg * (c111[1] - c101[1]),
+                    c000[2]
+                        + tr * (c100[2] - c000[2])
+                        + tb * (c101[2] - c100[2])
+                        + tg * (c111[2] - c101[2]),
                 ]
             } else {
                 // b > r > g
                 [
-                    c000[0] + tb * (c001[0] - c000[0]) + tr * (c101[0] - c001[0]) + tg * (c111[0] - c101[0]),
-                    c000[1] + tb * (c001[1] - c000[1]) + tr * (c101[1] - c001[1]) + tg * (c111[1] - c101[1]),
-                    c000[2] + tb * (c001[2] - c000[2]) + tr * (c101[2] - c001[2]) + tg * (c111[2] - c101[2]),
+                    c000[0]
+                        + tb * (c001[0] - c000[0])
+                        + tr * (c101[0] - c001[0])
+                        + tg * (c111[0] - c101[0]),
+                    c000[1]
+                        + tb * (c001[1] - c000[1])
+                        + tr * (c101[1] - c001[1])
+                        + tg * (c111[1] - c101[1]),
+                    c000[2]
+                        + tb * (c001[2] - c000[2])
+                        + tr * (c101[2] - c001[2])
+                        + tg * (c111[2] - c101[2]),
                 ]
             }
         } else if tb > tg {
             // b > g > r
             [
-                c000[0] + tb * (c001[0] - c000[0]) + tg * (c011[0] - c001[0]) + tr * (c111[0] - c011[0]),
-                c000[1] + tb * (c001[1] - c000[1]) + tg * (c011[1] - c001[1]) + tr * (c111[1] - c011[1]),
-                c000[2] + tb * (c001[2] - c000[2]) + tg * (c011[2] - c001[2]) + tr * (c111[2] - c011[2]),
+                c000[0]
+                    + tb * (c001[0] - c000[0])
+                    + tg * (c011[0] - c001[0])
+                    + tr * (c111[0] - c011[0]),
+                c000[1]
+                    + tb * (c001[1] - c000[1])
+                    + tg * (c011[1] - c001[1])
+                    + tr * (c111[1] - c011[1]),
+                c000[2]
+                    + tb * (c001[2] - c000[2])
+                    + tg * (c011[2] - c001[2])
+                    + tr * (c111[2] - c011[2]),
             ]
         } else if tb > tr {
             // g > b > r
             [
-                c000[0] + tg * (c010[0] - c000[0]) + tb * (c011[0] - c010[0]) + tr * (c111[0] - c011[0]),
-                c000[1] + tg * (c010[1] - c000[1]) + tb * (c011[1] - c010[1]) + tr * (c111[1] - c011[1]),
-                c000[2] + tg * (c010[2] - c000[2]) + tb * (c011[2] - c010[2]) + tr * (c111[2] - c011[2]),
+                c000[0]
+                    + tg * (c010[0] - c000[0])
+                    + tb * (c011[0] - c010[0])
+                    + tr * (c111[0] - c011[0]),
+                c000[1]
+                    + tg * (c010[1] - c000[1])
+                    + tb * (c011[1] - c010[1])
+                    + tr * (c111[1] - c011[1]),
+                c000[2]
+                    + tg * (c010[2] - c000[2])
+                    + tb * (c011[2] - c010[2])
+                    + tr * (c111[2] - c011[2]),
             ]
         } else {
             // g > r > b
             [
-                c000[0] + tg * (c010[0] - c000[0]) + tr * (c110[0] - c010[0]) + tb * (c111[0] - c110[0]),
-                c000[1] + tg * (c010[1] - c000[1]) + tr * (c110[1] - c010[1]) + tb * (c111[1] - c110[1]),
-                c000[2] + tg * (c010[2] - c000[2]) + tr * (c110[2] - c010[2]) + tb * (c111[2] - c110[2]),
+                c000[0]
+                    + tg * (c010[0] - c000[0])
+                    + tr * (c110[0] - c010[0])
+                    + tb * (c111[0] - c110[0]),
+                c000[1]
+                    + tg * (c010[1] - c000[1])
+                    + tr * (c110[1] - c010[1])
+                    + tb * (c111[1] - c110[1]),
+                c000[2]
+                    + tg * (c010[2] - c000[2])
+                    + tr * (c110[2] - c010[2])
+                    + tb * (c111[2] - c110[2]),
             ]
         };
         out
@@ -389,7 +503,7 @@ impl SoftProofTransform {
         intent: SoftProofIntent,
         bpc_requested: bool,
     ) -> Result<Self, SoftProofError> {
-        Self::build(proof, intent, bpc_requested, Some(DEFAULT_PROOF_LUT_SIZE))
+        Self::build(proof, intent, bpc_requested, Some(LUT_SIZE_CANDIDATES))
     }
 
     /// Build without attempting a 3D LUT (exact f32 path only).
@@ -407,14 +521,15 @@ impl SoftProofTransform {
         bpc_requested: bool,
         lut_size: usize,
     ) -> Result<Self, SoftProofError> {
-        Self::build(proof, intent, bpc_requested, Some(lut_size.max(2)))
+        let size = lut_size.max(2);
+        Self::build(proof, intent, bpc_requested, Some(&[size]))
     }
 
     fn build(
         proof: &ProofProfile,
         intent: SoftProofIntent,
         bpc_requested: bool,
-        lut_size: Option<usize>,
+        lut_sizes: Option<&[usize]>,
     ) -> Result<Self, SoftProofError> {
         if matches!(intent, SoftProofIntent::Perceptual) && !proof.info.has_perceptual {
             return Err(SoftProofError::Transform(
@@ -482,9 +597,20 @@ impl SoftProofTransform {
             xform.src_bp = xform.measure_black_point(proof);
         }
 
-        if let Some(size) = lut_size {
-            if let Some(lut) = xform.try_build_lut(size) {
-                xform.lut = Some(lut);
+        if let Some(sizes) = lut_sizes {
+            for &size in sizes {
+                if let Some(lut) = xform.try_build_lut(size) {
+                    log::info!(
+                        target: "soft_proof",
+                        "3D LUT accepted size={size}³ (exact path unused)"
+                    );
+                    xform.lut = Some(lut);
+                    break;
+                }
+                log::info!(
+                    target: "soft_proof",
+                    "3D LUT rejected size={size}³; trying next candidate or exact f32"
+                );
             }
         }
 
@@ -563,42 +689,59 @@ impl SoftProofTransform {
             return None;
         }
 
-        // Validate ΔE budget on a coarse probe grid vs exact.
-        let probes = [0.0f32, 0.25, 0.5, 0.75, 1.0];
         let lut = SoftProofLut3D {
             size: n,
             data: data.clone(),
         };
         let mut max_de = 0.0f64;
-        for &r in &probes {
-            for &g in &probes {
-                for &b in &probes {
-                    let mut exact = [0f32; 3];
-                    if self.apply_cms_exact(&[r, g, b], &mut exact).is_err() {
-                        return None;
-                    }
-                    let approx = lut.lookup(r, g, b);
-                    let a = [
-                        (exact[0] * 255.0 + 0.5) as u8,
-                        (exact[1] * 255.0 + 0.5) as u8,
-                        (exact[2] * 255.0 + 0.5) as u8,
-                    ];
-                    let c = [
-                        (approx[0].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
-                        (approx[1].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
-                        (approx[2].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
-                    ];
-                    max_de = max_de.max(delta_e2000_srgb8(a, c));
-                }
+        for p in LUT_PROBE_POINTS {
+            let [r, g, b] = *p;
+            let mut exact = [0f32; 3];
+            if self.apply_cms_exact(&[r, g, b], &mut exact).is_err() {
+                return None;
             }
+            let approx = lut.lookup(r, g, b);
+            let a = [
+                (exact[0] * 255.0 + 0.5) as u8,
+                (exact[1] * 255.0 + 0.5) as u8,
+                (exact[2] * 255.0 + 0.5) as u8,
+            ];
+            let c = [
+                (approx[0].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+                (approx[1].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+                (approx[2].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+            ];
+            max_de = max_de.max(delta_e2000_srgb8(a, c));
         }
         if max_de > LUT_MAX_DELTA_E2000 {
             log::warn!(
-                "soft-proof 3D LUT rejected: max ΔE2000={max_de:.3} > {LUT_MAX_DELTA_E2000}"
+                "soft-proof 3D LUT rejected: size={n} max ΔE2000={max_de:.3} > {LUT_MAX_DELTA_E2000}"
             );
             return None;
         }
+        if !lut_gray_axis_monotone(&lut, self) {
+            log::warn!("soft-proof 3D LUT rejected: size={n} gray-axis non-monotone");
+            return None;
+        }
         Some(lut)
+    }
+
+    /// Soft-proof display-referred pixels (Composite convention).
+    pub fn apply_display_rgb(
+        &self,
+        src: &[crate::display_rgb::DisplayRgbF32],
+        dst: &mut [crate::display_rgb::DisplayRgbF32],
+    ) -> Result<(), SoftProofError> {
+        if src.len() != dst.len() {
+            return Err(SoftProofError::BufferLength);
+        }
+        let enc = crate::display_rgb::DisplayRgbF32::unpack_to_interleaved(src);
+        let mut out = vec![0f32; enc.len()];
+        self.apply_srgb_f32(&enc, &mut out)?;
+        for (i, chunk) in out.chunks_exact(3).enumerate() {
+            dst[i] = crate::display_rgb::DisplayRgbF32::new(chunk[0], chunk[1], chunk[2]);
+        }
+        Ok(())
     }
 
     /// Soft-proof packed sRGB-encoded f32 RGB pixels: `src` → `dst` (both [0,1] * 3N).
@@ -618,14 +761,11 @@ impl SoftProofTransform {
         self.apply_cms_exact(src, dst)
     }
 
-    /// GPU path (P1): upload [`SoftProofLut3D::as_rgb_f32_volume`] as a 3D texture and
-    /// sample in the preview shader. Color remains authored in Rust; this is only a
-    /// sampling acceleration once the CPU LUT ΔE budget is met (already gated in build).
-    #[allow(dead_code)]
+    /// GPU path: upload [`SoftProofLut3D::as_rgb_f32_volume`] as a 3D texture.
+    /// Gated behind the `gpu-lut` feature so unused volume export does not accumulate.
+    #[cfg(feature = "gpu-lut")]
     pub fn gpu_lut_volume(&self) -> Option<(usize, &[f32])> {
-        self.lut
-            .as_ref()
-            .map(|l| (l.size, l.as_rgb_f32_volume()))
+        self.lut.as_ref().map(|l| (l.size, l.as_rgb_f32_volume()))
     }
 
     /// Soft-proof packed sRGB8 RGB pixels: `src` → `dst`.
@@ -782,9 +922,15 @@ mod tests {
         xform.apply_linear_rgb_f32(&linear, &mut out).unwrap();
 
         let white = &out[12..15];
-        assert!(white[0] > 230 && white[1] > 230 && white[2] > 230, "white={white:?}");
+        assert!(
+            white[0] > 230 && white[1] > 230 && white[2] > 230,
+            "white={white:?}"
+        );
         let black = &out[15..18];
-        assert!(black[0] < 40 && black[1] < 40 && black[2] < 40, "black={black:?}");
+        assert!(
+            black[0] < 40 && black[1] < 40 && black[2] < 40,
+            "black={black:?}"
+        );
     }
 
     #[test]

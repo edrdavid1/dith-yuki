@@ -203,7 +203,10 @@ impl ProofService {
     }
 
     pub fn has_profile(&self, id: &str) -> bool {
-        self.profiles.lock().expect("proof profiles").contains_key(id)
+        self.profiles
+            .lock()
+            .expect("proof profiles")
+            .contains_key(id)
     }
 
     /// If the configured profile is missing, disable proof (user re-enables after import).
@@ -212,9 +215,8 @@ impl ProofService {
             return false;
         }
         if cfg.profile_display_name.is_none() {
-            cfg.profile_display_name = Some(SoftProofConfig::sanitize_display_name(
-                &cfg.profile_id,
-            ));
+            cfg.profile_display_name =
+                Some(SoftProofConfig::sanitize_display_name(&cfg.profile_id));
         }
         let changed = cfg.enabled;
         cfg.enabled = false;
@@ -361,7 +363,11 @@ fn load_fogra52_icc() -> Option<(String, Vec<u8>)> {
     }
     // Any CMYK ICC in the folder whose content is not identical to FOGRA51.
     let fogra51_hash = sha256_hex(BUILTIN_FOGRA51_ICC);
-    let mut entries: Vec<_> = fs::read_dir(&dir).ok()?.flatten().map(|e| e.path()).collect();
+    let mut entries: Vec<_> = fs::read_dir(&dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .collect();
     entries.sort();
     for path in entries {
         if path.extension().and_then(|e| e.to_str()) != Some("icc") {
@@ -376,7 +382,12 @@ fn load_fogra52_icc() -> Option<(String, Vec<u8>)> {
             continue;
         }
         if let Ok(proof) = ProofProfile::from_icc_bytes(&bytes) {
-            let name = if proof.info.description.to_ascii_lowercase().contains("uncoated") {
+            let name = if proof
+                .info
+                .description
+                .to_ascii_lowercase()
+                .contains("uncoated")
+            {
                 proof.info.description
             } else {
                 format!("{} (FOGRA52)", proof.info.description)

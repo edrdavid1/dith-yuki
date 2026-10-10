@@ -24,8 +24,12 @@ pub enum PreviewServe {
     Pending,
 }
 
-/// Byte budget for preview RGBA8 LRU (~64 MiB ≈ 256 tiles).
-const PROOF_CACHE_BYTE_BUDGET: usize = 64 * 1024 * 1024;
+/// Byte budget for preview RGBA8 LRU.
+///
+/// A visible 4K RGBA8 framebuffer is ~33 MiB. Proof on + off both reside in this
+/// cache for toggle revisit, so 64 MiB evicts the working set. 256 MiB holds
+/// roughly three 4K screens of dual-state tiles with headroom.
+const PROOF_CACHE_BYTE_BUDGET: usize = 256 * 1024 * 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct ProofCacheKey {
@@ -84,10 +88,7 @@ impl PreviewRgba8Cache {
             return;
         }
         while *bytes + rgba8.len() > PROOF_CACHE_BYTE_BUDGET && !map.is_empty() {
-            let victim = map
-                .iter()
-                .min_by_key(|(_, e)| e.last_used)
-                .map(|(k, _)| *k);
+            let victim = map.iter().min_by_key(|(_, e)| e.last_used).map(|(k, _)| *k);
             if let Some(v) = victim {
                 if let Some(old) = map.remove(&v) {
                     *bytes = bytes.saturating_sub(old.rgba8.len());

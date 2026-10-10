@@ -1,11 +1,11 @@
 //! Unified display preview encode for Composite tiles.
 //!
-//! **Working buffer convention:** Composite/`decode_*` store RGB as `u8/255`
-//! (display-referred / sRGB-encoded), not optical linear. Preview must not apply
-//! an extra sRGB transfer on proof-off — that double-encodes and looks muddy.
+//! Working buffers are [`crate::display_rgb::DisplayRgbF32`] values (`u8/255`),
+//! not [`crate::display_rgb::LinearRgbF32`]. Preview must not apply an extra
+//! sRGB transfer on proof-off — that double-encodes and looks muddy.
 //!
 //! - Proof off: `clamp(c) * 255` (same as historical `f32_tile_to_rgba8`)
-//! - Proof on: CMS on those encoded values → u8
+//! - Proof on: CMS on those display-referred values → u8
 //!
 //! Export may share this buffer convention; soft-proof never touches export.
 
@@ -262,8 +262,7 @@ pub fn delta_e2000(lab1: [f64; 3], lab2: [f64; 3]) -> f64 {
         (h1p + h2p - 360.0) / 2.0
     };
 
-    let t = 1.0
-        - 0.17 * ((h_bar - 30.0).to_radians()).cos()
+    let t = 1.0 - 0.17 * ((h_bar - 30.0).to_radians()).cos()
         + 0.24 * ((2.0 * h_bar).to_radians()).cos()
         + 0.32 * ((3.0 * h_bar + 6.0).to_radians()).cos()
         - 0.20 * ((4.0 * h_bar - 63.0).to_radians()).cos();
