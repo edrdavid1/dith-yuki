@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import styles from '../features/document/NewProjectDialog.module.css';
 import { bind } from '../shared/ui/cn';
 import { DialogTitlebar } from '../shared/ui/WindowTitlebar';
+import { useWorkspaceOptional } from '../features/workspace/WorkspaceContext';
 
 const cn = bind(styles);
 
@@ -57,6 +58,8 @@ export function extensionForFormat(format: ImageExportFormat): string {
 }
 
 export default function ExportImageDialog({ isOpen, onExport, onClose }: ExportImageDialogProps) {
+  const workspace = useWorkspaceOptional();
+  const showTileSize = workspace?.visibility.showTileSizeSetting ?? false;
   const [format, setFormat] = useState<ImageExportFormat>('PNG');
   const [quality, setQuality] = useState(90);
   const [svgAlgorithm, setSvgAlgorithm] = useState<SvgExportAlgorithm>('greedy_meshing');
@@ -97,7 +100,7 @@ export default function ExportImageDialog({ isOpen, onExport, onClose }: ExportI
               format,
               quality: format === 'JPEG' ? quality : undefined,
               svg_algorithm: format === 'SVG' ? svgAlgorithm : undefined,
-              ...(spriteCells
+              ...(showTileSize && spriteCells
                 ? { sprite_cell_w: Math.max(1, Math.round(cellW)), sprite_cell_h: Math.max(1, Math.round(cellH)) }
                 : {}),
             });
@@ -156,15 +159,23 @@ export default function ExportImageDialog({ isOpen, onExport, onClose }: ExportI
             </fieldset>
           )}
 
+          {showTileSize && (
           <label className={cn('new-project-radio')}>
             <input
               type="checkbox"
               checked={spriteCells}
-              onChange={(e) => setSpriteCells(e.target.checked)}
+              onChange={(e) => {
+                setSpriteCells(e.target.checked);
+                if (e.target.checked) {
+                  void workspace?.triggerHint({ trigger: 'tile_export' });
+                  void workspace?.markTileExport();
+                }
+              }}
             />
             Sprite-sheet cells (ordered dither, same phase per cell)
           </label>
-          {spriteCells && (
+          )}
+          {showTileSize && spriteCells && (
             <>
               <div className={cn('new-project-field')}>
                 <label htmlFor="sprite-cell-w">Cell width (px)</label>

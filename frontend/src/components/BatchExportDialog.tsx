@@ -13,6 +13,7 @@ import {
   type BatchOutputFormat,
 } from '../shared/ipc/batchExport';
 import { usePatternsUi } from '../features/patterns/PatternsUiContext';
+import { useWorkspaceOptional } from '../features/workspace/WorkspaceContext';
 
 const cn = bind(styles);
 
@@ -40,13 +41,16 @@ export default function BatchExportDialog({
   const [progress, setProgress] = useState<BatchExportProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { openPatternManager } = usePatternsUi();
+  const workspace = useWorkspaceOptional();
 
   useEffect(() => {
     if (!isOpen) return;
     setProgress(null);
     setError(null);
     setRunning(false);
-  }, [isOpen]);
+    // FR-9: Batch Export in General suggests Gamedev (tile/atlas workflows).
+    void workspace?.triggerHint({ trigger: 'batch_tile' });
+  }, [isOpen, workspace]);
 
   useEffect(() => {
     if (!isOpen || !running) return;
