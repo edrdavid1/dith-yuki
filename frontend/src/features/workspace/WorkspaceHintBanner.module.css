@@ -1,0 +1,40 @@
+.banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  background: color-mix(in srgb, var(--panel-bg, #2a2a2a) 92%, #6b8f71);
+  border-bottom: 1px solid var(--border-subtle, #3a3a3a);
+  font-size: 12px;
+  line-height: 1.35;
+  pointer-events: auto;
+  z-index: 5;
+}
+
+.text {
+  margin: 0;
+  flex: 1 1 220px;
+  color: var(--text-primary, #e8e8e8);
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.btn {
+  appearance: none;
+  border: 1px solid var(--border-subtle, #555);
+  background: var(--control-bg, #333);
+  color: var(--text-primary, #e8e8e8);
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: var(--control-bg-hover, #3e3e3e);
+}
