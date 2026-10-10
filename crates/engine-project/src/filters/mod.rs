@@ -70,7 +70,9 @@ pub use dither_diffusion::{
     apply_error_diffusion, apply_error_diffusion_tile_row_strip, apply_error_diffusion_with_cache,
 };
 pub use ed_wrap_padding::{
-    apply_ed_with_wrap_padding, wrap_pad_rgba_f32, wrap_padding_margin,
+    apply_ed_buffer_no_wrap, apply_ed_with_wrap_padding, apply_ed_with_wrap_padding_simple,
+    edge_margin, wrap_pad_rgba_f32, wrap_padding_fits_limits, EdWrapError, WRAP_PADDING_HINT,
+    MAX_MARGIN_PX, MAX_PADDED_PIXELS,
 };
 
 // Re-export FilterContext

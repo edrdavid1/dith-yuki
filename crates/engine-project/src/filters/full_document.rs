@@ -290,7 +290,16 @@ pub fn compute_full_document_rgba_ex(
         };
 
         if filter_uses_ed_wrap_padding(filter) {
-            apply_ed_wrap_padding_filter(&mut rgba, w, h, filter)?;
+            apply_ed_wrap_padding_filter(
+                &mut rgba,
+                w,
+                h,
+                filter,
+                should_cancel,
+                layer,
+                doc,
+                cache,
+            )?;
             continue;
         }
         match algo.execution_scope() {
@@ -344,7 +353,16 @@ pub fn compute_ascii_job(
             break;
         }
         if filter_uses_ed_wrap_padding(filter) {
-            apply_ed_wrap_padding_filter(&mut rgba, w, h, filter)?;
+            apply_ed_wrap_padding_filter(
+                &mut rgba,
+                w,
+                h,
+                filter,
+                should_cancel,
+                layer,
+                doc,
+                cache,
+            )?;
             continue;
         }
         let Some(id) = resolve_algorithm_id(filter) else {
@@ -373,7 +391,13 @@ fn apply_ed_wrap_padding_filter(
     width: u32,
     height: u32,
     filter: &FilterInstance,
+    should_cancel: &AtomicBool,
+    layer: &Layer,
+    doc: &Document,
+    cache: &TileCache,
 ) -> Result<(), EngineError> {
+    use crate::filters::ed_wrap_padding::{apply_ed_with_wrap_padding, EdWrapError};
+
     let params = match &filter.params {
         FilterParams::DitherV2(p) => p.clone(),
         other => {
@@ -383,7 +407,17 @@ fn apply_ed_wrap_padding_filter(
             })?
         }
     };
-    crate::filters::ed_wrap_padding::apply_ed_with_wrap_padding(rgba, width, height, &params)
+    match apply_ed_with_wrap_padding(rgba, width, height, &params, should_cancel, None) {
+        Ok(()) => Ok(()),
+        // Size / overflow: fall back to tile-strip for this filter (§8).
+        Err(EdWrapError::SizeLimitExceeded { .. }) | Err(EdWrapError::Overflow) => {
+            apply_tiled_filters_on_buffer(rgba, width, height, layer, filter, doc, cache)
+        }
+        Err(EdWrapError::Cancelled) => Err(EngineError::invalid_state("ed wrap-padding cancelled")),
+        Err(EdWrapError::UnsupportedKernel) => {
+            apply_tiled_filters_on_buffer(rgba, width, height, layer, filter, doc, cache)
+        }
+    }
 }
 
 fn apply_full_document_algorithm(
