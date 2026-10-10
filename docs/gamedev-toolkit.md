@@ -21,17 +21,26 @@ run time; use Pattern Manager beforehand to apply a saved recipe to the doc.
 Error diffusion cannot be exactly seamless (sequential wavefront). When
 `DitherParamsV2.wrap_padding` is true:
 
-1. Margin = `DiffusionKernel::edge_margin(pixel_size)` (= `pixel_size × max_offset()`).
+1. Margin `(mx, my)` = `DiffusionKernel::edge_margin_xy(pixel_size)`
+   (= `pixel_size × (|dx|max, |dy|max)`).
 2. Pad opposite edges (left←right, top←bottom) by that margin.
 3. Run ED on the padded buffer, crop back to the original rect.
 
-Labeled **approximate only** in the Effect panel seamless hint, the checkbox
-(“Approximate wrap-padding”), and this doc. Ordered modes ignore the flag and
-remain bit-identical with the option on or off. Without the flag, ED export
-determinism is unchanged (tile-strip path).
+Approximate wrap-padding reduces seams for tiled export by padding the dithering buffer with wrapped edges. Error diffusion is sequential, so the result is approximate, not exact.
+
+Labeled **approximate only** in the Effect panel (checkbox + hint), the ADR, and
+this doc. Ordered modes ignore the flag and remain bit-identical with the option
+on or off. Without the flag, ED export determinism is unchanged (tile-strip
+path). Images above the memory ceiling fall back to tile-strip with a UI warning.
+
+**Visibility:** the wrap-padding checkbox is gated by Workspace → Gamedev with
+Tiling → Advanced on (`UiVisibility.show_wrap_padding`). See
+`.local-doc/Workspace.md`. Hidden in General; existing `wrap_padding` in
+documents still renders and saves unchanged.
 
 **Implementation:** `filters/ed_wrap_padding.rs`; full-document route when any
 enabled ED filter has wrap-padding (`layer_has_full_document_filter_ex`).
+ADR: `docs/adr/ed-wrap-padding.md`.
 
 ## hex / jasc palette fuzz
 
