@@ -371,16 +371,37 @@ describe('EffectSettingsPanel', () => {
     });
 
     it('calls onUpdateParams when algorithm changes', () => {
-      renderPanel(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
-      fireEvent.click(screen.getByText('Floyd-Steinberg'));
+      renderPanel(
+        <EffectSettingsPanel
+          selectedLayer={makeDitherLayer({ mode: 'bayer_8x8' })}
+          onUpdateParams={onUpdateParams}
+        />,
+      );
+      fireEvent.click(screen.getByLabelText('Dither algorithm variant'));
       fireEvent.click(screen.getByRole('option', { name: 'Bayer 4×4' }));
       expect(onUpdateParams).toHaveBeenCalledWith(1, 'filter-1', expect.objectContaining({ mode: 'bayer_4x4' }));
     });
 
+    it('calls onUpdateParams when algorithm family changes', () => {
+      renderPanel(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
+      fireEvent.click(screen.getByLabelText('Dither algorithm family'));
+      fireEvent.click(screen.getByRole('option', { name: 'Ordered' }));
+      expect(onUpdateParams).toHaveBeenCalledWith(
+        1,
+        'filter-1',
+        expect.objectContaining({ mode: 'bayer_8x8' }),
+      );
+    });
+
     it('picks a threshold map when selecting Custom Threshold Map', async () => {
       openDialogMock.mockResolvedValue('/Users/test/maps/blue_noise.png');
-      renderPanel(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
-      fireEvent.click(screen.getByText('Floyd-Steinberg'));
+      renderPanel(
+        <EffectSettingsPanel
+          selectedLayer={makeDitherLayer({ mode: 'bayer_8x8' })}
+          onUpdateParams={onUpdateParams}
+        />,
+      );
+      fireEvent.click(screen.getByLabelText('Dither algorithm variant'));
       fireEvent.click(screen.getByRole('option', { name: 'Custom Threshold Map' }));
       await waitFor(() => {
         expect(onUpdateParams).toHaveBeenCalledWith(
@@ -395,8 +416,13 @@ describe('EffectSettingsPanel', () => {
 
     it('does not commit Custom Threshold Map when the file dialog is cancelled', async () => {
       openDialogMock.mockResolvedValue(null);
-      renderPanel(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
-      fireEvent.click(screen.getByText('Floyd-Steinberg'));
+      renderPanel(
+        <EffectSettingsPanel
+          selectedLayer={makeDitherLayer({ mode: 'bayer_8x8' })}
+          onUpdateParams={onUpdateParams}
+        />,
+      );
+      fireEvent.click(screen.getByLabelText('Dither algorithm variant'));
       fireEvent.click(screen.getByRole('option', { name: 'Custom Threshold Map' }));
       await waitFor(() => {
         expect(openDialogMock).toHaveBeenCalled();

@@ -1,0 +1,19 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.tradeoff {
+  margin: 2px 0 6px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--color-dark-gray);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tradeoffDisabled {
+  opacity: 0.5;
+}
