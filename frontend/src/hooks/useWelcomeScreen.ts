@@ -86,6 +86,10 @@ export function useWelcomeScreen() {
     void runAndRefresh(doc.exportPrint);
   }, [doc.exportPrint, runAndRefresh]);
 
+  const onBatchExport = useCallback(() => {
+    doc.exportBatch();
+  }, [doc.exportBatch]);
+
   const onSaveProject = useCallback(() => {
     void runAndRefresh(doc.saveProject);
   }, [doc.saveProject, runAndRefresh]);
@@ -134,6 +138,7 @@ export function useWelcomeScreen() {
     handleCreate,
     onSaveImage,
     onExportPrint,
+    onBatchExport,
     onSaveProject,
     onSaveProjectAs,
     onShareProjectCopy,

@@ -459,6 +459,8 @@ fn main() {
             commands::print_export_gamut_report,
             commands::print_export_run,
             commands::print_export_cancel,
+            commands::batch_export_run,
+            commands::batch_export_cancel,
             commands::save_project,
             commands::save_project_as,
             commands::share_project_copy,

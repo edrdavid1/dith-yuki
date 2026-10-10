@@ -16,6 +16,7 @@ interface MenuBarProps {
   onSaveImage: () => void;
   onExportPrint?: () => void;
   onExportAscii?: () => void;
+  onBatchExport?: () => void;
   onCopyAsciiText?: () => void;
   onCopyAsciiAnsi?: () => void;
   onOpenProject: () => void;
@@ -61,6 +62,7 @@ function MenuBar({
   onSaveImage,
   onExportPrint,
   onExportAscii,
+  onBatchExport,
   onCopyAsciiText,
   onCopyAsciiAnsi,
   onOpenProject,
@@ -245,6 +247,14 @@ function MenuBar({
               disabled={!hasDocument || !onExportAscii}
             >
               Export ASCII…
+            </button>
+            <button
+              className={cn('menubar-dropdown-item')}
+              role="menuitem"
+              onClick={() => onBatchExport && handleAction(onBatchExport)}
+              disabled={!hasDocument || !onBatchExport}
+            >
+              Batch Export…
             </button>
             <button
               className={cn('menubar-dropdown-item')}

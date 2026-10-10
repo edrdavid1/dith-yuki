@@ -22,6 +22,8 @@ pub mod proof;
 pub use proof::*;
 pub mod print_export;
 pub use print_export::*;
+pub mod batch_export;
+pub use batch_export::*;
 pub mod pattern_library;
 pub use pattern_library::*;
 
@@ -87,6 +89,8 @@ pub struct AppState {
     pub proof: Mutex<Option<Arc<crate::services::ProofService>>>,
     /// Cancel flag for an in-flight print export (cleared when the job ends).
     pub print_export_cancel: Mutex<Option<Arc<AtomicBool>>>,
+    /// Cancel flag for an in-flight batch export (cleared when the job ends).
+    pub batch_export_cancel: Mutex<Option<Arc<AtomicBool>>>,
 }
 
 pub struct QuitGuard {

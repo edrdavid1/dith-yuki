@@ -19,6 +19,7 @@ pub mod dto;
 pub mod error;
 pub mod filter;
 pub mod filters;
+pub mod headless;
 pub mod invalidation;
 pub mod layer;
 pub mod mask;
@@ -38,6 +39,11 @@ pub use filter::{
     PlaceholderParams,
 };
 pub use filters::FilterContext;
+pub use headless::{
+    expand_output_name, palette_from_srgb, run_headless_batch, run_headless_job,
+    run_headless_job_cancellable, HeadlessError, HeadlessJob, HeadlessJobResult,
+    HeadlessOutputFormat,
+};
 pub use invalidation::{
     invalidate_layer_filter_changed, invalidate_layer_props_changed,
     invalidate_layer_structure_changed, validate_document_consistency,

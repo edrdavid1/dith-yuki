@@ -32,6 +32,7 @@ import ExportImageDialog, {
 } from '../components/ExportImageDialog';
 import ExportPrintDialog from '../components/ExportPrintDialog';
 import AsciiExportDialog from '../components/AsciiExportDialog';
+import BatchExportDialog from '../components/BatchExportDialog';
 import ShareCopyDialog from '../components/ShareCopyDialog';
 import type { ShareProjectCopyOptions } from '../shared/ipc/project';
 import {
@@ -40,6 +41,7 @@ import {
   type AsciiExportFormat,
 } from '../shared/ipc/ascii';
 import { printExportRun, type PrintExportConfig } from '../shared/ipc/printExport';
+import type { BatchExportSummary } from '../shared/ipc/batchExport';
 import { copyTextToClipboard } from '../shared/clipboard';
 import { suggestedSaveDefaultPath } from '../shared/unsavedGuard';
 
@@ -58,6 +60,7 @@ export function useDocument() {
   const [shareCopyOpen, setShareCopyOpen] = useState(false);
   const [asciiExportOpen, setAsciiExportOpen] = useState(false);
   const asciiResolver = useRef<((format: AsciiExportFormat | null) => void) | null>(null);
+  const [batchExportOpen, setBatchExportOpen] = useState(false);
 
   const maybeWarnMemory = useCallback(async () => {
     try {
@@ -196,6 +199,44 @@ export function useDocument() {
       // Dialog cancel
     }
   }, [dispatch, state.docId, state.projectPath, state.sourcePath]);
+
+  const exportBatchFn = useCallback(() => {
+    if (!state.docId) return;
+    setBatchExportOpen(true);
+  }, [state.docId]);
+
+  const handleBatchDone = useCallback(
+    (summary: BatchExportSummary) => {
+      setBatchExportOpen(false);
+      if (summary.cancelled) {
+        dispatch(
+          setDocumentMeta({
+            notification: `Batch export cancelled (${summary.succeeded} ok, ${summary.failed} failed)`,
+          })
+        );
+        return;
+      }
+      const msg =
+        summary.failed === 0
+          ? `Batch export: ${summary.succeeded} file(s) written`
+          : `Batch export: ${summary.succeeded} ok, ${summary.failed} failed`;
+      dispatch(
+        setDocumentMeta({
+          notification: msg,
+          ...(summary.failed > 0
+            ? {
+                error: summary.results
+                  .filter((r) => r.error)
+                  .slice(0, 3)
+                  .map((r) => `${r.input.split(/[/\\]/).pop()}: ${r.error}`)
+                  .join('; '),
+              }
+            : {}),
+        })
+      );
+    },
+    [dispatch]
+  );
 
   const exportAsciiFn = useCallback(async () => {
     if (!state.docId) return;
@@ -507,6 +548,7 @@ export function useDocument() {
     importPattern: importPatternFn,
     exportAscii: exportAsciiFn,
     exportPrint: exportPrintFn,
+    exportBatch: exportBatchFn,
     copyAsciiText: copyAsciiTextFn,
     clearNotification: clearNotificationFn,
     svgDialog: (
@@ -533,6 +575,13 @@ export function useDocument() {
           isOpen={shareCopyOpen}
           onExport={(opts) => void runShareCopyExport(opts)}
           onCancel={() => setShareCopyOpen(false)}
+        />
+        <BatchExportDialog
+          isOpen={batchExportOpen}
+          docId={state.docId}
+          layerId={selectedLayerId}
+          onClose={() => setBatchExportOpen(false)}
+          onDone={handleBatchDone}
         />
       </>
     ),

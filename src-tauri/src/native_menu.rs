@@ -95,6 +95,7 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
         MenuItem::with_id(app, "share-project-copy", "Share Copy…", true, None::<&str>)?;
     let save_export = MenuItem::with_id(app, "save-export", "Save/Export", true, None::<&str>)?;
     let export_ascii = MenuItem::with_id(app, "export-ascii", "Export ASCII…", true, None::<&str>)?;
+    let batch_export = MenuItem::with_id(app, "batch-export", "Batch Export…", true, None::<&str>)?;
 
     let file_menu = Submenu::with_items(
         app,
@@ -110,6 +111,7 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
             &share_project_copy,
             &save_export,
             &export_ascii,
+            &batch_export,
         ],
     )?;
 

@@ -46,6 +46,7 @@ describe('MenuBar', () => {
     expect(screen.getByText('Save Project As…')).toBeInTheDocument();
     expect(screen.getByText('Save/Export')).toBeInTheDocument();
     expect(screen.getByText('Export for Print…')).toBeInTheDocument();
+    expect(screen.getByText('Batch Export…')).toBeInTheDocument();
   });
 
   it('Patterns click calls onOpenPatterns directly (no dropdown)', () => {
