@@ -61,6 +61,14 @@ pub struct AdvancedConfig {
     pub tiling_advanced: bool,
 }
 
+/// Experimental feature flags (`ED-on-GPU.md` §12.1). Off by default.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExperimentalConfig {
+    /// When true, UI may offer `blocked_fs` / `blue_noise` GPU dither families.
+    #[serde(default, alias = "gpuDitherFamilies")]
+    pub gpu_dither_families: bool,
+}
+
 /// Persisted application config at `{app_data_dir}/config.json` (FR-2, NFR-2).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -70,6 +78,8 @@ pub struct AppConfig {
     pub workspace: Workspace,
     #[serde(default)]
     pub advanced: AdvancedConfig,
+    #[serde(default)]
+    pub experimental: ExperimentalConfig,
     /// FR-8: when false, upgrade prompt may reappear.
     #[serde(default)]
     pub workspace_choice_remembered: bool,
@@ -94,6 +104,7 @@ impl Default for AppConfig {
             schema_version: CURRENT_SCHEMA_VERSION,
             workspace: Workspace::General,
             advanced: AdvancedConfig::default(),
+            experimental: ExperimentalConfig::default(),
             // Fresh install: no prompt (FR-8).
             workspace_choice_remembered: true,
             workspace_prompt_launches: 0,
@@ -434,6 +445,7 @@ pub struct AppConfigDto {
     pub schema_version: u32,
     pub workspace: Workspace,
     pub advanced: AdvancedConfig,
+    pub experimental: ExperimentalConfig,
     pub workspace_choice_remembered: bool,
     pub workspace_prompt_launches: u32,
     pub has_exported_tiles: bool,
@@ -451,6 +463,7 @@ impl AppConfigDto {
             schema_version: cfg.schema_version,
             workspace: cfg.workspace,
             advanced: cfg.advanced.clone(),
+            experimental: cfg.experimental.clone(),
             workspace_choice_remembered: cfg.workspace_choice_remembered,
             workspace_prompt_launches: cfg.workspace_prompt_launches,
             has_exported_tiles: cfg.has_exported_tiles,

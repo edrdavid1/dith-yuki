@@ -11,7 +11,8 @@ import { useWorkspaceOptional } from '../features/workspace/WorkspaceContext';
 import { useAppSelector } from '../app/hooks';
 import { selectFiltersList } from '../app/slices/filtersSlice';
 import { getAsciiPreview, setAsciiPreview } from '../shared/ipc/ascii';
-import { onFullDocumentBusy } from '../shared/ipc/events';
+import { onFullDocumentBusy, onGpuDitherStatus } from '../shared/ipc/events';
+import type { GpuDitherStatusPayload } from '../shared/ipc/events';
 import { previewBackgroundStyle } from '../features/preview/previewBackground';
 import styles from '../features/preview/PreviewWindow.module.css';
 import previewStyles from '../features/preview/Preview.module.css';
@@ -66,12 +67,16 @@ export default function PreviewWindow({
   const hasAscii = filters.some((f) => f.kind === 'Ascii' && f.enabled);
   const [asciiPreview, setAsciiPreviewState] = useState(true);
   const [tileRepeat3x3, setTileRepeat3x3] = useState(false);
-  const showSeamlessPreview =
-    useWorkspaceOptional()?.visibility.showSeamlessPreview ?? false;
+  const workspace = useWorkspaceOptional();
+  const showSeamlessPreview = workspace?.visibility.showSeamlessPreview ?? false;
+  const showGpuDitherIndicator = workspace?.gpuDitherFamilies ?? false;
   useEffect(() => {
     if (!showSeamlessPreview) setTileRepeat3x3(false);
   }, [showSeamlessPreview]);
   const [fullDocumentBusy, setFullDocumentBusy] = useState(false);
+  const [gpuDitherStatus, setGpuDitherStatus] = useState<GpuDitherStatusPayload | null>(
+    null,
+  );
   const containerRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
   const lastPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -106,6 +111,27 @@ export default function PreviewWindow({
       setFullDocumentBusy(false);
     };
   }, [docId]);
+
+  useEffect(() => {
+    if (!showGpuDitherIndicator) {
+      setGpuDitherStatus(null);
+      return;
+    }
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void onGpuDitherStatus((event) => {
+      if (cancelled) return;
+      if (event.payload.doc_id !== docId) return;
+      setGpuDitherStatus(event.payload);
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [docId, showGpuDitherIndicator]);
 
   const toggleAsciiPreview = useCallback(
     async (enabled: boolean) => {
@@ -273,6 +299,16 @@ export default function PreviewWindow({
           <span className={cn('pv-footer-size')}>
             {docWidth} × {docHeight}
           </span>
+          {showGpuDitherIndicator && gpuDitherStatus && (
+            <span
+              className={cn('pv-gpu-dither')}
+              title={`${gpuDitherStatus.strips} strip(s)`}
+              aria-label="GPU dither path"
+            >
+              {gpuDitherStatus.algorithm} · {gpuDitherStatus.path} (
+              {gpuDitherStatus.backend}) · {gpuDitherStatus.elapsed_ms} ms
+            </span>
+          )}
           {hasAscii && (
             <span className={cn('pv-ascii-mode')} role="group" aria-label="Preview mode">
               <Tooltip label="Show image without ASCII">

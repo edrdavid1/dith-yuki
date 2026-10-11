@@ -56,6 +56,18 @@
   align-self: center;
 }
 
+.pv-gpu-dither {
+  align-self: center;
+  font-family: var(--font-family);
+  font-size: 10px;
+  color: var(--text-color);
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 42ch;
+}
+
 .pv-ascii-mode {
   display: inline-flex;
   align-items: stretch;

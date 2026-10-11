@@ -4,6 +4,12 @@
 
 ### Added
 
+- **GPU dither families (experimental):** `blocked_fs` (fast approximate error
+  diffusion) and `blue_noise` (threshold-shift). Fixed-point Q8.8 CPU reference
+  is canonical; GPU path is capability-gated. Enable with
+  `experimental.gpu_dither_families` in config (off by default). Files that use
+  these modes require format **1.2** feature ids `blocked-fs` / `blue-noise`.
+  See `docs/adr/gpu-dither-families.md`.
 - **Workspace** selection (General / Gamedev) in Preferences. General is the
   default and hides tiling / seamless / wrap-padding UI; Gamedev enables them.
   Upgrade installs may show a one-time workspace prompt. Switching never

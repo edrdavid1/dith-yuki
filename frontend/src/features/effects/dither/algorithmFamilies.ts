@@ -4,7 +4,7 @@
  * Adapted from `.local-doc/chose-algorithm.md` §3 for this app:
  * - Variant ids are the existing `params.mode` string ids (e.g. `jarvis_judice_ninke`).
  * - Families include the full current algorithm catalog so the UI does not regress.
- * - `gpu_ed` stays stubbed (`available: false`) until a capability probe exists.
+ * - `gpu_ed` is gated by `experimental.gpu_dither_families` (see setGpuDitherFamiliesAvailable).
  */
 
 export type AlgorithmFamilyId = 'cpu_ed' | 'gpu_ed' | 'ordered';
@@ -25,9 +25,9 @@ export type AlgorithmVariantId =
   | 'stevenson_arce'
   | 'zhou_fang'
   | 'riemersma'
-  // gpu_ed (stub — not valid DitherModeV2 yet)
-  | 'approximate_fs'
-  | 'stochastic_fs'
+  // gpu_ed — available when experimental.gpu_dither_families is on
+  | 'blocked_fs'
+  | 'blue_noise'
   // ordered / matrix / pattern
   | 'bayer_2x2'
   | 'bayer_4x4'
@@ -49,6 +49,8 @@ export interface AlgorithmVariant {
   id: AlgorithmVariantId;
   label: string;
   tooltip?: string;
+  /** When false, the variant is shown but not selectable. Defaults to true. */
+  available?: boolean;
 }
 
 export interface AlgorithmFamily {
@@ -95,13 +97,26 @@ export const ALGORITHM_FAMILIES: AlgorithmFamily[] = [
     id: 'gpu_ed',
     label: 'Error Diffusion — GPU',
     tradeoff: 'fast, approximate',
-    tooltip: 'GPU error diffusion. Fast on large images. Not bit-identical to CPU.',
-    defaultVariant: 'approximate_fs',
-    // TODO(chose-algorithm §3 / follow-up §11.2): replace stub with GPU capability probe.
+    tooltip:
+      'Approximate GPU dither families. Deterministic fixed-point; not bit-identical to exact ED. Enable via experimental.gpu_dither_families.',
+    defaultVariant: 'blue_noise',
+    // Hidden until experimental.gpu_dither_families is true (ED-on-GPU.md §12.1).
     available: false,
     variants: [
-      { id: 'approximate_fs', label: 'Approximate FS' },
-      { id: 'stochastic_fs', label: 'Stochastic FS' },
+      {
+        id: 'blocked_fs',
+        label: 'Fast error diffusion (approximate)',
+        tooltip:
+          'Blocked Floyd–Steinberg with warm-up padding. GPU when available; CPU reference otherwise.',
+        available: true,
+      },
+      {
+        id: 'blue_noise',
+        label: 'Blue noise',
+        tooltip:
+          'Threshold-shift blue-noise dither (Ulichney void-and-cluster 128×128). GPU when available; CPU reference otherwise.',
+        available: true,
+      },
     ],
   },
   {
@@ -131,6 +146,18 @@ export const ALGORITHM_FAMILIES: AlgorithmFamily[] = [
   },
 ];
 
+/** Flip gpu_ed.available from experimental config (ED-on-GPU.md §12.1 / §8). */
+export function setGpuDitherFamiliesAvailable(available: boolean): void {
+  const family = ALGORITHM_FAMILIES.find((f) => f.id === 'gpu_ed');
+  if (!family) return;
+  family.available = available;
+  for (const variant of family.variants) {
+    if (variant.id === 'blocked_fs' || variant.id === 'blue_noise') {
+      variant.available = available;
+    }
+  }
+}
+
 const DEFAULT_SELECTION: AlgorithmSelectorValue = {
   family: 'cpu_ed',
   variant: 'floyd_steinberg',
@@ -155,12 +182,23 @@ export function selectionFromMode(mode: string): AlgorithmSelectorValue {
   return DEFAULT_SELECTION;
 }
 
+function variantAvailable(variant: AlgorithmVariant): boolean {
+  return variant.available !== false;
+}
+
 export function variantInFamily(
   family: AlgorithmFamily,
   variant: AlgorithmVariantId | undefined,
 ): AlgorithmVariantId {
-  if (variant && family.variants.some((entry) => entry.id === variant)) {
+  if (
+    variant &&
+    family.variants.some((entry) => entry.id === variant && variantAvailable(entry))
+  ) {
     return variant;
   }
-  return family.defaultVariant;
+  const preferred = family.variants.find(
+    (entry) => entry.id === family.defaultVariant && variantAvailable(entry),
+  );
+  if (preferred) return preferred.id;
+  return family.variants.find(variantAvailable)?.id ?? family.defaultVariant;
 }

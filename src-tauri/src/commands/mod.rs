@@ -128,6 +128,38 @@ pub struct FullDocumentBusyPayload {
     pub doc_id: u32,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct GpuDitherStatusPayload {
+    pub doc_id: u32,
+    pub algorithm: String,
+    pub path: String,
+    pub backend: String,
+    pub elapsed_ms: u32,
+    pub strips: u32,
+}
+
+/// Emit last GPU-dither apply status for the preview footer (when experimental flag is on).
+pub(crate) fn emit_gpu_dither_status(state: &AppState, doc_id: u32) {
+    let Some(status) = engine_project::algorithms::gpu_dither::take_last_gpu_dither_status() else {
+        return;
+    };
+    let Ok(guard) = state.app_handle.lock() else {
+        return;
+    };
+    let Some(ref app) = *guard else {
+        return;
+    };
+    let payload = GpuDitherStatusPayload {
+        doc_id,
+        algorithm: status.algorithm,
+        path: status.path,
+        backend: status.backend,
+        elapsed_ms: status.elapsed_ms,
+        strips: status.strips,
+    };
+    let _ = app.emit_to(tauri::EventTarget::Any, "gpu-dither-status", payload);
+}
+
 /// Enter a full-document ensure; emit `full-document-busy` when the first caller enters.
 pub(crate) fn begin_full_document_busy(state: &AppState, doc_id: u32) {
     let prev = state.full_document_busy.fetch_add(1, Ordering::AcqRel);

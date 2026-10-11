@@ -101,3 +101,19 @@ export async function onFullDocumentBusy(
 ): Promise<UnlistenFn> {
   return listen<FullDocumentBusyPayload>('full-document-busy', handler);
 }
+
+/** GPU dither path indicator for the preview footer (experimental.gpu_dither_families). */
+export interface GpuDitherStatusPayload {
+  doc_id: number;
+  algorithm: string;
+  path: string;
+  backend: string;
+  elapsed_ms: number;
+  strips: number;
+}
+
+export async function onGpuDitherStatus(
+  handler: (event: Event<GpuDitherStatusPayload>) => void
+): Promise<UnlistenFn> {
+  return listen<GpuDitherStatusPayload>('gpu-dither-status', handler);
+}

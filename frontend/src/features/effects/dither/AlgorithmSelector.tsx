@@ -1,8 +1,10 @@
 import { useEffect, useId, useRef } from 'react';
 import DropdownMenu from '../../../components/common/DropdownMenu';
+import { useWorkspaceOptional } from '../../workspace/WorkspaceContext';
 import {
   ALGORITHM_FAMILIES,
   getAlgorithmFamily,
+  setGpuDitherFamiliesAvailable,
   variantInFamily,
   type AlgorithmFamilyId,
   type AlgorithmSelectorValue,
@@ -28,6 +30,10 @@ export function AlgorithmSelector({
   disabled = false,
 }: AlgorithmSelectorProps) {
   const tradeoffId = useId();
+  const gpuDitherFamilies = useWorkspaceOptional()?.gpuDitherFamilies ?? false;
+  // Catalog is a module singleton; keep it aligned before we read `available`.
+  setGpuDitherFamiliesAvailable(gpuDitherFamilies);
+
   const lastVariantByFamily = useRef<Partial<Record<AlgorithmFamilyId, AlgorithmVariantId>>>({
     [value.family]: value.variant,
   });
@@ -44,7 +50,19 @@ export function AlgorithmSelector({
     const fallback = getAlgorithmFamily('cpu_ed')!;
     const nextVariant = variantInFamily(fallback, lastVariantByFamily.current.cpu_ed);
     onChange({ family: 'cpu_ed', variant: nextVariant });
-  }, [value.family, onChange]);
+  }, [value.family, onChange, gpuDitherFamilies]);
+
+  // If the selected variant is blocked (e.g. blocked_fs until GPU path), pick a live one.
+  useEffect(() => {
+    const family = getAlgorithmFamily(value.family);
+    if (!family || !family.available) return;
+    const current = family.variants.find((variant) => variant.id === value.variant);
+    if (current && current.available !== false) return;
+    const nextVariant = variantInFamily(family, undefined);
+    if (nextVariant === value.variant) return;
+    lastVariantByFamily.current[family.id] = nextVariant;
+    onChange({ family: family.id, variant: nextVariant });
+  }, [value.family, value.variant, onChange, gpuDitherFamilies]);
 
   const familyOptions = ALGORITHM_FAMILIES.map((family) => ({
     value: family.id,
@@ -53,11 +71,15 @@ export function AlgorithmSelector({
     title: family.tooltip,
   }));
 
-  const variantOptions = activeFamily.variants.map((variant) => ({
-    value: variant.id,
-    label: variant.label,
-    title: variant.tooltip ?? '',
-  }));
+  const variantOptions = activeFamily.variants.map((variant) => {
+    const available = variant.available !== false;
+    return {
+      value: variant.id,
+      label: available ? variant.label : `${variant.label} (unavailable)`,
+      title: variant.tooltip ?? '',
+      disabled: !available,
+    };
+  });
 
   const handleFamilySelect = (familyId: string) => {
     const family = getAlgorithmFamily(familyId as AlgorithmFamilyId);
@@ -70,7 +92,8 @@ export function AlgorithmSelector({
 
   const handleVariantSelect = (variantId: string) => {
     const nextVariant = variantId as AlgorithmVariantId;
-    if (!activeFamily.variants.some((variant) => variant.id === nextVariant)) return;
+    const entry = activeFamily.variants.find((variant) => variant.id === nextVariant);
+    if (!entry || entry.available === false) return;
     lastVariantByFamily.current[activeFamily.id] = nextVariant;
     onChange({ family: activeFamily.id, variant: nextVariant });
   };
