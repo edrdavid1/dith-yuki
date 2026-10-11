@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { windowChromeTitle } from '../windowTitle';
+import { appNameForWorkspace, windowChromeTitle } from '../windowTitle';
+
+describe('appNameForWorkspace', () => {
+  it('keeps the base name in general', () => {
+    expect(appNameForWorkspace('general')).toBe('Dither Yuki');
+  });
+
+  it('appends GameDev in gamedev', () => {
+    expect(appNameForWorkspace('gamedev')).toBe('Dither Yuki GameDev');
+  });
+});
 
 describe('windowChromeTitle', () => {
   it('uses only the app name with no file', () => {
@@ -13,6 +23,18 @@ describe('windowChromeTitle', () => {
     ).toBe('Dither Yuki');
   });
 
+  it('shows GameDev in the app name when workspace is gamedev', () => {
+    expect(
+      windowChromeTitle({
+        dirty: false,
+        hasDocument: false,
+        projectPath: null,
+        sourcePath: null,
+        workspace: 'gamedev',
+      })
+    ).toBe('Dither Yuki GameDev');
+  });
+
   it('shows a saved project name', () => {
     expect(
       windowChromeTitle({
@@ -22,6 +44,18 @@ describe('windowChromeTitle', () => {
         sourcePath: '/tmp/photo.png',
       })
     ).toBe('cats.dyproj — Dither Yuki');
+  });
+
+  it('keeps GameDev after the file name', () => {
+    expect(
+      windowChromeTitle({
+        dirty: false,
+        hasDocument: true,
+        projectPath: '/tmp/cats.dyproj',
+        sourcePath: null,
+        workspace: 'gamedev',
+      })
+    ).toBe('cats.dyproj — Dither Yuki GameDev');
   });
 
   it('falls back to the opened image name', () => {
