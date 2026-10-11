@@ -144,8 +144,59 @@ products inside `i32` for clamped adjusted values (`|e| ≤ 65280`,
 `e*7 ≤ 456960`). Remainder-preserving distribution:
 `e1 = e - e7 - e3 - e5`.
 
+## Frontend integration follow-up (2026-10-11)
+
+Spec: `.local-doc/Dither интеграция GPU-семейства во фронт, исправления.md`
+
+### Diagnosis A — `pixel_size` inert
+
+| Step | Finding |
+|---|---|
+| UI → IPC | `DitherSettings` emits `pixel_size`; `update_filter` deserializes `DitherParamsV2`. Debug log at `filter_service.rs` (`target: gpu_dither`) records mode + `pixel_size`. |
+| Graph / ED | Exact ED applies `pixel_size` **inside** the filter (`dither_diffusion.rs` block representatives; `docs/tile-pipeline.md` §6). Not a separate graph stage. |
+| Node | **Root cause:** `apply_gpu_dither_rgba` discarded the param (`let _ = params.pixel_size` in `gpu_dither.rs`); `blocked_fs_cpu` / GPU kernels have no `pixel_size` argument. Parity group `params_ps` set the field but never passed it into CPU/GPU — false confidence. |
+| Cache | `hash_layer_filter_params` includes full filter JSON (so `pixel_size` is in the key). Preview looked stuck because output bytes were identical, not because the cache ignored the slider. |
+
+**Fix:** ED-style block-representative wrap via `with_pixel_size_blocks` around the unchanged Q8.8 / warm-up kernel (CPU + GPU). `ps=1` remains bit-identical to prior goldens. Golden check requires `pixel_size <= 1`.
+
+### Speed bench (Apple M3 Metal)
+
+| Field | Value |
+|---|---|
+| Date | 2026-10-11 |
+| Commit | `feature/gpu-dither-families` tip at measurement (uncommitted follow-up on top of `607c8df`) |
+| Adapter | Apple M3 (Metal) |
+| Repeats | 5 warm (spec asks 20; 8K skipped this run — `BENCH_SKIP_8K=1`) |
+| Harness | `cargo test -p engine-project --test gpu_dither_bench --release -- --ignored` |
+
+Warm median ms (selected rows):
+
+| Algo | Path | Size | ps | pal | median_ms |
+|---|---|---|---|---|---|
+| blocked_fs | gpu | 1920×1080 | 1 | 2 | 73.3 |
+| blocked_fs | cpu | 1920×1080 | 1 | 2 | 128.7 |
+| blocked_fs | gpu | 3840×2160 | 1 | 2 | 293.3 |
+| blocked_fs | cpu | 3840×2160 | 1 | 2 | 503.4 |
+| blocked_fs | gpu | 3840×2160 | 1 | 16 | 421.8 |
+| blocked_fs | cpu | 3840×2160 | 1 | 16 | 983.8 |
+| blue_noise | gpu | 1920×1080 | 1 | 2 | 54.0 |
+| blue_noise | cpu | 1920×1080 | 1 | 2 | 55.0 |
+| blue_noise | gpu | 3840×2160 | 1 | 2 | 206.7 |
+| blue_noise | cpu | 3840×2160 | 1 | 2 | 217.6 |
+
+**Answers (§5.3):**
+
+1. **Speedup vs CPU reference:** `blocked_fs` ~1.7–2.3× at 1080p/4K (ps=1). `blue_noise` ≈ parity with CPU (I/O-bound). At `ps=4` the lattice shrinks and GPU≈CPU (both cheap).
+2. **Dispatch vs rest:** After session pipeline cache, warm `prepare` is near-zero; remaining cost is upload + dispatch + readback + host linear↔sRGB. Pre-cache, every render rebuilt the compute pipeline (`pipeline=new`) — primary cause of the earlier 285–500 ms reports.
+3. **Cold vs warm:** First call pays pipeline create (`pipeline=new`); subsequent calls use `pipeline=cached`. Example: `blue_noise` 1080p cold 137 ms → warm 54 ms.
+
+**Optimization applied from table D:** cache `blocked_fs` / `blue_noise` pipelines for the process lifetime; poll GPU before attributing readback time.
+
+**Not in this bench:** full 20-repeat matrix, 8192², exact `floyd_steinberg` wall times (different apply path).
+
 ## Reference
 
 - Spec: `.local-doc/ED-on-GPU.md`
 - Spike: `crates/engine-gpu/src/ed_wavefront_spike.rs`
 - UI family map: `frontend/src/features/effects/dither/algorithmFamilies.ts`
+- Integration checklist: `.local-doc/Dither интеграция GPU-семейства во фронт, исправления.md`
