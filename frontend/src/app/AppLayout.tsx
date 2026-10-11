@@ -65,6 +65,8 @@ const cn = bind({ ...styles, ...menuStyles, ...previewStyles, ...previewWindowSt
  */
 export default function AppLayout() {
   const dispatch = useAppDispatch();
+  const workspaceApi = useWorkspaceOptional();
+  const workspace = workspaceApi?.workspace ?? 'general';
   const {
     doc,
     welcome,
@@ -145,13 +147,14 @@ export default function AppLayout() {
       hasDocument: doc.hasDocument,
       projectPath: doc.projectPath,
       sourcePath: doc.sourcePath,
+      workspace,
     });
     void getCurrentWindow()
       .setTitle(title)
       .catch(() => {
         /* panel webviews may lack set-title; main title is enough */
       });
-  }, [doc.dirty, doc.hasDocument, doc.projectPath, doc.sourcePath]);
+  }, [doc.dirty, doc.hasDocument, doc.projectPath, doc.sourcePath, workspace]);
 
   useEffect(() => {
     void dispatch(refreshTabs());
@@ -223,7 +226,6 @@ export default function AppLayout() {
     swapSidebars,
     previewBackground,
   } = useShell();
-  const workspaceApi = useWorkspaceOptional();
   const projectPath = useAppSelector((s) => s.document.projectPath);
   const sourcePath = useAppSelector((s) => s.document.sourcePath);
 
@@ -564,6 +566,7 @@ export default function AppLayout() {
             hasDocument: false,
             projectPath: null,
             sourcePath: null,
+            workspace,
           })}</div>
           <div className={cn('toolbar-icon-group')} data-tauri-drag-region="false">
             <button

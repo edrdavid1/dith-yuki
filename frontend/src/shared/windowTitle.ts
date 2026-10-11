@@ -1,5 +1,11 @@
 import { APP_NAME } from './appMeta';
 import { projectBasename } from './unsavedGuard';
+import type { Workspace } from './workspace/visibility';
+
+/** App name in the window chrome; Gamedev appends a mode suffix. */
+export function appNameForWorkspace(workspace?: Workspace | null): string {
+  return workspace === 'gamedev' ? `${APP_NAME} GameDev` : APP_NAME;
+}
 
 export function windowChromeTitle(opts: {
   dirty: boolean;
@@ -7,8 +13,9 @@ export function windowChromeTitle(opts: {
   projectPath: string | null;
   sourcePath: string | null;
   appName?: string;
+  workspace?: Workspace | null;
 }): string {
-  const appName = opts.appName ?? APP_NAME;
+  const appName = opts.appName ?? appNameForWorkspace(opts.workspace);
   const bullet = opts.hasDocument && opts.dirty ? '* ' : '';
   const filePath = opts.projectPath ?? opts.sourcePath;
   const fileName = filePath ? projectBasename(filePath) : null;
