@@ -30,8 +30,8 @@ use crate::algorithms::builtin_registry;
 use crate::document::Document;
 use crate::error::EngineError;
 use crate::filter::{
-    filter_params_to_json, resolve_algorithm_id, AsciiParams, DitherParamsV2, FilterInstance,
-    FilterParams,
+    filter_params_to_json, resolve_algorithm_id, AsciiParams, DitherModeV2, DitherParamsV2,
+    FilterInstance, FilterParams,
 };
 use crate::filters::ascii_job::{apply_ascii_rgba, run_ascii_job};
 use crate::filters::riemersma::{apply_riemersma_rgba, RiemersmaError};
@@ -304,7 +304,7 @@ pub fn compute_full_document_rgba_ex(
         }
         match algo.execution_scope() {
             ExecutionScope::FullDocument => {
-                apply_full_document_algorithm(&mut rgba, w, h, filter, should_cancel)?;
+                apply_full_document_algorithm(&mut rgba, w, h, filter, doc, should_cancel)?;
             }
             ExecutionScope::Tiled => {
                 apply_tiled_filters_on_buffer(&mut rgba, w, h, layer, filter, doc, cache)?;
@@ -373,7 +373,7 @@ pub fn compute_ascii_job(
         };
         match algo.execution_scope() {
             ExecutionScope::FullDocument => {
-                apply_full_document_algorithm(&mut rgba, w, h, filter, should_cancel)?;
+                apply_full_document_algorithm(&mut rgba, w, h, filter, doc, should_cancel)?;
             }
             ExecutionScope::Tiled => {
                 apply_tiled_filters_on_buffer(&mut rgba, w, h, layer, filter, doc, cache)?;
@@ -425,6 +425,7 @@ fn apply_full_document_algorithm(
     width: u32,
     height: u32,
     filter: &FilterInstance,
+    doc: &Document,
     should_cancel: &AtomicBool,
 ) -> Result<(), EngineError> {
     // ASCII is its own FilterParams arm (not a dither mode).
@@ -442,16 +443,55 @@ fn apply_full_document_algorithm(
         FilterParams::DitherV2(p) => p.clone(),
         other => {
             let json = filter_params_to_json(other)?;
-            serde_json::from_value::<DitherParamsV2>(json)
-                .map_err(|e| EngineError::invalid_filter_params(format!("riemersma params: {e}")))?
+            serde_json::from_value::<DitherParamsV2>(json).map_err(|e| {
+                EngineError::invalid_filter_params(format!("full-document params: {e}"))
+            })?
         }
     };
-    apply_riemersma_rgba(rgba, width, height, &params, should_cancel).map_err(|e| match e {
-        RiemersmaError::Cancelled => EngineError::invalid_state("riemersma cancelled"),
-        RiemersmaError::InvalidBuffer => {
-            EngineError::invalid_filter_params("riemersma invalid buffer")
+
+    match params.mode {
+        DitherModeV2::BlockedFs | DitherModeV2::BlueNoise => {
+            use crate::algorithms::gpu_dither_cpu::PaletteRgb;
+            use engine_color::palette::linear_to_srgb;
+            let palette: Vec<PaletteRgb> = match params
+                .palette_id
+                .and_then(|id| doc.get_palette(id))
+            {
+                Some(pal) if !pal.colors.is_empty() => pal
+                    .colors
+                    .iter()
+                    .map(|c| PaletteRgb {
+                        r: linear_to_srgb(c.r),
+                        g: linear_to_srgb(c.g),
+                        b: linear_to_srgb(c.b),
+                    })
+                    .collect(),
+                _ => vec![
+                    PaletteRgb { r: 0, g: 0, b: 0 },
+                    PaletteRgb {
+                        r: 255,
+                        g: 255,
+                        b: 255,
+                    },
+                ],
+            };
+            crate::algorithms::gpu_dither::apply_gpu_dither_rgba(
+                rgba,
+                width,
+                height,
+                &params,
+                &palette,
+                should_cancel,
+            )
+            .map_err(|e| EngineError::invalid_filter_params(e.to_string()))
         }
-    })
+        _ => apply_riemersma_rgba(rgba, width, height, &params, should_cancel).map_err(|e| match e {
+            RiemersmaError::Cancelled => EngineError::invalid_state("riemersma cancelled"),
+            RiemersmaError::InvalidBuffer => {
+                EngineError::invalid_filter_params("riemersma invalid buffer")
+            }
+        }),
+    }
 }
 
 /// Apply a single tiled filter by walking document tiles (no cross-tile ED

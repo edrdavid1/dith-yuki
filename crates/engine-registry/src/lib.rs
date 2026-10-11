@@ -167,6 +167,9 @@ pub enum GpuEligibility {
     Eligible,
     /// The algorithm must run on CPU; carries the reason for diagnostics.
     Cpu(CpuCheckpointKind),
+    /// GPU can run this if the capability probe passes; otherwise the CPU
+    /// reference runs and must produce identical bytes (`ED-on-GPU.md` §4).
+    Conditional,
 }
 
 // ---------------------------------------------------------------------------
@@ -620,14 +623,18 @@ mod tests {
         }
     }
 
-    /// GpuEligibility::Eligible and Cpu variants are distinct.
+    /// GpuEligibility::Eligible, Cpu, and Conditional are distinct.
     #[test]
     fn gpu_eligibility_variants() {
         let e = GpuEligibility::Eligible;
         let c = GpuEligibility::Cpu(CpuCheckpointKind::UnsupportedFilter);
+        let cond = GpuEligibility::Conditional;
         assert_ne!(e, c);
+        assert_ne!(e, cond);
+        assert_ne!(c, cond);
         assert_eq!(e, GpuEligibility::Eligible);
         assert_eq!(c, GpuEligibility::Cpu(CpuCheckpointKind::UnsupportedFilter));
+        assert_eq!(cond, GpuEligibility::Conditional);
     }
 
     /// EffectCategory serialises as snake_case strings.

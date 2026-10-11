@@ -349,6 +349,12 @@ pub enum DitherModeV2 {
     HalftoneScreenAngled,
     /// Sinusoidal / line-modulated threshold (ordered path).
     Wave,
+    /// Approximate blocked Floyd–Steinberg (`ED-on-GPU.md` — `blocked_fs`).
+    #[serde(rename = "blocked_fs")]
+    BlockedFs,
+    /// Threshold-shift blue noise (`ED-on-GPU.md` — `blue_noise`).
+    #[serde(rename = "blue_noise")]
+    BlueNoise,
 }
 
 impl DitherModeV2 {
@@ -424,6 +430,8 @@ impl DitherModeV2 {
             Self::CmykHalftone => Some("cmyk_halftone"),
             Self::HalftoneScreenAngled => Some("halftone_screen_angled"),
             Self::Wave => Some("wave"),
+            Self::BlockedFs => Some("blocked_fs"),
+            Self::BlueNoise => Some("blue_noise"),
             Self::CustomPng { .. } => None,
         }
     }
@@ -1431,7 +1439,9 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         | "random_dot_stipple"
         | "cmyk_halftone"
         | "halftone_screen_angled"
-        | "wave" => Some(FilterKind::Dither),
+        | "wave"
+        | "blocked_fs"
+        | "blue_noise" => Some(FilterKind::Dither),
         "palette_quantize" | "nearest_color" => Some(FilterKind::PaletteQuantize),
         "crt" => Some(FilterKind::Crt),
         "glow" => Some(FilterKind::Glow),

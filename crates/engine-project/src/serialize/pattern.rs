@@ -164,7 +164,9 @@ fn min_version_for_dither_mode(mode: &DitherModeV2) -> Option<&'static str> {
         | DitherModeV2::RandomDotStipple
         | DitherModeV2::CmykHalftone
         | DitherModeV2::HalftoneScreenAngled
-        | DitherModeV2::Wave => Some("0.1.0"),
+        | DitherModeV2::Wave
+        | DitherModeV2::BlockedFs
+        | DitherModeV2::BlueNoise => Some("0.1.0"),
     }
 }
 

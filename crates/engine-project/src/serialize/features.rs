@@ -54,9 +54,10 @@ pub struct FeatureDef {
 
 /// Highest format version this build can open (major+minor).
 ///
-/// Soft-proof settings in `.dyproj` use format `1.1`. Canary drill features
-/// share the same minor lane under `--features version-drill`.
-pub const SUPPORTED_FORMAT: FormatVersion = FormatVersion::new(1, 1);
+/// Soft-proof settings in `.dyproj` use format `1.1`. GPU dither families
+/// (`blocked-fs`, `blue-noise`) use format `1.2`. Canary drill features share
+/// the same minor lane under `--features version-drill`.
+pub const SUPPORTED_FORMAT: FormatVersion = FormatVersion::new(1, 2);
 
 /// Highest format major this build can open (per kind still uses migrate ladders).
 pub const SUPPORTED_FORMAT_MAJOR: u32 = SUPPORTED_FORMAT.major;
@@ -81,6 +82,18 @@ pub fn feature_registry() -> &'static [FeatureDef] {
                 since: FormatVersion::new(1, 1),
                 required: true,
                 description: "Per-document soft-proof settings in document.json",
+            },
+            FeatureDef {
+                id: "blocked-fs",
+                since: FormatVersion::new(1, 2),
+                required: true,
+                description: "Approximate blocked Floyd–Steinberg dither (params.mode blocked_fs)",
+            },
+            FeatureDef {
+                id: "blue-noise",
+                since: FormatVersion::new(1, 2),
+                required: true,
+                description: "Threshold-shift blue-noise dither (params.mode blue_noise)",
             },
             FeatureDef {
                 id: "canary-optional",
@@ -111,6 +124,18 @@ pub fn feature_registry() -> &'static [FeatureDef] {
                 since: FormatVersion::new(1, 1),
                 required: true,
                 description: "Per-document soft-proof settings in document.json",
+            },
+            FeatureDef {
+                id: "blocked-fs",
+                since: FormatVersion::new(1, 2),
+                required: true,
+                description: "Approximate blocked Floyd–Steinberg dither (params.mode blocked_fs)",
+            },
+            FeatureDef {
+                id: "blue-noise",
+                since: FormatVersion::new(1, 2),
+                required: true,
+                description: "Threshold-shift blue-noise dither (params.mode blue_noise)",
             },
         ];
         REG
@@ -186,6 +211,7 @@ pub fn collect_used_format_features(doc: &Document) -> (Vec<String>, Vec<String>
     if doc.soft_proof.requires_format_feature() {
         required.push("soft-proof".into());
     }
+    collect_gpu_dither_features(&doc.root, &mut required);
     #[cfg(feature = "version-drill")]
     {
         let mut optional = Vec::new();
@@ -205,6 +231,35 @@ pub fn collect_used_format_features(doc: &Document) -> (Vec<String>, Vec<String>
     #[cfg(not(feature = "version-drill"))]
     {
         (required, Vec::new())
+    }
+}
+
+fn collect_gpu_dither_features(nodes: &[crate::layer::LayerNode], required: &mut Vec<String>) {
+    use crate::filter::{DitherModeV2, FilterParams};
+    use crate::layer::LayerNode;
+    for node in nodes {
+        match node {
+            LayerNode::Leaf(layer) => {
+                for filter in &layer.filters {
+                    if let FilterParams::DitherV2(p) = &filter.params {
+                        match p.mode {
+                            DitherModeV2::BlockedFs => {
+                                if !required.iter().any(|s| s == "blocked-fs") {
+                                    required.push("blocked-fs".into());
+                                }
+                            }
+                            DitherModeV2::BlueNoise => {
+                                if !required.iter().any(|s| s == "blue-noise") {
+                                    required.push("blue-noise".into());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            LayerNode::Group(g) => collect_gpu_dither_features(&g.children, required),
+        }
     }
 }
 
@@ -301,7 +356,21 @@ mod tests {
         assert!(feature_by_id("canary-optional").is_none());
         assert!(feature_by_id("canary-required").is_none());
         assert!(feature_by_id("soft-proof").is_some());
-        assert_eq!(SUPPORTED_FORMAT, FormatVersion::new(1, 1));
+        assert!(feature_by_id("blocked-fs").is_some());
+        assert!(feature_by_id("blue-noise").is_some());
+        assert_eq!(SUPPORTED_FORMAT, FormatVersion::new(1, 2));
+    }
+
+    #[test]
+    fn gpu_dither_features_bump_to_v1_2() {
+        assert_eq!(
+            required_version_for_features(["blocked-fs"]),
+            FormatVersion::new(1, 2)
+        );
+        assert_eq!(
+            required_version_for_features(["blue-noise"]),
+            FormatVersion::new(1, 2)
+        );
     }
 
     #[test]
