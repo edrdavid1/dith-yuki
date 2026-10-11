@@ -784,6 +784,21 @@ impl FilterService {
             dither_params
                 .validate()
                 .map_err(|e| AppError::InvalidOperation(format!("{}", e)))?;
+            // Diagnostic for GPU-family pixel_size wiring (integration checklist).
+            if matches!(
+                dither_params.mode,
+                engine_project::filter::DitherModeV2::BlockedFs
+                    | engine_project::filter::DitherModeV2::BlueNoise
+            ) {
+                log::debug!(
+                    target: "gpu_dither",
+                    "update_filter doc={} layer={} mode={:?} pixel_size={}",
+                    doc_id,
+                    req.layer_id,
+                    dither_params.mode,
+                    dither_params.pixel_size
+                );
+            }
             FilterParams::DitherV2(dither_params)
         } else {
             match filter_kind {

@@ -20,7 +20,8 @@ use crate::filter::{DitherModeV2, DitherParamsV2};
 use crate::filters::context::FilterContext;
 
 use super::gpu_dither_cpu::{
-    blue_noise_cpu, blue_noise_ranks, blocked_fs_cpu, PaletteRgb, Rgba8, CORE, DEFAULT_SPREAD, PAD,
+    blue_noise_cpu, blue_noise_ranks, blocked_fs_cpu, with_pixel_size_blocks, PaletteRgb, Rgba8,
+    CORE, DEFAULT_SPREAD, PAD,
 };
 use super::scratch::scratch_src;
 
@@ -34,6 +35,9 @@ pub struct GpuDitherStatus {
     pub backend: String,
     pub elapsed_ms: u32,
     pub strips: u32,
+    pub width: u32,
+    pub height: u32,
+    pub pixel_size: u32,
 }
 
 static LAST_STATUS: Mutex<Option<GpuDitherStatus>> = Mutex::new(None);
@@ -49,15 +53,6 @@ pub fn last_gpu_dither_status() -> Option<GpuDitherStatus> {
 }
 
 fn record_status(status: GpuDitherStatus) {
-    log::info!(
-        target: "gpu_dither",
-        "{} · {} ({}) · {} ms · {} strips",
-        status.algorithm,
-        status.path,
-        status.backend,
-        status.elapsed_ms,
-        status.strips
-    );
     if let Ok(mut g) = LAST_STATUS.lock() {
         *g = Some(status);
     }
@@ -209,7 +204,6 @@ fn bilevel_palette() -> Vec<PaletteRgb> {
 
 fn palette_from_ctx(ctx: &FilterContext<'_>, params: &DitherParamsV2) -> Result<Vec<PaletteRgb>, FilterError> {
     let doc = ctx.document;
-    // Resolve optional document palette by id; fall back to bilevel.
     let Some(pal) = params.palette_id.and_then(|id| doc.get_palette(id)) else {
         return Ok(bilevel_palette());
     };
@@ -230,7 +224,6 @@ fn palette_from_ctx(ctx: &FilterContext<'_>, params: &DitherParamsV2) -> Result<
 }
 
 fn spread_from_params(params: &DitherParamsV2) -> u32 {
-    // Map threshold_scale (default 1.0) onto u8 spread units.
     let s = (params.threshold_scale * DEFAULT_SPREAD as f32).round();
     s.clamp(0.0, 1024.0) as u32
 }
@@ -269,18 +262,36 @@ pub fn apply_gpu_dither_rgba(
 
     let algo = algo_name(&params.mode);
     let choice = path_choice();
+    let ps = params.pixel_size.max(1) as u32;
     let t0 = Instant::now();
-    let _ = params.pixel_size; // warm-up fixed at PAD=8 for GPU parity (§1.1)
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
 
-    let (out, path_label, backend, strips) = match choice {
+    let (out, path_label, backend, strips, phase_log) = match choice {
         PathChoice::ForceCpu => {
+            let t_cpu = Instant::now();
             let out = run_cpu(&input, width, height, params, palette)?;
-            (out, "CPU", "cpu".to_string(), 1u32)
+            let total = t_cpu.elapsed().as_secs_f64() * 1000.0;
+            let log = format!(
+                "{algo} | path=cpu | {width}x{height} | ps={ps} | threads={threads} | total={total:.0}ms"
+            );
+            (out, "CPU", "cpu".to_string(), 1u32, log)
         }
         PathChoice::Auto | PathChoice::ForceGpu => {
             match try_gpu(&input, width, height, params, palette, should_cancel) {
-                Ok((bytes, backend, strips)) => {
-                    (bytes_to_rgba8(&bytes), "GPU", backend, strips)
+                Ok((bytes, backend, strips, timing)) => {
+                    let total = t0.elapsed().as_secs_f64() * 1000.0;
+                    let log = format!(
+                        "{algo} | {backend} | {width}x{height} | ps={ps} | strips={strips} | pipeline={} | total={total:.0}ms\n  prepare={:.0} upload={:.0} dispatch={:.0} readback={:.0} post={:.0}",
+                        timing.pipeline,
+                        timing.prepare_ms,
+                        timing.upload_ms,
+                        timing.dispatch_ms,
+                        timing.readback_ms,
+                        timing.post_ms,
+                    );
+                    (bytes_to_rgba8(&bytes), "GPU", backend, strips, log)
                 }
                 Err(reason) => {
                     if choice == PathChoice::ForceGpu {
@@ -294,8 +305,13 @@ pub fn apply_gpu_dither_rgba(
                             "{algo}: GPU unavailable ({reason}); using CPU"
                         );
                     }
+                    let t_cpu = Instant::now();
                     let out = run_cpu(&input, width, height, params, palette)?;
-                    (out, "CPU", "cpu".to_string(), 1u32)
+                    let total = t_cpu.elapsed().as_secs_f64() * 1000.0;
+                    let log = format!(
+                        "{algo} | path=cpu | {width}x{height} | ps={ps} | threads={threads} | total={total:.0}ms | fallback={reason}"
+                    );
+                    (out, "CPU", "cpu".to_string(), 1u32, log)
                 }
             }
         }
@@ -313,12 +329,16 @@ pub fn apply_gpu_dither_rgba(
     }
 
     let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    log::info!(target: "gpu_dither", "{phase_log}");
     record_status(GpuDitherStatus {
         algorithm: algo.to_string(),
         path: path_label.to_string(),
         backend,
         elapsed_ms: elapsed_ms.round().clamp(0.0, u32::MAX as f64) as u32,
         strips,
+        width,
+        height,
+        pixel_size: ps,
     });
     Ok(())
 }
@@ -330,20 +350,26 @@ fn run_cpu(
     params: &DitherParamsV2,
     palette: &[PaletteRgb],
 ) -> Result<Vec<Rgba8>, FilterError> {
-    match params.mode {
-        DitherModeV2::BlockedFs => blocked_fs_cpu(input, width, height, palette, CORE, CORE, PAD)
-            .map_err(FilterError::from_engine),
-        DitherModeV2::BlueNoise => blue_noise_cpu(
-            input,
-            width,
-            height,
-            palette,
-            blue_noise_ranks(),
-            spread_from_params(params),
-        )
-        .map_err(FilterError::from_engine),
-        _ => Err(FilterError::from_engine("gpu_dither: unexpected mode")),
-    }
+    let ps = params.pixel_size.max(1) as u32;
+    with_pixel_size_blocks(input, width, height, ps, |small, sw, sh| {
+        match params.mode {
+            DitherModeV2::BlockedFs => {
+                blocked_fs_cpu(small, sw, sh, palette, CORE, CORE, PAD)
+            }
+            DitherModeV2::BlueNoise => blue_noise_cpu(
+                small,
+                sw,
+                sh,
+                palette,
+                blue_noise_ranks(),
+                spread_from_params(params),
+            ),
+            _ => Err(crate::error::EngineError::invalid_filter_params(
+                "gpu_dither: unexpected mode",
+            )),
+        }
+    })
+    .map_err(FilterError::from_engine)
 }
 
 fn try_gpu(
@@ -353,32 +379,48 @@ fn try_gpu(
     params: &DitherParamsV2,
     palette: &[PaletteRgb],
     cancel: &std::sync::atomic::AtomicBool,
-) -> Result<(Vec<u8>, String, u32), String> {
+) -> Result<(Vec<u8>, String, u32, engine_gpu::GpuPhaseTiming), String> {
     let Some((device, queue, label)) = engine_gpu::cached_blocked_fs_device() else {
         return Err("no adapter".into());
     };
-    let in_b = rgba8_to_bytes(input);
-    let pal_b = palette_rgba(palette);
     let backend = backend_short(label);
-    let result = match params.mode {
-        DitherModeV2::BlockedFs => {
-            engine_gpu::apply_blocked_fs_gpu_opts(
-                device,
-                queue,
-                &in_b,
-                width,
-                height,
-                &pal_b,
-                cancel,
-                engine_gpu::BlockedFsGpuOpts::default(),
-            )
+    let ps = params.pixel_size.max(1) as u32;
+    let pal_b = palette_rgba(palette);
+
+    // Build block-rep lattice (identity when ps==1), run GPU once, expand.
+    let (tw, th, lattice) = if ps <= 1 {
+        (width, height, None)
+    } else {
+        let bw = width.div_ceil(ps);
+        let bh = height.div_ceil(ps);
+        let w = width as usize;
+        let mut small = Vec::with_capacity((bw * bh) as usize);
+        for by in 0..bh {
+            for bx in 0..bw {
+                small.push(input[(by * ps) as usize * w + (bx * ps) as usize]);
+            }
         }
+        (bw, bh, Some(small))
+    };
+    let src: &[Rgba8] = lattice.as_deref().unwrap_or(input);
+    let in_b = rgba8_to_bytes(src);
+    let gpu = match params.mode {
+        DitherModeV2::BlockedFs => engine_gpu::apply_blocked_fs_gpu_opts(
+            device,
+            queue,
+            &in_b,
+            tw,
+            th,
+            &pal_b,
+            cancel,
+            engine_gpu::BlockedFsGpuOpts::default(),
+        ),
         DitherModeV2::BlueNoise => engine_gpu::apply_blue_noise_gpu_opts(
             device,
             queue,
             &in_b,
-            width,
-            height,
+            tw,
+            th,
             &pal_b,
             blue_noise_ranks(),
             spread_from_params(params),
@@ -387,7 +429,28 @@ fn try_gpu(
         ),
         _ => return Err("unexpected mode".into()),
     }?;
-    Ok((result.rgba8, backend, result.strips))
+
+    let out_bytes = if ps <= 1 {
+        gpu.rgba8
+    } else {
+        let dithered = bytes_to_rgba8(&gpu.rgba8);
+        let bw = tw as usize;
+        let w = width as usize;
+        let h = height as usize;
+        let mut out = Vec::with_capacity(w * h);
+        for y in 0..h {
+            let by = (y as u32 / ps) as usize;
+            for x in 0..w {
+                let bx = (x as u32 / ps) as usize;
+                let p = dithered[by * bw + bx];
+                let src_a = input[y * w + x].a;
+                out.push(Rgba8::new(p.r, p.g, p.b, src_a));
+            }
+        }
+        rgba8_to_bytes(&out)
+    };
+
+    Ok((out_bytes, backend, gpu.strips, gpu.timing))
 }
 
 fn apply_tile(
@@ -401,30 +464,7 @@ fn apply_tile(
     let palette = palette_from_ctx(fctx, &params)?;
     let src = scratch_src(tile);
     let input = tile_to_rgba8(&src);
-    let out = match mode {
-        DitherModeV2::BlockedFs => {
-            blocked_fs_cpu(
-                &input,
-                TILE_SIZE,
-                TILE_SIZE,
-                &palette,
-                CORE,
-                CORE,
-                PAD,
-            )
-            .map_err(FilterError::from_engine)?
-        }
-        DitherModeV2::BlueNoise => blue_noise_cpu(
-            &input,
-            TILE_SIZE,
-            TILE_SIZE,
-            &palette,
-            blue_noise_ranks(),
-            spread_from_params(&params),
-        )
-        .map_err(FilterError::from_engine)?,
-        _ => unreachable!(),
-    };
+    let out = run_cpu(&input, TILE_SIZE, TILE_SIZE, &params, &palette)?;
     write_rgba8_to_tile(tile, &out);
     Ok(())
 }
@@ -452,7 +492,6 @@ impl FilterAlgorithm for BlockedFs {
     }
 
     fn gpu_eligibility(&self, _params: &serde_json::Value) -> GpuEligibility {
-        // TODO(ED-on-GPU.md §4): Conditional — GPU when probe passes.
         GpuEligibility::Conditional
     }
 
@@ -522,11 +561,10 @@ impl FilterAlgorithm for BlueNoise {
     }
 
     fn execution_scope(&self) -> ExecutionScope {
-        // Stateless; FullDocument keeps strip/GPU path aligned with CPU reference.
         ExecutionScope::FullDocument
     }
 
     fn temporal_stability(&self) -> TemporalStability {
-        TemporalStability::Stable
+        TemporalStability::Unstable
     }
 }

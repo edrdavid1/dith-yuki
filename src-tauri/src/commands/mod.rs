@@ -136,6 +136,9 @@ pub struct GpuDitherStatusPayload {
     pub backend: String,
     pub elapsed_ms: u32,
     pub strips: u32,
+    pub width: u32,
+    pub height: u32,
+    pub pixel_size: u32,
 }
 
 /// Emit last GPU-dither apply status for the preview footer (when experimental flag is on).
@@ -156,6 +159,9 @@ pub(crate) fn emit_gpu_dither_status(state: &AppState, doc_id: u32) {
         backend: status.backend,
         elapsed_ms: status.elapsed_ms,
         strips: status.strips,
+        width: status.width,
+        height: status.height,
+        pixel_size: status.pixel_size,
     };
     let _ = app.emit_to(tauri::EventTarget::Any, "gpu-dither-status", payload);
 }

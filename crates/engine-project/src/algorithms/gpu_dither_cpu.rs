@@ -80,6 +80,63 @@ fn read_clamped(input: &[Rgba8], w: usize, h: usize, x: i32, y: i32) -> Rgba8 {
     input[cy * w + cx]
 }
 
+/// ED-style mega-pixel grid: sample the top-left of each `ps×ps` block, then
+/// expand the dithered block grid back to full resolution.
+///
+/// Matches `docs/tile-pipeline.md` §6 (“Block representative”). Does **not**
+/// change tile warm-up / Q8.8 arithmetic — only the sampling lattice.
+/// `ps <= 1` is a no-op (bit-identical to running `f` on `input`).
+pub fn with_pixel_size_blocks<F>(
+    input: &[Rgba8],
+    width: u32,
+    height: u32,
+    pixel_size: u32,
+    f: F,
+) -> Result<Vec<Rgba8>, EngineError>
+where
+    F: FnOnce(&[Rgba8], u32, u32) -> Result<Vec<Rgba8>, EngineError>,
+{
+    let ps = pixel_size.max(1);
+    let w = width as usize;
+    let h = height as usize;
+    if input.len() != w * h {
+        return Err(EngineError::invalid_filter_params(
+            "pixel_size blocks: buffer size",
+        ));
+    }
+    if ps <= 1 {
+        return f(input, width, height);
+    }
+    let bw = width.div_ceil(ps);
+    let bh = height.div_ceil(ps);
+    let mut small = Vec::with_capacity((bw * bh) as usize);
+    for by in 0..bh {
+        for bx in 0..bw {
+            let x = (bx * ps) as usize;
+            let y = (by * ps) as usize;
+            small.push(input[y * w + x]);
+        }
+    }
+    let dithered = f(&small, bw, bh)?;
+    if dithered.len() != (bw * bh) as usize {
+        return Err(EngineError::invalid_filter_params(
+            "pixel_size blocks: dither size mismatch",
+        ));
+    }
+    let mut out = Vec::with_capacity(w * h);
+    for y in 0..h {
+        let by = (y as u32 / ps) as usize;
+        for x in 0..w {
+            let bx = (x as u32 / ps) as usize;
+            let p = dithered[by * (bw as usize) + bx];
+            // Alpha comes from the source pixel (ED keeps alpha; block color from rep).
+            let src = input[y * w + x];
+            out.push(Rgba8::new(p.r, p.g, p.b, src.a));
+        }
+    }
+    Ok(out)
+}
+
 /// Approximate blocked Floyd–Steinberg with left/top warm-up.
 ///
 /// `tile_w`/`tile_h` are the **core** stride (default [`CORE`]). Each tile

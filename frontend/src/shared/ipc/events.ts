@@ -110,6 +110,9 @@ export interface GpuDitherStatusPayload {
   backend: string;
   elapsed_ms: number;
   strips: number;
+  width?: number;
+  height?: number;
+  pixel_size?: number;
 }
 
 export async function onGpuDitherStatus(

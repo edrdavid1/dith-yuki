@@ -6,7 +6,8 @@ use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 use engine_gpu::{apply_blocked_fs_gpu_opts, apply_blue_noise_gpu_opts, BlockedFsGpuOpts, BlueNoiseGpuOpts};
 use engine_project::algorithms::gpu_dither_cpu::{
-    blue_noise_cpu, blue_noise_ranks, blocked_fs_cpu, PaletteRgb, Rgba8, CORE, PAD,
+    blue_noise_cpu, blue_noise_ranks, blocked_fs_cpu, with_pixel_size_blocks, PaletteRgb, Rgba8,
+    CORE, PAD,
 };
 use sha2::{Digest, Sha256};
 
@@ -123,6 +124,7 @@ fn palette_rgb(pal: &[[u8; 4]]) -> Vec<PaletteRgb> {
 
 fn run_cpu(case: &ParityCase, input: &[Rgba8]) -> Result<Vec<u8>, String> {
     let pal = palette_rgb(&case.palette);
+    let ps = case.params.pixel_size.max(1);
     match case.algorithm {
         Algorithm::BlockedFs => {
             let pad = if case.params.pad == 0 {
@@ -131,27 +133,23 @@ fn run_cpu(case: &ParityCase, input: &[Rgba8]) -> Result<Vec<u8>, String> {
                 case.params.pad
             };
             // GPU warm-up is fixed at PAD=8; non-default pad is CPU-only.
-            let out = blocked_fs_cpu(
-                input,
-                case.width,
-                case.height,
-                &pal,
-                CORE,
-                CORE,
-                pad,
-            )
+            let out = with_pixel_size_blocks(input, case.width, case.height, ps, |small, sw, sh| {
+                blocked_fs_cpu(small, sw, sh, &pal, CORE, CORE, pad)
+            })
             .map_err(|e| e.to_string())?;
             Ok(to_bytes(&out))
         }
         Algorithm::BlueNoise => {
-            let out = blue_noise_cpu(
-                input,
-                case.width,
-                case.height,
-                &pal,
-                blue_noise_ranks(),
-                case.params.spread,
-            )
+            let out = with_pixel_size_blocks(input, case.width, case.height, ps, |small, sw, sh| {
+                blue_noise_cpu(
+                    small,
+                    sw,
+                    sh,
+                    &pal,
+                    blue_noise_ranks(),
+                    case.params.spread,
+                )
+            })
             .map_err(|e| e.to_string())?;
             Ok(to_bytes(&out))
         }
@@ -167,7 +165,26 @@ fn run_gpu(
     strip_cores: Option<u32>,
     strip_h: Option<u32>,
 ) -> Result<Vec<u8>, String> {
-    match case.algorithm {
+    let ps = case.params.pixel_size.max(1);
+    let input = from_bytes(input_bytes);
+    // Same ED-style block lattice as CPU / apply_gpu_dither_rgba.
+    let (tw, th, lattice) = if ps <= 1 {
+        (case.width, case.height, None)
+    } else {
+        let bw = case.width.div_ceil(ps);
+        let bh = case.height.div_ceil(ps);
+        let w = case.width as usize;
+        let mut small = Vec::with_capacity((bw * bh) as usize);
+        for by in 0..bh {
+            for bx in 0..bw {
+                small.push(input[(by * ps) as usize * w + (bx * ps) as usize]);
+            }
+        }
+        (bw, bh, Some(small))
+    };
+    let src = lattice.as_deref().unwrap_or(&input);
+    let in_b = to_bytes(src);
+    let gpu = match case.algorithm {
         Algorithm::BlockedFs => {
             if case.params.pad != 8 && case.params.pad != 0 {
                 return Err("skip:pad".into());
@@ -175,24 +192,23 @@ fn run_gpu(
             apply_blocked_fs_gpu_opts(
                 device,
                 queue,
-                input_bytes,
-                case.width,
-                case.height,
+                &in_b,
+                tw,
+                th,
                 &case.palette,
                 cancel,
                 BlockedFsGpuOpts {
                     force_strip_cores: strip_cores,
                     force_max_bind: None,
                 },
-            )
-            .map(|r| r.rgba8)
+            )?
         }
         Algorithm::BlueNoise => apply_blue_noise_gpu_opts(
             device,
             queue,
-            input_bytes,
-            case.width,
-            case.height,
+            &in_b,
+            tw,
+            th,
             &case.palette,
             blue_noise_ranks(),
             case.params.spread,
@@ -201,9 +217,25 @@ fn run_gpu(
                 force_strip_h: strip_h,
                 force_max_bind: None,
             },
-        )
-        .map(|r| r.rgba8),
+        )?,
+    };
+    if ps <= 1 {
+        return Ok(gpu.rgba8);
     }
+    let dithered = from_bytes(&gpu.rgba8);
+    let bw = tw as usize;
+    let w = case.width as usize;
+    let h = case.height as usize;
+    let mut out = Vec::with_capacity(w * h);
+    for y in 0..h {
+        let by = (y as u32 / ps) as usize;
+        for x in 0..w {
+            let bx = (x as u32 / ps) as usize;
+            let p = dithered[by * bw + bx];
+            out.push(Rgba8::new(p.r, p.g, p.b, input[y * w + x].a));
+        }
+    }
+    Ok(to_bytes(&out))
 }
 
 fn check_properties(case: &ParityCase, input: &[Rgba8], out: &[u8]) -> Result<(), String> {
@@ -422,6 +454,7 @@ pub fn run_parity_matrix() {
             && matches!(case.width, 8 | 56 | 64 | 128)
             && case.params.spread == 256
             && case.params.pad == 8
+            && case.params.pixel_size <= 1
             && matches!(case.input, super::case::InputKind::GradientH)
             && is_bw_p2;
         if is_golden {
