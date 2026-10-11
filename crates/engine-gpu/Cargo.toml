@@ -34,3 +34,7 @@ engine-color = { path = "../engine-color" }
 [[example]]
 name = "ed_gpu_prototype"
 path = "examples/ed_gpu_prototype.rs"
+
+[[example]]
+name = "ed_wavefront_spike"
+path = "examples/ed_wavefront_spike.rs"

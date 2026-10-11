@@ -13,7 +13,11 @@ mod context;
 mod crt;
 mod decision;
 mod dispatch;
+pub mod blocked_fs;
+pub mod blue_noise_gpu;
 pub mod ed_prototype;
+pub mod ed_wavefront_spike;
+mod strip_bind;
 mod executor;
 mod graph;
 mod halftone;
@@ -28,6 +32,15 @@ mod vram_budget;
 mod warmup;
 
 pub use bayer::{apply_bayer_gpu, BayerGpuParams, BayerMatrixSize};
+pub use blocked_fs::{
+    apply_blocked_fs_gpu, apply_blocked_fs_gpu_opts, cached_blocked_fs_device,
+    request_blocked_fs_device, BlockedFsGpuOpts, GpuImageResult, CORE as BLOCKED_FS_CORE,
+    PAD as BLOCKED_FS_PAD, WG_SIZE as BLOCKED_FS_WG,
+};
+pub use blue_noise_gpu::{apply_blue_noise_gpu, apply_blue_noise_gpu_opts, BlueNoiseGpuOpts};
+pub use strip_bind::{
+    effective_max_bind, max_blocked_fs_strip_cores, max_blue_noise_strip_h,
+};
 pub use composite::{
     CompositePassParams, GpuCompositeFrameJob, GpuCompositeLayerOp, GpuCompositeTileWork,
 };
