@@ -1,10 +1,13 @@
 //! GPU threshold-shift blue noise.
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
+use std::time::Instant;
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
+use crate::blocked_fs::GpuPhaseTiming;
 use crate::strip_bind::{effective_max_bind, max_blue_noise_strip_h, row_bytes};
 
 const SHADER: &str = include_str!("shaders/blue_noise.wgsl");
@@ -95,6 +98,7 @@ pub fn apply_blue_noise_gpu_opts(
         noise_u32.push((chunk[0] as u32) | ((chunk[1] as u32) << 16));
     }
 
+    let t_prepare0 = Instant::now();
     let max_bind = effective_max_bind(device, opts.force_max_bind);
     let full_bytes = n as u64 * 4;
     let use_full = full_bytes <= max_bind && opts.force_strip_h.is_none();
@@ -109,34 +113,10 @@ pub fn apply_blue_noise_gpu_opts(
         strip_h = forced.max(1).min(strip_h);
     }
 
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("blue_noise"),
-        source: wgpu::ShaderSource::Wgsl(SHADER.into()),
-    });
-    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("bn_bgl"),
-        entries: &[
-            storage_entry(0, true),
-            storage_entry(1, false),
-            storage_entry(2, true),
-            storage_entry(3, true),
-            uniform_entry(4),
-        ],
-    });
-    let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("bn_pl"),
-        bind_group_layouts: &[&bgl],
-        push_constant_ranges: &[],
-    });
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("bn_pipe"),
-        layout: Some(&pl),
-        module: &shader,
-        entry_point: Some("main"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
+    let (bgl, pipeline, pipeline_label) = cached_bn_pipeline(device);
+    let prepare_ms = t_prepare0.elapsed().as_secs_f64() * 1000.0;
 
+    let t_upload0 = Instant::now();
     let palette_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("bn-pal"),
         contents: bytemuck::cast_slice(&palette_u32),
@@ -156,6 +136,9 @@ pub fn apply_blue_noise_gpu_opts(
 
     let mut out_u32 = vec![0u32; n];
     let mut strips = 0u32;
+    let upload_ms;
+    let mut dispatch_ms = 0.0;
+    let mut readback_ms = 0.0;
 
     if use_full {
         let input_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -171,13 +154,15 @@ pub fn apply_blue_noise_gpu_opts(
         });
         let bind_group = make_bn_bg(
             device,
-            &bgl,
+            bgl,
             &input_buf,
             &output_buf,
             &palette_buf,
             &noise_buf,
             &uniform_buf,
         );
+        upload_ms = t_upload0.elapsed().as_secs_f64() * 1000.0;
+        let t_d0 = Instant::now();
         let mut y0 = 0u32;
         while y0 < height {
             if cancel.load(Ordering::Acquire) {
@@ -195,12 +180,17 @@ pub fn apply_blue_noise_gpu_opts(
                 h,
                 0,
             );
-            dispatch_bn(device, queue, &pipeline, &bind_group, width, h);
+            dispatch_bn(device, queue, pipeline, &bind_group, width, h);
             strips += 1;
             y0 += h;
         }
+        device.poll(wgpu::Maintain::Wait);
+        dispatch_ms = t_d0.elapsed().as_secs_f64() * 1000.0;
+        let t_r0 = Instant::now();
         out_u32 = readback_u32(device, queue, &output_buf, full_bytes)?;
+        readback_ms = t_r0.elapsed().as_secs_f64() * 1000.0;
     } else {
+        upload_ms = t_upload0.elapsed().as_secs_f64() * 1000.0;
         let mut y0 = 0u32;
         while y0 < height {
             if cancel.load(Ordering::Acquire) {
@@ -229,7 +219,7 @@ pub fn apply_blue_noise_gpu_opts(
             });
             let bind_group = make_bn_bg(
                 device,
-                &bgl,
+                bgl,
                 &input_buf,
                 &output_buf,
                 &palette_buf,
@@ -247,22 +237,89 @@ pub fn apply_blue_noise_gpu_opts(
                 h,
                 y0, // buf_y0 == strip start
             );
-            dispatch_bn(device, queue, &pipeline, &bind_group, width, h);
+            let t_d0 = Instant::now();
+            dispatch_bn(device, queue, pipeline, &bind_group, width, h);
+            device.poll(wgpu::Maintain::Wait);
+            dispatch_ms += t_d0.elapsed().as_secs_f64() * 1000.0;
             strips += 1;
+            let t_r0 = Instant::now();
             let strip_out = readback_u32(device, queue, &output_buf, bind_bytes)?;
+            readback_ms += t_r0.elapsed().as_secs_f64() * 1000.0;
             out_u32[start..end].copy_from_slice(&strip_out);
             y0 += h;
         }
     }
 
+    let t_post0 = Instant::now();
     let mut out = Vec::with_capacity(n * 4);
     for &p in &out_u32 {
         out.extend_from_slice(&p.to_le_bytes());
     }
+    let post_ms = t_post0.elapsed().as_secs_f64() * 1000.0;
     Ok(crate::blocked_fs::GpuImageResult {
         rgba8: out,
         strips: strips.max(1),
+        timing: GpuPhaseTiming {
+            prepare_ms,
+            upload_ms,
+            dispatch_ms,
+            readback_ms,
+            post_ms,
+            pipeline: pipeline_label,
+        },
     })
+}
+
+struct CachedBnPipe {
+    bgl: wgpu::BindGroupLayout,
+    pipeline: wgpu::ComputePipeline,
+}
+
+fn cached_bn_pipeline(
+    device: &wgpu::Device,
+) -> (
+    &'static wgpu::BindGroupLayout,
+    &'static wgpu::ComputePipeline,
+    &'static str,
+) {
+    static CELL: OnceLock<CachedBnPipe> = OnceLock::new();
+    static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let pipe = CELL.get_or_init(|| {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("blue_noise"),
+            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+        });
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("bn_bgl"),
+            entries: &[
+                storage_entry(0, true),
+                storage_entry(1, false),
+                storage_entry(2, true),
+                storage_entry(3, true),
+                uniform_entry(4),
+            ],
+        });
+        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("bn_pl"),
+            bind_group_layouts: &[&bgl],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("bn_pipe"),
+            layout: Some(&pl),
+            module: &shader,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        CachedBnPipe { bgl, pipeline }
+    });
+    let n = CALLS.fetch_add(1, Ordering::Relaxed);
+    (
+        &pipe.bgl,
+        &pipe.pipeline,
+        if n == 0 { "new" } else { "cached" },
+    )
 }
 
 fn make_bn_bg<'a>(

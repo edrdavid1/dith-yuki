@@ -6,6 +6,8 @@
 //! Scheme: `.local-doc/Dither GPU-аналоги ED — схема реализации.md`
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
+use std::time::Instant;
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
@@ -45,12 +47,67 @@ pub struct BlockedFsGpuOpts {
     pub force_max_bind: Option<u64>,
 }
 
+/// Phase timings for one GPU apply (milliseconds; includes GPU wait on readback).
+#[derive(Clone, Debug, Default)]
+pub struct GpuPhaseTiming {
+    pub prepare_ms: f64,
+    pub upload_ms: f64,
+    pub dispatch_ms: f64,
+    pub readback_ms: f64,
+    pub post_ms: f64,
+    /// `"cached"` when the compute pipeline was reused; `"new"` on first build.
+    pub pipeline: &'static str,
+}
+
 /// GPU apply result with strip accounting for the preview indicator.
 #[derive(Clone, Debug)]
 pub struct GpuImageResult {
     pub rgba8: Vec<u8>,
     /// Number of strip dispatches submitted.
     pub strips: u32,
+    pub timing: GpuPhaseTiming,
+}
+
+struct CachedBfsPipe {
+    bgl: wgpu::BindGroupLayout,
+    pipeline: wgpu::ComputePipeline,
+}
+
+/// Session-cached pipeline. Returns `(pipe, "new"|"cached")`.
+fn cached_bfs_pipeline(device: &wgpu::Device) -> (&'static CachedBfsPipe, &'static str) {
+    static CELL: OnceLock<CachedBfsPipe> = OnceLock::new();
+    static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let pipe = CELL.get_or_init(|| {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("blocked_fs"),
+            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+        });
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("blocked_fs_bgl"),
+            entries: &[
+                storage_entry(0, true),
+                storage_entry(1, false),
+                storage_entry(2, true),
+                uniform_entry(3),
+            ],
+        });
+        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("blocked_fs_pl"),
+            bind_group_layouts: &[&bgl],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("blocked_fs_pipe"),
+            layout: Some(&pl),
+            module: &shader,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        CachedBfsPipe { bgl, pipeline }
+    });
+    let n = CALLS.fetch_add(1, Ordering::Relaxed);
+    (pipe, if n == 0 { "new" } else { "cached" })
 }
 
 /// Packed RGBA8 image + packed RGBA8 palette → packed RGBA8 output.
@@ -108,6 +165,7 @@ pub fn apply_blocked_fs_gpu_opts(
         .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
 
+    let t_prepare0 = Instant::now();
     let max_bind = effective_max_bind(device, opts.force_max_bind);
     let full_bytes = n as u64 * 4;
     let use_full = full_bytes <= max_bind && opts.force_strip_cores.is_none();
@@ -133,33 +191,10 @@ pub fn apply_blocked_fs_gpu_opts(
         ));
     }
 
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("blocked_fs"),
-        source: wgpu::ShaderSource::Wgsl(SHADER.into()),
-    });
-    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("blocked_fs_bgl"),
-        entries: &[
-            storage_entry(0, true),
-            storage_entry(1, false),
-            storage_entry(2, true),
-            uniform_entry(3),
-        ],
-    });
-    let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("blocked_fs_pl"),
-        bind_group_layouts: &[&bgl],
-        push_constant_ranges: &[],
-    });
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("blocked_fs_pipe"),
-        layout: Some(&pl),
-        module: &shader,
-        entry_point: Some("main"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
+    let (pipe, pipeline_label) = cached_bfs_pipeline(device);
+    let prepare_ms = t_prepare0.elapsed().as_secs_f64() * 1000.0;
 
+    let t_upload0 = Instant::now();
     let palette_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("bfs-pal"),
         contents: bytemuck::cast_slice(&palette_u32),
@@ -176,6 +211,9 @@ pub fn apply_blocked_fs_gpu_opts(
     let tiles_y = height.div_ceil(CORE);
     let mut out_u32 = input_u32.clone();
     let mut strips = 0u32;
+    let mut upload_ms;
+    let mut dispatch_ms = 0.0;
+    let mut readback_ms = 0.0;
 
     if use_full {
         // Single full-image binding; strip only for cancel checkpoints.
@@ -191,7 +229,7 @@ pub fn apply_blocked_fs_gpu_opts(
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("bfs-bg"),
-            layout: &bgl,
+            layout: &pipe.bgl,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -211,7 +249,9 @@ pub fn apply_blocked_fs_gpu_opts(
                 },
             ],
         });
+        upload_ms = t_upload0.elapsed().as_secs_f64() * 1000.0;
 
+        let t_disp0 = Instant::now();
         let mut ty = 0u32;
         while ty < tiles_y {
             if cancel.load(Ordering::Acquire) {
@@ -227,12 +267,19 @@ pub fn apply_blocked_fs_gpu_opts(
                 ty * CORE,
                 0,
             );
-            dispatch_strip(device, queue, &pipeline, &bind_group, tiles_x, rows);
+            dispatch_strip(device, queue, &pipe.pipeline, &bind_group, tiles_x, rows);
             strips += 1;
             ty += rows;
         }
+        // Wait for GPU work before attributing time solely to readback.
+        device.poll(wgpu::Maintain::Wait);
+        dispatch_ms = t_disp0.elapsed().as_secs_f64() * 1000.0;
+
+        let t_rb0 = Instant::now();
         out_u32 = readback_u32(device, queue, &output_buf, full_bytes)?;
+        readback_ms = t_rb0.elapsed().as_secs_f64() * 1000.0;
     } else {
+        upload_ms = t_upload0.elapsed().as_secs_f64() * 1000.0;
         // Strip-sized STORAGE buffers.
         let mut ty = 0u32;
         while ty < tiles_y {
@@ -265,7 +312,7 @@ pub fn apply_blocked_fs_gpu_opts(
             });
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("bfs-bg-strip"),
-                layout: &bgl,
+                layout: &pipe.bgl,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -294,9 +341,14 @@ pub fn apply_blocked_fs_gpu_opts(
                 strip_y0,
                 buf_y0,
             );
-            dispatch_strip(device, queue, &pipeline, &bind_group, tiles_x, rows);
+            let t_d0 = Instant::now();
+            dispatch_strip(device, queue, &pipe.pipeline, &bind_group, tiles_x, rows);
+            device.poll(wgpu::Maintain::Wait);
+            dispatch_ms += t_d0.elapsed().as_secs_f64() * 1000.0;
             strips += 1;
+            let t_r0 = Instant::now();
             let strip_out = readback_u32(device, queue, &output_buf, bind_bytes)?;
+            readback_ms += t_r0.elapsed().as_secs_f64() * 1000.0;
             // Copy written core rows (and any overlapping warm-up) back.
             // Only rows in [strip_y0, strip_y0+rows*CORE) are authoritative.
             let write_y0 = strip_y0;
@@ -311,13 +363,23 @@ pub fn apply_blocked_fs_gpu_opts(
         }
     }
 
+    let t_post0 = Instant::now();
     let mut out = Vec::with_capacity(n * 4);
     for &p in &out_u32 {
         out.extend_from_slice(&p.to_le_bytes());
     }
+    let post_ms = t_post0.elapsed().as_secs_f64() * 1000.0;
     Ok(GpuImageResult {
         rgba8: out,
         strips: strips.max(1),
+        timing: GpuPhaseTiming {
+            prepare_ms,
+            upload_ms,
+            dispatch_ms,
+            readback_ms,
+            post_ms,
+            pipeline: pipeline_label,
+        },
     })
 }
 
