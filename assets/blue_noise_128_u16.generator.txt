@@ -1,0 +1,8 @@
+size=128
+sigma=1.5
+seed=0x5EED
+algorithm=void-and-cluster (Ulichney 1993)
+rank_range=0..16383
+sha256=867787dfb97bc846aec24f1c6a3371e3932c16408bb68e14fab2042803a31631
+canonical=blue_noise_128_u16.raw (little-endian u16)
+png=blue_noise_128_u16.png (inspectable visualization)
