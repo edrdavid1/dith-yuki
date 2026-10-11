@@ -34,26 +34,30 @@ function toFilterParams(kind: string, params: Record<string, unknown>): FilterPa
   return { type: kind, ...unwrapFilterParams(params) } as unknown as FilterParams;
 }
 
-const DEFAULT_DEBOUNCE_MS = 100;
+/** Single knob for slider coalesce (preview responsiveness vs thrash). */
+export const PREVIEW_SLIDER_DEBOUNCE_MS = 150;
 /**
  * Monolithic full-document filters (ASCII, Riemersma): longer coalesce so slider
- * ticks do not cancel/restart an expensive job every 100 ms (Riemersma §3 /
- * ASCII debounce rule).
+ * ticks do not cancel/restart an expensive job every tick.
  */
 const FULL_DOCUMENT_DEBOUNCE_MS = 350;
 
 function debounceMsForParams(params: FilterParams | null): number {
-  if (!params) return DEFAULT_DEBOUNCE_MS;
+  if (!params) return PREVIEW_SLIDER_DEBOUNCE_MS;
   const record = params as unknown as Record<string, unknown>;
   const kind = typeof record.type === 'string' ? record.type : '';
   if (kind === 'Ascii') return FULL_DOCUMENT_DEBOUNCE_MS;
   if (
     (kind === 'DitherV2' || kind === 'Dither') &&
-    record.mode === 'riemersma'
+    (record.mode === 'riemersma' ||
+      record.mode === 'blocked_fs' ||
+      record.mode === 'blue_noise')
   ) {
-    return FULL_DOCUMENT_DEBOUNCE_MS;
+    return record.mode === 'riemersma'
+      ? FULL_DOCUMENT_DEBOUNCE_MS
+      : PREVIEW_SLIDER_DEBOUNCE_MS;
   }
-  return DEFAULT_DEBOUNCE_MS;
+  return PREVIEW_SLIDER_DEBOUNCE_MS;
 }
 
 /**

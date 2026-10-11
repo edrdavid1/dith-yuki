@@ -74,6 +74,8 @@ export default function PreviewWindow({
     if (!showSeamlessPreview) setTileRepeat3x3(false);
   }, [showSeamlessPreview]);
   const [fullDocumentBusy, setFullDocumentBusy] = useState(false);
+  /** After the first successful paint, keep the previous frame during recompute. */
+  const [hadPreviewFrame, setHadPreviewFrame] = useState(false);
   const [gpuDitherStatus, setGpuDitherStatus] = useState<GpuDitherStatusPayload | null>(
     null,
   );
@@ -95,12 +97,20 @@ export default function PreviewWindow({
   }, [hasAscii, docId]);
 
   useEffect(() => {
+    setHadPreviewFrame(false);
+    setGpuDitherStatus(null);
+  }, [docId]);
+
+  useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     void onFullDocumentBusy((event) => {
       if (cancelled) return;
       if (event.payload.doc_id !== docId) return;
       setFullDocumentBusy(event.payload.busy);
+      if (!event.payload.busy) {
+        setHadPreviewFrame(true);
+      }
     }).then((fn) => {
       if (cancelled) fn();
       else unlisten = fn;
@@ -286,10 +296,18 @@ export default function PreviewWindow({
           onViewportChange={handleViewportChange}
           tileRepeat3x3={tileRepeat3x3}
         />
-        {fullDocumentBusy && (
+        {fullDocumentBusy && !hadPreviewFrame && (
           <div className={cn('preview-loading')} role="status" aria-live="polite">
             <span className={cn('pv-rendering-label')}>Rendering…</span>
           </div>
+        )}
+        {fullDocumentBusy && hadPreviewFrame && (
+          <div
+            className={cn('preview-recomputing')}
+            role="status"
+            aria-live="polite"
+            aria-label="Updating preview"
+          />
         )}
       </div>
 
@@ -302,11 +320,18 @@ export default function PreviewWindow({
           {showGpuDitherIndicator && gpuDitherStatus && (
             <span
               className={cn('pv-gpu-dither')}
-              title={`${gpuDitherStatus.strips} strip(s)`}
+              title={
+                gpuDitherStatus.width && gpuDitherStatus.height
+                  ? `${gpuDitherStatus.width}×${gpuDitherStatus.height} · ps=${gpuDitherStatus.pixel_size ?? 1} · ${gpuDitherStatus.strips} strip(s)`
+                  : `${gpuDitherStatus.strips} strip(s)`
+              }
               aria-label="GPU dither path"
             >
-              {gpuDitherStatus.algorithm} · {gpuDitherStatus.path} (
-              {gpuDitherStatus.backend}) · {gpuDitherStatus.elapsed_ms} ms
+              {gpuDitherStatus.algorithm} ·{' '}
+              {gpuDitherStatus.path === 'CPU'
+                ? 'CPU fallback'
+                : `GPU (${gpuDitherStatus.backend})`}{' '}
+              · {gpuDitherStatus.elapsed_ms} ms
             </span>
           )}
           {hasAscii && (
