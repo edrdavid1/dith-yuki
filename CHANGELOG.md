@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## 2.0.1-beta
+
+### Performance
+
+- Full-document preview mass-publish runs once per generation on a background
+  thread (parallel tile insert + pixel buffer pool), so slice/return is not
+  blocked by publish.
+- Linear↔sRGB transfer uses a LUT; `setup_hash` stays Debug-only on the hot path.
+
+### Added
+
+- Optional Level-1 preview latency diagnostics (config flag) with FE gesture
+  timing and a Step-0 harness for scale A/B measurements.
+- Nightly workflow for exhaustive sRGB LUT coverage.
+
+### Fixed
+
+- CI green on rustc/clippy 1.98 (rustfmt + style nits), format 1.2 `min_reader`
+  / version-drill gates, and `useEffectLayer` debounce tests (150ms).
+- Full-document leader panic no longer leaves the ensure gate stuck (RAII).
+
 ## 2.0.0-beta
 
 ### Added
