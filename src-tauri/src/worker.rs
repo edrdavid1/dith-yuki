@@ -7,7 +7,7 @@
 
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::Emitter;
@@ -106,6 +106,8 @@ pub struct TileReadyPayload {
 pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
     loop {
         if let Some(task) = state.tiles.scheduler.dequeue() {
+            // One relaxed load per task. Diagnostics stay off this path when it is 0.
+            let diag = crate::preview_diag::level();
             state.preview_pass_inflight.fetch_add(1, Ordering::AcqRel);
 
             // Staleness check (requirement 10.5), including Composite layer 0.
@@ -118,6 +120,7 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
                 Err(_) => {
                     state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
                     crate::commands::on_preview_task_finished(&state);
+                    diag_task_finished(diag, &state, &task);
                     continue;
                 }
             };
@@ -125,9 +128,16 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
             if task_is_stale(&task, &snapshot) {
                 state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
                 crate::commands::on_preview_task_finished(&state);
+                diag_task_finished(diag, &state, &task);
                 continue;
             }
 
+            // Level 1: time only a level-0 processed/composite task that runs
+            // (diagnostic.md §5.1). No `Instant` when the flag is off.
+            if diag >= 1 {
+                crate::preview_diag::reset_task_phases();
+            }
+            let mut l0_started: Option<Instant> = None;
             let result: Result<Arc<PixelTile>, engine_project::error::EngineError> =
                 match task.key.stage {
                     CacheStage::Raw => load_raw_tile(task.key, &state),
@@ -140,30 +150,36 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
                             state.tiles.ed_frontier.block(task, &state.tiles.tile_cache);
                             state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
                             crate::commands::on_preview_task_finished(&state);
+                            diag_task_finished(diag, &state, &task);
                             continue;
                         }
+                        l0_started = l0_compute_started(diag, &task);
                         compute_processed_tile(task.key, &state)
                     }
-                    CacheStage::Composite => match compute_composite_tile(task.key, &state) {
-                        Err(engine_project::error::EngineError::EdPrefixPending) => {
-                            let deps = crate::tile_pipeline::pending_ed_processed_at_coord(
-                                &state,
-                                &snapshot.root,
-                                task.key.doc,
-                                task.key.coord,
-                            );
-                            if deps.is_empty() {
-                                state.tiles.scheduler.enqueue_or_bump(task);
-                                state.worker_wake.notify_one();
-                            } else {
-                                state.tiles.ed_frontier.block_on(task, deps);
+                    CacheStage::Composite => {
+                        l0_started = l0_compute_started(diag, &task);
+                        match compute_composite_tile(task.key, &state) {
+                            Err(engine_project::error::EngineError::EdPrefixPending) => {
+                                let deps = crate::tile_pipeline::pending_ed_processed_at_coord(
+                                    &state,
+                                    &snapshot.root,
+                                    task.key.doc,
+                                    task.key.coord,
+                                );
+                                if deps.is_empty() {
+                                    state.tiles.scheduler.enqueue_or_bump(task);
+                                    state.worker_wake.notify_one();
+                                } else {
+                                    state.tiles.ed_frontier.block_on(task, deps);
+                                }
+                                state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
+                                crate::commands::on_preview_task_finished(&state);
+                                diag_task_finished(diag, &state, &task);
+                                continue;
                             }
-                            state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
-                            crate::commands::on_preview_task_finished(&state);
-                            continue;
+                            other => other,
                         }
-                        other => other,
-                    },
+                    }
                 };
 
             if let Ok(tile) = result {
@@ -173,12 +189,36 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
                     Err(_) => {
                         state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
                         crate::commands::on_preview_task_finished(&state);
+                        diag_task_finished(diag, &state, &task);
                         continue;
                     }
                 };
                 if task_is_stale(&task, &snapshot) {
                     // Discarded; current gen should already be queued or pending refresh.
                 } else {
+                    if diag >= 1 {
+                        if let Some(t0) = l0_started {
+                            let total = t0.elapsed();
+                            crate::preview_diag::record_l0_compute(
+                                task.key.doc,
+                                task.generation,
+                                total,
+                            );
+                            let stage = match task.key.stage {
+                                CacheStage::Raw => 0,
+                                CacheStage::Processed => 1,
+                                CacheStage::Composite => 2,
+                            };
+                            crate::preview_diag::commit_task_phases(
+                                task.key.doc,
+                                task.generation,
+                                total,
+                                stage,
+                                task.key.coord.x,
+                                task.key.coord.y,
+                            );
+                        }
+                    }
                     match task.key.stage {
                         // Raw is already in cache; load_raw_tile returns the shared Arc.
                         CacheStage::Raw => {
@@ -213,11 +253,25 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
                                     x: task.key.coord.x,
                                     y: task.key.coord.y,
                                 };
+                                let t_emit = (diag >= 1).then(std::time::Instant::now);
                                 let _ = app_handle.emit_to(
                                     tauri::EventTarget::Any,
                                     "tile-ready",
                                     payload,
                                 );
+                                if let Some(t0) = t_emit {
+                                    crate::preview_diag::record_emit(
+                                        task.key.doc,
+                                        task.generation,
+                                        t0.elapsed(),
+                                    );
+                                }
+                                if diag >= 1 {
+                                    crate::preview_diag::record_display_ready(
+                                        task.key.doc,
+                                        task.generation,
+                                    );
+                                }
                             }
                         }
                     }
@@ -242,12 +296,39 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
 
             state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
             crate::commands::on_preview_task_finished(&state);
+            diag_task_finished(diag, &state, &task);
         } else {
             // No tasks available — wait on Condvar for immediate wake when work arrives.
             // Falls back to park_timeout(1ms) if the mutex is poisoned (degraded mode).
             state.worker_wake.wait();
         }
     }
+}
+
+/// `Some` only when Level 1+ is on and this task is a level-0 processed or composite.
+fn l0_compute_started(diag: u8, task: &RecomputeTask) -> Option<Instant> {
+    if diag == 0 || task.key.coord.level != 0 {
+        return None;
+    }
+    match task.key.stage {
+        CacheStage::Processed | CacheStage::Composite => Some(Instant::now()),
+        CacheStage::Raw => None,
+    }
+}
+
+fn diag_task_finished(diag: u8, state: &AppState, task: &RecomputeTask) {
+    if diag == 0 {
+        return;
+    }
+    let pending = state.tiles.scheduler.pending_count();
+    let inflight = state.preview_pass_inflight.load(Ordering::Acquire);
+    crate::preview_diag::note_cache(
+        task.key.doc,
+        task.generation,
+        state.tiles.tile_cache.used_bytes_count() as u64,
+        state.tiles.tile_cache.budget_bytes_count() as u64,
+    );
+    crate::preview_diag::maybe_flush(task.key.doc, task.generation, pending, inflight);
 }
 
 /// True when the task's recorded generations no longer match the live document.

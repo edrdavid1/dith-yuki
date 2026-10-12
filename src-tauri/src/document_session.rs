@@ -328,7 +328,14 @@ impl AppState {
         };
         if self.tiles.tile_cache.used_bytes_count() > self.tiles.tile_cache.budget_bytes_count() {
             log_cpu_pressure("viewport", self);
-            self.tiles.tile_cache.evict_for_pressure(&ctx);
+            let stats = self.tiles.tile_cache.evict_for_pressure(&ctx);
+            if crate::preview_diag::level() > 0 {
+                if let Ok(session) = self.active_session() {
+                    let snap = session.document_handle.snapshot();
+                    let gen = snap.generations.document_gen.load(Ordering::Acquire);
+                    crate::preview_diag::record_evict(snap.id.0, gen, stats.passes, stats.removed);
+                }
+            }
         }
         if let Some(gpu) = self.gpu_resident.as_ref() {
             gpu.set_evict_policy(&ctx);

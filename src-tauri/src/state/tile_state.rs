@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use engine_color::palette_cache::PaletteKdCache;
 use engine_color::palette_lut::PaletteLutCache;
 use engine_color::threshold_map::ThresholdMapCache;
@@ -5,7 +7,7 @@ use engine_project::filters::{ErrorResidualsStore, FullDocumentCache};
 use engine_tiles::{BlockRepresentativeCache, EdFrontier, Scheduler, TileCache};
 
 pub struct TileState {
-    pub tile_cache: TileCache,
+    pub tile_cache: Arc<TileCache>,
     pub scheduler: Scheduler,
     pub palette_cache: PaletteKdCache,
     pub palette_lut_cache: PaletteLutCache,
@@ -19,7 +21,7 @@ pub struct TileState {
 impl TileState {
     pub fn new(cache_bytes: usize) -> Self {
         Self {
-            tile_cache: TileCache::new(cache_bytes),
+            tile_cache: Arc::new(TileCache::new(cache_bytes)),
             scheduler: Scheduler::new(),
             palette_cache: PaletteKdCache::new(),
             palette_lut_cache: PaletteLutCache::new(),

@@ -24,11 +24,14 @@ mod macos_title;
 mod memory_budget;
 mod native_menu;
 mod pattern_library;
+mod preview_diag;
 #[cfg(test)]
 mod preview_latency_diag;
 mod recent_files;
 mod services;
 mod state;
+#[cfg(test)]
+mod step0_harness;
 mod tile_pipeline;
 mod tile_protocol;
 mod tile_serve;

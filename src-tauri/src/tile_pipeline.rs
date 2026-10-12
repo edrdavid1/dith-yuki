@@ -8,8 +8,12 @@
 //!
 //! Both are called by the worker pool when a tile is needed (cache miss or dirty).
 
+use std::collections::HashSet;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(test)]
+use std::thread::JoinHandle;
+use std::time::Instant;
 
 use engine_project::composite_tile;
 use engine_project::error::EngineError;
@@ -19,6 +23,49 @@ use engine_project::layer::LayerNode;
 use engine_tiles::{CacheStage, PixelTile, Priority, RecomputeTask, TileKey};
 
 use crate::commands::AppState;
+
+/// Once-per-`(doc, layer, gen)` publish claim set (Option A).
+///
+/// Mass / SliceOnly experiment branches were removed after the 30-run matrix;
+/// see ADR `docs/adr/gpu-dither-families.md` and `.local-doc/publish_ab_experiment.md`.
+fn fd_published_set() -> &'static Mutex<HashSet<(u32, u32, u64)>> {
+    static FD_PUBLISHED: OnceLock<Mutex<HashSet<(u32, u32, u64)>>> = OnceLock::new();
+    FD_PUBLISHED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Returns true iff this caller should perform the mass publish (first claim wins).
+fn claim_fd_publish(doc: u32, layer: u32, gen: u64) -> bool {
+    let Ok(mut set) = fd_published_set().lock() else {
+        return true;
+    };
+    set.insert((doc, layer, gen))
+}
+
+/// Drop publish-once claims (tests / new document_gen invalidation).
+#[cfg(test)]
+pub fn reset_fd_publish_claims() {
+    if let Ok(mut set) = fd_published_set().lock() {
+        set.clear();
+    }
+}
+
+#[cfg(test)]
+fn fd_publish_joins() -> &'static Mutex<Vec<JoinHandle<()>>> {
+    static JOINS: OnceLock<Mutex<Vec<JoinHandle<()>>>> = OnceLock::new();
+    JOINS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Wait for background full-document publishes (harness / T-BYTES).
+#[cfg(test)]
+pub fn join_fd_publishes() {
+    let handles = fd_publish_joins()
+        .lock()
+        .map(|mut g| std::mem::take(&mut *g))
+        .unwrap_or_default();
+    for h in handles {
+        let _ = h.join();
+    }
+}
 
 fn snapshot_for_key(
     state: &AppState,
@@ -95,17 +142,51 @@ pub fn compute_processed_tile(
     let include_ascii = state.ascii_preview.load(Ordering::Relaxed);
     if engine_project::filters::layer_has_full_document_filter_ex(layer, include_ascii) {
         let compute_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
+        let diag = crate::preview_diag::level();
         crate::commands::begin_full_document_busy(state, key.doc);
-        let result = engine_project::filters::ensure_full_document_ex(
-            &state.tiles.full_document,
-            &state.tiles.tile_cache,
-            layer,
-            &snapshot,
-            compute_gen,
-            include_ascii,
-        );
+        let mut trace = engine_project::filters::EnsureTrace::default();
+        let result = if diag == 0 {
+            engine_project::filters::ensure_full_document_ex(
+                &state.tiles.full_document,
+                &state.tiles.tile_cache,
+                layer,
+                &snapshot,
+                compute_gen,
+                include_ascii,
+            )
+        } else {
+            crate::preview_diag::record_ensure(key.doc, compute_gen);
+            engine_project::filters::ensure_full_document_ex_timed(
+                &state.tiles.full_document,
+                &state.tiles.tile_cache,
+                layer,
+                &snapshot,
+                compute_gen,
+                include_ascii,
+                &mut trace,
+            )
+        };
         crate::commands::end_full_document_busy(state, key.doc);
         let result = result?;
+        if diag != 0 {
+            crate::preview_diag::record_ensure_class(
+                key.doc,
+                compute_gen,
+                trace.hit,
+                trace.waited,
+                trace.rendered,
+            );
+            crate::preview_diag::add_task_phase(
+                trace.wait,
+                trace.render,
+                std::time::Duration::ZERO,
+            );
+            if trace.rendered {
+                if let Some(s) = engine_project::algorithms::gpu_dither::last_gpu_dither_status() {
+                    crate::preview_diag::record_gpu_apply(key.doc, compute_gen, &s);
+                }
+            }
+        }
         crate::commands::emit_gpu_dither_status(state, key.doc);
         let now_gen = snapshot_for_key(state, key)?
             .generations
@@ -116,15 +197,43 @@ pub fn compute_processed_tile(
                 "full-document result stale after compute",
             ));
         }
-        engine_project::filters::publish_processed_tiles(
-            &state.tiles.tile_cache,
-            &result,
-            key.doc,
-            key.layer,
-            compute_gen,
-        );
+        // Option A: `store_ready` already ran inside ensure (waiters proceed).
+        // First returner claims once-per-gen mass publish and runs it on a
+        // background thread so slice/return is not blocked; harness joins via
+        // [`join_fd_publishes`].
+        if claim_fd_publish(key.doc, key.layer, compute_gen) {
+            let cache = Arc::clone(&state.tiles.tile_cache);
+            let published = result.clone();
+            let doc = key.doc;
+            let layer = key.layer;
+            let gen = compute_gen;
+            let handle = std::thread::Builder::new()
+                .name("fd-publish".into())
+                .spawn(move || {
+                    let t_pub = Instant::now();
+                    engine_project::filters::publish_processed_tiles(
+                        &cache, &published, doc, layer, gen,
+                    );
+                    let pub_dt = t_pub.elapsed();
+                    if crate::preview_diag::level() != 0 {
+                        crate::preview_diag::record_publish(doc, gen, pub_dt);
+                    }
+                })
+                .expect("spawn fd-publish");
+            #[cfg(test)]
+            if let Ok(mut joins) = fd_publish_joins().lock() {
+                joins.push(handle);
+            }
+            #[cfg(not(test))]
+            drop(handle); // detach — production never joins
+            let _ = diag;
+        }
         let tile = engine_project::filters::slice_processed_tile(&result, key.coord);
         let arc = Arc::new(tile);
+        let was_missing = state.tiles.tile_cache.get_entry(processed_key).is_none();
+        if was_missing && diag != 0 {
+            crate::preview_diag::record_tile_fallback_insert(key.doc, compute_gen);
+        }
         let inserted =
             state
                 .tiles
@@ -462,7 +571,13 @@ pub fn compute_composite_tile(
     ensure_processed_tiles_fresh(&snapshot.root, key.doc, key.coord, state)?;
 
     // 3. Composite all visible layers at this tile coordinate.
+    let diag = crate::preview_diag::level();
+    let t_comp = (diag != 0).then(Instant::now);
     let composited = composite_tile(&snapshot.root, key.doc, key.coord, &state.tiles.tile_cache)?;
+    if let Some(t0) = t_comp {
+        let gen = snapshot.generations.document_gen.load(Ordering::Acquire);
+        crate::preview_diag::record_composite(key.doc, gen, t0.elapsed());
+    }
 
     // 4. Single Arc: insert + return the same allocation.
     let arc = Arc::new(composited);
@@ -851,7 +966,23 @@ fn collect_dirty_recursive(
                     stage: CacheStage::Processed,
                 };
                 let needs_compute = match state.tiles.tile_cache.entries.get(&key) {
-                    None => true,
+                    None => {
+                        if crate::preview_diag::level() != 0 {
+                            let gen = state
+                                .session(doc)
+                                .ok()
+                                .map(|s| {
+                                    s.document_handle
+                                        .snapshot()
+                                        .generations
+                                        .document_gen
+                                        .load(Ordering::Acquire)
+                                })
+                                .unwrap_or(0);
+                            crate::preview_diag::record_composer_tile_miss(doc, gen);
+                        }
+                        true
+                    }
                     Some(entry) => entry.dirty.load(Ordering::Acquire),
                 };
                 if needs_compute {

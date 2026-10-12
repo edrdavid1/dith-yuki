@@ -19,15 +19,11 @@ use serde_json::{Map, Value};
 /// Canonical workspace enum (FR-1). Serialized as `"general"` / `"gamedev"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum Workspace {
+    #[default]
     General,
     Gamedev,
-}
-
-impl Default for Workspace {
-    fn default() -> Self {
-        Workspace::General
-    }
 }
 
 impl Workspace {
@@ -61,12 +57,41 @@ pub struct AdvancedConfig {
     pub tiling_advanced: bool,
 }
 
+/// Preview-latency instrumentation (`.local-doc/diagnostic.md` §9). Off by default.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreviewDiagnosticsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// 1 = gesture breakdown, 2 = per-tile. Ignored while `enabled` is false.
+    #[serde(default = "default_diag_level")]
+    pub level: u8,
+    #[serde(default)]
+    pub save_session_reports: bool,
+}
+
+fn default_diag_level() -> u8 {
+    1
+}
+
+impl Default for PreviewDiagnosticsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            level: 1,
+            save_session_reports: false,
+        }
+    }
+}
+
 /// Experimental feature flags (`ED-on-GPU.md` §12.1). Off by default.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExperimentalConfig {
     /// When true, UI may offer `blocked_fs` / `blue_noise` GPU dither families.
     #[serde(default, alias = "gpuDitherFamilies")]
     pub gpu_dither_families: bool,
+    /// Gesture / tile timing. Hot path reads an atomic copied from this struct.
+    #[serde(default)]
+    pub preview_diagnostics: PreviewDiagnosticsConfig,
 }
 
 /// Persisted application config at `{app_data_dir}/config.json` (FR-2, NFR-2).
@@ -175,7 +200,7 @@ impl ConfigStore {
     /// Load from `{app_data}/config.json`, migrating as needed (FR-2, NFR-3).
     pub fn load(app_data_dir: &Path) -> Arc<Self> {
         let (path, config, fresh_install) = Self::read_from_dir(app_data_dir);
-        Arc::new(Self {
+        let store = Arc::new(Self {
             inner: Mutex::new(ConfigStoreInner {
                 path,
                 config,
@@ -185,7 +210,16 @@ impl ConfigStore {
                 write_count: 0,
                 flush_generation: 0,
             }),
-        })
+        });
+        store.publish_diag();
+        store
+    }
+
+    /// Copy `preview_diagnostics` into the hot-path atomic (diagnostic.md §2.8).
+    pub fn publish_diag(&self) {
+        let cfg = self.snapshot();
+        let diag = &cfg.experimental.preview_diagnostics;
+        crate::preview_diag::sync_from_config(diag.enabled, diag.level);
     }
 
     fn read_from_dir(app_data_dir: &Path) -> (PathBuf, AppConfig, bool) {
@@ -193,10 +227,7 @@ impl ConfigStore {
         match std::fs::read(&path) {
             Ok(bytes) => match parse_and_migrate(&bytes) {
                 Ok(cfg) => {
-                    log::info!(
-                        "workspace.active workspace={}",
-                        cfg.workspace.as_str()
-                    );
+                    log::info!("workspace.active workspace={}", cfg.workspace.as_str());
                     (path, cfg, false)
                 }
                 Err(e) => {
@@ -222,6 +253,7 @@ impl ConfigStore {
         guard.last_disk_write = None;
         guard.pending_flush = false;
         drop(guard);
+        self.publish_diag();
         self.maybe_force_general_after_prompts();
     }
 
@@ -237,6 +269,7 @@ impl ConfigStore {
         ui_visibility_from_config(&self.snapshot())
     }
 
+    #[cfg(test)]
     pub fn write_count(&self) -> u64 {
         self.inner.lock().expect("config lock").write_count
     }
@@ -288,6 +321,7 @@ impl ConfigStore {
     }
 
     /// Force immediate disk write (tests / shutdown).
+    #[cfg(test)]
     pub fn flush_now(&self) -> Result<(), String> {
         let mut guard = self.inner.lock().expect("config lock");
         write_config_atomic(&guard.path, &guard.config)?;
@@ -302,10 +336,9 @@ impl ConfigStore {
         workspace: Workspace,
         source: WorkspaceSwitchSource,
     ) -> AppConfig {
-        let mut from = Workspace::General;
         let cfg = {
             let mut guard = self.inner.lock().expect("config lock");
-            from = guard.config.workspace;
+            let from = guard.config.workspace;
             if from != workspace {
                 log::info!(
                     "workspace switched: {} -> {} (source={:?})",
@@ -320,7 +353,6 @@ impl ConfigStore {
             guard.config.clone()
         };
         self.schedule_flush();
-        let _ = from;
         cfg
     }
 
@@ -335,11 +367,7 @@ impl ConfigStore {
         cfg
     }
 
-    pub fn resolve_prompt(
-        self: &Arc<Self>,
-        choice: Workspace,
-        remember: bool,
-    ) -> AppConfig {
+    pub fn resolve_prompt(self: &Arc<Self>, choice: Workspace, remember: bool) -> AppConfig {
         WORKSPACE_METRICS
             .prompt_choice
             .fetch_add(1, Ordering::Relaxed);
@@ -378,7 +406,7 @@ impl ConfigStore {
         WORKSPACE_METRICS
             .prompt_shown
             .fetch_add(1, Ordering::Relaxed);
-        let mut guard = self.inner.lock().expect("config lock");
+        let guard = self.inner.lock().expect("config lock");
         if !guard.config.workspace_choice_remembered {
             // Count this launch toward the 3-launch cap when user dismisses via choice later.
             // Launch counter increments on resolve without remember; also bump on show for
@@ -415,15 +443,13 @@ impl ConfigStore {
 }
 
 fn parse_and_migrate(bytes: &[u8]) -> Result<AppConfig, String> {
-    let mut value: Value =
-        serde_json::from_slice(bytes).map_err(|e| format!("json: {e}"))?;
+    let mut value: Value = serde_json::from_slice(bytes).map_err(|e| format!("json: {e}"))?;
     let had_workspace = value
         .as_object()
         .map(|o| o.contains_key("workspace"))
         .unwrap_or(false);
     value = migrate_config_value(value);
-    let mut cfg: AppConfig =
-        serde_json::from_value(value).map_err(|e| format!("decode: {e}"))?;
+    let mut cfg: AppConfig = serde_json::from_value(value).map_err(|e| format!("decode: {e}"))?;
     if !had_workspace {
         // Upgrade path (FR-8): prompt until remembered or 3 launches.
         cfg.workspace_choice_remembered = false;
@@ -528,6 +554,15 @@ mod tests {
         cfg.advanced.tiling_advanced = true;
         let v = ui_visibility_from_config(&cfg);
         assert!(v.show_wrap_padding);
+    }
+
+    #[test]
+    fn preview_diagnostics_defaults_off_when_key_missing() {
+        let raw = br#"{"schema_version":1,"workspace":"general"}"#;
+        let cfg = parse_and_migrate(raw).unwrap();
+        assert!(!cfg.experimental.preview_diagnostics.enabled);
+        assert_eq!(cfg.experimental.preview_diagnostics.level, 1);
+        assert!(!cfg.experimental.preview_diagnostics.save_session_reports);
     }
 
     #[test]
