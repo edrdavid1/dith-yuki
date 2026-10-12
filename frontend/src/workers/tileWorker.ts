@@ -35,6 +35,8 @@ export interface RequestTilesMessage {
   rev?: number;
   /** Override protocol origin; main thread should pass platform-aware base. */
   protocolBase?: string;
+  /** Set only while preview diagnostics are enabled. */
+  diag?: boolean;
 }
 
 export interface FetchTileMessage {
@@ -45,6 +47,8 @@ export interface FetchTileMessage {
   docId: number;
   rev?: number;
   protocolBase?: string;
+  /** Set only while preview diagnostics are enabled. */
+  diag?: boolean;
 }
 
 export type WorkerInMessage = RequestTilesMessage | FetchTileMessage;
@@ -55,6 +59,20 @@ export interface TileDecodedMessage {
   bitmap: ImageBitmap;
   rev?: number;
   docId: number;
+  /** Present only when the request set `diag: true` (diagnostic.md §5). */
+  diag?: TileFetchDiag;
+}
+
+export interface TileFetchDiag {
+  retries: number;
+  retry_wait_ms: number;
+  fetch_ms: number;
+  decode_ms: number;
+  http_status: number;
+  gen: number | null;
+  stale: boolean;
+  pyramid_fallback: boolean;
+  bytes: number;
 }
 
 export interface TilePendingMessage {
@@ -75,24 +93,87 @@ export type WorkerOutMessage = TileDecodedMessage | TilePendingMessage | TileErr
 const TILE_SIZE = 256;
 const TILE_BYTE_LENGTH = TILE_SIZE * TILE_SIZE * 4; // 262,144 bytes RGBA8
 
+function responseMeta(response: Response, diag: boolean): {
+  gen: number | null;
+  stale: boolean;
+  pyramid: boolean;
+} {
+  if (!diag || response.headers == null || typeof response.headers.get !== 'function') {
+    return { gen: null, stale: false, pyramid: false };
+  }
+  const raw = response.headers.get('X-Tile-Generation');
+  const parsed = raw == null || raw === '' ? null : Number(raw);
+  return {
+    gen: parsed != null && Number.isFinite(parsed) ? parsed : null,
+    stale: response.headers.get('X-Dither-Tile-Stale') != null,
+    pyramid: response.headers.get('X-Dither-Tile-Fallback') != null,
+  };
+}
+
 /**
  * Fetch a single tile from the tile protocol, decode the raw RGBA8
  * bytes into an ImageBitmap, and post it back to the main thread.
+ *
+ * `diag` is set only while preview diagnostics are enabled. When it is
+ * false this function does not call `performance.now` and the posted
+ * message keys match the historical shape (diagnostic.md §2.3, §5).
  */
 async function fetchAndDecodeTile(
   docId: number,
   tile: TileRequest,
   rev?: number,
   protocolBase?: string,
+  diag = false,
 ): Promise<void> {
   const key = `${tile.level}/${tile.x}/${tile.y}`;
   const url = buildTileUrl(docId, tile, rev, { base: protocolBase });
 
+  const postDecoded = (
+    bitmap: ImageBitmap,
+    fetchMs: number,
+    decodeMs: number,
+    retries: number,
+    retryWait: number,
+    status: number,
+    meta: { gen: number | null; stale: boolean; pyramid: boolean },
+    bytes: number,
+  ) => {
+    const msg: TileDecodedMessage = { type: 'tile-decoded', key, bitmap, rev, docId };
+    if (diag) {
+      msg.diag = {
+        retries,
+        retry_wait_ms: retryWait,
+        fetch_ms: Math.round(fetchMs * 10) / 10,
+        decode_ms: Math.round(decodeMs * 10) / 10,
+        http_status: status,
+        gen: meta.gen,
+        stale: meta.stale,
+        pyramid_fallback: meta.pyramid,
+        bytes,
+      };
+    }
+    postMessage(msg, [bitmap]);
+  };
+
+  const decodeBitmap = async (buffer: ArrayBuffer, withOptions: boolean) => {
+    const t0 = diag ? performance.now() : 0;
+    const imageData = new ImageData(new Uint8ClampedArray(buffer), TILE_SIZE, TILE_SIZE);
+    const bitmap = withOptions
+      ? await createImageBitmap(imageData, {
+          premultiplyAlpha: 'none',
+          colorSpaceConversion: 'none',
+        })
+      : await createImageBitmap(imageData);
+    return { bitmap, decodeMs: diag ? performance.now() - t0 : 0 };
+  };
+
   try {
+    const tFetch = diag ? performance.now() : 0;
     const response = await fetch(url);
 
     if (response.status === 200) {
       const buffer = await response.arrayBuffer();
+      const fetchMs = diag ? performance.now() - tFetch : 0;
 
       if (buffer.byteLength !== TILE_BYTE_LENGTH) {
         postMessage({
@@ -104,19 +185,8 @@ async function fetchAndDecodeTile(
         return;
       }
 
-      const imageData = new ImageData(
-        new Uint8ClampedArray(buffer),
-        TILE_SIZE,
-        TILE_SIZE,
-      );
-      const bitmap = await createImageBitmap(imageData, {
-        premultiplyAlpha: 'none',
-        colorSpaceConversion: 'none',
-      });
-
-      // Transfer the bitmap (zero-copy) to the main thread
-      const msg: TileDecodedMessage = { type: 'tile-decoded', key, bitmap, rev, docId };
-      postMessage(msg, [bitmap]);
+      const { bitmap, decodeMs } = await decodeBitmap(buffer, true);
+      postDecoded(bitmap, fetchMs, decodeMs, 0, 0, 200, responseMeta(response, diag), buffer.byteLength);
     } else if (response.status === 202) {
       // Tile is pending computation — retry with exponential backoff.
       // This is more reliable than depending solely on tile-ready events
@@ -124,27 +194,33 @@ async function fetchAndDecodeTile(
       postMessage({ type: 'tile-pending', key, docId } satisfies TilePendingMessage);
 
       // Retry up to 5 times with increasing delays: 50, 100, 200, 400, 800ms
+      let retryWait = 0;
+      let retries = 0;
       for (let attempt = 0; attempt < 5; attempt++) {
-        await new Promise(resolve => setTimeout(resolve, 50 * Math.pow(2, attempt)));
+        const delay = 50 * Math.pow(2, attempt);
+        if (diag) {
+          retries += 1;
+          retryWait += delay;
+        }
+        await new Promise(resolve => setTimeout(resolve, delay));
         try {
+          const tRetry = diag ? performance.now() : 0;
           const retryResponse = await fetch(url);
           if (retryResponse.status === 200) {
             const retryBuffer = await retryResponse.arrayBuffer();
+            const fetchMs = diag ? performance.now() - tRetry : 0;
             if (retryBuffer.byteLength === TILE_BYTE_LENGTH) {
-              const retryImageData = new ImageData(
-                new Uint8ClampedArray(retryBuffer),
-                TILE_SIZE,
-                TILE_SIZE,
+              const { bitmap, decodeMs } = await decodeBitmap(retryBuffer, false);
+              postDecoded(
+                bitmap,
+                fetchMs,
+                decodeMs,
+                retries,
+                retryWait,
+                200,
+                responseMeta(retryResponse, diag),
+                retryBuffer.byteLength,
               );
-              const retryBitmap = await createImageBitmap(retryImageData);
-              const retryMsg: TileDecodedMessage = {
-                type: 'tile-decoded',
-                key,
-                bitmap: retryBitmap,
-                rev,
-                docId,
-              };
-              postMessage(retryMsg, [retryBitmap]);
             }
             break; // Success, stop retrying
           }
@@ -186,7 +262,7 @@ self.onmessage = async (e: MessageEvent<WorkerInMessage>) => {
     // fetchAndDecodeTile handles its own error and posts results independently.
     await Promise.all(
       msg.tiles.map(tile =>
-        fetchAndDecodeTile(msg.docId, tile, msg.rev, msg.protocolBase),
+        fetchAndDecodeTile(msg.docId, tile, msg.rev, msg.protocolBase, msg.diag === true),
       ),
     );
   } else if (msg.type === 'fetch-tile') {
@@ -199,6 +275,7 @@ self.onmessage = async (e: MessageEvent<WorkerInMessage>) => {
       },
       msg.rev,
       msg.protocolBase,
+      msg.diag === true,
     );
   }
 };

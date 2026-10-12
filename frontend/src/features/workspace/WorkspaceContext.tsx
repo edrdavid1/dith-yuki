@@ -28,6 +28,7 @@ import {
   type Workspace,
 } from '../../shared/workspace/visibility';
 import { setGpuDitherFamiliesAvailable } from '../effects/dither/algorithmFamilies';
+import { setPreviewDiagnostics } from '../../diagnostics/session';
 
 const DEFAULT_VISIBILITY: UiVisibility = uiVisibilityFromConfig({
   workspace: 'general',
@@ -82,6 +83,11 @@ function applyDto(dto: AppConfigDto): {
   };
 }
 
+function applyPreviewDiagnostics(experimental: AppConfigDto['experimental']): void {
+  const block = experimental?.preview_diagnostics ?? experimental?.previewDiagnostics;
+  setPreviewDiagnostics(Boolean(block?.enabled), block?.level ?? 1);
+}
+
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [workspace, setWorkspaceState] = useState<Workspace>('general');
@@ -100,6 +106,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setShowPrompt(next.showWorkspacePrompt);
     setGpuDitherFamilies(next.gpuDitherFamilies);
     setGpuDitherFamiliesAvailable(next.gpuDitherFamilies);
+    applyPreviewDiagnostics(dto.experimental);
   }, []);
 
   useEffect(() => {

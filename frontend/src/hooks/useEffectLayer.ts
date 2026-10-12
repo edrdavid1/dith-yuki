@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useAppDispatch, useAppSelector } from '../app/hooks';
 import { patchFilter, refreshFilters, selectFiltersList } from '../app/slices/filtersSlice';
 import { formatIpcError, logIpcError, updateFilter } from '../shared/ipc';
+import { noteIpcDone, noteIpcSent, noteUserInput } from '../diagnostics/level1';
 import type { FilterParams } from '../types';
 import { EFFECT_TO_FILTER_KIND } from '../types/effects';
 import type { EffectType } from '../types/effects';
@@ -160,6 +161,11 @@ export function useEffectLayer(
   const updateParams = useCallback((params: Record<string, unknown>) => {
     if (layerIdRef.current === null || filterIdRef.current === null) return;
 
+    const scenario =
+      'mode' in params ? 'algo_switch' : 'pixel_size' in params ? 'pixel_size' : 'slider';
+    const mode = typeof params.mode === 'string' ? params.mode : null;
+    noteUserInput(scenario, mode);
+
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
     }
@@ -198,6 +204,7 @@ export function useEffectLayer(
           return;
         }
         inflightRef.current = true;
+        noteIpcSent('update_filter');
         try {
           await updateFilter(targetDocId, layerIdRef.current, filterIdRef.current, patch);
         } catch (err) {
@@ -205,6 +212,7 @@ export function useEffectLayer(
           setOptimisticParams(prevParams);
           setError(formatIpcError(err));
         } finally {
+          noteIpcDone();
           inflightRef.current = false;
         }
         const queued = queuedPatchRef.current;
