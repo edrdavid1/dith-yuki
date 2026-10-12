@@ -118,7 +118,7 @@ fn generate_drill_fixtures() {
 
 #[test]
 fn matrix_1_v1_minimal_opens_with_drill_engine() {
-    assert_eq!(SUPPORTED_FORMAT, FormatVersion::new(1, 1));
+    assert_eq!(SUPPORTED_FORMAT, FormatVersion::new(1, 2));
     let bytes = fs::read(fixtures_root().join("dyproj/v1/minimal.dyproj")).unwrap();
     let staging = TileCache::new(32 * 1024 * 1024);
     open_project_from_bytes(&bytes, &staging, DocumentId::new(1)).unwrap();
