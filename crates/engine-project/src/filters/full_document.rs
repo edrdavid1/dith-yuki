@@ -43,6 +43,11 @@ use crate::serialize::pixels::assemble_layer_rgba8;
 #[cfg(test)]
 pub static FD_TEST_COMPUTE_DELAY_MS: AtomicU64 = AtomicU64::new(0);
 
+/// Test-only: when true, [`compute_full_document_rgba_ex`] panics after the delay
+/// so leader RAII / waiter wake-up can be asserted (T-PANIC).
+#[cfg(test)]
+pub static FD_TEST_PANIC: AtomicBool = AtomicBool::new(false);
+
 /// Cache key for a full-document filter result (§0.2).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FullDocumentKey {
@@ -100,6 +105,50 @@ impl CacheSlot {
     fn store_ready(&mut self, key: FullDocumentKey, result: FullDocumentResult) {
         let idx = usize::from(key.include_ascii);
         self.ready[idx] = Some((key, result));
+    }
+}
+
+/// RAII: if the leader panics or returns early without finishing, clear
+/// `inflight_key` (when still owner) and wake waiters so they are not stuck.
+struct LeaderGuard<'a> {
+    cache: &'a FullDocumentCache,
+    doc: u32,
+    layer: u32,
+    token: u64,
+    armed: bool,
+}
+
+impl<'a> LeaderGuard<'a> {
+    fn arm(cache: &'a FullDocumentCache, doc: u32, layer: u32, token: u64) -> Self {
+        Self {
+            cache,
+            doc,
+            layer,
+            token,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for LeaderGuard<'_> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let Ok(mut guard) = self.cache.inner.lock() else {
+            return;
+        };
+        if let Some(slot) = guard.get_mut(&(self.doc, self.layer)) {
+            if slot.job_token == self.token {
+                slot.inflight_key = None;
+                slot.cancel.store(true, Ordering::Relaxed);
+            }
+        }
+        self.cache.cv.notify_all();
     }
 }
 
@@ -264,6 +313,9 @@ pub fn compute_full_document_rgba_ex(
             if should_cancel.load(Ordering::Relaxed) {
                 return Err(EngineError::invalid_state("full-document job cancelled"));
             }
+        }
+        if FD_TEST_PANIC.load(Ordering::Relaxed) {
+            panic!("FD_TEST_PANIC: leader compute panic");
         }
     }
 
@@ -609,6 +661,10 @@ pub fn ensure_full_document_ex(
         }
     };
 
+    // Armed until we finish under the slot lock (success, error, or cancel).
+    // Panic unwinding drops this and wakes waiters (publish_once_v2 §4.3).
+    let mut leader = LeaderGuard::arm(fd_cache, key.doc, key.layer, token);
+
     let compute = compute_full_document_rgba_ex(tile_cache, layer, doc, &cancel, include_ascii);
 
     let mut guard = fd_cache.inner.lock().expect("full_document cache lock");
@@ -622,6 +678,7 @@ pub fn ensure_full_document_ex(
     }
 
     if !still_owner || cancel.load(Ordering::Relaxed) {
+        leader.disarm();
         fd_cache.cv.notify_all();
         return Err(EngineError::invalid_state(
             "full-document job cancelled or superseded",
@@ -631,10 +688,12 @@ pub fn ensure_full_document_ex(
     match compute {
         Ok(result) => {
             slot.store_ready(key, result.clone());
+            leader.disarm();
             fd_cache.cv.notify_all();
             Ok(result)
         }
         Err(e) => {
+            leader.disarm();
             fd_cache.cv.notify_all();
             Err(e)
         }
@@ -902,5 +961,62 @@ mod tests {
             Arc::ptr_eq(&again.rgba_f32, &ascii.rgba_f32),
             "ASCII raster must be reused after Image-mode pass"
         );
+    }
+
+    /// T-PANIC: leader panics in compute → waiters wake; next call succeeds.
+    #[test]
+    fn leader_panic_wakes_waiters_and_slot_retries() {
+        let w = 28u32;
+        let h = 28u32;
+        let (doc, layer, cache) = doc_with_ascii(w, h);
+        let fd = Arc::new(FullDocumentCache::new());
+        let cache = Arc::new(cache);
+        let doc = Arc::new(doc);
+        let layer = Arc::new(layer);
+
+        FD_TEST_COMPUTE_DELAY_MS.store(60, Ordering::Relaxed);
+        FD_TEST_PANIC.store(true, Ordering::Relaxed);
+
+        let barrier = Arc::new(Barrier::new(3));
+        let mut handles = Vec::new();
+        for _ in 0..3 {
+            let fd = Arc::clone(&fd);
+            let cache = Arc::clone(&cache);
+            let doc = Arc::clone(&doc);
+            let layer = Arc::clone(&layer);
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    ensure_full_document_ex(&fd, &cache, &layer, &doc, 1, true)
+                }))
+            }));
+        }
+
+        let mut panics = 0usize;
+        let mut errs = 0usize;
+        let mut oks = 0usize;
+        for h in handles {
+            match h.join().expect("thread join") {
+                Err(_) => panics += 1,
+                Ok(Ok(_)) => oks += 1,
+                Ok(Err(_)) => errs += 1,
+            }
+        }
+        FD_TEST_PANIC.store(false, Ordering::Relaxed);
+        FD_TEST_COMPUTE_DELAY_MS.store(0, Ordering::Relaxed);
+
+        assert!(panics >= 1, "at least the leader must panic");
+        assert_eq!(oks, 0, "no success while panic flag was set");
+        let _ = errs;
+
+        // Slot must be Empty: a fresh call succeeds without hanging.
+        let start = Instant::now();
+        let retry = ensure_full_document_ex(&fd, &cache, &layer, &doc, 1, true);
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "retry hung after leader panic"
+        );
+        assert!(retry.is_ok(), "retry after panic must succeed");
     }
 }
