@@ -66,7 +66,14 @@ pub struct ParityCase {
 }
 
 impl ParityCase {
-    pub fn make_id(algo: Algorithm, w: u32, h: u32, pal_tag: &str, input_tag: &str, seed: u64) -> String {
+    pub fn make_id(
+        algo: Algorithm,
+        w: u32,
+        h: u32,
+        pal_tag: &str,
+        input_tag: &str,
+        seed: u64,
+    ) -> String {
         let a = match algo {
             Algorithm::BlockedFs => "bfs",
             Algorithm::BlueNoise => "bn",

@@ -102,7 +102,11 @@ fn mutated_hex_never_panics() {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = parse_and_build(&bytes, PaletteFormat::Hex);
         }));
-        assert!(result.is_ok(), "hex mutation {i} panicked (len={})", bytes.len());
+        assert!(
+            result.is_ok(),
+            "hex mutation {i} panicked (len={})",
+            bytes.len()
+        );
     }
 }
 

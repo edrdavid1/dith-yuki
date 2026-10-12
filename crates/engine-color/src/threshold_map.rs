@@ -213,15 +213,22 @@ fn load_png_threshold_map(bytes: &[u8]) -> Result<ThresholdMap, ThresholdMapErro
             }
             pixels
         }
-        (png::ColorType::GrayscaleAlpha, png::BitDepth::Eight) => {
-            buf.chunks_exact(2).map(|px| px[0] as f32 / 255.0).collect()
-        }
+        (png::ColorType::GrayscaleAlpha, png::BitDepth::Eight) => buf
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|px| px[0] as f32 / 255.0)
+            .collect(),
         (png::ColorType::Rgb, png::BitDepth::Eight) => buf
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|px| luma8(px[0], px[1], px[2]))
             .collect(),
         (png::ColorType::Rgba, png::BitDepth::Eight) => buf
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|px| luma8(px[0], px[1], px[2]))
             .collect(),
         _ => unreachable!("supported combinations checked above"),

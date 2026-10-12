@@ -189,7 +189,10 @@ fn print_dod_gate() {
     println!("host={}", std::env::consts::OS);
     println!("routing_single_ed_pre_ns={pre_single:.3}");
     println!("routing_single_ed_cur_ns={cur_single:.3}");
-    println!("routing_single_ed_delta_pct={:.4}", pct(pre_single, cur_single));
+    println!(
+        "routing_single_ed_delta_pct={:.4}",
+        pct(pre_single, cur_single)
+    );
     println!("routing_stack_pre_ns={pre_stack:.3}");
     println!("routing_stack_cur_ns={cur_stack:.3}");
     println!("routing_stack_delta_pct={:.4}", pct(pre_stack, cur_stack));

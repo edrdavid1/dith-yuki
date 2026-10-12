@@ -112,9 +112,7 @@ fn toroidal(w: u32, h: u32) -> Vec<f32> {
     for y in 0..h as usize {
         for x in 0..w as usize {
             let i = (y * w as usize + x) * 4;
-            let v = 0.5
-                + 0.25 * (x as f32 * tw).sin()
-                + 0.25 * (y as f32 * th).cos();
+            let v = 0.5 + 0.25 * (x as f32 * tw).sin() + 0.25 * (y as f32 * th).cos();
             rgba[i] = v.clamp(0.0, 1.0);
             rgba[i + 1] = v.clamp(0.0, 1.0);
             rgba[i + 2] = v.clamp(0.0, 1.0);
@@ -216,15 +214,8 @@ fn progress_reported_per_row() {
         assert!(p + 1e-6 >= last);
         last = p;
     };
-    apply_ed_with_wrap_padding(
-        &mut rgba,
-        24,
-        24,
-        &params,
-        &cancel,
-        Some(&mut on_progress),
-    )
-    .unwrap();
+    apply_ed_with_wrap_padding(&mut rgba, 24, 24, &params, &cancel, Some(&mut on_progress))
+        .unwrap();
     assert!((last - 1.0).abs() < 1e-5);
 }
 

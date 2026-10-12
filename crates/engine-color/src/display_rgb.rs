@@ -33,12 +33,15 @@ impl DisplayRgbF32 {
     }
 
     /// Pack interleaved display RGB into typed pixels (length must be multiple of 3).
+    #[allow(clippy::result_unit_err)]
     pub fn pack_from_interleaved(rgb: &[f32]) -> Result<Vec<Self>, ()> {
-        if rgb.len() % 3 != 0 {
+        if !rgb.len().is_multiple_of(3) {
             return Err(());
         }
         Ok(rgb
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|c| Self::new(c[0], c[1], c[2]))
             .collect())
     }

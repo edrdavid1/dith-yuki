@@ -89,7 +89,7 @@ pub fn encode_preview_rgba(
     dst_rgba8: &mut [u8],
     proof: Option<&SoftProofTransform>,
 ) -> Result<(), crate::soft_proof::SoftProofError> {
-    if rgba.len() % 4 != 0 || dst_rgba8.len() != rgba.len() {
+    if !rgba.len().is_multiple_of(4) || dst_rgba8.len() != rgba.len() {
         return Err(crate::soft_proof::SoftProofError::BufferLength);
     }
     let pixels = rgba.len() / 4;
@@ -146,7 +146,7 @@ pub fn encode_preview_rgb(
     dst_srgb8: &mut [u8],
     proof: Option<&SoftProofTransform>,
 ) -> Result<(), crate::soft_proof::SoftProofError> {
-    if rgb.len() % 3 != 0 || dst_srgb8.len() != rgb.len() {
+    if !rgb.len().is_multiple_of(3) || dst_srgb8.len() != rgb.len() {
         return Err(crate::soft_proof::SoftProofError::BufferLength);
     }
     let pixels = rgb.len() / 3;

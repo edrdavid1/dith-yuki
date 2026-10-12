@@ -25,27 +25,19 @@ pub const EXPORT_LUT_MAX_DELTA_E2000: f64 = 0.3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum PrintExportFormat {
+    #[default]
     Tiff,
-}
-
-impl Default for PrintExportFormat {
-    fn default() -> Self {
-        Self::Tiff
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum TiffCompression {
     None,
+    #[default]
     Lzw,
-}
-
-impl Default for TiffCompression {
-    fn default() -> Self {
-        Self::Lzw
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -219,7 +211,7 @@ impl PrintExportTransform {
 
     /// Convert packed RGB8 → packed CMYK8 (lengths must be 3N / 4N).
     pub fn rgb8_to_cmyk8(&self, src: &[u8], dst: &mut [u8]) -> Result<(), PrintExportError> {
-        if src.len() % 3 != 0 || dst.len() != src.len() / 3 * 4 {
+        if !src.len().is_multiple_of(3) || dst.len() != src.len() / 3 * 4 {
             return Err(PrintExportError::BufferLength);
         }
         self.to_cmyk.transform_pixels(src, dst);
@@ -227,7 +219,7 @@ impl PrintExportTransform {
     }
 
     pub fn cmyk8_to_rgb8(&self, src: &[u8], dst: &mut [u8]) -> Result<(), PrintExportError> {
-        if src.len() % 4 != 0 || dst.len() != src.len() / 4 * 3 {
+        if !src.len().is_multiple_of(4) || dst.len() != src.len() / 4 * 3 {
             return Err(PrintExportError::BufferLength);
         }
         self.to_srgb.transform_pixels(src, dst);
@@ -265,7 +257,7 @@ pub fn scaled_dimensions(
 /// Count unique opaque RGB colors in an RGBA8 buffer (alpha ignored for keying).
 pub fn count_unique_rgb(rgba: &[u8]) -> usize {
     let mut set = HashSet::new();
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0 {
         let key = u32::from_be_bytes([0, px[0], px[1], px[2]]);
         set.insert(key);
     }
@@ -335,7 +327,7 @@ pub fn convert_palette(
 
 fn collect_unique_colors(rgba: &[u8]) -> Vec<[u8; 3]> {
     let mut map: HashMap<u32, [u8; 3]> = HashMap::new();
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0 {
         let key = u32::from_be_bytes([0, px[0], px[1], px[2]]);
         map.entry(key).or_insert([px[0], px[1], px[2]]);
     }
@@ -362,11 +354,9 @@ pub fn rgba8_to_cmyk8(
             key_to_idx.insert(u32::from_be_bytes([0, c[0], c[1], c[2]]), i);
         }
         let mut out = vec![0u8; pixels * 4];
-        for (i, px) in rgba.chunks_exact(4).enumerate() {
-            if i & 0x3fff == 0 {
-                if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
-                    return Err(PrintExportError::Cancelled);
-                }
+        for (i, px) in rgba.as_chunks::<4>().0.iter().enumerate() {
+            if i & 0x3fff == 0 && cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+                return Err(PrintExportError::Cancelled);
             }
             let key = u32::from_be_bytes([0, px[0], px[1], px[2]]);
             let idx = key_to_idx[&key];
@@ -381,7 +371,7 @@ pub fn rgba8_to_cmyk8(
 
     // Pointwise path (batch by rows for cancel checks).
     let mut rgb = Vec::with_capacity(pixels * 3);
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0 {
         rgb.extend_from_slice(&px[..3]);
     }
     let mut cmyk = vec![0u8; pixels * 4];
@@ -476,7 +466,7 @@ pub fn gamut_report(
     }
     let palette_collisions = cmyk_to_count.values().filter(|&&n| n > 1).sum::<u32>();
     // Number of colors that share a CMYK with at least one other.
-    let collapsed_colors: u32 = cmyk_to_count.values().filter(|&&n| n > 1).map(|&n| n).sum();
+    let collapsed_colors: u32 = cmyk_to_count.values().filter(|&&n| n > 1).copied().sum();
 
     let mut cmyk_flat = Vec::with_capacity(colors.len() * 4);
     for c in &cmyk_palette {
@@ -520,7 +510,7 @@ pub fn gamut_report(
 
     let mut oog_pixels = 0u64;
     let total_pixels = (rgba.len() / 4) as u64;
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0 {
         let key = u32::from_be_bytes([0, px[0], px[1], px[2]]);
         if key_shift.contains_key(&key) {
             oog_pixels += 1;

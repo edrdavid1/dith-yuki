@@ -12,8 +12,20 @@ fn main() {
     let l = adapter.limits();
     let info = adapter.get_info();
     println!("adapter={} {:?}", info.name, info.backend);
-    println!("max_compute_workgroup_storage_size={}", l.max_compute_workgroup_storage_size);
-    println!("max_compute_invocations_per_workgroup={}", l.max_compute_invocations_per_workgroup);
-    println!("max_compute_workgroup_size_x={}", l.max_compute_workgroup_size_x);
-    println!("max_compute_workgroup_size_y={}", l.max_compute_workgroup_size_y);
+    println!(
+        "max_compute_workgroup_storage_size={}",
+        l.max_compute_workgroup_storage_size
+    );
+    println!(
+        "max_compute_invocations_per_workgroup={}",
+        l.max_compute_invocations_per_workgroup
+    );
+    println!(
+        "max_compute_workgroup_size_x={}",
+        l.max_compute_workgroup_size_x
+    );
+    println!(
+        "max_compute_workgroup_size_y={}",
+        l.max_compute_workgroup_size_y
+    );
 }

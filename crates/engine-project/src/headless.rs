@@ -111,7 +111,11 @@ fn filters_have_guided(filters: &[FilterInstance]) -> bool {
     })
 }
 
-pub(crate) fn encode_rgba_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, HeadlessError> {
+pub(crate) fn encode_rgba_png(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, HeadlessError> {
     use image::codecs::png::PngEncoder;
     use image::ImageEncoder;
     use std::io::Cursor;
@@ -155,18 +159,14 @@ pub fn run_headless_job_cancellable(
     let live_gen = 1u64;
 
     // Budget: roughly enough for one full-resolution document worth of tiles.
-      let budget = ((width as usize).saturating_mul(height as usize).saturating_mul(16))
-        .clamp(50_000_000, 512_000_000);
+    let budget = ((width as usize)
+        .saturating_mul(height as usize)
+        .saturating_mul(16))
+    .clamp(50_000_000, 512_000_000);
     let cache = TileCache::new(budget);
 
     decompose_image_to_tiles_at_generation(
-        &rgba_f32,
-        width,
-        height,
-        doc_id,
-        layer_id,
-        &cache,
-        live_gen,
+        &rgba_f32, width, height, doc_id, layer_id, &cache, live_gen,
     )
     .map_err(|e| HeadlessError::Export(format!("tile decompose: {e}")))?;
 
@@ -174,12 +174,7 @@ pub fn run_headless_job_cancellable(
     doc.generations.set_document_gen(live_gen);
     doc.palettes = job.palettes.clone();
 
-    let mut layer = Layer::new(
-        LayerId::new(layer_id),
-        LayerKind::Raster,
-        width,
-        height,
-    );
+    let mut layer = Layer::new(LayerId::new(layer_id), LayerKind::Raster, width, height);
     layer.filters = job.filters.clone();
     doc.root.push(LayerNode::Leaf(layer));
 
@@ -197,7 +192,13 @@ pub fn run_headless_job_cancellable(
             let palette_srgb: Vec<(u8, u8, u8)> = palette
                 .colors
                 .iter()
-                .map(|c| (linear_to_srgb(c.r), linear_to_srgb(c.g), linear_to_srgb(c.b)))
+                .map(|c| {
+                    (
+                        linear_to_srgb(c.r),
+                        linear_to_srgb(c.g),
+                        linear_to_srgb(c.b),
+                    )
+                })
                 .collect();
             encode_indexed_png(&rgba8, width, height, &palette_srgb)
                 .map_err(|e| HeadlessError::Export(e.to_string()))?
@@ -236,13 +237,8 @@ pub fn expand_output_name(template: &str, input: &Path) -> String {
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("image");
-    let ext = input
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("png");
-    template
-        .replace("{name}", stem)
-        .replace("{ext}", ext)
+    let ext = input.extension().and_then(|s| s.to_str()).unwrap_or("png");
+    template.replace("{name}", stem).replace("{ext}", ext)
 }
 
 /// Run jobs sequentially. One failure does not stop the batch.
@@ -313,19 +309,15 @@ pub fn palette_from_srgb(id: u32, name: &str, colors: &[(u8, u8, u8)]) -> Palett
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2, FilterKind, FilterParams};
     use crate::filter::FilterInstance;
+    use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2, FilterKind, FilterParams};
     use image::RgbImage;
     use std::sync::atomic::AtomicBool;
 
     fn write_test_png(path: &Path, w: u32, h: u32) {
         let mut img = RgbImage::new(w, h);
         for (x, y, p) in img.enumerate_pixels_mut() {
-            *p = image::Rgb([
-                (x * 17) as u8,
-                (y * 13) as u8,
-                128,
-            ]);
+            *p = image::Rgb([(x * 17) as u8, (y * 13) as u8, 128]);
         }
         img.save(path).unwrap();
     }

@@ -540,7 +540,7 @@ fn find_layers_referencing_palette_recursive_group() {
             FilterParams::PaletteQuantize {
                 palette_id,
                 diffusion: None,
-                    metric: "oklab".to_string(),
+                metric: "oklab".to_string(),
             },
         )];
         children.push(LayerNode::Leaf(leaf));

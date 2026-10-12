@@ -1091,11 +1091,11 @@ impl FilterService {
         // document_gen or invalidate FullDocumentCache — that was re-running
         // GPU dither with unchanged params_hash (slider settle / queued flush).
         {
-            fn find_filter<'a>(
-                nodes: &'a [engine_project::LayerNode],
+            fn find_filter(
+                nodes: &[engine_project::LayerNode],
                 layer_id: u32,
                 filter_id: FilterInstanceId,
-            ) -> Option<&'a engine_project::FilterInstance> {
+            ) -> Option<&engine_project::FilterInstance> {
                 for node in nodes.iter() {
                     match node {
                         engine_project::LayerNode::Leaf(layer) if layer.id.0 == layer_id => {

@@ -2,9 +2,7 @@
 
 use std::sync::atomic::AtomicBool;
 
-use engine_project::algorithms::gpu_dither_cpu::{
-    blocked_fs_cpu, PaletteRgb, Rgba8, CORE, PAD,
-};
+use engine_project::algorithms::gpu_dither_cpu::{blocked_fs_cpu, PaletteRgb, Rgba8, CORE, PAD};
 
 fn gray_ramp(w: usize, h: usize) -> Vec<Rgba8> {
     let mut v = Vec::with_capacity(w * h);
@@ -26,21 +24,9 @@ fn six_palette() -> Vec<PaletteRgb> {
             g: 255,
             b: 255,
         },
-        PaletteRgb {
-            r: 255,
-            g: 0,
-            b: 0,
-        },
-        PaletteRgb {
-            r: 0,
-            g: 255,
-            b: 0,
-        },
-        PaletteRgb {
-            r: 0,
-            g: 0,
-            b: 255,
-        },
+        PaletteRgb { r: 255, g: 0, b: 0 },
+        PaletteRgb { r: 0, g: 255, b: 0 },
+        PaletteRgb { r: 0, g: 0, b: 255 },
         PaletteRgb {
             r: 128,
             g: 128,
@@ -58,9 +44,7 @@ fn to_bytes(px: &[Rgba8]) -> Vec<u8> {
 }
 
 fn palette_rgba(pal: &[PaletteRgb]) -> Vec<[u8; 4]> {
-    pal.iter()
-        .map(|p| [p.r, p.g, p.b, 255])
-        .collect()
+    pal.iter().map(|p| [p.r, p.g, p.b, 255]).collect()
 }
 
 fn parity_at(side: u32) {

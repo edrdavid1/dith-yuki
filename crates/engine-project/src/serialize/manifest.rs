@@ -435,15 +435,15 @@ mod tests {
 
     #[test]
     fn min_reader_minor_too_new_errors_when_above_supported() {
-        // SUPPORTED_FORMAT is 1.1 — ask for 1.2 so a current build still rejects.
+        // SUPPORTED_FORMAT is 1.2 — ask for 1.3 so a current build still rejects.
         let v = json!({
             "format_version": 1,
             "kind": "dyproj",
             "app_version": "0.2.0",
             "created_at": "t",
             "modified_at": "t",
-            "format": { "major": 1, "minor": 2 },
-            "min_reader": { "major": 1, "minor": 2 }
+            "format": { "major": 1, "minor": 3 },
+            "min_reader": { "major": 1, "minor": 3 }
         });
         let n = normalize_manifest_value(v).unwrap();
         let err = check_open_gate(&n).unwrap_err();

@@ -48,7 +48,10 @@ impl std::fmt::Display for EdWrapError {
         match self {
             Self::Cancelled => write!(f, "ed wrap-padding cancelled"),
             Self::UnsupportedKernel => write!(f, "ed wrap-padding unsupported kernel"),
-            Self::SizeLimitExceeded { padded_pixels, limit } => {
+            Self::SizeLimitExceeded {
+                padded_pixels,
+                limit,
+            } => {
                 write!(
                     f,
                     "ed wrap-padding size limit: padded_pixels={padded_pixels} > limit={limit}"
@@ -168,9 +171,7 @@ pub fn wrap_pad_rgba_f32(
     }
     let pw = w + 2 * mx as usize;
     let ph = h + 2 * my as usize;
-    let floats = padded_pixels
-        .checked_mul(4)
-        .ok_or(EdWrapError::Overflow)?;
+    let floats = padded_pixels.checked_mul(4).ok_or(EdWrapError::Overflow)?;
     let mut out = Vec::new();
     out.try_reserve(floats).map_err(|_| EdWrapError::Overflow)?;
     out.resize(floats, 0.0);
@@ -218,7 +219,10 @@ pub fn crop_rgba_f32(
         return Err(EdWrapError::Overflow);
     }
     let mut out = Vec::new();
-    let floats = w.checked_mul(h).and_then(|n| n.checked_mul(4)).ok_or(EdWrapError::Overflow)?;
+    let floats = w
+        .checked_mul(h)
+        .and_then(|n| n.checked_mul(4))
+        .ok_or(EdWrapError::Overflow)?;
     out.try_reserve(floats).map_err(|_| EdWrapError::Overflow)?;
     out.resize(floats, 0.0);
     for y in 0..h {
@@ -271,13 +275,20 @@ fn apply_ed_buffer_inplace(
     ) || params.serpentine;
     let offsets = kernel.offsets();
     let mut err_buf = Vec::new();
-    let err_len = w.checked_mul(h).and_then(|n| n.checked_mul(3)).ok_or(EdWrapError::Overflow)?;
-    err_buf.try_reserve(err_len).map_err(|_| EdWrapError::Overflow)?;
+    let err_len = w
+        .checked_mul(h)
+        .and_then(|n| n.checked_mul(3))
+        .ok_or(EdWrapError::Overflow)?;
+    err_buf
+        .try_reserve(err_len)
+        .map_err(|_| EdWrapError::Overflow)?;
     err_buf.resize(err_len, 0.0);
 
     for y in 0..h {
         if (y as u32).is_multiple_of(CANCEL_POLL_ROWS) && cancel.load(Ordering::Relaxed) {
-            WRAP_PADDING_METRICS.cancelled.fetch_add(1, Ordering::Relaxed);
+            WRAP_PADDING_METRICS
+                .cancelled
+                .fetch_add(1, Ordering::Relaxed);
             log::warn!("ed_wrap_padding cancelled at row {y}/{h}");
             return Err(EdWrapError::Cancelled);
         }
@@ -415,13 +426,14 @@ pub fn apply_ed_with_wrap_padding(
 
     let (mut padded, pw, ph) = match wrap_pad_rgba_f32(rgba, width, height, mx, my) {
         Ok(v) => v,
-        Err(EdWrapError::SizeLimitExceeded { padded_pixels, limit }) => {
+        Err(EdWrapError::SizeLimitExceeded {
+            padded_pixels,
+            limit,
+        }) => {
             WRAP_PADDING_METRICS
                 .fallback_size_limit
                 .fetch_add(1, Ordering::Relaxed);
-            log::info!(
-                "ed_wrap_padding fallback: padded_pixels={padded_pixels} > limit={limit}"
-            );
+            log::info!("ed_wrap_padding fallback: padded_pixels={padded_pixels} > limit={limit}");
             return Err(EdWrapError::SizeLimitExceeded {
                 padded_pixels,
                 limit,
@@ -476,10 +488,7 @@ mod tests {
 
     #[test]
     fn edge_margin_symmetric_kernel() {
-        assert_eq!(
-            edge_margin(DiffusionKernel::FloydSteinberg, 1),
-            (1, 1)
-        );
+        assert_eq!(edge_margin(DiffusionKernel::FloydSteinberg, 1), (1, 1));
     }
 
     #[test]
@@ -577,8 +586,8 @@ mod tests {
             ..DitherParamsV2::default()
         };
         let cancel = AtomicBool::new(true);
-        let err = apply_ed_with_wrap_padding(&mut rgba, 64, 128, &params, &cancel, None)
-            .unwrap_err();
+        let err =
+            apply_ed_with_wrap_padding(&mut rgba, 64, 128, &params, &cancel, None).unwrap_err();
         assert_eq!(err, EdWrapError::Cancelled);
     }
 
@@ -598,15 +607,8 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let mut values = Vec::new();
         let mut on_progress = |p: f32| values.push(p);
-        apply_ed_with_wrap_padding(
-            &mut rgba,
-            32,
-            32,
-            &params,
-            &cancel,
-            Some(&mut on_progress),
-        )
-        .unwrap();
+        apply_ed_with_wrap_padding(&mut rgba, 32, 32, &params, &cancel, Some(&mut on_progress))
+            .unwrap();
         assert!(!values.is_empty());
         assert!((values.last().copied().unwrap_or(0.0) - 1.0).abs() < 1e-5);
         for w in values.windows(2) {

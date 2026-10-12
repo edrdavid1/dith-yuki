@@ -156,7 +156,10 @@ fn set_workspace_gamedev_updates_config_and_visibility() {
     assert_eq!(store.config.snapshot().workspace, Workspace::Gamedev);
 
     let vis = invoke_cmd(&webview, "get_ui_visibility", json!({})).expect("get_ui_visibility");
-    assert_eq!(vis.get("showTilingSection").and_then(|v| v.as_bool()), Some(true));
+    assert_eq!(
+        vis.get("showTilingSection").and_then(|v| v.as_bool()),
+        Some(true)
+    );
 }
 
 #[test]

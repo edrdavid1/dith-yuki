@@ -92,10 +92,7 @@ fn apply_nearest(
                 NearestMetric::Oklab => lut_index(LinRgb { r, g, b }),
                 NearestMetric::Brightness => {
                     let query_l = linear_to_oklab(LinRgb { r, g, b }).l;
-                    brightness
-                        .as_ref()
-                        .map(|s| s.nearest(query_l))
-                        .unwrap_or(0)
+                    brightness.as_ref().map(|s| s.nearest(query_l)).unwrap_or(0)
                 }
                 NearestMetric::Srgb => {
                     let qr = linear_to_srgb(r) as f32;
