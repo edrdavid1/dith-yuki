@@ -19,12 +19,13 @@ use engine_registry::{
 use engine_tiles::{PixelTile, HALO, TILE_SIZE};
 use serde::Serialize;
 
+use crate::document::Document;
 use crate::filter::{DitherModeV2, DitherParamsV2};
 use crate::filters::context::FilterContext;
 
 use super::gpu_dither_cpu::{
-    blue_noise_cpu, blue_noise_ranks, blocked_fs_cpu, with_pixel_size_blocks, PaletteRgb, Rgba8,
-    CORE, DEFAULT_SPREAD, PAD,
+    blue_noise_cpu, blue_noise_ranks, blocked_fs_cpu, levels_palette, with_pixel_size_blocks,
+    PaletteRgb, Rgba8, CORE, DEFAULT_SPREAD, PAD,
 };
 use super::scratch::scratch_src;
 
@@ -201,36 +202,37 @@ fn write_rgba8_to_tile(dst: &mut PixelTile, pixels: &[Rgba8]) {
     }
 }
 
-fn bilevel_palette() -> Vec<PaletteRgb> {
-    vec![
-        PaletteRgb { r: 0, g: 0, b: 0 },
-        PaletteRgb {
-            r: 255,
-            g: 255,
-            b: 255,
-        },
-    ]
+/// Resolve the palette for GPU ED families: document swatch if bound, otherwise
+/// a synthetic levels palette (same idea as CPU ED’s uniform quantizer — not
+/// hard black/white unless levels=2 grayscale).
+pub fn resolve_gpu_dither_palette(
+    params: &DitherParamsV2,
+    doc: &Document,
+) -> Result<Vec<PaletteRgb>, crate::error::EngineError> {
+    if let Some(palette_id) = params.palette_id {
+        let Some(pal) = doc.get_palette(palette_id) else {
+            return Err(crate::error::EngineError::palette_not_found(palette_id));
+        };
+        if pal.colors.is_empty() {
+            return Err(crate::error::EngineError::invalid_filter_params(
+                "InvalidPalette: empty",
+            ));
+        }
+        return Ok(pal
+            .colors
+            .iter()
+            .map(|c| PaletteRgb {
+                r: linear_to_srgb(c.r),
+                g: linear_to_srgb(c.g),
+                b: linear_to_srgb(c.b),
+            })
+            .collect());
+    }
+    Ok(levels_palette(params.levels, params.color_mode))
 }
 
 fn palette_from_ctx(ctx: &FilterContext<'_>, params: &DitherParamsV2) -> Result<Vec<PaletteRgb>, FilterError> {
-    let doc = ctx.document;
-    let Some(pal) = params.palette_id.and_then(|id| doc.get_palette(id)) else {
-        return Ok(bilevel_palette());
-    };
-    if pal.colors.is_empty() {
-        return Err(FilterError::from_engine(
-            crate::error::EngineError::invalid_filter_params("InvalidPalette: empty"),
-        ));
-    }
-    Ok(pal
-        .colors
-        .iter()
-        .map(|c| PaletteRgb {
-            r: linear_to_srgb(c.r),
-            g: linear_to_srgb(c.g),
-            b: linear_to_srgb(c.b),
-        })
-        .collect())
+    resolve_gpu_dither_palette(params, ctx.document).map_err(FilterError::from_engine)
 }
 
 fn spread_from_params(params: &DitherParamsV2) -> u32 {

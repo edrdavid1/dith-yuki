@@ -451,30 +451,7 @@ fn apply_full_document_algorithm(
 
     match params.mode {
         DitherModeV2::BlockedFs | DitherModeV2::BlueNoise => {
-            use crate::algorithms::gpu_dither_cpu::PaletteRgb;
-            use engine_color::palette::linear_to_srgb;
-            let palette: Vec<PaletteRgb> = match params
-                .palette_id
-                .and_then(|id| doc.get_palette(id))
-            {
-                Some(pal) if !pal.colors.is_empty() => pal
-                    .colors
-                    .iter()
-                    .map(|c| PaletteRgb {
-                        r: linear_to_srgb(c.r),
-                        g: linear_to_srgb(c.g),
-                        b: linear_to_srgb(c.b),
-                    })
-                    .collect(),
-                _ => vec![
-                    PaletteRgb { r: 0, g: 0, b: 0 },
-                    PaletteRgb {
-                        r: 255,
-                        g: 255,
-                        b: 255,
-                    },
-                ],
-            };
+            let palette = crate::algorithms::gpu_dither::resolve_gpu_dither_palette(&params, doc)?;
             crate::algorithms::gpu_dither::apply_gpu_dither_rgba(
                 rgba,
                 width,

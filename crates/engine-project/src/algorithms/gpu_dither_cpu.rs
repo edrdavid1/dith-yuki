@@ -9,6 +9,7 @@ use crate::algorithms::fixed_point::{
     blue_noise_shift_q8, clamp_adjusted_q8, distribute_fs, q8_to_u8_rounded, u8_to_q8, MAX_U8_Q8,
 };
 use crate::error::EngineError;
+use crate::filter::DitherColorMode;
 
 /// Workgroup / padded-tile side (64×64).
 pub const WG_SIZE: u32 = 64;
@@ -41,11 +42,50 @@ impl Rgba8 {
 }
 
 /// Display-referred palette entry (RGB only; alpha ignored for distance).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PaletteRgb {
     pub r: u8,
     pub g: u8,
     pub b: u8,
+}
+
+/// Max channel steps for a synthetic RGB cube (`16³ = 4096`). Larger `levels`
+/// values are clamped so the GPU storage buffer stays bounded.
+pub const MAX_SYNTHETIC_CUBE_LEVELS: u16 = 16;
+
+/// Build a levels palette matching CPU ED’s uniform quantizer when no document
+/// palette is bound. RGB → L³ cube (nearest ≡ per-channel uniform); Grayscale →
+/// L-step ramp. Never hard-codes bilevel unless `levels == 2` and grayscale.
+pub fn levels_palette(levels: u16, color_mode: DitherColorMode) -> Vec<PaletteRgb> {
+    let levels = levels.clamp(2, 256);
+    match color_mode {
+        DitherColorMode::Grayscale => {
+            let n = levels as u32;
+            let denom = (n - 1).max(1);
+            (0..n)
+                .map(|i| {
+                    let v = ((i * 255) / denom) as u8;
+                    PaletteRgb { r: v, g: v, b: v }
+                })
+                .collect()
+        }
+        DitherColorMode::Rgb => {
+            let n = u32::from(levels.min(MAX_SYNTHETIC_CUBE_LEVELS));
+            let denom = (n - 1).max(1);
+            let mut out = Vec::with_capacity((n * n * n) as usize);
+            for ir in 0..n {
+                let r = ((ir * 255) / denom) as u8;
+                for ig in 0..n {
+                    let g = ((ig * 255) / denom) as u8;
+                    for ib in 0..n {
+                        let b = ((ib * 255) / denom) as u8;
+                        out.push(PaletteRgb { r, g, b });
+                    }
+                }
+            }
+            out
+        }
+    }
 }
 
 /// Euclidean nearest palette color in display-referred RGB (§9).
@@ -578,5 +618,30 @@ mod tests {
         let a = blocked_fs_cpu(&input, 70, 70, &pal, CORE, CORE, PAD).unwrap();
         let b = blocked_fs_cpu(&input, 70, 70, &pal, CORE, CORE, PAD).unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn levels_palette_rgb_default_is_not_bilevel() {
+        use crate::filter::DitherColorMode;
+        // Default Levels=4 → 4³ = 64 colors (CPU ED uniform), not black/white.
+        let pal = levels_palette(4, DitherColorMode::Rgb);
+        assert_eq!(pal.len(), 64);
+        assert!(pal.iter().any(|c| c.r != c.g || c.g != c.b));
+    }
+
+    #[test]
+    fn levels_palette_grayscale_two_is_bilevel() {
+        use crate::filter::DitherColorMode;
+        let pal = levels_palette(2, DitherColorMode::Grayscale);
+        assert_eq!(pal.len(), 2);
+        assert_eq!(pal[0], PaletteRgb { r: 0, g: 0, b: 0 });
+        assert_eq!(
+            pal[1],
+            PaletteRgb {
+                r: 255,
+                g: 255,
+                b: 255
+            }
+        );
     }
 }
