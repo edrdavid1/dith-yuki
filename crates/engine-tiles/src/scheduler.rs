@@ -160,6 +160,11 @@ impl Scheduler {
         }
     }
 
+    /// Pending tasks not yet dequeued. Relaxed load of the existing counter.
+    pub fn pending_count(&self) -> usize {
+        self.queued_count.load(Ordering::Acquire)
+    }
+
     pub fn clear_all(&self) {
         while self.immediate.pop().is_some() {}
         while self.viewport_center.pop().is_some() {}

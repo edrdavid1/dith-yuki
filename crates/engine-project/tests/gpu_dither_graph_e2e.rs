@@ -30,21 +30,36 @@ fn gray_ramp_f32(w: u32, h: u32) -> Vec<f32> {
     v
 }
 
-fn load_photo_f32() -> (u32, u32, Vec<f32>) {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/gpu_parity/photos/photo_grad.png"
+fn load_photo_f32(name: &str) -> (u32, u32, Vec<f32>) {
+    let path = format!(
+        "{}/tests/fixtures/gpu_parity/photos/{name}",
+        env!("CARGO_MANIFEST_DIR")
     );
-    let img = image::open(path).expect("photo_grad").to_rgba8();
+    let img = image::open(&path)
+        .unwrap_or_else(|e| panic!("open {path}: {e}"))
+        .to_rgba8();
     let (w, h) = img.dimensions();
     let mut out = Vec::with_capacity((w * h * 4) as usize);
     for p in img.pixels() {
-        out.push(p[0] as f32 / 255.0);
-        out.push(p[1] as f32 / 255.0);
-        out.push(p[2] as f32 / 255.0);
+        out.push(engine_color::palette::srgb_to_linear(p[0]));
+        out.push(engine_color::palette::srgb_to_linear(p[1]));
+        out.push(engine_color::palette::srgb_to_linear(p[2]));
         out.push(p[3] as f32 / 255.0);
     }
     (w, h, out)
+}
+
+fn crop_rgba(src_w: u32, src_h: u32, src: &[f32], cw: u32, ch: u32) -> Vec<f32> {
+    let cw = cw.min(src_w);
+    let ch = ch.min(src_h);
+    let mut out = Vec::with_capacity((cw * ch * 4) as usize);
+    for y in 0..ch {
+        for x in 0..cw {
+            let i = ((y * src_w + x) * 4) as usize;
+            out.extend_from_slice(&src[i..i + 4]);
+        }
+    }
+    out
 }
 
 fn sha256_f32(rgba: &[f32]) -> String {
@@ -129,28 +144,30 @@ fn graph_gpu_matches_cpu_for_pixel_sizes() {
         eprintln!("skip: no GPU");
         return;
     }
-    let (pw, ph, photo_full) = load_photo_f32();
-    let crop_w = pw.min(160);
-    let crop_h = ph.min(120);
-    let mut photo = Vec::with_capacity((crop_w * crop_h * 4) as usize);
-    for y in 0..crop_h {
-        for x in 0..crop_w {
-            let i = ((y * pw + x) * 4) as usize;
-            photo.extend_from_slice(&photo_full[i..i + 4]);
-        }
+    let fixtures = [
+        "photo_sky.png",
+        "photo_skin.png",
+        "photo_edge.png",
+        "photo_grad.png",
+    ];
+    let mut photo_bufs: Vec<(u32, u32, Vec<f32>)> = Vec::with_capacity(fixtures.len());
+    for name in fixtures {
+        let (pw, ph, full) = load_photo_f32(name);
+        let cropped = crop_rgba(pw, ph, &full, 160, 120);
+        let cw = pw.min(160);
+        let ch = ph.min(120);
+        photo_bufs.push((cw, ch, cropped));
     }
-    let w = 128u32;
-    let h = 96u32;
-    let grad = gray_ramp_f32(w, h);
-    let cases: &[(u32, u32, &[f32])] = &[(w, h, &grad), (crop_w, crop_h, &photo)];
+    // T-BYTES through the graph: 4 fixtures × ps ∈ {1,3,5,7}.
     for mode in [DitherModeV2::BlockedFs, DitherModeV2::BlueNoise] {
-        for &(rw, rh, buf) in cases {
-            for ps in [1u8, 2, 4] {
-                let cpu = sha256_f32(&render_path("cpu", mode.clone(), rw, rh, buf, ps));
-                let gpu = sha256_f32(&render_path("gpu", mode.clone(), rw, rh, buf, ps));
+        for (i, (rw, rh, buf)) in photo_bufs.iter().enumerate() {
+            let label = fixtures[i];
+            for ps in [1u8, 3, 5, 7] {
+                let cpu = sha256_f32(&render_path("cpu", mode.clone(), *rw, *rh, buf, ps));
+                let gpu = sha256_f32(&render_path("gpu", mode.clone(), *rw, *rh, buf, ps));
                 assert_eq!(
                     cpu, gpu,
-                    "{mode:?} ps={ps} {rw}x{rh} GPU≠CPU through graph"
+                    "{mode:?} ps={ps} {label} {rw}x{rh} GPU≠CPU through graph (T-BYTES)"
                 );
                 let st = last_gpu_dither_status().expect("status");
                 assert_eq!(st.pixel_size, ps as u32);
@@ -176,7 +193,10 @@ fn pixel_size_change_invalidates_full_document_cache() {
     doc.root = vec![LayerNode::Leaf(layer.clone())];
     let second = ensure_full_document_ex(&fd, &cache, &layer, &doc, 1, false).expect("second");
     let h2 = sha256_f32(&second.rgba_f32);
-    assert_ne!(h1, h2, "cache returned stale result after pixel_size change");
+    assert_ne!(
+        h1, h2,
+        "cache returned stale result after pixel_size change"
+    );
 }
 
 #[test]

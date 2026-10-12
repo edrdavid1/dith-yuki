@@ -20,14 +20,15 @@ pub mod error;
 pub mod filter;
 pub mod filters;
 pub mod headless;
-pub mod seamless;
-pub mod sprite_sheet;
 pub mod invalidation;
 pub mod layer;
 pub mod mask;
 pub mod palette_gen;
+pub mod pixel_pool;
+pub mod seamless;
 pub mod serialize;
 pub mod simd;
+pub mod sprite_sheet;
 pub mod types;
 
 // Public API re-exports
@@ -46,13 +47,6 @@ pub use headless::{
     run_headless_job_cancellable, HeadlessError, HeadlessJob, HeadlessJobResult,
     HeadlessOutputFormat,
 };
-pub use seamless::{
-    check_seamless, nearest_multiples, ordered_matrix_side, pattern_angle_breaks_periodicity,
-    pattern_period_px, seamless_warning_lines, SeamlessKind, SeamlessReport,
-};
-pub use sprite_sheet::{
-    process_sprite_sheet_rgba_f32, rgba8_to_f32, SpriteSheetError,
-};
 pub use invalidation::{
     invalidate_layer_filter_changed, invalidate_layer_props_changed,
     invalidate_layer_structure_changed, validate_document_consistency,
@@ -62,10 +56,15 @@ pub use layer::{
 };
 pub use mask::{apply_mask, MaskRef, MaskStorage};
 pub use palette_gen::{generate_palette_from_layer, generate_palette_from_layer_weighted};
+pub use seamless::{
+    check_seamless, nearest_multiples, ordered_matrix_side, pattern_angle_breaks_periodicity,
+    pattern_period_px, seamless_warning_lines, SeamlessKind, SeamlessReport,
+};
 pub use simd::{
     blend_row_scalar, blend_row_simd, f32_to_rgba8_row_scalar, f32_to_rgba8_row_simd,
     levels_row_scalar, levels_row_simd,
 };
+pub use sprite_sheet::{process_sprite_sheet_rgba_f32, rgba8_to_f32, SpriteSheetError};
 pub use types::{
     BlendMode, ColorProfileRef, DocumentId, FilterInstanceId, LayerId, LayerKind, PaletteId,
     TileBounds,

@@ -27,6 +27,7 @@ pub const BLUE_NOISE_SIZE: usize = 128;
 pub const DEFAULT_SPREAD: u32 = 256;
 
 /// Packed RGBA8 pixel.
+#[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rgba8 {
     pub r: u8,
@@ -89,7 +90,10 @@ pub fn levels_palette(levels: u16, color_mode: DitherColorMode) -> Vec<PaletteRg
 }
 
 /// Euclidean nearest palette color in display-referred RGB (§9).
-pub fn nearest_palette(color: (u8, u8, u8), palette: &[PaletteRgb]) -> Result<(u8, u8, u8), EngineError> {
+pub fn nearest_palette(
+    color: (u8, u8, u8),
+    palette: &[PaletteRgb],
+) -> Result<(u8, u8, u8), EngineError> {
     if palette.is_empty() {
         return Err(EngineError::invalid_filter_params("InvalidPalette: empty"));
     }
@@ -196,7 +200,9 @@ pub fn blocked_fs_cpu(
     let w = width as usize;
     let h = height as usize;
     if input.len() != w * h {
-        return Err(EngineError::invalid_filter_params("blocked_fs: buffer size"));
+        return Err(EngineError::invalid_filter_params(
+            "blocked_fs: buffer size",
+        ));
     }
     let mut output = input.to_vec();
     let tile_w = tile_w.max(1) as usize;
@@ -281,12 +287,8 @@ pub fn blocked_fs_cpu(
                     let sx = (pad as usize) + lx;
                     let sy = (pad as usize) + ly;
                     let rgb = buffer[sy * pw + sx];
-                    output[(ty + ly) * w + (tx + lx)] = Rgba8::new(
-                        rgb[0],
-                        rgb[1],
-                        rgb[2],
-                        alpha[sy * pw + sx],
-                    );
+                    output[(ty + ly) * w + (tx + lx)] =
+                        Rgba8::new(rgb[0], rgb[1], rgb[2], alpha[sy * pw + sx]);
                 }
             }
 
@@ -318,7 +320,9 @@ pub fn blue_noise_cpu(
     let w = width as usize;
     let h = height as usize;
     if input.len() != w * h {
-        return Err(EngineError::invalid_filter_params("blue_noise: buffer size"));
+        return Err(EngineError::invalid_filter_params(
+            "blue_noise: buffer size",
+        ));
     }
     let mut output = Vec::with_capacity(input.len());
     for y in 0..h {
@@ -446,21 +450,9 @@ mod tests {
                 g: 255,
                 b: 255,
             },
-            PaletteRgb {
-                r: 255,
-                g: 0,
-                b: 0,
-            },
-            PaletteRgb {
-                r: 0,
-                g: 255,
-                b: 0,
-            },
-            PaletteRgb {
-                r: 0,
-                g: 0,
-                b: 255,
-            },
+            PaletteRgb { r: 255, g: 0, b: 0 },
+            PaletteRgb { r: 0, g: 255, b: 0 },
+            PaletteRgb { r: 0, g: 0, b: 255 },
             PaletteRgb {
                 r: 128,
                 g: 128,
@@ -528,10 +520,9 @@ mod tests {
         ];
         let out = blocked_fs_cpu(&input, 48, 48, &pal, CORE, CORE, PAD).unwrap();
         for px in &out {
-            assert!(
-                pal.iter()
-                    .any(|p| p.r == px.r && p.g == px.g && p.b == px.b)
-            );
+            assert!(pal
+                .iter()
+                .any(|p| p.r == px.r && p.g == px.g && p.b == px.b));
         }
     }
 
@@ -548,37 +539,17 @@ mod tests {
                 g: 255,
                 b: 255,
             },
-            PaletteRgb {
-                r: 255,
-                g: 0,
-                b: 0,
-            },
-            PaletteRgb {
-                r: 0,
-                g: 255,
-                b: 0,
-            },
-            PaletteRgb {
-                r: 0,
-                g: 0,
-                b: 255,
-            },
+            PaletteRgb { r: 255, g: 0, b: 0 },
+            PaletteRgb { r: 0, g: 255, b: 0 },
+            PaletteRgb { r: 0, g: 0, b: 255 },
             PaletteRgb {
                 r: 128,
                 g: 128,
                 b: 128,
             },
         ];
-        let output = blocked_fs_cpu(
-            &input,
-            side as u32,
-            side as u32,
-            &palette,
-            CORE,
-            CORE,
-            PAD,
-        )
-        .unwrap();
+        let output =
+            blocked_fs_cpu(&input, side as u32, side as u32, &palette, CORE, CORE, PAD).unwrap();
         let mut bytes = Vec::with_capacity(output.len() * 4);
         for px in &output {
             bytes.extend_from_slice(&[px.r, px.g, px.b, px.a]);
@@ -595,11 +566,7 @@ mod tests {
     fn alpha_preserved_blue_noise() {
         let mut input = gray_ramp(16, 16);
         input[3].a = 77;
-        let pal = [PaletteRgb {
-            r: 0,
-            g: 0,
-            b: 0,
-        }];
+        let pal = [PaletteRgb { r: 0, g: 0, b: 0 }];
         let out = blue_noise_cpu(&input, 16, 16, &pal, blue_noise_ranks(), 128).unwrap();
         assert_eq!(out[3].a, 77);
     }

@@ -15,6 +15,7 @@ pub use presets::{find_preset, PalettePreset, BUILTIN_PRESETS};
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::OnceLock;
 use thiserror::Error;
 
 /// A single color in linear RGB space (matching PixelTile representation).
@@ -92,18 +93,50 @@ pub enum PaletteError {
     GenerationFailed(String),
 }
 
-/// Convert an sRGB gamma-encoded u8 value to linear f32.
-///
-/// Uses the standard sRGB transfer function:
-/// - If normalized <= 0.04045: linear = normalized / 12.92
-/// - Otherwise: linear = ((normalized + 0.055) / 1.055)^2.4
-pub fn srgb_to_linear(value: u8) -> f32 {
+/// Previous direct `powf` path (frozen). Used to build the LUT and as the
+/// identity / benchmark oracle — keep the body bit-identical to historical code.
+#[inline]
+pub fn srgb_to_linear_reference(value: u8) -> f32 {
     let normalized = value as f32 / 255.0;
     if normalized <= 0.04045 {
         normalized / 12.92
     } else {
         ((normalized + 0.055) / 1.055).powf(2.4)
     }
+}
+
+/// 256-entry table of [`srgb_to_linear_reference`]. Built once; bit-identical to a
+/// direct call for every u8 input.
+fn srgb_to_linear_table() -> &'static [f32; 256] {
+    static TABLE: OnceLock<[f32; 256]> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut t = [0.0f32; 256];
+        for (i, slot) in t.iter_mut().enumerate() {
+            *slot = srgb_to_linear_reference(i as u8);
+        }
+        t
+    })
+}
+
+/// Convert an sRGB gamma-encoded u8 value to linear f32.
+///
+/// Uses the standard sRGB transfer function via a 256-entry lookup table
+/// (exact for every u8; same values as the previous direct `powf` path).
+pub fn srgb_to_linear(value: u8) -> f32 {
+    srgb_to_linear_table()[value as usize]
+}
+
+/// Previous linear→sRGB formula (frozen oracle for identity tests / benchmarks).
+/// Body is duplicated from [`linear_to_srgb`] so a drift in either path is caught.
+#[inline]
+pub fn linear_to_srgb_reference(value: f32) -> u8 {
+    let clamped = value.clamp(0.0, 1.0);
+    let result = if clamped <= 0.0031308 {
+        clamped * 12.92
+    } else {
+        1.055 * clamped.powf(1.0 / 2.4) - 0.055
+    };
+    (result * 255.0 + 0.5) as u8
 }
 
 /// Convert a linear f32 value to sRGB gamma-encoded u8.
@@ -198,6 +231,96 @@ mod tests {
     #[test]
     fn srgb_to_linear_black() {
         assert_eq!(srgb_to_linear(0), 0.0);
+    }
+
+    /// Reverse transfer: all 256 u8 inputs — LUT vs previous direct path.
+    #[test]
+    fn srgb_to_linear_lut_matches_reference_all_u8() {
+        for v in 0u8..=255 {
+            let via_lut = srgb_to_linear(v);
+            let direct = srgb_to_linear_reference(v);
+            assert_eq!(via_lut.to_bits(), direct.to_bits(), "u8={v}");
+        }
+    }
+
+    /// Out-of-range / NaN / inf for linear→sRGB (clamped / defined casting).
+    #[test]
+    fn linear_to_srgb_matches_reference_on_specials() {
+        let samples = [
+            f32::NAN,
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+            -1.0,
+            -0.0,
+            0.0,
+            1.0,
+            1.5,
+            2.0,
+            f32::MIN,
+            f32::MAX,
+            0.0031308,
+            0.0031308 - f32::EPSILON,
+            0.0031308 + f32::EPSILON,
+            -f32::EPSILON,
+            1.0 + f32::EPSILON,
+        ];
+        for v in samples {
+            assert_eq!(
+                linear_to_srgb(v),
+                linear_to_srgb_reference(v),
+                "v={v:?} bits={:#x}",
+                v.to_bits()
+            );
+        }
+    }
+
+    #[inline(never)]
+    fn linear_to_srgb_prod_ni(v: f32) -> u8 {
+        linear_to_srgb(v)
+    }
+
+    #[inline(never)]
+    fn linear_to_srgb_ref_ni(v: f32) -> u8 {
+        linear_to_srgb_reference(v)
+    }
+
+    /// Exhaustive: every finite f32 whose value lies in [0, 1].
+    /// Bodies are called via `#[inline(never)]` + `black_box` so LLVM cannot
+    /// fold the identity away. Runtime is on the order of minutes; ignored by default.
+    #[test]
+    #[ignore = "exhaustive 2^32 sweep; run with --ignored / nightly"]
+    fn linear_to_srgb_matches_reference_all_f32_in_unit_interval() {
+        use std::hint::black_box;
+        let t0 = std::time::Instant::now();
+        let mut checked = 0u64;
+        // Chunk the bit space so progress is visible and the loop body cannot
+        // be proven empty by the optimizer across the whole range.
+        for chunk in 0u32..256 {
+            let base = chunk << 24;
+            for off in 0u32..(1u32 << 24) {
+                let bits = base.wrapping_add(off);
+                let v = f32::from_bits(bits);
+                if !v.is_finite() || !(0.0..=1.0).contains(&v) {
+                    continue;
+                }
+                let a = black_box(linear_to_srgb_prod_ni(black_box(v)));
+                let b = black_box(linear_to_srgb_ref_ni(black_box(v)));
+                assert_eq!(a, b, "bits={bits:#x} v={v}");
+                checked += 1;
+            }
+            if chunk % 16 == 15 {
+                eprintln!(
+                    "exhaustive progress chunk={chunk}/256 checked={checked} elapsed={:.1}s",
+                    t0.elapsed().as_secs_f64()
+                );
+            }
+        }
+        // ≈ 1.056e9 finite values in [0, 1] inclusive.
+        assert!(checked > 1_000_000_000, "checked={checked}");
+        eprintln!(
+            "exhaustive OK checked={checked} wall_s={:.1}",
+            t0.elapsed().as_secs_f64()
+        );
     }
 
     #[test]
