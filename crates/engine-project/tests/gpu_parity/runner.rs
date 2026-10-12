@@ -248,7 +248,8 @@ fn check_properties(case: &ParityCase, input: &[Rgba8], out: &[u8]) -> Result<()
         .iter()
         .map(|c| [c[0], c[1], c[2]])
         .collect();
-    for (i, px) in from_bytes(out).iter().enumerate() {
+    let pixels = from_bytes(out);
+    for (i, px) in pixels.iter().enumerate() {
         if !pal.contains(&[px.r, px.g, px.b]) {
             return Err(format!(
                 "pixel {i} rgb=({},{},{}) not in palette",
@@ -262,7 +263,83 @@ fn check_properties(case: &ParityCase, input: &[Rgba8], out: &[u8]) -> Result<()
             ));
         }
     }
+    // Block uniformity: every ps×ps cell (incl. ragged edges) is one RGB.
+    let ps = case.params.pixel_size.max(1);
+    if ps > 1 {
+        let w = case.width as usize;
+        let h = case.height as usize;
+        let bw = case.width.div_ceil(ps) as usize;
+        let bh = case.height.div_ceil(ps) as usize;
+        for by in 0..bh {
+            for bx in 0..bw {
+                let x0 = bx * ps as usize;
+                let y0 = by * ps as usize;
+                let rep = pixels[y0 * w + x0];
+                for y in y0..(y0 + ps as usize).min(h) {
+                    for x in x0..(x0 + ps as usize).min(w) {
+                        let p = pixels[y * w + x];
+                        if p.r != rep.r || p.g != rep.g || p.b != rep.b {
+                            return Err(format!(
+                                "block ({bx},{by}) not uniform at ({x},{y}): rep=({},{},{}) got=({},{},{})",
+                                rep.r, rep.g, rep.b, p.r, p.g, p.b
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
     Ok(())
+}
+
+/// App FullDocument path (`apply_gpu_dither_rgba`) — used for `params_ps`.
+fn run_app_path(case: &ParityCase, input: &[Rgba8], path: &str) -> Result<Vec<u8>, String> {
+    use engine_project::algorithms::gpu_dither::apply_gpu_dither_rgba;
+    use engine_project::filter::{DitherModeV2, DitherParamsV2};
+    std::env::set_var("DITHER_GPU_PATH", path);
+    let n = input.len();
+    let mut rgba = Vec::with_capacity(n * 4);
+    for p in input {
+        rgba.push(engine_color::palette::srgb_to_linear(p.r));
+        rgba.push(engine_color::palette::srgb_to_linear(p.g));
+        rgba.push(engine_color::palette::srgb_to_linear(p.b));
+        rgba.push(p.a as f32 / 255.0);
+    }
+    let mode = match case.algorithm {
+        Algorithm::BlockedFs => DitherModeV2::BlockedFs,
+        Algorithm::BlueNoise => DitherModeV2::BlueNoise,
+    };
+    let ps = case.params.pixel_size.max(1);
+    if ps > 32 {
+        return Err(format!(
+            "app path rejects pixel_size={ps} (DitherParamsV2 max 32); use kernel path"
+        ));
+    }
+    let params = DitherParamsV2 {
+        mode,
+        pixel_size: ps as u8,
+        threshold_scale: case.params.spread as f32 / 256.0,
+        ..DitherParamsV2::default()
+    };
+    let pal = palette_rgb(&case.palette);
+    let cancel = AtomicBool::new(false);
+    apply_gpu_dither_rgba(
+        &mut rgba,
+        case.width,
+        case.height,
+        &params,
+        &pal,
+        &cancel,
+    )
+    .map_err(|e| e.to_string())?;
+    let mut out = Vec::with_capacity(n * 4);
+    for chunk in rgba.chunks_exact(4) {
+        out.push(engine_color::palette::linear_to_srgb(chunk[0]));
+        out.push(engine_color::palette::linear_to_srgb(chunk[1]));
+        out.push(engine_color::palette::linear_to_srgb(chunk[2]));
+        out.push((chunk[3].clamp(0.0, 1.0) * 255.0).round() as u8);
+    }
+    Ok(out)
 }
 
 fn goldens_path() -> PathBuf {
@@ -368,7 +445,11 @@ pub fn run_parity_matrix() {
         return;
     }
 
-    let Some((device, queue, backend)) = engine_gpu::request_blocked_fs_device() else {
+    // Use the process-cached device so `params_ps` app-path calls
+    // (`apply_gpu_dither_rgba` → `cached_blocked_fs_device`) share the same
+    // OnceLock pipeline. A second device would panic: BindGroupLayout from
+    // device A used on device B.
+    let Some((device, queue, backend)) = engine_gpu::cached_blocked_fs_device() else {
         eprintln!("skip: no suitable GPU adapter");
         return;
     };
@@ -427,8 +508,15 @@ pub fn run_parity_matrix() {
 
         let input = build_input(&case.input, case.width, case.height);
         let input_bytes = to_bytes(&input);
+        // App `DitherParamsV2.pixel_size` is capped at 32. Larger lattice
+        // values (56/57/64 from the spec matrix) exercise the kernel wrap only.
+        let via_app = case.group == "params_ps" && case.params.pixel_size <= 32;
 
-        let cpu = match run_cpu(case, &input) {
+        let cpu = match if via_app {
+            run_app_path(case, &input, "cpu")
+        } else {
+            run_cpu(case, &input)
+        } {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("FAIL {} cpu: {e}", case.id);
@@ -450,19 +538,36 @@ pub fn run_parity_matrix() {
         let is_bw_p2 = case.palette.len() == 2
             && case.palette[0] == [0, 0, 0, 255]
             && case.palette[1] == [255, 255, 255, 255];
-        let is_golden = case.width == case.height
+        let is_golden_ps1 = case.width == case.height
             && matches!(case.width, 8 | 56 | 64 | 128)
             && case.params.spread == 256
             && case.params.pad == 8
             && case.params.pixel_size <= 1
             && matches!(case.input, super::case::InputKind::GradientH)
             && is_bw_p2;
-        if is_golden {
+        // Draft goldens: one ragged square per ps∈{2,4,7} (regenerate after geometry pick).
+        let is_golden_ps_draft = case.group == "params_ps"
+            && case.width == case.height
+            && matches!(
+                (case.params.pixel_size, case.width),
+                (2, 15) | (4, 31) | (7, 55)
+            )
+            && matches!(case.input, super::case::InputKind::GradientH)
+            && is_bw_p2
+            && case.algorithm == Algorithm::BlockedFs;
+        if is_golden_ps1 || is_golden_ps_draft {
             let algo = match case.algorithm {
                 Algorithm::BlockedFs => "bfs",
                 Algorithm::BlueNoise => "bn",
             };
-            let key = format!("{algo}_{}x{}_p2_grad_h_cpu", case.width, case.height);
+            let key = if is_golden_ps1 {
+                format!("{algo}_{}x{}_p2_grad_h_cpu", case.width, case.height)
+            } else {
+                format!(
+                    "{algo}_{}x{}_ps{}_p2_grad_h_cpu_draft",
+                    case.width, case.height, case.params.pixel_size
+                )
+            };
             let hash = sha256_hex(&cpu);
             if record_goldens {
                 goldens.insert(key, hash);
@@ -482,7 +587,12 @@ pub fn run_parity_matrix() {
         let mut gpu_results = Vec::with_capacity(repeats);
         let mut gpu_err: Option<String> = None;
         for r in 0..repeats {
-            match run_gpu(&device, &queue, case, &input_bytes, &cancel, None, None) {
+            let once = if via_app {
+                run_app_path(case, &input, "gpu")
+            } else {
+                run_gpu(&device, &queue, case, &input_bytes, &cancel, None, None)
+            };
+            match once {
                 Ok(v) => gpu_results.push(v),
                 Err(e) => {
                     gpu_err = Some(format!("repeat{r}: {e}"));

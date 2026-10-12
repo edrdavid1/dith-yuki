@@ -73,6 +73,7 @@ export default function PreviewWindow({
   useEffect(() => {
     if (!showSeamlessPreview) setTileRepeat3x3(false);
   }, [showSeamlessPreview]);
+  /** Filter / full-document recompute in flight (GPU or CPU path). */
   const [fullDocumentBusy, setFullDocumentBusy] = useState(false);
   /** After the first successful paint, keep the previous frame during recompute. */
   const [hadPreviewFrame, setHadPreviewFrame] = useState(false);

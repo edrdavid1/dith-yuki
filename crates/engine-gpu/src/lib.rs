@@ -34,8 +34,8 @@ mod warmup;
 pub use bayer::{apply_bayer_gpu, BayerGpuParams, BayerMatrixSize};
 pub use blocked_fs::{
     apply_blocked_fs_gpu, apply_blocked_fs_gpu_opts, cached_blocked_fs_device,
-    request_blocked_fs_device, BlockedFsGpuOpts, GpuImageResult, GpuPhaseTiming,
-    CORE as BLOCKED_FS_CORE, PAD as BLOCKED_FS_PAD, WG_SIZE as BLOCKED_FS_WG,
+    request_blocked_fs_device, warm_blocked_fs_pipelines, BlockedFsGpuOpts, GpuImageResult,
+    GpuPhaseTiming, CORE as BLOCKED_FS_CORE, PAD as BLOCKED_FS_PAD, WG_SIZE as BLOCKED_FS_WG,
 };
 pub use blue_noise_gpu::{apply_blue_noise_gpu, apply_blue_noise_gpu_opts, BlueNoiseGpuOpts};
 pub use strip_bind::{

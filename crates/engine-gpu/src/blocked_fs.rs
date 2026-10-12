@@ -211,7 +211,7 @@ pub fn apply_blocked_fs_gpu_opts(
     let tiles_y = height.div_ceil(CORE);
     let mut out_u32 = input_u32.clone();
     let mut strips = 0u32;
-    let mut upload_ms;
+    let upload_ms;
     let mut dispatch_ms = 0.0;
     let mut readback_ms = 0.0;
 
@@ -492,6 +492,28 @@ pub fn cached_blocked_fs_device() -> Option<&'static (wgpu::Device, wgpu::Queue,
     static CELL: std::sync::OnceLock<Option<(wgpu::Device, wgpu::Queue, String)>> =
         std::sync::OnceLock::new();
     CELL.get_or_init(request_blocked_fs_device).as_ref()
+}
+
+/// Build device + compute pipelines in the background so the first user render
+/// is not charged `pipeline=new`.
+pub fn warm_blocked_fs_pipelines() -> bool {
+    let Some((device, queue, _)) = cached_blocked_fs_device() else {
+        return false;
+    };
+    let cancel = AtomicBool::new(false);
+    let px = [0u8, 0, 0, 255, 255, 255, 255, 255, 128, 128, 128, 255, 64, 64, 64, 255];
+    let pal = [[0, 0, 0, 255], [255, 255, 255, 255]];
+    let _ = apply_blocked_fs_gpu_opts(
+        device,
+        queue,
+        &px,
+        2,
+        2,
+        &pal,
+        &cancel,
+        BlockedFsGpuOpts::default(),
+    );
+    true
 }
 
 /// Request a device suitable for blocked_fs (32KB+ workgroup storage).

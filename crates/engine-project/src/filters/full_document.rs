@@ -586,6 +586,15 @@ pub fn ensure_full_document_ex(
                 .or_insert_with(CacheSlot::empty);
 
             if let Some(result) = slot.ready_for(&key) {
+                log::info!(
+                    target: "gpu_dither",
+                    "full_document cache_hit doc={} layer={} params_hash={:x} gen={} include_ascii={}",
+                    key.doc,
+                    key.layer,
+                    key.params_hash,
+                    key.document_gen,
+                    key.include_ascii
+                );
                 return Ok(result);
             }
 

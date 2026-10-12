@@ -38,3 +38,7 @@ path = "examples/ed_gpu_prototype.rs"
 [[example]]
 name = "ed_wavefront_spike"
 path = "examples/ed_wavefront_spike.rs"
+
+[[example]]
+name = "probe_limits"
+path = "examples/probe_limits.rs"

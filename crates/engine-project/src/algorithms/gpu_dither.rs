@@ -5,6 +5,9 @@
 //!
 //! Dev path override: `DITHER_GPU_PATH=auto|gpu|cpu` (default `auto`).
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -41,6 +44,13 @@ pub struct GpuDitherStatus {
 }
 
 static LAST_STATUS: Mutex<Option<GpuDitherStatus>> = Mutex::new(None);
+static REQ_SEQ: AtomicU64 = AtomicU64::new(1);
+
+fn hash_u64(bytes: &[u8]) -> u64 {
+    let mut h = DefaultHasher::new();
+    bytes.hash(&mut h);
+    h.finish()
+}
 
 /// Take the status from the most recent [`apply_gpu_dither_rgba`] call.
 pub fn take_last_gpu_dither_status() -> Option<GpuDitherStatus> {
@@ -263,6 +273,17 @@ pub fn apply_gpu_dither_rgba(
     let algo = algo_name(&params.mode);
     let choice = path_choice();
     let ps = params.pixel_size.max(1) as u32;
+    let req = REQ_SEQ.fetch_add(1, Ordering::Relaxed);
+    let params_hash = {
+        let mut h = DefaultHasher::new();
+        algo.hash(&mut h);
+        ps.hash(&mut h);
+        params.threshold_scale.to_bits().hash(&mut h);
+        palette.len().hash(&mut h);
+        h.finish()
+    };
+    let input_hash = hash_u64(&rgba8_to_bytes(&input));
+    let trigger = std::env::var("DITHER_GPU_TRIGGER").unwrap_or_else(|_| "other".into());
     let t0 = Instant::now();
     let threads = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -274,7 +295,7 @@ pub fn apply_gpu_dither_rgba(
             let out = run_cpu(&input, width, height, params, palette)?;
             let total = t_cpu.elapsed().as_secs_f64() * 1000.0;
             let log = format!(
-                "{algo} | path=cpu | {width}x{height} | ps={ps} | threads={threads} | total={total:.0}ms"
+                "{algo} | path=cpu | {width}x{height} | ps={ps} | strips=1 | pipeline=n/a | total={total:.0}ms\n  prepare=0 upload=0 dispatch=0 readback=0 post=0\n  req={req} params_hash={params_hash:x} input_hash={input_hash:x} trigger={trigger} cancelled=no threads={threads}"
             );
             (out, "CPU", "cpu".to_string(), 1u32, log)
         }
@@ -283,7 +304,7 @@ pub fn apply_gpu_dither_rgba(
                 Ok((bytes, backend, strips, timing)) => {
                     let total = t0.elapsed().as_secs_f64() * 1000.0;
                     let log = format!(
-                        "{algo} | {backend} | {width}x{height} | ps={ps} | strips={strips} | pipeline={} | total={total:.0}ms\n  prepare={:.0} upload={:.0} dispatch={:.0} readback={:.0} post={:.0}",
+                        "{algo} | {backend} | {width}x{height} | ps={ps} | strips={strips} | pipeline={} | total={total:.0}ms\n  prepare={:.0} upload={:.0} dispatch={:.0} readback={:.0} post={:.0}\n  req={req} params_hash={params_hash:x} input_hash={input_hash:x} trigger={trigger} cancelled=no",
                         timing.pipeline,
                         timing.prepare_ms,
                         timing.upload_ms,
@@ -294,6 +315,7 @@ pub fn apply_gpu_dither_rgba(
                     (bytes_to_rgba8(&bytes), "GPU", backend, strips, log)
                 }
                 Err(reason) => {
+                    let cancelled = reason.contains("cancel");
                     if choice == PathChoice::ForceGpu {
                         log::warn!(
                             target: "gpu_dither",
@@ -308,8 +330,9 @@ pub fn apply_gpu_dither_rgba(
                     let t_cpu = Instant::now();
                     let out = run_cpu(&input, width, height, params, palette)?;
                     let total = t_cpu.elapsed().as_secs_f64() * 1000.0;
+                    let cflag = if cancelled { "yes" } else { "no" };
                     let log = format!(
-                        "{algo} | path=cpu | {width}x{height} | ps={ps} | threads={threads} | total={total:.0}ms | fallback={reason}"
+                        "{algo} | path=cpu | {width}x{height} | ps={ps} | strips=1 | pipeline=n/a | total={total:.0}ms\n  prepare=0 upload=0 dispatch=0 readback=0 post=0\n  req={req} params_hash={params_hash:x} input_hash={input_hash:x} trigger={trigger} cancelled={cflag} fallback={reason}"
                     );
                     (out, "CPU", "cpu".to_string(), 1u32, log)
                 }
@@ -317,7 +340,11 @@ pub fn apply_gpu_dither_rgba(
         }
     };
 
-    if should_cancel.load(std::sync::atomic::Ordering::Acquire) {
+    if should_cancel.load(Ordering::Acquire) {
+        log::info!(
+            target: "gpu_dither",
+            "{algo} | req={req} params_hash={params_hash:x} input_hash={input_hash:x} trigger={trigger} cancelled=yes"
+        );
         return Err(FilterError::from_engine("gpu_dither: cancelled"));
     }
     for (i, p) in out.iter().enumerate() {

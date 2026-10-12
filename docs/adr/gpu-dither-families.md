@@ -101,6 +101,21 @@ Recorded result of the deterministic `PARITY_MODE=full` overnight on the agent w
 | Test binary | `target/release/deps/gpu_parity_matrix-9eb1fbdb66233a26` |
 | SHA-256 | `06d8ac89b7bf1d4f361db87cbb6a192f68623035655b52aff9218aa9fbb8b4e1` |
 
+### Fact: quick parity on committed tree (2026-10-11)
+
+Tree is committed on `feature/gpu-dither-families`. Re-run after integration fixes (`pixel_size` wrap, pipeline cache).
+
+| Field | Value |
+|---|---|
+| Date | 2026-10-11 |
+| Commit | `c54cad4b42a0a0723489aba94cc806b9fa77a01d` (`c54cad4`) |
+| Adapter | Apple M3 (Metal) |
+| Seed | `0xc1` |
+| Mode | `PARITY_MODE=quick` `PARITY_REPEAT=1` |
+| Cases | **1794 passed**, 0 failed, 0 skipped; goldens checked=9 fail=0 |
+| Test binary | `target/release/deps/gpu_parity_matrix-9eb1fbdb66233a26` |
+| Binary SHA-256 | `0c3367bf418edde5bb4a67f87b0054f15b6775ae570c50ee7cfab2a907c4016e` |
+
 ## Decision
 
 1. Add two families: `blocked_fs` (approximate blocked FS) and `blue_noise`
@@ -194,9 +209,73 @@ Warm median ms (selected rows):
 
 **Not in this bench:** full 20-repeat matrix, 8192², exact `floyd_steinberg` wall times (different apply path).
 
+## Next stage (pixel_size matrix, duplicate renders, geometry) — 2026-10-11
+
+Spec: `.local-doc/Dither следующий этап GPU-семейства (pixel_size, повторные рендеры, геометрия тайла).md`
+
+### Duplicate renders (Task 3)
+
+| Finding | Detail |
+|---|---|
+| Path | Every processed-tile request for a full-document filter enters `ensure_full_document_ex` (`src-tauri/src/tile_pipeline.rs` ~97). Single-flight + ready cache coalesce same-key callers. |
+| Zoom / pan | Do **not** change filter params or `document_gen`; they consume published processed tiles / pyramid. No dither recompute when gen is unchanged. |
+| Root cause of N× identical GPU logs | `update_filter` always `increment_generation` + `invalidate_layer` even when params were byte-identical (queued flush in `useEffectLayer.ts` after an in-flight IPC, or a second commit of the same settle). |
+| Fix | (1) `update_filter` no-op when params/opacity/blend/enabled unchanged — no gen bump, no invalidate. (2) Frontend skips re-flush when queued patch equals the just-sent params. Debounce remains `PREVIEW_SLIDER_DEBOUNCE_MS = 150`. |
+| Warmup | `warm_blocked_fs_pipelines()` on app start when `experimental.gpu_dither_families` is on (`src-tauri/src/main.rs`). |
+| Placeholder | `PreviewWindow` keeps prior frame after first paint (`hadPreviewFrame`); busy indicator via `full_document_busy` — already shipped in `e47d2d5`. |
+
+### Geometry spike (Task 4) — **STOP for owner**
+
+| Variant | Core | Pad | Threads | Declared workgroup bytes | Apple M3 32 KiB |
+|---|---|---|---|---|---|
+| A (current) | 56×56 | 8 | 64 | 33808 | ships today (Metal admits despite declared size) |
+| B | 120×56 | 8 | 64 | 67088 | **EXCEEDS** — needs global memory |
+| C | 248×56 | 8 | 64 | 133648 | **EXCEEDS** |
+| D | 248×120 | 8 | 128 | 265232 | **EXCEEDS** |
+
+CPU timings + seam PNGs: `cargo test -p engine-project --test gpu_geometry_spike --release -- --ignored --nocapture`. Default geometry remains A. **No Task 5 / `algo_version` until owner picks.**
+
+CPU warm median ms (20 reps; B–D cannot fit workgroup storage on M3 so GPU dispatch was not measured for them):
+
+| Variant | 1920×1080 ps=1 | 3840×2160 ps=1 | 4000×3000 ps=1 | seam_dY (1920 ramp) |
+|---|---|---|---|---|
+| A | 88.3 | 350.9 | 509.3 | 0.082 |
+| B | 79.0 | 318.7 | 458.2 | −0.346 |
+| C | 79.7 | 308.9 | 457.1 | −0.054 |
+| D | 74.6 | 291.7 | 438.8 | −0.156 |
+
+PNGs: `target/geometry_spike/{A,B,C,D}_*.png`. `blur8_vs_A` on large ramps is ~19 (geometry changes the image; expected).
+
+
+### Block representative (Task 2.3)
+
+`with_pixel_size_blocks` samples top-left of each `ps×ps` cell — same rule as `docs/tile-pipeline.md` §6. Exact ED representative helpers in `dither_diffusion.rs` were not opened for a private-API compare; property check is block uniformity + GPU=CPU via app path.
+
+### `blue_noise` routing (Q7)
+
+No routing change. Warm median ms (20 reps, Apple M3, `BENCH_SKIP_8K=1`):
+
+| Path | Size | ps | pal | median_ms |
+|---|---|---|---|---|
+| gpu | 1920×1080 | 1 | 2 | 57.6 |
+| cpu | 1920×1080 | 1 | 2 | 57.1 |
+| gpu | 1920×1080 | 1 | 16 | 72.4 |
+| cpu | 1920×1080 | 1 | 16 | 96.3 |
+| gpu | 3840×2160 | 1 | 2 | 221.4 |
+| cpu | 3840×2160 | 1 | 2 | 231.2 |
+| gpu | 3840×2160 | 1 | 16 | 275.6 |
+| cpu | 3840×2160 | 1 | 16 | 390.9 |
+| gpu | 4000×3000 | 1 | 2 | 315.1 |
+| cpu | 4000×3000 | 1 | 2 | 334.4 |
+| gpu | 4000×3000 | 1 | 16 | 395.9 |
+| cpu | 4000×3000 | 1 | 16 | 565.2 |
+
+At pal=2, GPU ≈ CPU (I/O-bound). At pal=16, GPU pulls ahead (~1.3–1.4×) because nearest-palette work moves to the GPU. Owner chooses any routing threshold later.
+
 ## Reference
 
 - Spec: `.local-doc/ED-on-GPU.md`
 - Spike: `crates/engine-gpu/src/ed_wavefront_spike.rs`
 - UI family map: `frontend/src/features/effects/dither/algorithmFamilies.ts`
 - Integration checklist: `.local-doc/Dither интеграция GPU-семейства во фронт, исправления.md`
+- Next stage: `.local-doc/Dither следующий этап GPU-семейства (pixel_size, повторные рендеры, геометрия тайла).md`

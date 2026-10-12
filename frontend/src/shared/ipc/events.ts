@@ -90,7 +90,11 @@ export async function onDockAffinity(
   return listen<DockAffinityEvent>('dock-affinity', handler);
 }
 
-/** Monolithic full-document job (ASCII / Riemersma) in flight — Preview “Rendering…”. */
+/**
+ * Preview recompute in flight — corner spinner / first-paint “Rendering…”.
+ * Fired for full-document jobs (GPU families, ASCII, Riemersma) and for
+ * filter-driven CPU tiled dither refreshes.
+ */
 export interface FullDocumentBusyPayload {
   busy: boolean;
   doc_id: number;

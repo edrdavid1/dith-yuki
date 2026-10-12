@@ -1087,6 +1087,63 @@ impl FilterService {
             .validate()
             .map_err(|e| AppError::InvalidOperation(format!("Invalid parameters: {}", e)))?;
 
+        // Identical update (same params/opacity/blend/enabled) must not bump
+        // document_gen or invalidate FullDocumentCache — that was re-running
+        // GPU dither with unchanged params_hash (slider settle / queued flush).
+        {
+            fn find_filter<'a>(
+                nodes: &'a [engine_project::LayerNode],
+                layer_id: u32,
+                filter_id: FilterInstanceId,
+            ) -> Option<&'a engine_project::FilterInstance> {
+                for node in nodes.iter() {
+                    match node {
+                        engine_project::LayerNode::Leaf(layer) if layer.id.0 == layer_id => {
+                            return layer.find_filter(filter_id);
+                        }
+                        engine_project::LayerNode::Group(group) => {
+                            if let Some(f) = find_filter(&group.children, layer_id, filter_id) {
+                                return Some(f);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                None
+            }
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
+            if let Some(cur) = find_filter(&snapshot.root, req.layer_id, filter_id) {
+                let params_same = serde_json::to_value(&cur.params).ok()
+                    == serde_json::to_value(&new_params).ok();
+                let opacity_same = match opacity_to_apply {
+                    Some(o) => (cur.opacity - o).abs() < 1e-6,
+                    None => true,
+                };
+                let blend_same = match parsed_blend {
+                    Some(m) => cur.blend_mode == m,
+                    None => true,
+                };
+                let enabled_same = match req.enabled {
+                    Some(e) => cur.enabled == e,
+                    None => true,
+                };
+                if params_same && opacity_same && blend_same && enabled_same {
+                    log::info!(
+                        target: "gpu_dither",
+                        "update_filter no-op doc={} layer={} filter={} (params unchanged)",
+                        doc_id,
+                        req.layer_id,
+                        req.filter_id
+                    );
+                    return Ok(());
+                }
+            }
+        }
+
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
             let layer_id = req.layer_id;
             let mut found = false;

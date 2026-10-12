@@ -323,6 +323,152 @@ pub fn build_matrix(mode: ParityMode, seed: u64) -> Vec<ParityCase> {
     out
 }
 
+/// Axis lengths on the block lattice for a given `ps` and lattice size `L`.
+fn lattice_axis_sizes(ps: u32, l: u32) -> Vec<u32> {
+    let mut v = Vec::new();
+    let full = l.saturating_mul(ps);
+    if full >= 1 {
+        v.push(full);
+    }
+    if l >= 1 {
+        let short = (l - 1).saturating_mul(ps).saturating_add(1);
+        if short >= 1 {
+            v.push(short);
+        }
+    }
+    if l >= 1 && full >= 2 {
+        v.push(full - 1);
+    }
+    v.sort_unstable();
+    v.dedup();
+    v.retain(|&x| x >= 1);
+    v
+}
+
+/// `params_ps` matrix: block-lattice sizes for pixel_size > 1 (and ps=1 control).
+///
+/// Full cartesian only for `ps ≤ 8` and `L ≤ 65` (compact=false). Compact mode
+/// keeps a CI-sized edge sample. Also covers `ps > min(W,H)` (single block).
+fn append_params_ps_cases(
+    out: &mut Vec<ParityCase>,
+    seed: u64,
+    algos: &[Algorithm],
+    filter: &Option<String>,
+    compact: bool,
+) {
+    let ps_all = [1u32, 2, 3, 4, 5, 6, 7, 8, 11, 12, 28, 56, 57, 64];
+    let l_all = [
+        1u32, 7, 8, 9, 55, 56, 57, 63, 64, 65, 111, 112, 113, 167, 168, 169,
+    ];
+    let pals: Vec<NamedPalette> = if compact {
+        quick_palettes()
+            .into_iter()
+            .filter(|p| matches!(p.tag, "p2" | "p16" | "p1" | "ptie"))
+            .collect()
+    } else {
+        full_palettes()
+    };
+    let inputs: Vec<(String, InputKind)> = if compact {
+        [
+            ("grad_h", InputKind::GradientH),
+            ("checker", InputKind::Checker),
+            ("noise0", InputKind::Noise { seed }),
+        ]
+        .into_iter()
+        .map(|(t, k)| (t.into(), k))
+        .collect()
+    } else {
+        full_inputs(seed)
+    };
+
+    let mut sizes: Vec<(u32, u32, u32)> = Vec::new(); // (w,h,ps)
+    let mut rng = SplitMix64::new(seed ^ 0x5050_5050);
+
+    for &ps in &ps_all {
+        for &l in &l_all {
+            let full_cart = !compact && ps <= 8 && l <= 65;
+            let axes = lattice_axis_sizes(ps, l);
+            if axes.is_empty() {
+                continue;
+            }
+            if full_cart {
+                for &w in &axes {
+                    for &h in &axes {
+                        sizes.push((w, h, ps));
+                    }
+                }
+            } else if compact {
+                // Edge sample: square full + one ragged, both algos covered later.
+                if matches!(ps, 1 | 2 | 4 | 7 | 8 | 12 | 56) && matches!(l, 1 | 8 | 56 | 64 | 65) {
+                    let w = axes[0];
+                    sizes.push((w, w, ps));
+                    if let Some(&ragged) = axes.get(1) {
+                        sizes.push((ragged, w, ps));
+                        // Both axes ragged — draft golden coverage for ps∈{2,4,7}.
+                        sizes.push((ragged, ragged, ps));
+                    }
+                }
+            } else {
+                // Pair coverage + a few random crosses for large ps/L.
+                let w = axes[0];
+                let h = *axes.last().unwrap_or(&w);
+                sizes.push((w, h, ps));
+                sizes.push((h, w, ps));
+                if axes.len() > 1 && (rng.next_u64() & 1) == 0 {
+                    sizes.push((axes[1], axes[0], ps));
+                }
+            }
+        }
+        // ps larger than the image → one block covering the whole frame.
+        if !compact || matches!(ps, 12 | 28 | 56 | 64) {
+            for &(w, h) in &[(3u32, 5), (7, 3), (8, 8)] {
+                if ps > w || ps > h {
+                    sizes.push((w, h, ps));
+                }
+            }
+        }
+    }
+
+    sizes.sort_unstable();
+    sizes.dedup();
+
+    // Cap compact matrix so CI stays minutes-scale.
+    if compact && sizes.len() > 48 {
+        sizes.truncate(48);
+    }
+
+    for (w, h, ps) in sizes {
+        for pal in &pals {
+            for (itag, ikind) in &inputs {
+                for &algo in algos {
+                    // Compact: one palette × one input for most; full uses all.
+                    if compact && (pal.tag != "p2" || itag != "grad_h") && ps > 1 {
+                        // Keep a few non-default combos.
+                        if !(pal.tag == "p16" && itag == "checker" && matches!(ps, 2 | 4)) {
+                            continue;
+                        }
+                    }
+                    let mut p = Params::default();
+                    p.pixel_size = ps;
+                    push_case(
+                        out,
+                        algo,
+                        w,
+                        h,
+                        pal,
+                        itag,
+                        ikind.clone(),
+                        seed,
+                        "params_ps",
+                        p,
+                        filter,
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// Compact matrix for every commit / CI: covers ties, OOG, identical palettes,
 /// edge sizes, strips, mid-gray, both algorithms — without the full cartesian.
 fn append_quick_ci(
@@ -404,6 +550,9 @@ fn append_quick_ci(
             filter,
         );
     }
+
+    // Compact pixel_size lattice (full expansion is in append_full_deterministic).
+    append_params_ps_cases(out, seed, algos, filter, /*compact*/ true);
 }
 
 fn append_full_deterministic(
@@ -518,6 +667,8 @@ fn append_full_deterministic(
         filter,
     );
 
+    append_params_ps_cases(out, seed, algos, filter, /*compact*/ false);
+
     let param_sizes = [(8u32, 8u32), (56, 56), (64, 64), (168, 168), (256, 256)];
     let param_pal = *quick_palettes()
         .iter()
@@ -525,23 +676,6 @@ fn append_full_deterministic(
         .expect("p2");
     let param_input = InputKind::GradientH;
     for &(w, h) in &param_sizes {
-        for pixel_size in [1u32, 2, 3, 4, 8] {
-            let mut p = Params::default();
-            p.pixel_size = pixel_size;
-            push_case(
-                out,
-                Algorithm::BlockedFs,
-                w,
-                h,
-                &param_pal,
-                "grad_h",
-                param_input.clone(),
-                seed,
-                "params_ps",
-                p,
-                filter,
-            );
-        }
         for spread in [0u32, 64, 256, 512] {
             let mut p = Params::default();
             p.spread = spread;

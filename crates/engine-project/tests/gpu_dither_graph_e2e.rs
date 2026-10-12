@@ -178,3 +178,62 @@ fn pixel_size_change_invalidates_full_document_cache() {
     let h2 = sha256_f32(&second.rgba_f32);
     assert_ne!(h1, h2, "cache returned stale result after pixel_size change");
 }
+
+#[test]
+fn identical_requests_hit_full_document_cache() {
+    std::env::set_var("DITHER_GPU_PATH", "cpu");
+    let w = 48u32;
+    let h = 48u32;
+    let rgba = gray_ramp_f32(w, h);
+    let (doc, layer, cache) = make_doc(w, h, &rgba, DitherModeV2::BlueNoise, 2);
+    let fd = FullDocumentCache::new();
+    let a = ensure_full_document_ex(&fd, &cache, &layer, &doc, 1, false).expect("a");
+    let b = ensure_full_document_ex(&fd, &cache, &layer, &doc, 1, false).expect("b");
+    assert!(
+        std::sync::Arc::ptr_eq(&a.rgba_f32, &b.rgba_f32),
+        "second identical request must return the cached Arc"
+    );
+}
+
+#[test]
+fn rapid_param_changes_last_request_wins() {
+    std::env::set_var("DITHER_GPU_PATH", "cpu");
+    let w = 64u32;
+    let h = 64u32;
+    let rgba = gray_ramp_f32(w, h);
+    let (mut doc, mut layer, cache) = make_doc(w, h, &rgba, DitherModeV2::BlockedFs, 1);
+    let fd = std::sync::Arc::new(FullDocumentCache::new());
+    let cache = std::sync::Arc::new(cache);
+
+    // Start a slow-ish first job (ps=1), then supersede with ps=8 before it settles.
+    let fd1 = std::sync::Arc::clone(&fd);
+    let cache1 = std::sync::Arc::clone(&cache);
+    let layer1 = layer.clone();
+    let doc1 = doc.clone();
+    let t1 = std::thread::spawn(move || {
+        ensure_full_document_ex(&fd1, &cache1, &layer1, &doc1, 1, false)
+    });
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    if let FilterParams::DitherV2(ref mut p) = layer.filters[0].params {
+        p.pixel_size = 8;
+    }
+    doc.root = vec![LayerNode::Leaf(layer.clone())];
+    let last = ensure_full_document_ex(&fd, &cache, &layer, &doc, 2, false).expect("last");
+    let first = t1.join().expect("join");
+    // First job must be cancelled/superseded OR both succeed with last cached.
+    match first {
+        Err(e) => {
+            let msg = e.to_string();
+            assert!(
+                msg.contains("superseded") || msg.contains("cancel"),
+                "expected supersede/cancel, got {msg}"
+            );
+        }
+        Ok(_) => {}
+    }
+    let again = ensure_full_document_ex(&fd, &cache, &layer, &doc, 2, false).expect("cached last");
+    assert!(
+        std::sync::Arc::ptr_eq(&last.rgba_f32, &again.rgba_f32),
+        "last request must be the cached result"
+    );
+}

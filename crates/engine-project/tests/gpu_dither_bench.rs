@@ -89,7 +89,12 @@ fn gpu_dither_speed_matrix() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(20usize)
         .max(3);
-    let sizes = [(1920u32, 1080u32), (3840, 2160), (8192, 8192)];
+    let sizes = [
+        (1920u32, 1080u32),
+        (3840, 2160),
+        (4000, 3000),
+        (8192, 8192),
+    ];
     eprintln!("=== gpu_dither_bench repeats={repeats} ===");
     eprintln!("algo\tpath\tWxH\tps\tpal\tstate\tmedian_ms\tp95_ms");
     for &(w, h) in &sizes {

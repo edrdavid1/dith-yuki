@@ -154,7 +154,7 @@ export function useEffectLayer(
         void dispatch(refreshFilters());
         setError(formatIpcError(err));
       }
-    }, DEFAULT_DEBOUNCE_MS);
+    }, PREVIEW_SLIDER_DEBOUNCE_MS);
   }, [dispatch]);
 
   const updateParams = useCallback((params: Record<string, unknown>) => {
@@ -210,7 +210,14 @@ export function useEffectLayer(
         const queued = queuedPatchRef.current;
         queuedPatchRef.current = null;
         if (queued) {
-          await flush(fullParams());
+          // Only re-flush when the coalesced view differs from what we just sent.
+          // An identical queued settle was re-invalidating FullDocumentCache.
+          const next = fullParams();
+          const same =
+            JSON.stringify(next) === JSON.stringify(patch);
+          if (!same) {
+            await flush(next);
+          }
         }
       };
 
