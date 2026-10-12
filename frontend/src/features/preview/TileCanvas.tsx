@@ -13,6 +13,16 @@ import { snapCssPx } from './zoomSnap';
 import { findFallbackTile } from '../../utils/tileFallback';
 import { getPlatform } from '../../lib/platform';
 import { tileProtocolBase } from '../../lib/tileProtocol';
+import {
+  noteCommitTimeout,
+  noteCssPan,
+  noteDisplayCurrent,
+  noteDisplayPost,
+  noteFramePainted,
+  noteTileDecoded,
+  noteUserInput,
+  stampWorkerMessage,
+} from '../../diagnostics/level1';
 
 const cn = bind(styles);
 
@@ -563,6 +573,7 @@ export default function TileCanvas({
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = null;
       drawTiles();
+      noteFramePainted();
     });
   }, [drawTiles]);
 
@@ -604,6 +615,7 @@ export default function TileCanvas({
     if (commitTimerRef.current != null) return;
     commitTimerRef.current = window.setTimeout(() => {
       commitTimerRef.current = null;
+      noteCommitTimeout();
       flushPendingCommit();
     }, COMMIT_WAIT_MS);
   }, [flushPendingCommit]);
@@ -628,6 +640,20 @@ export default function TileCanvas({
         bitmap.close();
         return;
       }
+
+      const fetchDiag = msg.diag as
+        | { retries?: number; stale?: boolean; pyramid_fallback?: boolean }
+        | undefined;
+      noteTileDecoded(
+        key,
+        fetchDiag
+          ? {
+              retries: fetchDiag.retries,
+              stale: fetchDiag.stale,
+              pyramidFallback: fetchDiag.pyramid_fallback,
+            }
+          : undefined,
+      );
 
       const metric = softProofMetricRef.current;
       if (metric && decodedRev === metric.rev && metric.expected.has(key)) {
@@ -765,6 +791,7 @@ export default function TileCanvas({
       const dx = snapCssPx((lastVp.panX - viewport.panX) * viewport.zoom, dpr);
       const dy = snapCssPx((lastVp.panY - viewport.panY) * viewport.zoom, dpr);
       canvas.style.transform = `translate(${dx}px, ${dy}px)`;
+      noteCssPan();
     }
 
     // Schedule actual redraw (async) — when it fires it resets the transform
@@ -785,13 +812,23 @@ export default function TileCanvas({
       ).filter((t) => !tileMapRef.current.has(tileKey(t)));
       const tiles = [...needed, ...ancestors];
       if (tiles.length > 0) {
-        workerRef.current.postMessage({
+        const displayKeys = (needed.length > 0 ? needed : tiles).map(tileKey);
+        noteDisplayPost(
+          displayKeys,
+          docId,
+          viewport.zoom,
+          viewport.canvasWidth,
+          viewport.canvasHeight,
+        );
+        workerRef.current.postMessage(stampWorkerMessage({
           type: 'request-tiles',
           tiles,
           docId,
           rev: tileRevRef.current,
           protocolBase: workerTileProtocolBase(),
-        });
+        }));
+      } else {
+        noteDisplayCurrent(visible.length);
       }
     }
   }, [viewport, docId, docWidth, docHeight, scheduleRedraw]);
@@ -809,7 +846,15 @@ export default function TileCanvas({
         docHeight,
       );
       if (level !== currentLevel) return;
-      workerRef.current?.postMessage({
+      const vp = viewportRef.current;
+      noteDisplayPost(
+        [`${level}/${x}/${y}`],
+        docId,
+        vp.zoom,
+        vp.canvasWidth,
+        vp.canvasHeight,
+      );
+      workerRef.current?.postMessage(stampWorkerMessage({
         type: 'fetch-tile',
         level,
         x,
@@ -817,7 +862,7 @@ export default function TileCanvas({
         docId,
         rev: tileRevRef.current,
         protocolBase: workerTileProtocolBase(),
-      });
+      }));
     });
     return () => { unlisten.then((fn) => fn()); };
   }, [docId, docWidth, docHeight]);
@@ -840,6 +885,7 @@ export default function TileCanvas({
       }
       refreshPendingRef.current.clear();
       if (sourceReplace) {
+        noteUserInput('open_doc');
         for (const bitmap of tileMapRef.current.values()) {
           bitmap.close();
         }
@@ -863,13 +909,21 @@ export default function TileCanvas({
           samples: prev?.samples ?? [],
         };
       }
-      workerRef.current.postMessage({
+      const vpNow = viewportRef.current;
+      noteDisplayPost(
+        visible.map(tileKey),
+        docId,
+        vpNow.zoom,
+        vpNow.canvasWidth,
+        vpNow.canvasHeight,
+      );
+      workerRef.current.postMessage(stampWorkerMessage({
         type: 'request-tiles',
         tiles: visible,
         docId,
         rev: tileRevRef.current,
         protocolBase: workerTileProtocolBase(),
-      });
+      }));
     });
     return () => {
       unlisten.then((fn) => fn());
@@ -907,13 +961,21 @@ export default function TileCanvas({
         tileRepeatRef.current,
       );
       if (visible.length > 0) {
-        workerRef.current.postMessage({
+        noteUserInput('open_doc');
+        noteDisplayPost(
+          visible.map(tileKey),
+          docId,
+          vp.zoom,
+          vp.canvasWidth,
+          vp.canvasHeight,
+        );
+        workerRef.current.postMessage(stampWorkerMessage({
           type: 'request-tiles',
           tiles: visible,
           docId,
           rev: tileRevRef.current,
           protocolBase: workerTileProtocolBase(),
-        });
+        }));
       }
     }
   }, [docId, documentEpoch, docWidth, docHeight]);
@@ -933,13 +995,21 @@ export default function TileCanvas({
         docHeight,
         tileRepeatRef.current,
       );
-      workerRef.current.postMessage({
+      const vpNow = viewportRef.current;
+      noteDisplayPost(
+        visible.map(tileKey),
+        docId,
+        vpNow.zoom,
+        vpNow.canvasWidth,
+        vpNow.canvasHeight,
+      );
+      workerRef.current.postMessage(stampWorkerMessage({
         type: 'request-tiles',
         tiles: visible,
         docId,
         rev: tileRevRef.current,
         protocolBase: workerTileProtocolBase(),
-      });
+      }));
     }, 300);
 
     return () => clearTimeout(timer);

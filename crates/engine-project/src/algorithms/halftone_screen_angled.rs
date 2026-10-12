@@ -4,9 +4,9 @@
 //! `pattern_angle` rotating the classic plate set. At angle 0 the output is
 //! byte-identical to `cmyk_halftone`.
 
-use engine_registry::{TemporalStability, 
+use engine_registry::{
     AlgorithmId, CpuCheckpointKind, EffectCategory, FilterAlgorithm, FilterCtx, FilterError,
-    GpuEligibility, ParamField,
+    GpuEligibility, ParamField, TemporalStability,
 };
 use engine_tiles::PixelTile;
 

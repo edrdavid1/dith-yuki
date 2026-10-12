@@ -75,7 +75,10 @@ fn blocked_fs_gpu_path_matches_cpu_path_hash() {
         return;
     }
     let (gpu_px, gpu_path, gpu_backend) = run_path("gpu", DitherModeV2::BlockedFs);
-    assert_eq!(gpu_path, "GPU", "expected GPU path, got {gpu_path} ({gpu_backend})");
+    assert_eq!(
+        gpu_path, "GPU",
+        "expected GPU path, got {gpu_path} ({gpu_backend})"
+    );
     let (cpu_px, cpu_path, _) = run_path("cpu", DitherModeV2::BlockedFs);
     assert_eq!(cpu_path, "CPU");
     let hg = sha256_hex(&gpu_px);
@@ -94,7 +97,10 @@ fn blue_noise_gpu_path_matches_cpu_path_hash() {
         return;
     }
     let (gpu_px, gpu_path, gpu_backend) = run_path("gpu", DitherModeV2::BlueNoise);
-    assert_eq!(gpu_path, "GPU", "expected GPU path, got {gpu_path} ({gpu_backend})");
+    assert_eq!(
+        gpu_path, "GPU",
+        "expected GPU path, got {gpu_path} ({gpu_backend})"
+    );
     let (cpu_px, cpu_path, _) = run_path("cpu", DitherModeV2::BlueNoise);
     assert_eq!(cpu_path, "CPU");
     let hg = sha256_hex(&gpu_px);

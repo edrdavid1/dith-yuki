@@ -164,7 +164,9 @@ impl SoftProofConfig {
 /// Rendering intents exposed in the Soft proof UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum SoftProofIntent {
+    #[default]
     Relative,
     Perceptual,
     Absolute,
@@ -177,12 +179,6 @@ impl SoftProofIntent {
             SoftProofIntent::Perceptual => RenderingIntent::Perceptual,
             SoftProofIntent::Absolute => RenderingIntent::AbsoluteColorimetric,
         }
-    }
-}
-
-impl Default for SoftProofIntent {
-    fn default() -> Self {
-        SoftProofIntent::Relative
     }
 }
 
@@ -311,7 +307,7 @@ fn srgb_encoded_to_xyz_d50(rgb: [f32; 3]) -> [f32; 3] {
     let b = srgb_f32_to_linear(rgb[2]);
     let x65 = r * 0.4124564 + g * 0.3575761 + b * 0.1804375;
     let y65 = r * 0.2126729 + g * 0.7151522 + b * 0.0721750;
-    let z65 = r * 0.0193339 + g * 0.1191920 + b * 0.9503041;
+    let z65 = r * 0.0193339 + g * 0.119_192 + b * 0.9503041;
     [
         x65 * 1.0478112 + y65 * 0.0228866 + z65 * -0.0501270,
         x65 * 0.0295424 + y65 * 0.9904844 + z65 * -0.0170491,
@@ -324,7 +320,7 @@ fn xyz_d50_to_srgb_encoded(xyz: [f32; 3]) -> [f32; 3] {
     let y65 = xyz[0] * -0.0282895 + xyz[1] * 1.0099416 + xyz[2] * 0.0210077;
     let z65 = xyz[0] * 0.0122982 + xyz[1] * -0.0204830 + xyz[2] * 1.3299098;
     let r = x65 * 3.2404542 + y65 * -1.5371385 + z65 * -0.4985314;
-    let g = x65 * -0.9692660 + y65 * 1.8760108 + z65 * 0.0415560;
+    let g = x65 * -0.969_266 + y65 * 1.8760108 + z65 * 0.0415560;
     let b = x65 * 0.0556434 + y65 * -0.2040259 + z65 * 1.0572252;
     [
         linear_to_srgb_f32(r),
@@ -374,7 +370,7 @@ impl SoftProofLut3D {
         let c011 = self.sample(r0, g1, b1);
         let c111 = self.sample(r1, g1, b1);
 
-        let out = if tr > tg {
+        if tr > tg {
             if tg > tb {
                 // r > g > b
                 [
@@ -472,8 +468,7 @@ impl SoftProofLut3D {
                     + tr * (c110[2] - c010[2])
                     + tb * (c111[2] - c110[2]),
             ]
-        };
-        out
+        }
     }
 
     #[inline]
@@ -635,7 +630,7 @@ impl SoftProofTransform {
     }
 
     fn apply_cms_exact(&self, src_enc: &[f32], dst_enc: &mut [f32]) -> Result<(), SoftProofError> {
-        if src_enc.len() != dst_enc.len() || src_enc.len() % 3 != 0 {
+        if src_enc.len() != dst_enc.len() || !src_enc.len().is_multiple_of(3) {
             return Err(SoftProofError::BufferLength);
         }
         let pixels = src_enc.len() / 3;
@@ -738,7 +733,7 @@ impl SoftProofTransform {
         let enc = crate::display_rgb::DisplayRgbF32::unpack_to_interleaved(src);
         let mut out = vec![0f32; enc.len()];
         self.apply_srgb_f32(&enc, &mut out)?;
-        for (i, chunk) in out.chunks_exact(3).enumerate() {
+        for (i, chunk) in out.as_chunks::<3>().0.iter().enumerate() {
             dst[i] = crate::display_rgb::DisplayRgbF32::new(chunk[0], chunk[1], chunk[2]);
         }
         Ok(())
@@ -746,11 +741,11 @@ impl SoftProofTransform {
 
     /// Soft-proof packed sRGB-encoded f32 RGB pixels: `src` → `dst` (both [0,1] * 3N).
     pub fn apply_srgb_f32(&self, src: &[f32], dst: &mut [f32]) -> Result<(), SoftProofError> {
-        if src.len() != dst.len() || src.len() % 3 != 0 {
+        if src.len() != dst.len() || !src.len().is_multiple_of(3) {
             return Err(SoftProofError::BufferLength);
         }
         if let Some(lut) = &self.lut {
-            for (i, chunk) in src.chunks_exact(3).enumerate() {
+            for (i, chunk) in src.as_chunks::<3>().0.iter().enumerate() {
                 let out = lut.lookup(chunk[0], chunk[1], chunk[2]);
                 dst[i * 3] = out[0];
                 dst[i * 3 + 1] = out[1];
@@ -770,7 +765,7 @@ impl SoftProofTransform {
 
     /// Soft-proof packed sRGB8 RGB pixels: `src` → `dst`.
     pub fn apply_srgb8(&self, src: &[u8], dst: &mut [u8]) -> Result<(), SoftProofError> {
-        if src.len() != dst.len() || src.len() % 3 != 0 {
+        if src.len() != dst.len() || !src.len().is_multiple_of(3) {
             return Err(SoftProofError::BufferLength);
         }
         let mut enc = vec![0f32; src.len()];
@@ -794,7 +789,7 @@ impl SoftProofTransform {
         linear_rgb: &[f32],
         dst_srgb8: &mut [u8],
     ) -> Result<(), SoftProofError> {
-        if linear_rgb.len() % 3 != 0 || dst_srgb8.len() != linear_rgb.len() {
+        if !linear_rgb.len().is_multiple_of(3) || dst_srgb8.len() != linear_rgb.len() {
             return Err(SoftProofError::BufferLength);
         }
         let lut = SrgbEncodeLut::new();
@@ -816,7 +811,7 @@ impl SoftProofTransform {
         encoded_rgb: &[f32],
         dst_srgb8: &mut [u8],
     ) -> Result<(), SoftProofError> {
-        if encoded_rgb.len() % 3 != 0 || dst_srgb8.len() != encoded_rgb.len() {
+        if !encoded_rgb.len().is_multiple_of(3) || dst_srgb8.len() != encoded_rgb.len() {
             return Err(SoftProofError::BufferLength);
         }
         let mut enc = vec![0f32; encoded_rgb.len()];

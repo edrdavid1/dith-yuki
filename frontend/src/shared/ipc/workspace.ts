@@ -12,6 +12,17 @@ export interface ExperimentalConfigDto {
   gpu_dither_families?: boolean;
   /** CamelCase if the DTO rename ever applies to nested fields. */
   gpuDitherFamilies?: boolean;
+  preview_diagnostics?: {
+    enabled?: boolean;
+    level?: number;
+    save_session_reports?: boolean;
+  };
+  previewDiagnostics?: {
+    enabled?: boolean;
+    level?: number;
+    save_session_reports?: boolean;
+    saveSessionReports?: boolean;
+  };
 }
 
 export interface AppConfigDto {

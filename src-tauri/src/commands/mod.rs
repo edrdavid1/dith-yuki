@@ -340,7 +340,10 @@ fn run_preview_refresh(state: &AppState, layer_id: u32, clear_residuals: bool) {
             .tiles
             .error_residuals
             .evict_layer(doc_id, engine_project::types::LayerId::new(layer_id));
-        state.tiles.block_representatives.evict_layer(doc_id, layer_id);
+        state
+            .tiles
+            .block_representatives
+            .evict_layer(doc_id, layer_id);
         state.tiles.full_document.invalidate_layer(doc_id, layer_id);
     }
     engine_tiles::invalidation::invalidate(

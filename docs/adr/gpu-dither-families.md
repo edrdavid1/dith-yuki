@@ -272,6 +272,53 @@ No routing change. Warm median ms (20 reps, Apple M3, `BENCH_SKIP_8K=1`):
 
 At pal=2, GPU ≈ CPU (I/O-bound). At pal=16, GPU pulls ahead (~1.3–1.4×) because nearest-palette work moves to the GPU. Owner chooses any routing threshold later.
 
+### Fact: exhaustive sRGB transfer identity (2026-10-12)
+
+Production `linear_to_srgb` vs frozen `linear_to_srgb_reference` over every finite
+`f32` in `[0, 1]` (≈1.065 × 10⁹ values). Calls go through `#[inline(never)]` +
+`black_box` so LLVM cannot fold the identity away; a deliberate one-unit drift
+in the reference fails at `bits=0x0`. Reverse transfer (`srgb_to_linear` LUT vs
+`srgb_to_linear_reference`) covers all 256 `u8` inputs in the non-ignored suite.
+
+| Field | Value |
+|---|---|
+| Date | 2026-10-12 |
+| Adapter host | Apple M3 (Metal workstation) |
+| Test | `palette::tests::linear_to_srgb_matches_reference_all_f32_in_unit_interval` (`#[ignore]`) |
+| Checked | **1 065 353 218** values |
+| Result | **pass** (0 mismatches) |
+| Wall | 4.6 s (`--release`) |
+| Nightly | `.github/workflows/nightly.yml` → job `srgb-transfer-exhaustive` |
+
+Harness:
+
+```bash
+cargo test -p engine-color --lib \
+  palette::tests::linear_to_srgb_matches_reference_all_f32_in_unit_interval \
+  --release -- --ignored --nocapture
+```
+
+### Fact: log-only `input_hash` / `setup_hash` at Debug (2026-10-12)
+
+Fingerprints in `apply_gpu_dither_rgba` are computed only when
+`log::log_enabled!(target: "gpu_dither", Debug)`. Normal Info logging no longer
+pays for blake3. Remeasure (fit 4096², 10 release runs): `setup_hash` p50/p95 =
+**0.0 / 0.0 ms**; `render_ms_sum` p50 ≈ **128 ms**.
+
+### Fact: full-document publish default = Once (2026-10-12)
+
+Mass / A / B 30-run alternating matrix (5 scenarios) selected **Option A
+(`once`)** as the release default: B failed the p50≤Mass rule on 8192².
+Report: `.local-doc/publish_ab_experiment.md`. Scale tables:
+`.local-doc/scale_a_large.md`.
+
+**Dead branches removed:** `FdPublishMode::{Mass, SliceOnly}` and
+`DITHER_FD_PUBLISH` env override were deleted from the release path after the
+matrix. The experiment code lived in the working tree on top of panic-RAII
+commit `2f4661f` (leader guard); see that commit plus `.local-doc/publish_ab_experiment.md`
+for the Mass/A/B numbers. Shipping path is Once-only: claim/swap + background
+parallel publish into the pixel pool after `store_ready`.
+
 ## Reference
 
 - Spec: `.local-doc/ED-on-GPU.md`

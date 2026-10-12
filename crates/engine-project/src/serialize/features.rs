@@ -248,10 +248,10 @@ fn collect_gpu_dither_features(nodes: &[crate::layer::LayerNode], required: &mut
                                     required.push("blocked-fs".into());
                                 }
                             }
-                            DitherModeV2::BlueNoise => {
-                                if !required.iter().any(|s| s == "blue-noise") {
-                                    required.push("blue-noise".into());
-                                }
+                            DitherModeV2::BlueNoise
+                                if !required.iter().any(|s| s == "blue-noise") =>
+                            {
+                                required.push("blue-noise".into());
                             }
                             _ => {}
                         }

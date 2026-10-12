@@ -393,7 +393,7 @@ pub fn run_wavefront_tiled_gpu(n: u32) -> Option<SpikeResult> {
     for ty in 0..tiles_y {
         let tile_y = ty * TILE;
         let tile_h = (n - tile_y).min(TILE);
-        let read_plane = (ty % 2) as u32;
+        let read_plane = ty % 2;
         let write_plane = 1 - read_plane;
 
         // Clear write plane before this row deposits bottoms.
@@ -491,8 +491,9 @@ pub fn run_spike() -> Option<Vec<SpikeResult>> {
     let mut results = Vec::new();
     results.push(run_wavefront_tiled_gpu(256)?);
     results.push(run_wavefront_tiled_gpu(4096)?);
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_wavefront_tiled_gpu(16384)))
-    {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_wavefront_tiled_gpu(16384)
+    })) {
         Ok(Some(r)) => results.push(r),
         Ok(None) | Err(_) => {
             progress("16K failed (OOM/panic); trying 8K…");

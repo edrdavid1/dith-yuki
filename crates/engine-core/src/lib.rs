@@ -43,8 +43,11 @@ pub enum BlendMode {
 
 #[cfg(test)]
 mod tests {
+    use super::BlendMode;
+
     #[test]
-    fn stub_compiles() {
-        assert!(true);
+    fn blend_mode_is_copy() {
+        fn assert_copy<T: Copy>() {}
+        assert_copy::<BlendMode>();
     }
 }

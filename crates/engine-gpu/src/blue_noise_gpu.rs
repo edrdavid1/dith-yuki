@@ -86,7 +86,9 @@ pub fn apply_blue_noise_gpu_opts(
     }
 
     let input_u32: Vec<u32> = input_rgba8
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
     let palette_u32: Vec<u32> = palette_rgba8
@@ -94,7 +96,7 @@ pub fn apply_blue_noise_gpu_opts(
         .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
     let mut noise_u32 = Vec::with_capacity(ranks_u16.len() / 2);
-    for chunk in ranks_u16.chunks_exact(2) {
+    for chunk in ranks_u16.as_chunks::<2>().0 {
         noise_u32.push((chunk[0] as u32) | ((chunk[1] as u32) << 16));
     }
 

@@ -127,13 +127,8 @@ fn case_tags(
     if input_tag.contains("photo") {
         tags.push("photo".into());
     }
-    let edge = matches!(
-        w,
-        1 | 55 | 56 | 57 | 63 | 64 | 65 | 127 | 128 | 129
-    ) || matches!(
-        h,
-        1 | 55 | 56 | 57 | 63 | 64 | 65 | 127 | 128 | 129
-    );
+    let edge = matches!(w, 1 | 55 | 56 | 57 | 63 | 64 | 65 | 127 | 128 | 129)
+        || matches!(h, 1 | 55 | 56 | 57 | 63 | 64 | 65 | 127 | 128 | 129);
     if edge {
         tags.push("edge_size".into());
     }
@@ -143,7 +138,12 @@ fn case_tags(
     if w == 1 || h == 1 {
         tags.push("strip_1px".into());
     }
-    if pal.tag == "ptie" && matches!(input, InputKind::Solid { .. } | InputKind::AccumulatingError) {
+    if pal.tag == "ptie"
+        && matches!(
+            input,
+            InputKind::Solid { .. } | InputKind::AccumulatingError
+        )
+    {
         tags.push("tie_exercise".into());
     }
     tags
@@ -670,10 +670,7 @@ fn append_full_deterministic(
     append_params_ps_cases(out, seed, algos, filter, /*compact*/ false);
 
     let param_sizes = [(8u32, 8u32), (56, 56), (64, 64), (168, 168), (256, 256)];
-    let param_pal = *quick_palettes()
-        .iter()
-        .find(|p| p.tag == "p2")
-        .expect("p2");
+    let param_pal = *quick_palettes().iter().find(|p| p.tag == "p2").expect("p2");
     let param_input = InputKind::GradientH;
     for &(w, h) in &param_sizes {
         for spread in [0u32, 64, 256, 512] {
@@ -770,17 +767,7 @@ fn append_random_cases(out: &mut Vec<ParityCase>, seed: u64, filter: &Option<Str
         }
         let case_seed = rng.next_u64();
         push_case(
-            out,
-            algo,
-            w,
-            h,
-            pal,
-            &itag,
-            ikind,
-            case_seed,
-            "random",
-            params,
-            filter,
+            out, algo, w, h, pal, &itag, ikind, case_seed, "random", params, filter,
         );
     }
 }

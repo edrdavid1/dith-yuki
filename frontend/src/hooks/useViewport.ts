@@ -10,6 +10,7 @@ import {
   ZOOM_MIN,
 } from '../features/preview/zoomSnap';
 import { logIpcError, setViewport as setViewportIPC } from '../shared/ipc';
+import { noteIpcDone, noteIpcSent, noteUserInput } from '../diagnostics/level1';
 import { nextZoomPreset, prevZoomPreset } from '../types/effects';
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
@@ -139,16 +140,20 @@ export function useViewport(docWidth: number, docHeight: number): UseViewportRet
       debounceTimerRef.current = null;
       ipcDebounceMsRef.current = IPC_DEBOUNCE_MS;
       if (vp.canvasWidth > 0 && vp.canvasHeight > 0) {
+        noteIpcSent('set_viewport');
         setViewportIPC({
           zoom: vp.zoom,
           x: vp.panX,
           y: vp.panY,
           width: vp.canvasWidth,
           height: vp.canvasHeight,
-        }).catch((err) => {
-          // Viewport is local-first; log failures without rolling back camera
-          logIpcError('useViewport.setViewport', err);
-        });
+        })
+          .then(() => noteIpcDone())
+          .catch((err) => {
+            noteIpcDone();
+            // Viewport is local-first; log failures without rolling back camera
+            logIpcError('useViewport.setViewport', err);
+          });
       }
     }, delay);
   }, []);
@@ -278,6 +283,7 @@ export function useViewport(docWidth: number, docHeight: number): UseViewportRet
       // zooms the same way. Two-finger trackpad scroll (no ctrl) pans, like
       // Photoshop / Preview — Space+drag remains available as a hand tool.
       const isPinchZoom = e.ctrlKey;
+      noteUserInput(isPinchZoom ? 'zoom' : 'pan');
 
       let pending = pendingWheelRef.current;
       if (!pending) {
@@ -321,6 +327,7 @@ export function useViewport(docWidth: number, docHeight: number): UseViewportRet
 
   const handlePanDrag = useCallback(
     (deltaScreenX: number, deltaScreenY: number) => {
+      noteUserInput('pan');
       setViewport((prev) =>
         constrainPan(
           {
@@ -339,6 +346,7 @@ export function useViewport(docWidth: number, docHeight: number): UseViewportRet
   // ─── Fit entire document in view ──────────────────────────────────────
 
   const fitToView = useCallback(() => {
+    noteUserInput('zoom');
     setViewport((prev) => {
       if (prev.canvasWidth === 0 || prev.canvasHeight === 0) return prev;
       if (docWidth === 0 || docHeight === 0) return prev;
@@ -362,6 +370,7 @@ export function useViewport(docWidth: number, docHeight: number): UseViewportRet
 
   const setZoom = useCallback(
     (newZoom: number) => {
+      noteUserInput('zoom');
       setViewport((prev) => {
         let clamped = clamp(newZoom, ZOOM_MIN, ZOOM_MAX);
         if (zoomModeRef.current === 'integer') {

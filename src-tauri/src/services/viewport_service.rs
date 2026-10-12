@@ -62,6 +62,8 @@ impl ViewportService {
         let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
         drop(snapshot);
 
+        let diag = crate::preview_diag::level();
+        let t_sched = (diag != 0).then(std::time::Instant::now);
         for coord in &visible {
             let key = TileKey {
                 doc: doc_id,
@@ -99,6 +101,9 @@ impl ViewportService {
                 self.state.tiles.scheduler.enqueue(task);
                 self.state.worker_wake.notify_one();
             }
+        }
+        if let Some(t0) = t_sched {
+            crate::preview_diag::record_schedule(doc_id, doc_gen, t0.elapsed());
         }
 
         let new_viewport = ViewportState {

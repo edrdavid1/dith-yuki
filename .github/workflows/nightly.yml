@@ -1,0 +1,40 @@
+name: Nightly
+
+# Exhaustive / soak checks that are too heavy for PR CI.
+on:
+  schedule:
+    # 06:00 UTC daily
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  srgb-transfer-exhaustive:
+    name: Exhaustive sRGB transfer identity
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+
+      - name: linear_to_srgb exhaustive [0,1] (release, ignored)
+        # Every finite f32 in [0,1] vs frozen reference; see ADR gpu-dither-families.
+        run: >
+          cargo test -p engine-color --lib
+          palette::tests::linear_to_srgb_matches_reference_all_f32_in_unit_interval
+          --release
+          -- --ignored --nocapture
+
+      - name: srgb_to_linear LUT vs reference (all 256)
+        run: >
+          cargo test -p engine-color --lib
+          palette::tests::srgb_to_linear_lut_matches_reference_all_u8
+          --release

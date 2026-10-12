@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use engine_registry::ExecutionScope;
 use engine_tiles::{CacheStage, PixelTile, TileCache, TileCoord, TileKey, HALO, TILE_SIZE};
@@ -36,12 +37,15 @@ use crate::filter::{
 use crate::filters::ascii_job::{apply_ascii_rgba, run_ascii_job};
 use crate::filters::riemersma::{apply_riemersma_rgba, RiemersmaError};
 use crate::layer::Layer;
-use crate::serialize::pixels::assemble_layer_rgba8;
-
 /// Test-only: sleep at the start of [`compute_full_document_rgba_ex`] so concurrent
 /// single-flight / cancel behaviour can be asserted without relying on ASCII cost.
 #[cfg(test)]
 pub static FD_TEST_COMPUTE_DELAY_MS: AtomicU64 = AtomicU64::new(0);
+
+/// Test-only: when true, [`compute_full_document_rgba_ex`] panics after the delay
+/// so leader RAII / waiter wake-up can be asserted (T-PANIC).
+#[cfg(test)]
+pub static FD_TEST_PANIC: AtomicBool = AtomicBool::new(false);
 
 /// Cache key for a full-document filter result (§0.2).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -52,6 +56,44 @@ pub struct FullDocumentKey {
     pub document_gen: u64,
     /// When false, Ascii filters are omitted from the pass (Image preview mode).
     pub include_ascii: bool,
+}
+
+/// Timing of one `ensure_full_document_ex` call. Filled only when the caller
+/// asks; the slot state machine does not read it.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EnsureTrace {
+    pub hit: bool,
+    pub waited: bool,
+    pub rendered: bool,
+    pub wait: Duration,
+    pub render: Duration,
+}
+
+/// Host stages around one full-document compute (outside `apply_gpu_dither_rgba`).
+/// Sum of fields ≈ wall of [`compute_full_document_rgba_ex`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FdRenderStages {
+    pub alloc_zero_ms: f64,
+    pub assemble_blit_ms: f64,
+    pub promote_f32_ms: f64,
+    pub palette_ms: f64,
+    pub apply_ms: f64,
+    pub arc_ms: f64,
+    pub misc_ms: f64,
+    pub total_ms: f64,
+}
+
+static LAST_FD_STAGES: Mutex<Option<FdRenderStages>> = Mutex::new(None);
+
+/// Peek the most recent [`FdRenderStages`] from a successful compute.
+pub fn last_fd_render_stages() -> Option<FdRenderStages> {
+    LAST_FD_STAGES.lock().ok().and_then(|g| *g)
+}
+
+fn store_fd_stages(s: FdRenderStages) {
+    if let Ok(mut g) = LAST_FD_STAGES.lock() {
+        *g = Some(s);
+    }
 }
 
 /// One ready full-document RGBA f32 result.
@@ -100,6 +142,50 @@ impl CacheSlot {
     fn store_ready(&mut self, key: FullDocumentKey, result: FullDocumentResult) {
         let idx = usize::from(key.include_ascii);
         self.ready[idx] = Some((key, result));
+    }
+}
+
+/// RAII: if the leader panics or returns early without finishing, clear
+/// `inflight_key` (when still owner) and wake waiters so they are not stuck.
+struct LeaderGuard<'a> {
+    cache: &'a FullDocumentCache,
+    doc: u32,
+    layer: u32,
+    token: u64,
+    armed: bool,
+}
+
+impl<'a> LeaderGuard<'a> {
+    fn arm(cache: &'a FullDocumentCache, doc: u32, layer: u32, token: u64) -> Self {
+        Self {
+            cache,
+            doc,
+            layer,
+            token,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for LeaderGuard<'_> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let Ok(mut guard) = self.cache.inner.lock() else {
+            return;
+        };
+        if let Some(slot) = guard.get_mut(&(self.doc, self.layer)) {
+            if slot.job_token == self.token {
+                slot.inflight_key = None;
+                slot.cancel.store(true, Ordering::Relaxed);
+            }
+        }
+        self.cache.cv.notify_all();
     }
 }
 
@@ -228,9 +314,27 @@ pub fn assemble_layer_rgba_f32(
     doc_height: u32,
     doc_id: u32,
 ) -> Result<Vec<f32>, EngineError> {
-    let rgba8 = assemble_layer_rgba8(cache, layer, doc_width, doc_height, doc_id)
+    let (rgba, _, _, _) =
+        assemble_layer_rgba_f32_timed(cache, layer, doc_width, doc_height, doc_id)?;
+    Ok(rgba)
+}
+
+fn assemble_layer_rgba_f32_timed(
+    cache: &TileCache,
+    layer: &Layer,
+    doc_width: u32,
+    doc_height: u32,
+    doc_id: u32,
+) -> Result<(Vec<f32>, f64, f64, f64), EngineError> {
+    let (rgba8, alloc_zero_ms, assemble_blit_ms) =
+        crate::serialize::pixels::assemble_layer_rgba8_timed(
+            cache, layer, doc_width, doc_height, doc_id,
+        )
         .map_err(|e| EngineError::invalid_state(format!("assemble raw for full-document: {e}")))?;
-    Ok(rgba8.into_iter().map(|b| b as f32 / 255.0).collect())
+    let t = Instant::now();
+    let rgba: Vec<f32> = rgba8.into_iter().map(|b| b as f32 / 255.0).collect();
+    let promote_f32_ms = t.elapsed().as_secs_f64() * 1000.0;
+    Ok((rgba, alloc_zero_ms, assemble_blit_ms, promote_f32_ms))
 }
 
 /// Run the full-document filter stack for `layer`, returning RGBA f32.
@@ -256,6 +360,7 @@ pub fn compute_full_document_rgba_ex(
     should_cancel: &AtomicBool,
     include_ascii: bool,
 ) -> Result<FullDocumentResult, EngineError> {
+    let t_all = Instant::now();
     #[cfg(test)]
     {
         let ms = FD_TEST_COMPUTE_DELAY_MS.load(Ordering::Relaxed);
@@ -265,15 +370,22 @@ pub fn compute_full_document_rgba_ex(
                 return Err(EngineError::invalid_state("full-document job cancelled"));
             }
         }
+        if FD_TEST_PANIC.load(Ordering::Relaxed) {
+            panic!("FD_TEST_PANIC: leader compute panic");
+        }
     }
 
-    let mut rgba = assemble_layer_rgba_f32(cache, layer, doc.width, doc.height, doc.id.0)?;
+    let (mut rgba, alloc_zero_ms, assemble_blit_ms, promote_f32_ms) =
+        assemble_layer_rgba_f32_timed(cache, layer, doc.width, doc.height, doc.id.0)?;
     let w = doc.width;
     let h = doc.height;
 
     // Bottom-up: last vec entry first (same as tiled apply).
     let enabled: Vec<&FilterInstance> = layer.filters.iter().rev().filter(|f| f.enabled).collect();
     let reg = builtin_registry();
+
+    let mut palette_ms = 0.0;
+    let mut apply_ms = 0.0;
 
     for filter in enabled {
         if should_cancel.load(Ordering::Relaxed) {
@@ -304,7 +416,16 @@ pub fn compute_full_document_rgba_ex(
         }
         match algo.execution_scope() {
             ExecutionScope::FullDocument => {
-                apply_full_document_algorithm(&mut rgba, w, h, filter, doc, should_cancel)?;
+                let (p, a) = apply_full_document_algorithm_timed(
+                    &mut rgba,
+                    w,
+                    h,
+                    filter,
+                    doc,
+                    should_cancel,
+                )?;
+                palette_ms += p;
+                apply_ms += a;
             }
             ExecutionScope::Tiled => {
                 apply_tiled_filters_on_buffer(&mut rgba, w, h, layer, filter, doc, cache)?;
@@ -312,11 +433,27 @@ pub fn compute_full_document_rgba_ex(
         }
     }
 
-    Ok(FullDocumentResult {
+    let t_arc = Instant::now();
+    let result = FullDocumentResult {
         rgba_f32: Arc::new(rgba),
         width: w,
         height: h,
-    })
+    };
+    let arc_ms = t_arc.elapsed().as_secs_f64() * 1000.0;
+    let total_ms = t_all.elapsed().as_secs_f64() * 1000.0;
+    let accounted =
+        alloc_zero_ms + assemble_blit_ms + promote_f32_ms + palette_ms + apply_ms + arc_ms;
+    store_fd_stages(FdRenderStages {
+        alloc_zero_ms,
+        assemble_blit_ms,
+        promote_f32_ms,
+        palette_ms,
+        apply_ms,
+        arc_ms,
+        misc_ms: (total_ms - accounted).max(0.0),
+        total_ms,
+    });
+    Ok(result)
 }
 
 /// Run the layer filter stack and capture the ASCII job result (grid + atlas).
@@ -428,15 +565,33 @@ fn apply_full_document_algorithm(
     doc: &Document,
     should_cancel: &AtomicBool,
 ) -> Result<(), EngineError> {
+    let (_, _) =
+        apply_full_document_algorithm_timed(rgba, width, height, filter, doc, should_cancel)?;
+    Ok(())
+}
+
+/// Returns `(palette_ms, apply_ms)`.
+fn apply_full_document_algorithm_timed(
+    rgba: &mut [f32],
+    width: u32,
+    height: u32,
+    filter: &FilterInstance,
+    doc: &Document,
+    should_cancel: &AtomicBool,
+) -> Result<(f64, f64), EngineError> {
     // ASCII is its own FilterParams arm (not a dither mode).
     if let FilterParams::Ascii(ref p) = filter.params {
-        return apply_ascii_rgba(rgba, width, height, p, should_cancel);
+        let t = Instant::now();
+        apply_ascii_rgba(rgba, width, height, p, should_cancel)?;
+        return Ok((0.0, t.elapsed().as_secs_f64() * 1000.0));
     }
     if resolve_algorithm_id(filter).as_deref() == Some("ascii") {
         let json = filter_params_to_json(&filter.params)?;
         let p: AsciiParams = serde_json::from_value(json)
             .map_err(|e| EngineError::invalid_filter_params(format!("ascii params: {e}")))?;
-        return apply_ascii_rgba(rgba, width, height, &p, should_cancel);
+        let t = Instant::now();
+        apply_ascii_rgba(rgba, width, height, &p, should_cancel)?;
+        return Ok((0.0, t.elapsed().as_secs_f64() * 1000.0));
     }
 
     let params = match &filter.params {
@@ -451,7 +606,10 @@ fn apply_full_document_algorithm(
 
     match params.mode {
         DitherModeV2::BlockedFs | DitherModeV2::BlueNoise => {
+            let t_pal = Instant::now();
             let palette = crate::algorithms::gpu_dither::resolve_gpu_dither_palette(&params, doc)?;
+            let palette_ms = t_pal.elapsed().as_secs_f64() * 1000.0;
+            let t_apply = Instant::now();
             crate::algorithms::gpu_dither::apply_gpu_dither_rgba(
                 rgba,
                 width,
@@ -460,14 +618,21 @@ fn apply_full_document_algorithm(
                 &palette,
                 should_cancel,
             )
-            .map_err(|e| EngineError::invalid_filter_params(e.to_string()))
+            .map_err(|e| EngineError::invalid_filter_params(e.to_string()))?;
+            Ok((palette_ms, t_apply.elapsed().as_secs_f64() * 1000.0))
         }
-        _ => apply_riemersma_rgba(rgba, width, height, &params, should_cancel).map_err(|e| match e {
-            RiemersmaError::Cancelled => EngineError::invalid_state("riemersma cancelled"),
-            RiemersmaError::InvalidBuffer => {
-                EngineError::invalid_filter_params("riemersma invalid buffer")
-            }
-        }),
+        _ => {
+            let t = Instant::now();
+            apply_riemersma_rgba(rgba, width, height, &params, should_cancel).map_err(
+                |e| match e {
+                    RiemersmaError::Cancelled => EngineError::invalid_state("riemersma cancelled"),
+                    RiemersmaError::InvalidBuffer => {
+                        EngineError::invalid_filter_params("riemersma invalid buffer")
+                    }
+                },
+            )?;
+            Ok((0.0, t.elapsed().as_secs_f64() * 1000.0))
+        }
     }
 }
 
@@ -545,6 +710,52 @@ pub fn ensure_full_document_ex(
     document_gen: u64,
     include_ascii: bool,
 ) -> Result<FullDocumentResult, EngineError> {
+    let mut ignored = EnsureTrace::default();
+    ensure_full_document_ex_inner(
+        fd_cache,
+        tile_cache,
+        layer,
+        doc,
+        document_gen,
+        include_ascii,
+        false,
+        &mut ignored,
+    )
+}
+
+/// Same as [`ensure_full_document_ex`], and writes wait/render times into `trace`.
+/// Slot transitions are unchanged.
+pub fn ensure_full_document_ex_timed(
+    fd_cache: &FullDocumentCache,
+    tile_cache: &TileCache,
+    layer: &Layer,
+    doc: &Document,
+    document_gen: u64,
+    include_ascii: bool,
+    trace: &mut EnsureTrace,
+) -> Result<FullDocumentResult, EngineError> {
+    ensure_full_document_ex_inner(
+        fd_cache,
+        tile_cache,
+        layer,
+        doc,
+        document_gen,
+        include_ascii,
+        true,
+        trace,
+    )
+}
+
+fn ensure_full_document_ex_inner(
+    fd_cache: &FullDocumentCache,
+    tile_cache: &TileCache,
+    layer: &Layer,
+    doc: &Document,
+    document_gen: u64,
+    include_ascii: bool,
+    timed: bool,
+    trace: &mut EnsureTrace,
+) -> Result<FullDocumentResult, EngineError> {
     let key = FullDocumentKey {
         doc: doc.id.0,
         layer: layer.id.0,
@@ -572,6 +783,9 @@ pub fn ensure_full_document_ex(
                     key.document_gen,
                     key.include_ascii
                 );
+                if timed {
+                    trace.hit = true;
+                }
                 return Ok(result);
             }
 
@@ -579,10 +793,15 @@ pub fn ensure_full_document_ex(
                 Some(inflight) if inflight == &key => {
                     // Same flight in progress — wait; do not cancel.
                     was_waiting = true;
+                    let t_wait = timed.then(Instant::now);
                     guard = fd_cache
                         .cv
                         .wait(guard)
                         .expect("full_document cache condvar");
+                    if let Some(t0) = t_wait {
+                        trace.wait += t0.elapsed();
+                        trace.waited = true;
+                    }
                     continue;
                 }
                 Some(_) if was_waiting => {
@@ -609,7 +828,16 @@ pub fn ensure_full_document_ex(
         }
     };
 
+    // Armed until we finish under the slot lock (success, error, or cancel).
+    // Panic unwinding drops this and wakes waiters (publish_once_v2 §4.3).
+    let mut leader = LeaderGuard::arm(fd_cache, key.doc, key.layer, token);
+
+    let t_render = timed.then(Instant::now);
     let compute = compute_full_document_rgba_ex(tile_cache, layer, doc, &cancel, include_ascii);
+    if let Some(t0) = t_render {
+        trace.render += t0.elapsed();
+        trace.rendered = true;
+    }
 
     let mut guard = fd_cache.inner.lock().expect("full_document cache lock");
     let slot = guard
@@ -622,6 +850,7 @@ pub fn ensure_full_document_ex(
     }
 
     if !still_owner || cancel.load(Ordering::Relaxed) {
+        leader.disarm();
         fd_cache.cv.notify_all();
         return Err(EngineError::invalid_state(
             "full-document job cancelled or superseded",
@@ -631,10 +860,12 @@ pub fn ensure_full_document_ex(
     match compute {
         Ok(result) => {
             slot.store_ready(key, result.clone());
+            leader.disarm();
             fd_cache.cv.notify_all();
             Ok(result)
         }
         Err(e) => {
+            leader.disarm();
             fd_cache.cv.notify_all();
             Err(e)
         }
@@ -653,6 +884,10 @@ pub fn slice_processed_tile(result: &FullDocumentResult, coord: TileCoord) -> Pi
 }
 
 /// Insert all level-0 Processed tiles for a full-document result into the cache.
+///
+/// Extract + insert runs on the dedicated [`crate::pixel_pool`] so the leader
+/// does not serialize tile cuts on one core. Byte-identical to the serial loop
+/// (same `extract_tile_from_rgba` + `insert_fresh_gen`).
 pub fn publish_processed_tiles(
     tile_cache: &TileCache,
     result: &FullDocumentResult,
@@ -660,12 +895,20 @@ pub fn publish_processed_tiles(
     layer_id: u32,
     generation: u64,
 ) {
+    use rayon::prelude::*;
+
     let cols = result.width.div_ceil(TILE_SIZE);
     let rows = result.height.div_ceil(TILE_SIZE);
-    for ty in 0..rows {
-        for tx in 0..cols {
-            let tile =
-                extract_tile_from_rgba(&result.rgba_f32, result.width, result.height, tx, ty);
+    let n = (cols as usize).saturating_mul(rows as usize);
+    let rgba = Arc::clone(&result.rgba_f32);
+    let width = result.width;
+    let height = result.height;
+
+    crate::pixel_pool::install(|| {
+        (0..n).into_par_iter().for_each(|i| {
+            let tx = (i % cols as usize) as u32;
+            let ty = (i / cols as usize) as u32;
+            let tile = extract_tile_from_rgba(&rgba, width, height, tx, ty);
             let key = TileKey {
                 doc: doc_id,
                 layer: layer_id,
@@ -677,8 +920,8 @@ pub fn publish_processed_tiles(
                 stage: CacheStage::Processed,
             };
             let _ = tile_cache.insert_fresh_gen(key, Arc::new(tile), generation);
-        }
-    }
+        });
+    });
 }
 
 fn extract_tile_from_rgba(
@@ -747,7 +990,10 @@ mod tests {
     use crate::layer::{Layer, LayerNode};
     use crate::types::{DocumentId, LayerId, LayerKind};
     use engine_tiles::decompose::decompose_image_to_tiles;
-    use std::sync::Barrier;
+    use std::sync::{Barrier, Mutex};
+
+    /// Serialize tests that mutate process-wide `FD_TEST_*` atomics.
+    static FD_TEST_GATE: Mutex<()> = Mutex::new(());
 
     fn solid_white(w: u32, h: u32) -> Vec<f32> {
         vec![1.0f32; (w * h * 4) as usize]
@@ -779,6 +1025,8 @@ mod tests {
 
     #[test]
     fn concurrent_same_key_all_succeed_single_flight() {
+        let _gate = FD_TEST_GATE.lock().unwrap_or_else(|e| e.into_inner());
+        FD_TEST_PANIC.store(false, Ordering::Relaxed);
         let w = 28u32;
         let h = 28u32;
         let (doc, layer, cache) = doc_with_ascii(w, h);
@@ -826,6 +1074,8 @@ mod tests {
 
     #[test]
     fn newer_key_cancels_in_flight_job() {
+        let _gate = FD_TEST_GATE.lock().unwrap_or_else(|e| e.into_inner());
+        FD_TEST_PANIC.store(false, Ordering::Relaxed);
         let w = 28u32;
         let h = 28u32;
         let (doc, layer, cache) = doc_with_ascii(w, h);
@@ -870,6 +1120,9 @@ mod tests {
 
     #[test]
     fn image_mode_preserves_ascii_ready_for_toggle() {
+        let _gate = FD_TEST_GATE.lock().unwrap_or_else(|e| e.into_inner());
+        FD_TEST_PANIC.store(false, Ordering::Relaxed);
+        FD_TEST_COMPUTE_DELAY_MS.store(0, Ordering::Relaxed);
         let w = 28u32;
         let h = 28u32;
         let (doc, layer, cache) = doc_with_ascii(w, h);
@@ -902,5 +1155,63 @@ mod tests {
             Arc::ptr_eq(&again.rgba_f32, &ascii.rgba_f32),
             "ASCII raster must be reused after Image-mode pass"
         );
+    }
+
+    /// T-PANIC: leader panics in compute → waiters wake; next call succeeds.
+    #[test]
+    fn leader_panic_wakes_waiters_and_slot_retries() {
+        let _gate = FD_TEST_GATE.lock().unwrap_or_else(|e| e.into_inner());
+        let w = 28u32;
+        let h = 28u32;
+        let (doc, layer, cache) = doc_with_ascii(w, h);
+        let fd = Arc::new(FullDocumentCache::new());
+        let cache = Arc::new(cache);
+        let doc = Arc::new(doc);
+        let layer = Arc::new(layer);
+
+        FD_TEST_COMPUTE_DELAY_MS.store(60, Ordering::Relaxed);
+        FD_TEST_PANIC.store(true, Ordering::Relaxed);
+
+        let barrier = Arc::new(Barrier::new(3));
+        let mut handles = Vec::new();
+        for _ in 0..3 {
+            let fd = Arc::clone(&fd);
+            let cache = Arc::clone(&cache);
+            let doc = Arc::clone(&doc);
+            let layer = Arc::clone(&layer);
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    ensure_full_document_ex(&fd, &cache, &layer, &doc, 1, true)
+                }))
+            }));
+        }
+
+        let mut panics = 0usize;
+        let mut errs = 0usize;
+        let mut oks = 0usize;
+        for h in handles {
+            match h.join().expect("thread join") {
+                Err(_) => panics += 1,
+                Ok(Ok(_)) => oks += 1,
+                Ok(Err(_)) => errs += 1,
+            }
+        }
+        FD_TEST_PANIC.store(false, Ordering::Relaxed);
+        FD_TEST_COMPUTE_DELAY_MS.store(0, Ordering::Relaxed);
+
+        assert!(panics >= 1, "at least the leader must panic");
+        assert_eq!(oks, 0, "no success while panic flag was set");
+        let _ = errs;
+
+        // Slot must be Empty: a fresh call succeeds without hanging.
+        let start = Instant::now();
+        let retry = ensure_full_document_ex(&fd, &cache, &layer, &doc, 1, true);
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "retry hung after leader panic"
+        );
+        assert!(retry.is_ok(), "retry after panic must succeed");
     }
 }

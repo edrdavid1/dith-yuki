@@ -48,7 +48,7 @@ fn ranks_slice() -> &'static [u16] {
                 "blue_noise_128_u16.raw size mismatch"
             );
             let mut ranks = [0u16; BlueNoiseTexture::PIXEL_COUNT];
-            for (i, chunk) in bytes.chunks_exact(2).enumerate() {
+            for (i, chunk) in bytes.as_chunks::<2>().0.iter().enumerate() {
                 ranks[i] = u16::from_le_bytes([chunk[0], chunk[1]]);
             }
             ranks

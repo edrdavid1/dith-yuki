@@ -268,8 +268,7 @@ fn geometry_cpu_timing_and_seams() {
             ("lines", line_art(gw, gh)),
         ] {
             for g in VARIANTS {
-                let out =
-                    blocked_fs_cpu(&src, gw, gh, &pals, g.core_w, g.core_h, g.pad).unwrap();
+                let out = blocked_fs_cpu(&src, gw, gh, &pals, g.core_w, g.core_h, g.pad).unwrap();
                 let seam = seam_metric(&out, gw, gh, g.core_h);
                 eprintln!("seam_{tag}\t{}\t{}x{}\t{seam:.3}", g.name, gw, gh);
                 write_png(
@@ -304,6 +303,9 @@ fn geometry_cpu_timing_and_seams() {
         }
     }
     eprintln!("note: GPU B–D not run — workgroup storage exceeds 32768 on Apple M3");
-    eprintln!("default CORE={} PAD={} still variant A — owner must pick before Task 5", CORE, PAD);
+    eprintln!(
+        "default CORE={} PAD={} still variant A — owner must pick before Task 5",
+        CORE, PAD
+    );
     eprintln!("STOP: awaiting owner geometry choice (spec §5.5)");
 }

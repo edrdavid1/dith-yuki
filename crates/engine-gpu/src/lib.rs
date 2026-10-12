@@ -8,16 +8,15 @@
 //! Warm resident Composite slots may download without opt-in (auto-dispatch A1).
 
 mod bayer;
+pub mod blocked_fs;
+pub mod blue_noise_gpu;
 mod composite;
 mod context;
 mod crt;
 mod decision;
 mod dispatch;
-pub mod blocked_fs;
-pub mod blue_noise_gpu;
 pub mod ed_prototype;
 pub mod ed_wavefront_spike;
-mod strip_bind;
 mod executor;
 mod graph;
 mod halftone;
@@ -26,6 +25,7 @@ mod palette_quantize;
 mod prefer;
 pub mod resident;
 mod stats;
+mod strip_bind;
 mod void_and_cluster;
 mod void_and_cluster_matrix;
 mod vram_budget;
@@ -38,9 +38,6 @@ pub use blocked_fs::{
     GpuPhaseTiming, CORE as BLOCKED_FS_CORE, PAD as BLOCKED_FS_PAD, WG_SIZE as BLOCKED_FS_WG,
 };
 pub use blue_noise_gpu::{apply_blue_noise_gpu, apply_blue_noise_gpu_opts, BlueNoiseGpuOpts};
-pub use strip_bind::{
-    effective_max_bind, max_blocked_fs_strip_cores, max_blue_noise_strip_h,
-};
 pub use composite::{
     CompositePassParams, GpuCompositeFrameJob, GpuCompositeLayerOp, GpuCompositeTileWork,
 };
@@ -72,6 +69,7 @@ pub use resident::{
     ResidentVoidAndClusterPipelines, ResidentWavePipelines,
 };
 pub use stats::not_worse_than;
+pub use strip_bind::{effective_max_bind, max_blocked_fs_strip_cores, max_blue_noise_strip_h};
 pub use void_and_cluster::{
     apply_void_and_cluster_gpu, void_and_cluster_ranks, VoidAndClusterGpuParams,
 };

@@ -38,11 +38,7 @@ pub fn max_blocked_fs_strip_cores(width: u32, max_bind: u64) -> Option<u32> {
 }
 
 /// Absolute row range covered by a blocked_fs strip (includes warm-up above).
-pub fn blocked_fs_strip_rows(
-    strip_y0: u32,
-    strip_cores: u32,
-    height: u32,
-) -> (u32, u32) {
+pub fn blocked_fs_strip_rows(strip_y0: u32, strip_cores: u32, height: u32) -> (u32, u32) {
     let y0 = strip_y0.saturating_sub(PAD);
     let y1 = (strip_y0 + strip_cores * CORE).min(height);
     (y0, y1)
@@ -78,12 +74,12 @@ pub fn align_down(offset: u64, align: u64) -> u64 {
 pub fn aligned_buf_y0(y0: u32, width: u32, align: u32) -> Option<u32> {
     let rb = row_bytes(width);
     let align = align.max(1) as u64;
-    if rb % align == 0 {
+    if rb.is_multiple_of(align) {
         return Some(y0);
     }
     let mut y = y0 as u64;
     loop {
-        if (y * rb) % align == 0 {
+        if (y * rb).is_multiple_of(align) {
             return Some(y as u32);
         }
         if y == 0 {

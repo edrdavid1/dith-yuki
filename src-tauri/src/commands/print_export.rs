@@ -50,9 +50,8 @@ fn load_rgba(
     let doc = (*snapshot).clone();
     drop(snapshot);
 
-    let rgba = build_processed_composite_rgba8(&state.tiles.tile_cache, &doc).map_err(|e| {
-        AppError::Generic(format!("Print export composite error: {e}"))
-    })?;
+    let rgba = build_processed_composite_rgba8(&state.tiles.tile_cache, &doc)
+        .map_err(|e| AppError::Generic(format!("Print export composite error: {e}")))?;
 
     // Defaults from soft-proof settings (profile/intent/BPC); export-only overrides come from req.
     let defaults = PrintExportConfig {
@@ -138,9 +137,9 @@ pub async fn print_export_run(
         };
 
         emit("composite", 0.05);
-        let session = state.session(doc_id).map_err(|_| {
-            format!("Document was closed (id {doc_id}); cannot export for print")
-        })?;
+        let session = state
+            .session(doc_id)
+            .map_err(|_| format!("Document was closed (id {doc_id}); cannot export for print"))?;
         let _io_guard = session.begin_io();
         let (w, h, rgba, _) = load_rgba(&state, doc_id).map_err(|e| e.to_string())?;
 

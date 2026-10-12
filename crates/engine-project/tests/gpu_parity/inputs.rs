@@ -77,12 +77,7 @@ pub fn build_input(kind: &InputKind, w: u32, h: u32) -> Vec<Rgba8> {
             let mut rng = SplitMix64::new(*seed);
             let mut v = Vec::with_capacity(n);
             for _ in 0..n {
-                v.push(Rgba8::new(
-                    rng.gen_u8(),
-                    rng.gen_u8(),
-                    rng.gen_u8(),
-                    255,
-                ));
+                v.push(Rgba8::new(rng.gen_u8(), rng.gen_u8(), rng.gen_u8(), 255));
             }
             v
         }
@@ -189,15 +184,7 @@ pub fn quick_inputs(seed: u64) -> Vec<(String, InputKind)> {
         ("s254", 254, 254, 254),
         ("s255", 255, 255, 255),
     ] {
-        v.push((
-            tag.to_string(),
-            InputKind::Solid {
-                r,
-                g,
-                b,
-                a: 255,
-            },
-        ));
+        v.push((tag.to_string(), InputKind::Solid { r, g, b, a: 255 }));
     }
     let mut rng = SplitMix64::new(seed ^ 0xA11CE);
     v.push((

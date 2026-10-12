@@ -1,15 +1,17 @@
+use engine_gpu::{
+    apply_blocked_fs_gpu_opts, apply_blue_noise_gpu_opts, BlockedFsGpuOpts, BlueNoiseGpuOpts,
+};
+use engine_project::algorithms::gpu_dither_cpu::{
+    blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, with_pixel_size_blocks, PaletteRgb, Rgba8,
+    CORE, PAD,
+};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
-use engine_gpu::{apply_blocked_fs_gpu_opts, apply_blue_noise_gpu_opts, BlockedFsGpuOpts, BlueNoiseGpuOpts};
-use engine_project::algorithms::gpu_dither_cpu::{
-    blue_noise_cpu, blue_noise_ranks, blocked_fs_cpu, with_pixel_size_blocks, PaletteRgb, Rgba8,
-    CORE, PAD,
-};
-use sha2::{Digest, Sha256};
 
 use super::case::{Algorithm, ParityCase};
 use super::inputs::{build_input, from_bytes, to_bytes};
@@ -133,24 +135,19 @@ fn run_cpu(case: &ParityCase, input: &[Rgba8]) -> Result<Vec<u8>, String> {
                 case.params.pad
             };
             // GPU warm-up is fixed at PAD=8; non-default pad is CPU-only.
-            let out = with_pixel_size_blocks(input, case.width, case.height, ps, |small, sw, sh| {
-                blocked_fs_cpu(small, sw, sh, &pal, CORE, CORE, pad)
-            })
-            .map_err(|e| e.to_string())?;
+            let out =
+                with_pixel_size_blocks(input, case.width, case.height, ps, |small, sw, sh| {
+                    blocked_fs_cpu(small, sw, sh, &pal, CORE, CORE, pad)
+                })
+                .map_err(|e| e.to_string())?;
             Ok(to_bytes(&out))
         }
         Algorithm::BlueNoise => {
-            let out = with_pixel_size_blocks(input, case.width, case.height, ps, |small, sw, sh| {
-                blue_noise_cpu(
-                    small,
-                    sw,
-                    sh,
-                    &pal,
-                    blue_noise_ranks(),
-                    case.params.spread,
-                )
-            })
-            .map_err(|e| e.to_string())?;
+            let out =
+                with_pixel_size_blocks(input, case.width, case.height, ps, |small, sw, sh| {
+                    blue_noise_cpu(small, sw, sh, &pal, blue_noise_ranks(), case.params.spread)
+                })
+                .map_err(|e| e.to_string())?;
             Ok(to_bytes(&out))
         }
     }
@@ -243,11 +240,8 @@ fn check_properties(case: &ParityCase, input: &[Rgba8], out: &[u8]) -> Result<()
     if out.len() != expected {
         return Err(format!("size {} != {expected}", out.len()));
     }
-    let pal: std::collections::HashSet<[u8; 3]> = case
-        .palette
-        .iter()
-        .map(|c| [c[0], c[1], c[2]])
-        .collect();
+    let pal: std::collections::HashSet<[u8; 3]> =
+        case.palette.iter().map(|c| [c[0], c[1], c[2]]).collect();
     let pixels = from_bytes(out);
     for (i, px) in pixels.iter().enumerate() {
         if !pal.contains(&[px.r, px.g, px.b]) {
@@ -323,15 +317,8 @@ fn run_app_path(case: &ParityCase, input: &[Rgba8], path: &str) -> Result<Vec<u8
     };
     let pal = palette_rgb(&case.palette);
     let cancel = AtomicBool::new(false);
-    apply_gpu_dither_rgba(
-        &mut rgba,
-        case.width,
-        case.height,
-        &params,
-        &pal,
-        &cancel,
-    )
-    .map_err(|e| e.to_string())?;
+    apply_gpu_dither_rgba(&mut rgba, case.width, case.height, &params, &pal, &cancel)
+        .map_err(|e| e.to_string())?;
     let mut out = Vec::with_capacity(n * 4);
     for chunk in rgba.chunks_exact(4) {
         out.push(engine_color::palette::linear_to_srgb(chunk[0]));
@@ -699,15 +686,7 @@ pub fn run_parity_matrix() {
                         if h >= case.height {
                             continue;
                         }
-                        match run_gpu(
-                            &device,
-                            &queue,
-                            case,
-                            &input_bytes,
-                            &cancel,
-                            None,
-                            Some(h),
-                        ) {
+                        match run_gpu(&device, &queue, case, &input_bytes, &cancel, None, Some(h)) {
                             Ok(v) if v == cpu => {}
                             Ok(v) => {
                                 eprintln!("FAIL {} strip_h={h}", case.id);
@@ -741,15 +720,7 @@ pub fn run_parity_matrix() {
         if !cancel_tested && case.height >= CORE && case.width >= 32 {
             cancel_tested = true;
             let flag = AtomicBool::new(true);
-            match run_gpu(
-                &device,
-                &queue,
-                case,
-                &input_bytes,
-                &flag,
-                Some(1),
-                Some(8),
-            ) {
+            match run_gpu(&device, &queue, case, &input_bytes, &flag, Some(1), Some(8)) {
                 Err(e) if e.to_ascii_lowercase().contains("cancel") => {}
                 Ok(_) => {
                     eprintln!("FAIL {} cancel returned Ok", case.id);
@@ -812,7 +783,12 @@ pub fn run_parity_matrix() {
             eprintln!("REQUIRED group {g}: skipped={sk} (must be 0)");
             required_skip_fail = true;
         } else if matches!(mode, ParityMode::Full | ParityMode::Nightly)
-            && stats.by_group.get(*g).map(|s| s.passed + s.failed).unwrap_or(0) == 0
+            && stats
+                .by_group
+                .get(*g)
+                .map(|s| s.passed + s.failed)
+                .unwrap_or(0)
+                == 0
             && skip_n == 0
         {
             eprintln!("REQUIRED group {g}: no cases executed");

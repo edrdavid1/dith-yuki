@@ -12,7 +12,9 @@ use crate::serialize::migrate::{ProjectError, SOFT_SIZE_WARN_BYTES};
 use crate::types::{LayerId, LayerKind, TileBounds};
 use engine_tiles::{CacheStage, TileCache, TileCoord, TileKey, HALO, TILE_SIZE};
 use image::RgbaImage;
+use rayon::prelude::*;
 use std::io::Cursor;
+use std::time::Instant;
 
 /// Uncompressed RGBA estimate for one full-document raster layer.
 pub fn uncompressed_layer_bytes(width: u32, height: u32) -> u64 {
@@ -63,33 +65,64 @@ pub fn assemble_layer_rgba8(
     doc_height: u32,
     doc_id: u32,
 ) -> Result<Vec<u8>, ProjectError> {
+    let (canvas, _, _) = assemble_layer_rgba8_timed(cache, layer, doc_width, doc_height, doc_id)?;
+    Ok(canvas)
+}
+
+/// Same as [`assemble_layer_rgba8`], plus alloc/zero and tile-blit timings (ms).
+pub fn assemble_layer_rgba8_timed(
+    cache: &TileCache,
+    layer: &Layer,
+    doc_width: u32,
+    doc_height: u32,
+    doc_id: u32,
+) -> Result<(Vec<u8>, f64, f64), ProjectError> {
     if layer.kind != LayerKind::Raster {
         return Err(ProjectError::InvalidArchive(
             "assemble_layer_rgba8 called on non-raster layer".into(),
         ));
     }
 
+    let t_alloc = Instant::now();
     let mut canvas = vec![0u8; (doc_width as usize) * (doc_height as usize) * 4];
+    let alloc_zero_ms = t_alloc.elapsed().as_secs_f64() * 1000.0;
+
+    let t_blit = Instant::now();
     let bounds = layer.bounds_l0;
     let (off_x, off_y) = layer.offset;
 
+    // Collect tile coords first so a missing Raw fails the same way as before
+    // (before any parallel write), then blit disjoint canvas regions in parallel.
+    let mut coords = Vec::new();
     for ty in bounds.min_y..=bounds.max_y {
         for tx in bounds.min_x..=bounds.max_x {
-            let key = TileKey {
-                doc: doc_id,
-                layer: layer.id.0,
-                coord: TileCoord {
-                    level: 0,
-                    x: tx,
-                    y: ty,
-                },
-                stage: CacheStage::Raw,
-            };
-            let tile = cache.get_entry(key).ok_or(ProjectError::IncompleteRaw {
-                doc_id,
-                layer_id: layer.id.0,
-            })?;
+            coords.push((tx, ty));
+        }
+    }
+    let mut tiles = Vec::with_capacity(coords.len());
+    for &(tx, ty) in &coords {
+        let key = TileKey {
+            doc: doc_id,
+            layer: layer.id.0,
+            coord: TileCoord {
+                level: 0,
+                x: tx,
+                y: ty,
+            },
+            stage: CacheStage::Raw,
+        };
+        let tile = cache.get_entry(key).ok_or(ProjectError::IncompleteRaw {
+            doc_id,
+            layer_id: layer.id.0,
+        })?;
+        tiles.push((tx, ty, tile));
+    }
 
+    // Disjoint destinations: each document pixel belongs to one L0 tile.
+    let canvas_len = canvas.len();
+    let canvas_ptr = canvas.as_mut_ptr() as usize;
+    crate::pixel_pool::install(|| {
+        tiles.par_iter().for_each(|&(tx, ty, ref tile)| {
             for ly in 0..TILE_SIZE {
                 for lx in 0..TILE_SIZE {
                     let gx = off_x + (tx * TILE_SIZE + lx) as i32;
@@ -98,18 +131,23 @@ pub fn assemble_layer_rgba8(
                         continue;
                     }
                     let dst = ((gy as usize) * (doc_width as usize) + (gx as usize)) * 4;
+                    debug_assert!(dst + 3 < canvas_len);
                     let sx = HALO + lx;
                     let sy = HALO + ly;
-                    canvas[dst] = f32_to_u8(tile.at(sx, sy, 0));
-                    canvas[dst + 1] = f32_to_u8(tile.at(sx, sy, 1));
-                    canvas[dst + 2] = f32_to_u8(tile.at(sx, sy, 2));
-                    canvas[dst + 3] = f32_to_u8(tile.at(sx, sy, 3));
+                    unsafe {
+                        let ptr = canvas_ptr as *mut u8;
+                        *ptr.add(dst) = f32_to_u8(tile.at(sx, sy, 0));
+                        *ptr.add(dst + 1) = f32_to_u8(tile.at(sx, sy, 1));
+                        *ptr.add(dst + 2) = f32_to_u8(tile.at(sx, sy, 2));
+                        *ptr.add(dst + 3) = f32_to_u8(tile.at(sx, sy, 3));
+                    }
                 }
             }
-        }
-    }
+        });
+    });
+    let assemble_blit_ms = t_blit.elapsed().as_secs_f64() * 1000.0;
 
-    Ok(canvas)
+    Ok((canvas, alloc_zero_ms, assemble_blit_ms))
 }
 
 /// Build a document-sized flat composite from Raw raster layers (insurance PNG).

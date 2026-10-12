@@ -1767,7 +1767,7 @@ mod tests {
             FilterParams::PaletteQuantize {
                 palette_id: PaletteId::new(1),
                 diffusion: Some(DiffusionKernel::Atkinson),
-                    metric: "oklab".to_string(),
+                metric: "oklab".to_string(),
             },
         );
         assert!(filter.validate().is_ok());
@@ -1777,7 +1777,7 @@ mod tests {
             FilterParams::PaletteQuantize {
                 palette_id: PaletteId::new(1),
                 diffusion: None,
-                    metric: "oklab".to_string(),
+                metric: "oklab".to_string(),
             },
         );
         assert!(filter_no_diffusion.validate().is_ok());

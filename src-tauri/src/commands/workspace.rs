@@ -41,10 +41,7 @@ fn default_settings_source() -> WorkspaceSwitchSource {
 }
 
 #[tauri::command]
-pub fn set_workspace(
-    state: State<'_, Arc<AppState>>,
-    req: SetWorkspaceRequest,
-) -> AppConfigDto {
+pub fn set_workspace(state: State<'_, Arc<AppState>>, req: SetWorkspaceRequest) -> AppConfigDto {
     let s = store(&state);
     s.set_workspace(req.workspace, req.source);
     AppConfigDto::from_store(&s)
@@ -134,17 +131,12 @@ pub fn evaluate_workspace_hint(
         "ed_square" => {
             let w = req.doc_width.unwrap_or(0);
             let h = req.doc_height.unwrap_or(0);
-            req.ed_enabled.unwrap_or(false)
-                && w == h
-                && w >= 32
-                && cfg.has_exported_tiles
+            req.ed_enabled.unwrap_or(false) && w == h && w >= 32 && cfg.has_exported_tiles
         }
         _ => false,
     };
     if show {
-        WORKSPACE_METRICS
-            .hint_shown
-            .fetch_add(1, Ordering::Relaxed);
+        WORKSPACE_METRICS.hint_shown.fetch_add(1, Ordering::Relaxed);
     }
     WorkspaceHintDecision {
         show,

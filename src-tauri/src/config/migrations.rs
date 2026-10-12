@@ -20,10 +20,7 @@ pub fn migrate_config_value(mut value: Value) -> Value {
     }
 
     if let Some(obj) = value.as_object_mut() {
-        obj.insert(
-            "schema_version".into(),
-            Value::from(CURRENT_SCHEMA_VERSION),
-        );
+        obj.insert("schema_version".into(), Value::from(CURRENT_SCHEMA_VERSION));
     }
     value
 }

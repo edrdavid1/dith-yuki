@@ -55,6 +55,21 @@ impl EvictContext<'_> {
     }
 }
 
+/// How many `evict_pass` calls ran, and how many tiles they removed.
+/// Drop order and which keys are removed are unchanged.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EvictStats {
+    pub passes: u32,
+    pub removed: u32,
+}
+
+impl EvictStats {
+    fn add(&mut self, other: EvictStats) {
+        self.passes = self.passes.saturating_add(other.passes);
+        self.removed = self.removed.saturating_add(other.removed);
+    }
+}
+
 /// `coord` is in the visible set, or is a finer child of a visible coarser tile.
 pub fn coord_feeds_visible_set(coord: TileCoord, viewport: &HashSet<TileCoord>) -> bool {
     if viewport.contains(&coord) {
@@ -296,10 +311,10 @@ impl TileCache {
     ///
     /// If `viewport_coords` is empty and `active_doc` is set, only inactive-doc
     /// non-pinned tiles are dropped (activate/open before `set_viewport`).
-    pub fn evict_for_pressure(&self, ctx: &EvictContext<'_>) {
+    pub fn evict_for_pressure(&self, ctx: &EvictContext<'_>) -> EvictStats {
         let budget = self.budget_bytes.load(Ordering::Relaxed);
         if self.used_bytes.load(Ordering::Relaxed) <= budget {
-            return;
+            return EvictStats::default();
         }
 
         // Raw of open docs is pinned; still scan Raw for orphans (not in open_docs).
@@ -308,26 +323,28 @@ impl TileCache {
             Some(CacheStage::Processed),
             Some(CacheStage::Raw),
         ];
+        let mut stats = EvictStats::default();
 
         if ctx.active_doc.is_some() {
             for stage in stage_order {
-                self.evict_pass(ctx, budget, true, stage);
+                stats.add(self.evict_pass(ctx, budget, true, stage));
                 if self.used_bytes.load(Ordering::Relaxed) <= budget {
-                    return;
+                    return stats;
                 }
             }
         }
 
         if ctx.active_doc.is_some() && ctx.viewport_coords.is_empty() {
-            return;
+            return stats;
         }
 
         for stage in stage_order {
-            self.evict_pass(ctx, budget, false, stage);
+            stats.add(self.evict_pass(ctx, budget, false, stage));
             if self.used_bytes.load(Ordering::Relaxed) <= budget {
-                return;
+                return stats;
             }
         }
+        stats
     }
 
     fn is_viewport_protected(key: &TileKey, ctx: &EvictContext<'_>) -> bool {
@@ -345,11 +362,15 @@ impl TileCache {
         budget: usize,
         inactive_only: bool,
         stage_filter: Option<CacheStage>,
-    ) {
+    ) -> EvictStats {
         let mut skipped: Vec<TileKey> = Vec::new();
         let max_iterations = self.entries.len().saturating_mul(2).max(1);
         let mut iterations = 0;
         let mut removed_this_pass = 0usize;
+        let mut stats = EvictStats {
+            passes: 1,
+            removed: 0,
+        };
 
         while self.used_bytes.load(Ordering::Relaxed) > budget {
             iterations += 1;
@@ -403,6 +424,8 @@ impl TileCache {
         for key in skipped {
             self.lru_queue.push(key);
         }
+        stats.removed = removed_this_pass as u32;
+        stats
     }
 
     /// Legacy doc-blind viewport preserve. Prefer [`Self::evict_for_pressure`].

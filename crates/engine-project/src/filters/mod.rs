@@ -51,9 +51,9 @@ pub use curves::{CurveChannel, CurvesFilter};
 pub use dither::{DitherAlgorithm, DitherFilter};
 pub use full_document::{
     compute_ascii_job, ensure_full_document, ensure_full_document_ex,
-    filter_uses_ed_wrap_padding, layer_has_full_document_filter,
-    layer_has_full_document_filter_ex, publish_processed_tiles, slice_processed_tile,
-    FullDocumentCache, FullDocumentResult,
+    ensure_full_document_ex_timed, filter_uses_ed_wrap_padding, last_fd_render_stages,
+    layer_has_full_document_filter, layer_has_full_document_filter_ex, publish_processed_tiles,
+    slice_processed_tile, EnsureTrace, FdRenderStages, FullDocumentCache, FullDocumentResult,
 };
 pub use glitch::{GlitchFilter, GlitchType};
 pub use levels::LevelsFilter;
@@ -71,8 +71,8 @@ pub use dither_diffusion::{
 };
 pub use ed_wrap_padding::{
     apply_ed_buffer_no_wrap, apply_ed_with_wrap_padding, apply_ed_with_wrap_padding_simple,
-    edge_margin, wrap_pad_rgba_f32, wrap_padding_fits_limits, EdWrapError, WRAP_PADDING_HINT,
-    MAX_MARGIN_PX, MAX_PADDED_PIXELS,
+    edge_margin, wrap_pad_rgba_f32, wrap_padding_fits_limits, EdWrapError, MAX_MARGIN_PX,
+    MAX_PADDED_PIXELS, WRAP_PADDING_HINT,
 };
 
 // Re-export FilterContext

@@ -39,7 +39,11 @@ pub fn parse(data: &[u8]) -> Result<Vec<(u8, u8, u8)>, PaletteError> {
         }
 
         let r = u8::from_str_radix(&hex[0..2], 16).map_err(|e| {
-            parse_error("HEX", &format!("line {}", i + 1), &format!("invalid red: {e}"))
+            parse_error(
+                "HEX",
+                &format!("line {}", i + 1),
+                &format!("invalid red: {e}"),
+            )
         })?;
         let g = u8::from_str_radix(&hex[2..4], 16).map_err(|e| {
             parse_error(

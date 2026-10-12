@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useEffectLayer } from '../useEffectLayer';
+import { PREVIEW_SLIDER_DEBOUNCE_MS, useEffectLayer } from '../useEffectLayer';
 import { createTestStore, StoreProvider } from '../../app/__tests__/testStore';
 import type { FilterInfo } from '../../types';
 import type { ReactNode } from 'react';
@@ -13,6 +13,8 @@ vi.mock('../../shared/ipc', async (importOriginal) => {
   };
 });
 
+import { gestureSnapshot, resetLevel1ForTests } from '../../diagnostics/level1';
+import { setPreviewDiagnostics } from '../../diagnostics/session';
 import { updateFilter } from '../../shared/ipc';
 
 const mockUpdateFilter = vi.mocked(updateFilter);
@@ -68,6 +70,7 @@ describe('useEffectLayer', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    resetLevel1ForTests();
   });
 
   it('returns null state when layerId is null', () => {
@@ -258,7 +261,7 @@ describe('useEffectLayer', () => {
     expect(mockUpdateFilter).not.toHaveBeenCalled();
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(PREVIEW_SLIDER_DEBOUNCE_MS);
     });
 
     expect(mockUpdateFilter).toHaveBeenCalledTimes(1);
@@ -272,7 +275,7 @@ describe('useEffectLayer', () => {
     );
   });
 
-  it('fires one update_filter per pause when slider ticks are >100ms apart', async () => {
+  it('fires one update_filter per pause when slider ticks are >debounce apart', async () => {
     vi.useFakeTimers();
     mockUpdateFilter.mockResolvedValue(undefined);
 
@@ -288,13 +291,14 @@ describe('useEffectLayer', () => {
     ]);
 
     const { result } = renderHook(() => useEffectLayer(1, 'filter-abc-123'), { wrapper });
+    const pauseMs = PREVIEW_SLIDER_DEBOUNCE_MS + 20;
 
     for (let i = 0; i < 4; i++) {
       act(() => {
         result.current.updateParams({ threshold_scale: 1 + i * 0.1 });
       });
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(120);
+        await vi.advanceTimersByTimeAsync(pauseMs);
       });
     }
 
@@ -325,12 +329,13 @@ describe('useEffectLayer', () => {
     ]);
 
     const { result } = renderHook(() => useEffectLayer(1, 'filter-abc-123'), { wrapper });
+    const pauseMs = PREVIEW_SLIDER_DEBOUNCE_MS + 20;
 
     act(() => {
       result.current.updateParams({ threshold_scale: 1.1 });
     });
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(120);
+      await vi.advanceTimersByTimeAsync(pauseMs);
     });
     expect(mockUpdateFilter).toHaveBeenCalledTimes(1);
 
@@ -339,7 +344,7 @@ describe('useEffectLayer', () => {
         result.current.updateParams({ threshold_scale: 1 + i * 0.1 });
       });
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(120);
+        await vi.advanceTimersByTimeAsync(pauseMs);
       });
     }
     expect(mockUpdateFilter).toHaveBeenCalledTimes(1);
@@ -381,10 +386,46 @@ describe('useEffectLayer', () => {
     expect(result.current.effectParams).toMatchObject({ levels: 16 });
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(PREVIEW_SLIDER_DEBOUNCE_MS);
     });
 
     expect(result.current.effectParams).toMatchObject({ levels: 4 });
     expect(result.current.error).toBeTruthy();
+  });
+
+  it('records at most two update_filter calls for five edits inside 500ms', async () => {
+    vi.useFakeTimers();
+    mockUpdateFilter.mockResolvedValue(undefined);
+    setPreviewDiagnostics(true, 1);
+
+    const { wrapper } = wrapperFor([
+      makeFilter('DitherV2', {
+        mode: 'bayer_8x8',
+        levels: 4,
+        threshold_scale: 1.0,
+        pixel_size: 1,
+        color_mode: 'rgb',
+        palette_id: null,
+      }),
+    ]);
+
+    const { result } = renderHook(() => useEffectLayer(1, 'filter-abc-123'), { wrapper });
+
+    for (let i = 0; i < 5; i++) {
+      act(() => {
+        result.current.updateParams({ threshold_scale: 1 + i * 0.05 });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(80);
+      });
+    }
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PREVIEW_SLIDER_DEBOUNCE_MS + 50);
+    });
+
+    expect(mockUpdateFilter.mock.calls.length).toBeLessThanOrEqual(2);
+    expect(gestureSnapshot()?.update_filter_calls ?? 0).toBeLessThanOrEqual(2);
+    expect(gestureSnapshot()?.update_filter_calls).toBe(mockUpdateFilter.mock.calls.length);
   });
 });

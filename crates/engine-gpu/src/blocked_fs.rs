@@ -157,7 +157,9 @@ pub fn apply_blocked_fs_gpu_opts(
     }
 
     let input_u32: Vec<u32> = input_rgba8
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
     let palette_u32: Vec<u32> = palette_rgba8
@@ -501,7 +503,9 @@ pub fn warm_blocked_fs_pipelines() -> bool {
         return false;
     };
     let cancel = AtomicBool::new(false);
-    let px = [0u8, 0, 0, 255, 255, 255, 255, 255, 128, 128, 128, 255, 64, 64, 64, 255];
+    let px = [
+        0u8, 0, 0, 255, 255, 255, 255, 255, 128, 128, 128, 255, 64, 64, 64, 255,
+    ];
     let pal = [[0, 0, 0, 255], [255, 255, 255, 255]];
     let _ = apply_blocked_fs_gpu_opts(
         device,
@@ -564,15 +568,8 @@ pub fn request_blocked_fs_device() -> Option<(wgpu::Device, wgpu::Queue, String)
     let lim = device.limits();
     eprintln!(
         "blocked_fs device: {} ({:?}) max_storage_buffer_binding_size={} max_buffer_size={}",
-        info.name,
-        info.backend,
-        lim.max_storage_buffer_binding_size,
-        lim.max_buffer_size
+        info.name, info.backend, lim.max_storage_buffer_binding_size, lim.max_buffer_size
     );
 
-    Some((
-        device,
-        queue,
-        format!("{} ({:?})", info.name, info.backend),
-    ))
+    Some((device, queue, format!("{} ({:?})", info.name, info.backend)))
 }

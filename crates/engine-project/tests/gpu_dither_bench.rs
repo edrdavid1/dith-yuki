@@ -89,12 +89,7 @@ fn gpu_dither_speed_matrix() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(20usize)
         .max(3);
-    let sizes = [
-        (1920u32, 1080u32),
-        (3840, 2160),
-        (4000, 3000),
-        (8192, 8192),
-    ];
+    let sizes = [(1920u32, 1080u32), (3840, 2160), (4000, 3000), (8192, 8192)];
     eprintln!("=== gpu_dither_bench repeats={repeats} ===");
     eprintln!("algo\tpath\tWxH\tps\tpal\tstate\tmedian_ms\tp95_ms");
     for &(w, h) in &sizes {
@@ -134,7 +129,9 @@ fn gpu_dither_speed_matrix() {
             // Use blocked_fs CPU as the approx reference already; note floyd via
             // full document would need a different harness. Spec asks for
             // floyd_steinberg — measure via a quick tile-less note:
-            eprintln!("floyd_steinberg\tcpu\t{w}x{h}\t(see exact ED path; not in gpu_dither apply)");
+            eprintln!(
+                "floyd_steinberg\tcpu\t{w}x{h}\t(see exact ED path; not in gpu_dither apply)"
+            );
         }
     }
 }

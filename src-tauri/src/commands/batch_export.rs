@@ -4,11 +4,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use engine_project::{
-    expand_output_name, flatten_bottom_to_top, run_headless_batch, FilterInstance,
-    HeadlessJob, HeadlessJobResult, HeadlessOutputFormat, LayerRef,
-};
 use engine_color::palette::Palette;
+use engine_project::{
+    expand_output_name, flatten_bottom_to_top, run_headless_batch, FilterInstance, HeadlessJob,
+    HeadlessJobResult, HeadlessOutputFormat, LayerRef,
+};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 

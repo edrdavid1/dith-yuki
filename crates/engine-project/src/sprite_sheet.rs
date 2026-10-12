@@ -34,8 +34,7 @@ pub enum SpriteSheetError {
 
 fn filters_have_error_diffusion(filters: &[FilterInstance]) -> bool {
     filters.iter().any(|f| {
-        f.enabled
-            && matches!(&f.params, FilterParams::DitherV2(p) if p.mode.is_error_diffusion())
+        f.enabled && matches!(&f.params, FilterParams::DitherV2(p) if p.mode.is_error_diffusion())
     })
 }
 
@@ -106,7 +105,13 @@ pub fn process_sprite_sheet_rgba_f32(
             let palette_srgb: Vec<(u8, u8, u8)> = palette
                 .colors
                 .iter()
-                .map(|c| (linear_to_srgb(c.r), linear_to_srgb(c.g), linear_to_srgb(c.b)))
+                .map(|c| {
+                    (
+                        linear_to_srgb(c.r),
+                        linear_to_srgb(c.g),
+                        linear_to_srgb(c.b),
+                    )
+                })
                 .collect();
             encode_indexed_png(&out_rgba, width, height, &palette_srgb)
                 .map_err(|e| SpriteSheetError::Headless(HeadlessError::Export(e.to_string())))
@@ -184,19 +189,17 @@ fn process_cell(
     let doc_id = 1u32;
     let layer_id = 1u32;
     let live_gen = 1u64;
-      let budget = ((width as usize).saturating_mul(height as usize).saturating_mul(16))
-        .clamp(4_000_000, 128_000_000);
+    let budget = ((width as usize)
+        .saturating_mul(height as usize)
+        .saturating_mul(16))
+    .clamp(4_000_000, 128_000_000);
     let cache = TileCache::new(budget);
     decompose_image_to_tiles_at_generation(
-        rgba_f32,
-        width,
-        height,
-        doc_id,
-        layer_id,
-        &cache,
-        live_gen,
+        rgba_f32, width, height, doc_id, layer_id, &cache, live_gen,
     )
-    .map_err(|e| SpriteSheetError::Headless(HeadlessError::Export(format!("tile decompose: {e}"))))?;
+    .map_err(|e| {
+        SpriteSheetError::Headless(HeadlessError::Export(format!("tile decompose: {e}")))
+    })?;
 
     let mut doc = Document::new(DocumentId::new(doc_id), width, height);
     doc.generations.set_document_gen(live_gen);
@@ -218,7 +221,7 @@ pub fn rgba8_to_f32(rgba: &[u8]) -> Vec<f32> {
 mod tests {
     use super::*;
     use crate::filter::{
-        DitherColorMode, DitherModeV2, DitherParamsV2, FilterKind, FilterParams, FilterInstance,
+        DitherColorMode, DitherModeV2, DitherParamsV2, FilterInstance, FilterKind, FilterParams,
     };
     use std::sync::atomic::AtomicBool;
 

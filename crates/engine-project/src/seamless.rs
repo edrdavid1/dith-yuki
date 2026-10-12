@@ -72,7 +72,11 @@ pub fn pattern_angle_breaks_periodicity(angle_deg: f32) -> bool {
     }
     // Snap near-integers to avoid float noise (15.000001 → 15).
     let nearest = a.round();
-    let a = if (a - nearest).abs() < 1e-3 { nearest } else { a };
+    let a = if (a - nearest).abs() < 1e-3 {
+        nearest
+    } else {
+        a
+    };
     let m = a % 90.0;
     m > 1e-3 && (90.0 - m) > 1e-3
 }
@@ -154,30 +158,25 @@ pub fn check_seamless(
 /// Human-readable warning lines for UI (empty when seamless).
 pub fn seamless_warning_lines(report: &SeamlessReport, width: u32, height: u32) -> Vec<String> {
     match report.kind {
-        SeamlessKind::ApproximateOnly => vec![
-            "Error diffusion cannot be exactly seamless (sequential). \
+        SeamlessKind::ApproximateOnly => {
+            vec!["Error diffusion cannot be exactly seamless (sequential). \
              Enable Approximate wrap-padding for a statistical edge fix — \
              results are approximate only, not bit-periodic."
-                .into(),
-        ],
+                .into()]
+        }
         SeamlessKind::Unknown => {
-            let mut lines = vec![
-                "Seamless period unknown for this mode (or custom map size missing).".into(),
-            ];
+            let mut lines =
+                vec!["Seamless period unknown for this mode (or custom map size missing).".into()];
             if report.angle_breaks_periodicity {
-                lines.push(
-                    "Pattern angle is not 0°/90° — the lattice is not axis-periodic.".into(),
-                );
+                lines
+                    .push("Pattern angle is not 0°/90° — the lattice is not axis-periodic.".into());
             }
             lines
         }
         SeamlessKind::ExactOrdered => {
             let mut lines = Vec::new();
             if report.angle_breaks_periodicity {
-                lines.push(
-                    "Pattern angle is not 0°/90° — tiling will show a dither seam."
-                        .into(),
-                );
+                lines.push("Pattern angle is not 0°/90° — tiling will show a dither seam.".into());
             }
             if let (Some(px), Some(py)) = (report.period_x, report.period_y) {
                 if !report.width_ok || !report.height_ok {
@@ -206,14 +205,7 @@ mod tests {
 
     #[test]
     fn bayer8_pixel_size_2_period_16() {
-        let r = check_seamless(
-            &DitherModeV2::Bayer8x8,
-            2,
-            0.0,
-            1024,
-            1000,
-            None,
-        );
+        let r = check_seamless(&DitherModeV2::Bayer8x8, 2, 0.0, 1024, 1000, None);
         assert_eq!(r.period_x, Some(16));
         assert_eq!(r.period_y, Some(16));
         assert!(r.width_ok);
@@ -232,14 +224,7 @@ mod tests {
 
     #[test]
     fn ed_is_approximate_only() {
-        let r = check_seamless(
-            &DitherModeV2::FloydSteinberg,
-            1,
-            0.0,
-            64,
-            64,
-            None,
-        );
+        let r = check_seamless(&DitherModeV2::FloydSteinberg, 1, 0.0, 64, 64, None);
         assert_eq!(r.kind, SeamlessKind::ApproximateOnly);
         let lines = seamless_warning_lines(&r, 64, 64);
         assert!(!lines.is_empty());

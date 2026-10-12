@@ -1,8 +1,8 @@
 //! CMYK angled-screen halftone (`cmyk_halftone`).
 
-use engine_registry::{TemporalStability, 
+use engine_registry::{
     AlgorithmId, CpuCheckpointKind, EffectCategory, FilterAlgorithm, FilterCtx, FilterError,
-    GpuEligibility, ParamField,
+    GpuEligibility, ParamField, TemporalStability,
 };
 use engine_tiles::PixelTile;
 

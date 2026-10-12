@@ -391,14 +391,8 @@ fn export_sprite_sheet_cells(
             .ok_or_else(|| AppError::Generic("No raster layer for sprite-sheet export".into()))?
     };
 
-    let raw = assemble_layer_rgba8(
-        &state.tiles.tile_cache,
-        layer,
-        width,
-        height,
-        doc.id.0,
-    )
-    .map_err(|e| AppError::Generic(format!("Sprite-sheet raw assemble: {e}")))?;
+    let raw = assemble_layer_rgba8(&state.tiles.tile_cache, layer, width, height, doc.id.0)
+        .map_err(|e| AppError::Generic(format!("Sprite-sheet raw assemble: {e}")))?;
     let rgba_f32 = rgba8_to_f32(&raw);
 
     let out_format = match format {
@@ -468,9 +462,9 @@ fn resolve_export_palette(
     palette_id: Option<u32>,
 ) -> Result<&engine_color::palette::Palette, AppError> {
     if let Some(id) = palette_id {
-        return doc.get_palette(engine_project::PaletteId::new(id)).ok_or_else(|| {
-            AppError::Generic(format!("Palette {id} not found for PNG8 export"))
-        });
+        return doc
+            .get_palette(engine_project::PaletteId::new(id))
+            .ok_or_else(|| AppError::Generic(format!("Palette {id} not found for PNG8 export")));
     }
     doc.palettes.first().ok_or_else(|| {
         AppError::Generic(

@@ -12,7 +12,7 @@ use engine_gpu::{
     apply_blue_noise_gpu_opts, BlockedFsGpuOpts, BlueNoiseGpuOpts,
 };
 use engine_project::algorithms::gpu_dither_cpu::{
-    blue_noise_cpu, blue_noise_ranks, blocked_fs_cpu, PaletteRgb, Rgba8, CORE, DEFAULT_SPREAD, PAD,
+    blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, PaletteRgb, Rgba8, CORE, DEFAULT_SPREAD, PAD,
 };
 
 fn gray_ramp(w: usize, h: usize) -> Vec<Rgba8> {
@@ -67,9 +67,7 @@ fn blocked_fs_4k_forced_4mib_strips_match_full_and_cpu() {
     let pal_b = pal_rgba(&pal);
     let cancel = AtomicBool::new(false);
 
-    let cpu = to_bytes(
-        &blocked_fs_cpu(&input, side, side, &pal, CORE, CORE, PAD).expect("cpu"),
-    );
+    let cpu = to_bytes(&blocked_fs_cpu(&input, side, side, &pal, CORE, CORE, PAD).expect("cpu"));
     let full = apply_blocked_fs_gpu(&device, &queue, &in_b, side, side, &pal_b, &cancel)
         .expect("full gpu");
     let stripped = apply_blocked_fs_gpu_opts(
@@ -110,9 +108,8 @@ fn blue_noise_4k_forced_4mib_strips_match_full_and_cpu() {
     let ranks = blue_noise_ranks();
     let cancel = AtomicBool::new(false);
 
-    let cpu = to_bytes(
-        &blue_noise_cpu(&input, side, side, &pal, ranks, DEFAULT_SPREAD).expect("cpu"),
-    );
+    let cpu =
+        to_bytes(&blue_noise_cpu(&input, side, side, &pal, ranks, DEFAULT_SPREAD).expect("cpu"));
     let full = apply_blue_noise_gpu(
         &device,
         &queue,
@@ -161,17 +158,14 @@ fn huge_parity(side: u32) {
     let pal_b = pal_rgba(&pal);
     let cancel = AtomicBool::new(false);
 
-    let cpu = to_bytes(
-        &blocked_fs_cpu(&input, side, side, &pal, CORE, CORE, PAD).expect("cpu"),
-    );
-    let gpu = apply_blocked_fs_gpu(&device, &queue, &in_b, side, side, &pal_b, &cancel)
-        .expect("gpu");
+    let cpu = to_bytes(&blocked_fs_cpu(&input, side, side, &pal, CORE, CORE, PAD).expect("cpu"));
+    let gpu =
+        apply_blocked_fs_gpu(&device, &queue, &in_b, side, side, &pal_b, &cancel).expect("gpu");
     assert_eq!(cpu, gpu, "blocked_fs {side}² GPU ≠ CPU");
 
     let ranks = blue_noise_ranks();
-    let cpu_bn = to_bytes(
-        &blue_noise_cpu(&input, side, side, &pal, ranks, DEFAULT_SPREAD).expect("cpu bn"),
-    );
+    let cpu_bn =
+        to_bytes(&blue_noise_cpu(&input, side, side, &pal, ranks, DEFAULT_SPREAD).expect("cpu bn"));
     let gpu_bn = apply_blue_noise_gpu(
         &device,
         &queue,

@@ -34,3 +34,7 @@ tempfile = "3"
 [[bench]]
 name = "palette_lut_bench"
 harness = false
+
+[[bench]]
+name = "srgb_transfer_bench"
+harness = false
