@@ -110,6 +110,16 @@
   color: var(--color-white);
 }
 
+.lp-dropdown-menu-item.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.lp-dropdown-menu-item.disabled:hover {
+  background: transparent;
+  color: var(--text-color);
+}
+
 .lp-dropdown-btn {
   border: none;
   outline: none;

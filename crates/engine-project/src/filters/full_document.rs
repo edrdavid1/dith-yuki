@@ -30,8 +30,8 @@ use crate::algorithms::builtin_registry;
 use crate::document::Document;
 use crate::error::EngineError;
 use crate::filter::{
-    filter_params_to_json, resolve_algorithm_id, AsciiParams, DitherParamsV2, FilterInstance,
-    FilterParams,
+    filter_params_to_json, resolve_algorithm_id, AsciiParams, DitherModeV2, DitherParamsV2,
+    FilterInstance, FilterParams,
 };
 use crate::filters::ascii_job::{apply_ascii_rgba, run_ascii_job};
 use crate::filters::riemersma::{apply_riemersma_rgba, RiemersmaError};
@@ -304,7 +304,7 @@ pub fn compute_full_document_rgba_ex(
         }
         match algo.execution_scope() {
             ExecutionScope::FullDocument => {
-                apply_full_document_algorithm(&mut rgba, w, h, filter, should_cancel)?;
+                apply_full_document_algorithm(&mut rgba, w, h, filter, doc, should_cancel)?;
             }
             ExecutionScope::Tiled => {
                 apply_tiled_filters_on_buffer(&mut rgba, w, h, layer, filter, doc, cache)?;
@@ -373,7 +373,7 @@ pub fn compute_ascii_job(
         };
         match algo.execution_scope() {
             ExecutionScope::FullDocument => {
-                apply_full_document_algorithm(&mut rgba, w, h, filter, should_cancel)?;
+                apply_full_document_algorithm(&mut rgba, w, h, filter, doc, should_cancel)?;
             }
             ExecutionScope::Tiled => {
                 apply_tiled_filters_on_buffer(&mut rgba, w, h, layer, filter, doc, cache)?;
@@ -425,6 +425,7 @@ fn apply_full_document_algorithm(
     width: u32,
     height: u32,
     filter: &FilterInstance,
+    doc: &Document,
     should_cancel: &AtomicBool,
 ) -> Result<(), EngineError> {
     // ASCII is its own FilterParams arm (not a dither mode).
@@ -442,16 +443,32 @@ fn apply_full_document_algorithm(
         FilterParams::DitherV2(p) => p.clone(),
         other => {
             let json = filter_params_to_json(other)?;
-            serde_json::from_value::<DitherParamsV2>(json)
-                .map_err(|e| EngineError::invalid_filter_params(format!("riemersma params: {e}")))?
+            serde_json::from_value::<DitherParamsV2>(json).map_err(|e| {
+                EngineError::invalid_filter_params(format!("full-document params: {e}"))
+            })?
         }
     };
-    apply_riemersma_rgba(rgba, width, height, &params, should_cancel).map_err(|e| match e {
-        RiemersmaError::Cancelled => EngineError::invalid_state("riemersma cancelled"),
-        RiemersmaError::InvalidBuffer => {
-            EngineError::invalid_filter_params("riemersma invalid buffer")
+
+    match params.mode {
+        DitherModeV2::BlockedFs | DitherModeV2::BlueNoise => {
+            let palette = crate::algorithms::gpu_dither::resolve_gpu_dither_palette(&params, doc)?;
+            crate::algorithms::gpu_dither::apply_gpu_dither_rgba(
+                rgba,
+                width,
+                height,
+                &params,
+                &palette,
+                should_cancel,
+            )
+            .map_err(|e| EngineError::invalid_filter_params(e.to_string()))
         }
-    })
+        _ => apply_riemersma_rgba(rgba, width, height, &params, should_cancel).map_err(|e| match e {
+            RiemersmaError::Cancelled => EngineError::invalid_state("riemersma cancelled"),
+            RiemersmaError::InvalidBuffer => {
+                EngineError::invalid_filter_params("riemersma invalid buffer")
+            }
+        }),
+    }
 }
 
 /// Apply a single tiled filter by walking document tiles (no cross-tile ED
@@ -546,6 +563,15 @@ pub fn ensure_full_document_ex(
                 .or_insert_with(CacheSlot::empty);
 
             if let Some(result) = slot.ready_for(&key) {
+                log::info!(
+                    target: "gpu_dither",
+                    "full_document cache_hit doc={} layer={} params_hash={:x} gen={} include_ascii={}",
+                    key.doc,
+                    key.layer,
+                    key.params_hash,
+                    key.document_gen,
+                    key.include_ascii
+                );
                 return Ok(result);
             }
 

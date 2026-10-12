@@ -27,6 +27,10 @@ npm-debug.log*
 *.swo
 *.sublime-*
 
+# Void-and-cluster generator local venv / run logs
+/tools/void_and_cluster/.venv/
+/tools/void_and_cluster/parity_*.log
+
 # OS
 .DS_Store
 Thumbs.db
@@ -49,3 +53,11 @@ Thumbs.db
 
 # Windows shell thumbnail DLL staged for Tauri resources
 /src-tauri/previews/
+
+# Local GPU parity / stress run artifacts
+/gpu_parity_failures/
+/gpu_stress_logs/
+/parity_progress.txt
+/parity_nightly.log
+/parity_full.log
+/parity_random.log

@@ -142,6 +142,8 @@ export const DITHERING_ALGORITHM_IDS: readonly string[] = [
   'random_dot_stipple',
   'cmyk_halftone',
   'wave',
+  'blocked_fs',
+  'blue_noise',
 ];
 
 export function isDitheringAlgorithmId(algorithmId: string): boolean {

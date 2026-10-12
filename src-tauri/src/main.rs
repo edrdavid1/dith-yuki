@@ -378,6 +378,16 @@ fn main() {
 
                 // Workspace / AppConfig (`config.json`) — FR-2 / NFR-2.
                 state.config.rebind_app_data(&app_data_dir);
+
+                // Warm GPU dither pipelines in the background when the experimental
+                // flag is on so the first preview is not charged `pipeline=new`.
+                if state.config.snapshot().experimental.gpu_dither_families {
+                    std::thread::spawn(|| {
+                        if engine_gpu::warm_blocked_fs_pipelines() {
+                            log::info!(target: "gpu_dither", "pipeline warmup complete");
+                        }
+                    });
+                }
             }
 
             // decorations stay true so traffic lights exist; Overlay+fullSize

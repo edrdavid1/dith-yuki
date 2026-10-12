@@ -82,6 +82,13 @@ fn filter_to_spec(
                 engine_registry::GpuEligibility::Cpu(kind) => {
                     return GraphLayerFilter::CpuCheckpoint(map_cpu_kind(kind));
                 }
+                // TODO(ED-on-GPU.md §6.3): dispatch GPU when probe + flag allow.
+                // Until then, FullDocument CPU reference is the product path.
+                engine_registry::GpuEligibility::Conditional => {
+                    return GraphLayerFilter::CpuCheckpoint(
+                        CpuCheckpointKind::SequentialGlobalDependency,
+                    );
+                }
             }
         }
     }

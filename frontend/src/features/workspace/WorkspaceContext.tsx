@@ -27,6 +27,7 @@ import {
   type UiVisibility,
   type Workspace,
 } from '../../shared/workspace/visibility';
+import { setGpuDitherFamiliesAvailable } from '../effects/dither/algorithmFamilies';
 
 const DEFAULT_VISIBILITY: UiVisibility = uiVisibilityFromConfig({
   workspace: 'general',
@@ -38,6 +39,8 @@ type WorkspaceContextValue = {
   workspace: Workspace;
   visibility: UiVisibility;
   tilingAdvanced: boolean;
+  /** experimental.gpu_dither_families — shows GPU ED family + preview path indicator. */
+  gpuDitherFamilies: boolean;
   showWorkspacePrompt: boolean;
   hintVisible: boolean;
   setWorkspacePreference: (w: Workspace) => Promise<void>;
@@ -62,15 +65,20 @@ function applyDto(dto: AppConfigDto): {
   visibility: UiVisibility;
   tilingAdvanced: boolean;
   showWorkspacePrompt: boolean;
+  gpuDitherFamilies: boolean;
 } {
   const workspace = dto.workspace ?? 'general';
   const advanced = dto.advanced ?? { tiling_advanced: false };
+  const experimental = dto.experimental ?? {};
   // Prefer local from_config so UI stays correct even if IPC field names drift.
   return {
     workspace,
     visibility: uiVisibilityFromConfig({ workspace, advanced }),
     tilingAdvanced: Boolean(advanced.tiling_advanced),
     showWorkspacePrompt: Boolean(dto.showWorkspacePrompt),
+    gpuDitherFamilies: Boolean(
+      experimental.gpu_dither_families ?? experimental.gpuDitherFamilies,
+    ),
   };
 }
 
@@ -79,6 +87,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [workspace, setWorkspaceState] = useState<Workspace>('general');
   const [visibility, setVisibility] = useState<UiVisibility>(DEFAULT_VISIBILITY);
   const [tilingAdvanced, setTilingAdvancedState] = useState(false);
+  const [gpuDitherFamilies, setGpuDitherFamilies] = useState(false);
   const [showWorkspacePrompt, setShowPrompt] = useState(false);
   const [hintVisible, setHintVisible] = useState(false);
   const [hintShownThisSession, setHintShownThisSession] = useState(false);
@@ -89,6 +98,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setVisibility(next.visibility);
     setTilingAdvancedState(next.tilingAdvanced);
     setShowPrompt(next.showWorkspacePrompt);
+    setGpuDitherFamilies(next.gpuDitherFamilies);
+    setGpuDitherFamiliesAvailable(next.gpuDitherFamilies);
   }, []);
 
   useEffect(() => {
@@ -210,6 +221,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       workspace,
       visibility,
       tilingAdvanced,
+      gpuDitherFamilies,
       showWorkspacePrompt,
       hintVisible,
       setWorkspacePreference,
@@ -225,6 +237,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       workspace,
       visibility,
       tilingAdvanced,
+      gpuDitherFamilies,
       showWorkspacePrompt,
       hintVisible,
       setWorkspacePreference,

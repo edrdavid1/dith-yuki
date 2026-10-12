@@ -14,6 +14,11 @@ import {
   wrapPaddingFitsLimits,
 } from '../../../shared/wrapPadding';
 import { useWorkspaceOptional } from '../../workspace/WorkspaceContext';
+import {
+  AlgorithmSelector,
+  type AlgorithmSelectorValue,
+} from '../dither/AlgorithmSelector';
+import { selectionFromMode } from '../dither/algorithmFamilies';
 import panelStyles from '../EffectSettingsPanel.module.css';
 import paramStyles from '../../../shared/ui/ParamControls.module.css';
 import inputStyles from '../../../shared/ui/ParamInput.module.css';
@@ -204,6 +209,12 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
   const patternAngle = Number(params.pattern_angle ?? 0);
   const simpleMode = modeToSimple(mode);
   const customPath = modeToCustomPath(mode);
+  // Map from the raw `mode` string so unknown values warn (§5.3); object modes
+  // (custom_png) resolve through modeToSimple.
+  const algorithmSelection = useMemo(() => {
+    if (typeof mode === 'string') return selectionFromMode(mode);
+    return selectionFromMode(simpleMode);
+  }, [mode, simpleMode]);
   const seamlessLines = useMemo(() => {
     if (docWidth <= 0 || docHeight <= 0) return [];
     const report = checkSeamless({
@@ -325,6 +336,15 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
     }
   };
 
+  /**
+   * TODO(chose-algorithm §5.2 / follow-up §11.1): structured family+variant on
+   * DitherParamsV2. Variants today are the existing `mode` string ids, so the
+   * render pipeline keeps reading `params.mode` unchanged.
+   */
+  const handleAlgorithmSelectorChange = (next: AlgorithmSelectorValue) => {
+    void handleModeSelect(next.variant);
+  };
+
   const handleBrowseThresholdMap = async () => {
     const selected = await pickThresholdMapPng();
     if (selected) {
@@ -342,43 +362,9 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
         .
       </p>
 
-      <DropdownMenu
-        label="Algorithm"
-        value={simpleMode}
-        options={[
-          { value: 'floyd_steinberg', label: 'Floyd-Steinberg' },
-          { value: 'atkinson', label: 'Atkinson' },
-          { value: 'jarvis_judice_ninke', label: 'Jarvis-Judice-Ninke' },
-          { value: 'stucki', label: 'Stucki' },
-          { value: 'burkes', label: 'Burkes' },
-          { value: 'fan93', label: 'Fan 93' },
-          { value: 'ostromoukhov', label: 'Ostromoukhov' },
-          { value: 'sierra', label: 'Sierra' },
-          { value: 'sierra_lite', label: 'Sierra Lite' },
-          { value: 'sierra_two_row', label: 'Sierra Two-Row' },
-          { value: 'shiau_fan', label: 'Shiau–Fan' },
-          { value: 'stevenson_arce', label: 'Stevenson–Arce' },
-          { value: 'zhou_fang', label: 'Zhou–Fang' },
-          { value: 'riemersma', label: 'Riemersma' },
-          { value: 'void_and_cluster', label: 'Void and Cluster' },
-          { value: 'crosshatch_dither', label: 'Crosshatch' },
-          { value: 'line_screen', label: 'Line Screen' },
-          { value: 'voronoi_stipple', label: 'Voronoi Stipple' },
-          { value: 'random_dot_stipple', label: 'Random Dot Stipple' },
-          { value: 'bayer_2x2', label: 'Bayer 2×2' },
-          { value: 'bayer_4x4', label: 'Bayer 4×4' },
-          { value: 'bayer_8x8', label: 'Bayer 8×8' },
-          { value: 'bayer_16x16', label: 'Bayer 16×16' },
-          { value: 'clustered_dot_ordered', label: 'Clustered Dot' },
-          { value: 'dispersed_dot_ordered', label: 'Dispersed Dot' },
-          { value: 'cmyk_halftone', label: 'CMYK Halftone' },
-          { value: 'halftone_screen_angled', label: 'Halftone Screen (Angled)' },
-          { value: 'wave', label: 'Wave' },
-          { value: 'custom_png', label: 'Custom Threshold Map' },
-        ]}
-        onSelect={(v) => {
-          void handleModeSelect(v);
-        }}
+      <AlgorithmSelector
+        value={algorithmSelection}
+        onChange={handleAlgorithmSelectorChange}
       />
 
       {visibility?.showEdTemporalWarning && (

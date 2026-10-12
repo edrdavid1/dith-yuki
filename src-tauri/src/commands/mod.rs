@@ -128,7 +128,47 @@ pub struct FullDocumentBusyPayload {
     pub doc_id: u32,
 }
 
-/// Enter a full-document ensure; emit `full-document-busy` when the first caller enters.
+#[derive(Debug, Clone, Serialize)]
+pub struct GpuDitherStatusPayload {
+    pub doc_id: u32,
+    pub algorithm: String,
+    pub path: String,
+    pub backend: String,
+    pub elapsed_ms: u32,
+    pub strips: u32,
+    pub width: u32,
+    pub height: u32,
+    pub pixel_size: u32,
+}
+
+/// Emit last GPU-dither apply status for the preview footer (when experimental flag is on).
+pub(crate) fn emit_gpu_dither_status(state: &AppState, doc_id: u32) {
+    let Some(status) = engine_project::algorithms::gpu_dither::take_last_gpu_dither_status() else {
+        return;
+    };
+    let Ok(guard) = state.app_handle.lock() else {
+        return;
+    };
+    let Some(ref app) = *guard else {
+        return;
+    };
+    let payload = GpuDitherStatusPayload {
+        doc_id,
+        algorithm: status.algorithm,
+        path: status.path,
+        backend: status.backend,
+        elapsed_ms: status.elapsed_ms,
+        strips: status.strips,
+        width: status.width,
+        height: status.height,
+        pixel_size: status.pixel_size,
+    };
+    let _ = app.emit_to(tauri::EventTarget::Any, "gpu-dither-status", payload);
+}
+
+/// Enter a preview recompute (full-document ensure or filter-driven tile refresh).
+/// Emits `full-document-busy` when the first caller enters — drives the corner
+/// spinner for GPU families **and** CPU tiled dither.
 pub(crate) fn begin_full_document_busy(state: &AppState, doc_id: u32) {
     let prev = state.full_document_busy.fetch_add(1, Ordering::AcqRel);
     if prev == 0 {
@@ -136,10 +176,18 @@ pub(crate) fn begin_full_document_busy(state: &AppState, doc_id: u32) {
     }
 }
 
-/// Leave a full-document ensure; emit clear when the last caller exits.
+/// Leave a preview recompute; emit clear when the last caller exits.
 pub(crate) fn end_full_document_busy(state: &AppState, doc_id: u32) {
     let prev = state.full_document_busy.fetch_sub(1, Ordering::AcqRel);
     if prev == 1 {
+        emit_full_document_busy(state, false, doc_id);
+    }
+}
+
+/// Drop any held preview-busy refcount and emit idle (safe if already 0).
+fn clear_full_document_busy(state: &AppState, doc_id: u32) {
+    let prev = state.full_document_busy.swap(0, Ordering::AcqRel);
+    if prev > 0 {
         emit_full_document_busy(state, false, doc_id);
     }
 }
@@ -286,28 +334,40 @@ fn run_preview_refresh(state: &AppState, layer_id: u32, clear_residuals: bool) {
     let Ok(session) = state.active_session() else {
         return;
     };
+    let doc_id = session.document_handle.snapshot().id.0;
     if clear_residuals {
-        let doc = session.document_handle.snapshot().id.0;
         state
             .tiles
             .error_residuals
-            .evict_layer(doc, engine_project::types::LayerId::new(layer_id));
-        state.tiles.block_representatives.evict_layer(doc, layer_id);
-        state.tiles.full_document.invalidate_layer(doc, layer_id);
+            .evict_layer(doc_id, engine_project::types::LayerId::new(layer_id));
+        state.tiles.block_representatives.evict_layer(doc_id, layer_id);
+        state.tiles.full_document.invalidate_layer(doc_id, layer_id);
     }
     engine_tiles::invalidation::invalidate(
         &state.tiles.tile_cache,
         engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
-            doc: session.document_handle.snapshot().id.0,
+            doc: doc_id,
             layer: layer_id,
         },
     );
+    // Hold the corner spinner for the whole filter refresh wave (CPU tiled ED
+    // included). Nested full-document begin/end inside workers nest on top.
+    begin_full_document_busy(state, doc_id);
     schedule_dirty_viewport_tiles(state);
+    if !preview_pass_busy(state) {
+        // Nothing queued (empty viewport / already fresh) — don't leave the chip on.
+        end_full_document_busy(state, doc_id);
+    }
 }
 
 pub(crate) fn on_preview_task_finished(state: &AppState) {
     if preview_pass_busy(state) {
         return;
+    }
+    // Wave idle: clear the refresh-held busy before a coalesced refresh restarts it.
+    if let Ok(session) = state.active_session() {
+        let doc_id = session.document_handle.snapshot().id.0;
+        clear_full_document_busy(state, doc_id);
     }
     let pending = state.pending_preview_refresh.lock().unwrap().take();
     if let Some(p) = pending {

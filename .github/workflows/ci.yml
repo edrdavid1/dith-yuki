@@ -42,6 +42,14 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
+      - name: GPU dither parity (quick)
+        # Subset of all critical categories; minutes. Full matrix is pre-release only
+        # (see docs/adr/gpu-dither-families.md). Test is #[ignore] — needs a GPU.
+        run: >
+          PARITY_MODE=quick PARITY_REPEAT=1 PARITY_SEED=0xc1
+          cargo test -p engine-project --test gpu_parity_matrix --release
+          -- --ignored --nocapture --test-threads=1
+
       - name: Soft-proof hostile ICC + golden (release)
         # Release + panic=unwind: corrupt ICC must become SoftProofError, not abort.
         # Seeded mutation corpus lives in this test; full libFuzzer campaigns:

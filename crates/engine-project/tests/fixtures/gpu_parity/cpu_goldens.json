@@ -1,0 +1,13 @@
+{
+  "bfs_128x128_p2_grad_h_cpu": "b5c9a789ff06fd6978f059d48e80f08adcb72035bb0847a0dd649ca17d2b2d77",
+  "bfs_15x15_ps2_p2_grad_h_cpu_draft": "ef10f1c61fe93ea20b8595807c8f125ea51c39209e74887f16f71efd60f9ced1",
+  "bfs_31x31_ps4_p2_grad_h_cpu_draft": "2bcc20e61a4d12e891bc829fa7d332fe87046894b2a768e3d4dc572033c5a0db",
+  "bfs_55x55_ps7_p2_grad_h_cpu_draft": "797de92dd3d94322814dd0f36b85fe85d0e0bbb883e18ede3996645782a93173",
+  "bfs_56x56_p2_grad_h_cpu": "a1fbf93c585f6eba808cfef178b6b31970cb85b6ae0111378945eb697e806ca3",
+  "bfs_64x64_p2_grad_h_cpu": "9082db6d51ece21bf3cbc113a3dbd8199d0ed71eaa130c6932633a54389313f3",
+  "bfs_8x8_p2_grad_h_cpu": "26d92df9c12f5147aee6c66e9ec61248ec8af8c4565b3430978a10367ffba294",
+  "bn_128x128_p2_grad_h_cpu": "c6a889b3b0bc276b7c8585689164337931e9438beefebcba7f243e2309ae8b4b",
+  "bn_56x56_p2_grad_h_cpu": "2f68c1e0df142e85eb1bb6b302e1e060294d294b55e536f5a8749b05b5e817dd",
+  "bn_64x64_p2_grad_h_cpu": "2830c4501420c15c2ff7b5a080ec3431c6ddd4b55ee86da6cb3fe47b958482e3",
+  "bn_8x8_p2_grad_h_cpu": "bb5f6722011f23a6e88209e9f77e38f9821dcccd15ecf2e0ae311027c20758bd"
+}

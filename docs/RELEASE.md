@@ -13,6 +13,17 @@ How we cut macOS/Windows builds, sign updater artifacts, and ship a public beta.
 
 Workflow: [`.github/workflows/release.yml`](../.github/workflows/release.yml) on `push` of `v*`.
 
+**GPU dither parity (pre-release):** CI runs `PARITY_MODE=quick` only. Before cutting a
+release tag that ships `blocked_fs` / `blue_noise`, run the deterministic full matrix
+on a machine with a real GPU and record the result in
+[`docs/adr/gpu-dither-families.md`](./adr/gpu-dither-families.md):
+
+```bash
+caffeinate -i bash -c 'PARITY_MODE=full PARITY_SEED=0xC0FFEE PARITY_REPEAT=3 \
+  cargo test -p engine-project --test gpu_parity_matrix --release -- --ignored --nocapture --test-threads=1 \
+  2>&1 | tee parity_full.log'
+```
+
 **Important:** GitHub’s `/releases/latest` **ignores** releases marked as GitHub “Pre-release”. The in-app updater endpoint uses that URL, so this workflow keeps `prerelease: false` and communicates the channel via the **tag** + title suffix (`(alpha)` / `(beta)`). When you later run stable + pre-release in parallel, add a separate channel endpoint instead of relying on GitHub prerelease flags.
 
 App endpoint (hardcoded in `tauri.conf.json`):

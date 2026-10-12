@@ -18,6 +18,8 @@ export interface DropdownOption {
   value: string;
   label: string;
   disabled?: boolean;
+  /** Native tooltip on the menu row (and useful for unavailable options). */
+  title?: string;
   /** Consecutive options with the same group get a non-selectable header. */
   group?: string;
 }
@@ -29,6 +31,10 @@ interface DropdownMenuProps {
   onSelect: (value: string) => void;
   disabled?: boolean;
   className?: string;
+  /** Accessible name for the closed field (`role="button"`). */
+  ariaLabel?: string;
+  /** Associates helper text (e.g. trade-off line) with the closed field. */
+  ariaDescribedBy?: string;
   /** Replaces the default label text inside the closed field (keeps field chrome). */
   selectedContent?: ReactNode;
   /** Custom menu row content; defaults to `option.label`. */
@@ -42,6 +48,8 @@ export default function DropdownMenu({
   onSelect,
   disabled = false,
   className = '',
+  ariaLabel,
+  ariaDescribedBy,
   selectedContent,
   renderOption,
 }: DropdownMenuProps) {
@@ -166,6 +174,8 @@ export default function DropdownMenu({
         role="button"
         aria-haspopup="listbox"
         aria-expanded={isOpen}
+        aria-label={ariaLabel}
+        aria-describedby={ariaDescribedBy}
         tabIndex={disabled ? -1 : 0}
         onClick={toggleOpen}
         onKeyDown={(event) => {
@@ -187,7 +197,8 @@ export default function DropdownMenu({
             toggleOpen();
           }}
           disabled={disabled}
-          aria-label="Open dropdown"
+          aria-label={ariaLabel ? `Open ${ariaLabel}` : 'Open dropdown'}
+          tabIndex={-1}
         />
       </div>
       {showMenu &&
@@ -223,6 +234,8 @@ export default function DropdownMenu({
                         )}
                         role="option"
                         aria-selected={option.value === value}
+                        aria-disabled={option.disabled || undefined}
+                        title={option.title}
                         onClick={() => !option.disabled && handleSelect(option.value)}
                       >
                         {renderOption ? renderOption(option) : option.label}

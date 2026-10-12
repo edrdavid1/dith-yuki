@@ -85,7 +85,9 @@ export type DitherModeV2 =
   | 'voronoi_stipple'
   | 'random_dot_stipple'
   | 'cmyk_halftone'
-  | 'wave';
+  | 'wave'
+  | 'blocked_fs'
+  | 'blue_noise';
 
 /** Color processing mode for dithering. */
 export type DitherColorMode = 'rgb' | 'grayscale';

@@ -1604,6 +1604,7 @@ dependencies = [
  "tokio",
  "unicode-normalization",
  "uuid",
+ "wgpu",
  "wide",
  "zip 2.4.2",
 ]

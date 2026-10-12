@@ -50,6 +50,22 @@
   z-index: 2;
 }
 
+/* Keep previous frame visible; small corner chip while a newer full-doc pass runs. */
+.preview-recomputing {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+  background: var(--bg-hover-accent, #333);
+  border: var(--border);
+  pointer-events: none;
+  z-index: 2;
+  opacity: 0.85;
+  animation: spin 1.2s linear infinite;
+}
+
 .pv-rendering-label {
   font-family: var(--font-family);
   font-size: 12px;

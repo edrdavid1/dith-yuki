@@ -7,10 +7,18 @@ export interface AdvancedConfigDto {
   tiling_advanced: boolean;
 }
 
+export interface ExperimentalConfigDto {
+  /** Snake_case from nested Rust `ExperimentalConfig`. */
+  gpu_dither_families?: boolean;
+  /** CamelCase if the DTO rename ever applies to nested fields. */
+  gpuDitherFamilies?: boolean;
+}
+
 export interface AppConfigDto {
   schemaVersion: number;
   workspace: Workspace;
   advanced: AdvancedConfigDto;
+  experimental?: ExperimentalConfigDto;
   workspaceChoiceRemembered: boolean;
   workspacePromptLaunches: number;
   hasExportedTiles: boolean;

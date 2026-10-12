@@ -87,6 +87,8 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "bayer_2x2",
         "bayer_4x4",
         "bayer_8x8",
+        "blocked_fs",
+        "blue_noise",
         "burkes",
         "clustered_dot_ordered",
         "cmyk_halftone",
@@ -260,8 +262,8 @@ fn register_all_ids_unique() {
     );
     assert_eq!(
         all_ids.len(),
-        36,
-        "must register all 36 built-in algorithms"
+        38,
+        "must register all 38 built-in algorithms"
     );
 }
 

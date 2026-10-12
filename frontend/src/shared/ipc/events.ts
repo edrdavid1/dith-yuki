@@ -90,7 +90,11 @@ export async function onDockAffinity(
   return listen<DockAffinityEvent>('dock-affinity', handler);
 }
 
-/** Monolithic full-document job (ASCII / Riemersma) in flight — Preview “Rendering…”. */
+/**
+ * Preview recompute in flight — corner spinner / first-paint “Rendering…”.
+ * Fired for full-document jobs (GPU families, ASCII, Riemersma) and for
+ * filter-driven CPU tiled dither refreshes.
+ */
 export interface FullDocumentBusyPayload {
   busy: boolean;
   doc_id: number;
@@ -100,4 +104,23 @@ export async function onFullDocumentBusy(
   handler: (event: Event<FullDocumentBusyPayload>) => void
 ): Promise<UnlistenFn> {
   return listen<FullDocumentBusyPayload>('full-document-busy', handler);
+}
+
+/** GPU dither path indicator for the preview footer (experimental.gpu_dither_families). */
+export interface GpuDitherStatusPayload {
+  doc_id: number;
+  algorithm: string;
+  path: string;
+  backend: string;
+  elapsed_ms: number;
+  strips: number;
+  width?: number;
+  height?: number;
+  pixel_size?: number;
+}
+
+export async function onGpuDitherStatus(
+  handler: (event: Event<GpuDitherStatusPayload>) => void
+): Promise<UnlistenFn> {
+  return listen<GpuDitherStatusPayload>('gpu-dither-status', handler);
 }

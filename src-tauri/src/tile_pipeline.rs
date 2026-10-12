@@ -106,6 +106,7 @@ pub fn compute_processed_tile(
         );
         crate::commands::end_full_document_busy(state, key.doc);
         let result = result?;
+        crate::commands::emit_gpu_dither_status(state, key.doc);
         let now_gen = snapshot_for_key(state, key)?
             .generations
             .document_gen
