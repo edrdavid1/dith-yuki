@@ -7,7 +7,7 @@ describe('appNameForWorkspace', () => {
   });
 
   it('appends GameDev in gamedev', () => {
-    expect(appNameForWorkspace('gamedev')).toBe('Dither Yuki GameDev');
+    expect(appNameForWorkspace('gamedev')).toBe('Dither Yuki\u2003\u2003▪\u2003\u2003Game Dev');
   });
 });
 
@@ -32,7 +32,7 @@ describe('windowChromeTitle', () => {
         sourcePath: null,
         workspace: 'gamedev',
       })
-    ).toBe('Dither Yuki GameDev');
+    ).toBe('Dither Yuki\u2003\u2003▪\u2003\u2003Game Dev');
   });
 
   it('shows a saved project name', () => {
@@ -55,7 +55,7 @@ describe('windowChromeTitle', () => {
         sourcePath: null,
         workspace: 'gamedev',
       })
-    ).toBe('cats.dyproj — Dither Yuki GameDev');
+    ).toBe('cats.dyproj — Dither Yuki\u2003\u2003▪\u2003\u2003Game Dev');
   });
 
   it('falls back to the opened image name', () => {

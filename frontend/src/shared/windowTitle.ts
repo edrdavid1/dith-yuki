@@ -4,7 +4,7 @@ import type { Workspace } from './workspace/visibility';
 
 /** App name in the window chrome; Gamedev appends a mode suffix. */
 export function appNameForWorkspace(workspace?: Workspace | null): string {
-  return workspace === 'gamedev' ? `${APP_NAME} GameDev` : APP_NAME;
+  return workspace === 'gamedev' ? `${APP_NAME}\u2003\u2003▪\u2003\u2003Game Dev` : APP_NAME;
 }
 
 export function windowChromeTitle(opts: {
