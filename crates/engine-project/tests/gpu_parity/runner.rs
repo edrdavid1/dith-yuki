@@ -777,7 +777,14 @@ pub fn run_parity_matrix() {
     }
 
     let mut required_skip_fail = false;
+    let filter = super::matrix::filter_substr();
     for g in REQUIRED_NO_SKIP_GROUPS {
+        // Filtered runs only enforce required groups that the filter selects.
+        if let Some(ref f) = filter {
+            if !super::matrix::filter_matches("", g, f) {
+                continue;
+            }
+        }
         let sk = stats.by_group.get(*g).map(|s| s.skipped).unwrap_or(0);
         if sk > 0 {
             eprintln!("REQUIRED group {g}: skipped={sk} (must be 0)");
