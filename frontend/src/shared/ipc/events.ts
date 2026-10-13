@@ -124,3 +124,24 @@ export async function onGpuDitherStatus(
 ): Promise<UnlistenFn> {
   return listen<GpuDitherStatusPayload>('gpu-dither-status', handler);
 }
+
+/** GPU family self-test gate (experimental.gpu_dither_families). */
+export interface GpuSelftestStatusPayload {
+  state: string;
+  reason?: string | null;
+  backend?: string | null;
+  adapter?: string | null;
+  cache_hit: boolean;
+  checked_at?: number | null;
+}
+
+export async function onGpuSelftestStatus(
+  handler: (event: Event<GpuSelftestStatusPayload>) => void
+): Promise<UnlistenFn> {
+  return listen<GpuSelftestStatusPayload>('gpu-selftest-status', handler);
+}
+
+export async function getGpuComputeCapability(): Promise<GpuSelftestStatusPayload> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<GpuSelftestStatusPayload>('gpu_compute_capability');
+}

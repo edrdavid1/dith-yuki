@@ -23,6 +23,8 @@ mod glitch;
 mod glow;
 pub mod gpu_dither;
 pub mod gpu_dither_cpu;
+pub mod gpu_geometry;
+pub mod gpu_selftest;
 mod halftone_screen_angled;
 mod line_screen;
 mod nearest_color;

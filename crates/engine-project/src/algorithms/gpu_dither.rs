@@ -384,6 +384,34 @@ pub fn apply_gpu_dither_rgba(
                 },
             )
         }
+        PathChoice::Auto if !crate::algorithms::gpu_selftest::gpu_path_allowed() => {
+            let reason = match crate::algorithms::gpu_selftest::snapshot().state {
+                crate::algorithms::gpu_selftest::SelftestState::Unknown => "selftest_pending",
+                crate::algorithms::gpu_selftest::SelftestState::Fail { .. } => "selftest_fail",
+                crate::algorithms::gpu_selftest::SelftestState::Lost => "device_lost",
+                crate::algorithms::gpu_selftest::SelftestState::Unavailable => {
+                    "selftest_unavailable"
+                }
+                crate::algorithms::gpu_selftest::SelftestState::Pass => "selftest_gate",
+            };
+            let t_cpu = Instant::now();
+            let out = run_cpu(&input, width, height, params, palette)?;
+            let total = ms_since(t_cpu);
+            let log = format!(
+                "{algo} | path=cpu | {width}x{height} | ps={ps} | strips=1 | pipeline=n/a | total={total:.0}ms\n  prepare=0 upload=0 dispatch=0 readback=0 post=0\n  req={req} params_hash={params_hash:x} input_hash={input_hash:x} trigger={trigger} cancelled=no fallback={reason}"
+            );
+            (
+                out,
+                "CPU",
+                "cpu".to_string(),
+                1u32,
+                log,
+                engine_gpu::GpuPhaseTiming {
+                    pipeline: "n/a",
+                    ..Default::default()
+                },
+            )
+        }
         PathChoice::Auto | PathChoice::ForceGpu => {
             match try_gpu_timed(
                 &input,

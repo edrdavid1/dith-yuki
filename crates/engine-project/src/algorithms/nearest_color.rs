@@ -130,7 +130,7 @@ impl FilterAlgorithm for NearestColorAlgo {
     }
 
     fn display_name(&self) -> &'static str {
-        "Nearest Color (no dither)"
+        "Nearest Color"
     }
 
     fn apply(

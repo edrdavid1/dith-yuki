@@ -7,6 +7,7 @@
 //! Force CPU: `DITHER_FORCE_CPU=1`. Opt-in cold GPU compute: `DITHER_GPU_PREVIEW=1`.
 //! Warm resident Composite slots may download without opt-in (auto-dispatch A1).
 
+mod adapter_info;
 mod bayer;
 pub mod blocked_fs;
 pub mod blue_noise_gpu;
@@ -31,11 +32,16 @@ mod void_and_cluster_matrix;
 mod vram_budget;
 mod warmup;
 
+pub use adapter_info::{
+    allow_software_adapter, gpu_family_shader_hash, wgpu_version_label, AdapterFingerprint,
+};
 pub use bayer::{apply_bayer_gpu, BayerGpuParams, BayerMatrixSize};
 pub use blocked_fs::{
-    apply_blocked_fs_gpu, apply_blocked_fs_gpu_opts, cached_blocked_fs_device,
-    request_blocked_fs_device, warm_blocked_fs_pipelines, BlockedFsGpuOpts, GpuImageResult,
-    GpuPhaseTiming, CORE as BLOCKED_FS_CORE, PAD as BLOCKED_FS_PAD, WG_SIZE as BLOCKED_FS_WG,
+    apply_blocked_fs_gpu, apply_blocked_fs_gpu_opts, cached_adapter_fingerprint,
+    cached_blocked_fs_device, probe_blocked_fs_adapter, request_blocked_fs_device,
+    warm_blocked_fs_pipelines, BlockedFsAdapterProbe, BlockedFsGpuOpts, GpuImageResult,
+    GpuPhaseTiming, BLOCKED_FS_MIN_WORKGROUP_STORAGE, CORE as BLOCKED_FS_CORE,
+    GEOMETRY_A_WORKGROUP_BYTES, PAD as BLOCKED_FS_PAD, WG_SIZE as BLOCKED_FS_WG,
 };
 pub use blue_noise_gpu::{apply_blue_noise_gpu, apply_blue_noise_gpu_opts, BlueNoiseGpuOpts};
 pub use composite::{
@@ -81,6 +87,7 @@ pub use warmup::{
     cap_warmup_coords, select_warmup_coords, slots_per_warmup_coord, viewport_vram_reserve,
     warmup_slot_budget,
 };
+pub use wgpu;
 
 /// Errors from a GPU tile dispatch (caller falls back to CPU).
 #[derive(Debug, thiserror::Error)]

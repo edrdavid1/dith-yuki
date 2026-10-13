@@ -10,7 +10,9 @@ use wgpu::util::DeviceExt;
 use crate::blocked_fs::GpuPhaseTiming;
 use crate::strip_bind::{effective_max_bind, max_blue_noise_strip_h, row_bytes};
 
-const SHADER: &str = include_str!("shaders/blue_noise.wgsl");
+/// WGSL source (self-test cache key + pipeline).
+pub const BLUE_NOISE_SHADER_SRC: &str = include_str!("shaders/blue_noise.wgsl");
+const SHADER: &str = BLUE_NOISE_SHADER_SRC;
 const NOISE_SIZE: u32 = 128;
 
 #[repr(C)]

@@ -23,7 +23,9 @@ pub const PAD: u32 = 8;
 /// Central written region.
 pub const CORE: u32 = WG_SIZE - PAD;
 
-const SHADER: &str = include_str!("shaders/blocked_fs.wgsl");
+/// WGSL source (self-test cache key + pipeline).
+pub const BLOCKED_FS_SHADER_SRC: &str = include_str!("shaders/blocked_fs.wgsl");
+const SHADER: &str = BLOCKED_FS_SHADER_SRC;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -489,11 +491,28 @@ fn uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
+type CachedTriple = (wgpu::Device, wgpu::Queue, String, crate::AdapterFingerprint);
+
+static CACHED_DEVICE: OnceLock<Option<CachedTriple>> = OnceLock::new();
+
+fn ensure_cached_device() -> Option<&'static CachedTriple> {
+    CACHED_DEVICE
+        .get_or_init(request_blocked_fs_device_with_info)
+        .as_ref()
+}
+
 /// Cached [`request_blocked_fs_device`] for the process lifetime.
 pub fn cached_blocked_fs_device() -> Option<&'static (wgpu::Device, wgpu::Queue, String)> {
-    static CELL: std::sync::OnceLock<Option<(wgpu::Device, wgpu::Queue, String)>> =
-        std::sync::OnceLock::new();
-    CELL.get_or_init(request_blocked_fs_device).as_ref()
+    static VIEW: OnceLock<Option<(wgpu::Device, wgpu::Queue, String)>> = OnceLock::new();
+    VIEW.get_or_init(|| {
+        ensure_cached_device().map(|(d, q, label, _)| (d.clone(), q.clone(), label.clone()))
+    })
+    .as_ref()
+}
+
+/// Adapter fingerprint from the blocked_fs device request (if any).
+pub fn cached_adapter_fingerprint() -> Option<crate::AdapterFingerprint> {
+    ensure_cached_device().map(|(_, _, _, fp)| fp.clone())
 }
 
 /// Build device + compute pipelines in the background so the first user render
@@ -520,9 +539,77 @@ pub fn warm_blocked_fs_pipelines() -> bool {
     true
 }
 
+/// Declared workgroup storage for geometry A (tile u32 + err atomics with +2 halo).
+/// Adapter `max_compute_workgroup_storage_size` may report lower (e.g. M3 = 32768)
+/// while Metal still admits the pipeline — device request uses the 32 KiB floor.
+pub const GEOMETRY_A_WORKGROUP_BYTES: u32 = 33808;
+
+/// Minimum `max_compute_workgroup_storage_size` accepted for blocked_fs device create.
+pub const BLOCKED_FS_MIN_WORKGROUP_STORAGE: u32 = 32768;
+
+/// Outcome of probing the primary adapter for blocked_fs (before device create).
+#[derive(Clone, Debug)]
+pub enum BlockedFsAdapterProbe {
+    /// No wgpu adapter.
+    NoAdapter,
+    /// Adapter present but below geometry-A floors (self-test → Fail(limits)).
+    Limits {
+        fingerprint: crate::AdapterFingerprint,
+        max_compute_workgroup_storage_size: u32,
+        max_compute_invocations_per_workgroup: u32,
+        max_compute_workgroup_size_x: u32,
+    },
+    /// Adapter meets floors; fingerprint for cache keys.
+    Ok {
+        fingerprint: crate::AdapterFingerprint,
+        max_compute_workgroup_storage_size: u32,
+    },
+}
+
+/// Probe primary adapter + limits without creating a device.
+pub fn probe_blocked_fs_adapter() -> BlockedFsAdapterProbe {
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::PRIMARY,
+        ..Default::default()
+    });
+    let Some(adapter) =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+    else {
+        return BlockedFsAdapterProbe::NoAdapter;
+    };
+    let info = adapter.get_info();
+    let fingerprint = crate::AdapterFingerprint::from_wgpu(&info);
+    let al = adapter.limits();
+    if al.max_compute_workgroup_storage_size < BLOCKED_FS_MIN_WORKGROUP_STORAGE
+        || al.max_compute_invocations_per_workgroup < 64
+        || al.max_compute_workgroup_size_x < 64
+    {
+        return BlockedFsAdapterProbe::Limits {
+            fingerprint,
+            max_compute_workgroup_storage_size: al.max_compute_workgroup_storage_size,
+            max_compute_invocations_per_workgroup: al.max_compute_invocations_per_workgroup,
+            max_compute_workgroup_size_x: al.max_compute_workgroup_size_x,
+        };
+    }
+    BlockedFsAdapterProbe::Ok {
+        fingerprint,
+        max_compute_workgroup_storage_size: al.max_compute_workgroup_storage_size,
+    }
+}
+
 /// Request a device suitable for blocked_fs (32KB+ workgroup storage).
 /// Uses the adapter's actual `max_storage_buffer_binding_size` / `max_buffer_size`.
 pub fn request_blocked_fs_device() -> Option<(wgpu::Device, wgpu::Queue, String)> {
+    request_blocked_fs_device_with_info().map(|(d, q, label, _)| (d, q, label))
+}
+
+/// Like [`request_blocked_fs_device`], also returning an [`AdapterFingerprint`].
+pub fn request_blocked_fs_device_with_info(
+) -> Option<(wgpu::Device, wgpu::Queue, String, crate::AdapterFingerprint)> {
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY,
         ..Default::default()
@@ -533,8 +620,10 @@ pub fn request_blocked_fs_device() -> Option<(wgpu::Device, wgpu::Queue, String)
         force_fallback_adapter: false,
     }))?;
     let info = adapter.get_info();
+    let fingerprint = crate::AdapterFingerprint::from_wgpu(&info);
     let al = adapter.limits();
-    if al.max_compute_workgroup_storage_size < 32768
+    // Geometry A: 64 invocations, ≥32 KiB workgroup storage (spec §2.5 / §3.6).
+    if al.max_compute_workgroup_storage_size < BLOCKED_FS_MIN_WORKGROUP_STORAGE
         || al.max_compute_invocations_per_workgroup < 64
         || al.max_compute_workgroup_size_x < 64
     {
@@ -571,5 +660,10 @@ pub fn request_blocked_fs_device() -> Option<(wgpu::Device, wgpu::Queue, String)
         info.name, info.backend, lim.max_storage_buffer_binding_size, lim.max_buffer_size
     );
 
-    Some((device, queue, format!("{} ({:?})", info.name, info.backend)))
+    Some((
+        device,
+        queue,
+        format!("{} ({:?})", info.name, info.backend),
+        fingerprint,
+    ))
 }

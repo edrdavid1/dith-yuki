@@ -15,6 +15,8 @@ bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"
 log = "0.4"
 thiserror = "1"
+blake3 = "1"
+serde = { version = "1", features = ["derive"] }
 engine-tiles = { path = "../engine-tiles" }
 engine-color = { path = "../engine-color" }
 crossbeam = "0.8"
