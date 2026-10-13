@@ -224,18 +224,21 @@ Spec: `.local-doc/Dither следующий этап GPU-семейства (pix
 | Warmup | `warm_blocked_fs_pipelines()` on app start when `experimental.gpu_dither_families` is on (`src-tauri/src/main.rs`). |
 | Placeholder | `PreviewWindow` keeps prior frame after first paint (`hadPreviewFrame`); busy indicator via `full_document_busy` — already shipped in `e47d2d5`. |
 
-### Geometry spike (Task 4) — **STOP for owner**
+### Geometry freeze (Task 4 / Part A §3.8) — **owner chose A** (2026-10-13)
 
-| Variant | Core | Pad | Threads | Declared workgroup bytes | Apple M3 32 KiB |
+| Variant | Core | Pad | Threads | Declared workgroup bytes | Apple M3 |
 |---|---|---|---|---|---|
-| A (current) | 56×56 | 8 | 64 | 33808 | ships today (Metal admits despite declared size) |
-| B | 120×56 | 8 | 64 | 67088 | **EXCEEDS** — needs global memory |
-| C | 248×56 | 8 | 64 | 133648 | **EXCEEDS** |
-| D | 248×120 | 8 | 128 | 265232 | **EXCEEDS** |
+| **A (frozen)** | 56×56 | 8 | 64 | **33808** | ships |
+| B | 120×56 | 8 | 64 | 67088 | exceeds 32 KiB — not shipped |
+| C | 248×56 | 8 | 64 | 133648 | exceeds |
+| D | 248×120 | 8 | 128 | 265232 | exceeds |
 
-CPU timings + seam PNGs: `cargo test -p engine-project --test gpu_geometry_spike --release -- --ignored --nocapture`. Default geometry remains A. **No Task 5 / `algo_version` until owner picks.**
+- **`algo_version = 1`** on `DitherParamsV2` (serde default 1; missing JSON → 1). Geometry A; **goldens unchanged**.
+- Declared workgroup memory for A: **33808** bytes (`GEOMETRY_A_WORKGROUP_BYTES` / tile `u32` + err atomics with +2 halo).
+- Apple M3 `max_compute_workgroup_storage_size` returned: **32768**. Metal still admits the A pipeline; device create uses a **32768** floor (`BLOCKED_FS_MIN_WORKGROUP_STORAGE`).
+- Adapters reporting a **lower** workgroup-storage (or invocations) limit: startup self-test → **`Fail(limits)`**, GPU path stays closed, **CPU reference runs** (same bytes).
 
-CPU warm median ms (20 reps; B–D cannot fit workgroup storage on M3 so GPU dispatch was not measured for them):
+CPU warm median ms (20 reps; prior spike; B–D GPU not measured on M3):
 
 | Variant | 1920×1080 ps=1 | 3840×2160 ps=1 | 4000×3000 ps=1 | seam_dY (1920 ramp) |
 |---|---|---|---|---|
@@ -244,7 +247,9 @@ CPU warm median ms (20 reps; B–D cannot fit workgroup storage on M3 so GPU dis
 | C | 79.7 | 308.9 | 457.1 | −0.054 |
 | D | 74.6 | 291.7 | 438.8 | −0.156 |
 
-PNGs: `target/geometry_spike/{A,B,C,D}_*.png`. `blur8_vs_A` on large ramps is ~19 (geometry changes the image; expected).
+PNGs: `target/geometry_spike/{A,B,C,D}_*.png`. Sheet: `.local-doc/geometry_comparison_sheet.png`.
+
+**Not verified:** GPU dispatch matrix for B–D; exact FS column on the comparison sheet; overnight `PARITY_MODE=full` (owner).
 
 
 ### Block representative (Task 2.3)
