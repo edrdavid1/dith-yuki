@@ -289,7 +289,12 @@ fn check_properties(case: &ParityCase, input: &[Rgba8], out: &[u8]) -> Result<()
 /// App FullDocument path (`apply_gpu_dither_rgba`) — used for `params_ps`.
 fn run_app_path(case: &ParityCase, input: &[Rgba8], path: &str) -> Result<Vec<u8>, String> {
     use engine_project::algorithms::gpu_dither::apply_gpu_dither_rgba;
+    use engine_project::algorithms::gpu_selftest::{set_state, SelftestState};
     use engine_project::filter::{DitherModeV2, DitherParamsV2};
+    // Release lib: `DITHER_GPU_PATH=gpu` no longer bypasses an Unknown/Fail gate.
+    if path.eq_ignore_ascii_case("gpu") {
+        set_state(SelftestState::Pass);
+    }
     std::env::set_var("DITHER_GPU_PATH", path);
     let n = input.len();
     let mut rgba = Vec::with_capacity(n * 4);

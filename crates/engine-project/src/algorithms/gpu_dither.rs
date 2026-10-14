@@ -108,13 +108,23 @@ enum PathChoice {
     ForceCpu,
 }
 
+/// `DITHER_GPU_PATH=gpu` may bypass the self-test gate only in debug builds and
+/// `cfg!(test)` unit-test binaries. Release app / release lib used by integration
+/// tests must not skip Fail/Unknown — set Pass (or use `auto`) instead.
+fn allow_force_gpu_bypass() -> bool {
+    cfg!(debug_assertions) || cfg!(test)
+}
+
 fn path_choice() -> PathChoice {
     match std::env::var("DITHER_GPU_PATH")
         .unwrap_or_else(|_| "auto".into())
         .to_ascii_lowercase()
         .as_str()
     {
-        "gpu" => PathChoice::ForceGpu,
+        "gpu" if allow_force_gpu_bypass() => PathChoice::ForceGpu,
+        // Release: honor the env as a preference only when the gate already allows GPU.
+        "gpu" if crate::algorithms::gpu_selftest::gpu_path_allowed() => PathChoice::ForceGpu,
+        "gpu" => PathChoice::Auto,
         "cpu" => PathChoice::ForceCpu,
         _ => PathChoice::Auto,
     }

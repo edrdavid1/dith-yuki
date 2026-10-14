@@ -54,6 +54,11 @@ fn f32_to_rgba8(rgba: &[f32]) -> Vec<u8> {
 }
 
 fn run_path(path: &str, mode: DitherModeV2) -> (Vec<u8>, String, String) {
+    if path.eq_ignore_ascii_case("gpu") {
+        engine_project::algorithms::gpu_selftest::set_state(
+            engine_project::algorithms::gpu_selftest::SelftestState::Pass,
+        );
+    }
     std::env::set_var("DITHER_GPU_PATH", path);
     let w = 256u32;
     let h = 256u32;

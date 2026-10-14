@@ -111,6 +111,11 @@ fn make_doc(
 }
 
 fn render_path(path: &str, mode: DitherModeV2, w: u32, h: u32, rgba: &[f32], ps: u8) -> Vec<f32> {
+    if path.eq_ignore_ascii_case("gpu") {
+        engine_project::algorithms::gpu_selftest::set_state(
+            engine_project::algorithms::gpu_selftest::SelftestState::Pass,
+        );
+    }
     std::env::set_var("DITHER_GPU_PATH", path);
     let (doc, layer, cache) = make_doc(w, h, rgba, mode, ps);
     let cancel = AtomicBool::new(false);
