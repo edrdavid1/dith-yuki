@@ -2,8 +2,8 @@ use engine_gpu::{
     apply_blocked_fs_gpu_opts, apply_blue_noise_gpu_opts, BlockedFsGpuOpts, BlueNoiseGpuOpts,
 };
 use engine_project::algorithms::gpu_dither_cpu::{
-    blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, with_pixel_size_blocks, PaletteRgb, Rgba8,
-    CORE, PAD,
+    blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, palette_rgba8_blue_noise,
+    with_pixel_size_blocks, PaletteRgb, Rgba8, CORE, PAD,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -200,21 +200,24 @@ fn run_gpu(
                 },
             )?
         }
-        Algorithm::BlueNoise => apply_blue_noise_gpu_opts(
-            device,
-            queue,
-            &in_b,
-            tw,
-            th,
-            &case.palette,
-            blue_noise_ranks(),
-            case.params.spread,
-            cancel,
-            BlueNoiseGpuOpts {
-                force_strip_h: strip_h,
-                force_max_bind: None,
-            },
-        )?
+        Algorithm::BlueNoise => {
+            let pal_bn = palette_rgba8_blue_noise(&palette_rgb(&case.palette));
+            apply_blue_noise_gpu_opts(
+                device,
+                queue,
+                &in_b,
+                tw,
+                th,
+                &pal_bn,
+                blue_noise_ranks(),
+                case.params.spread,
+                cancel,
+                BlueNoiseGpuOpts {
+                    force_strip_h: strip_h,
+                    force_max_bind: None,
+                },
+            )?
+        }
     };
     if ps <= 1 {
         return Ok(gpu.rgba8);

@@ -1,6 +1,11 @@
 // Threshold-shift blue noise — one thread per pixel, workgroup 8×8.
 // Storage may be a strip: index as (y - buf_y0) * img_w + x.
 // Spec: `.local-doc/Dither GPU-аналоги ED — схема реализации.md` §2.
+//
+// Option A (identity): palette α holds half nearest-neighbor Chebyshev distance
+// max(|Δr|,|Δg|,|Δb|) / 2. |shift_q8| is clamped to (α << 8) for the closest
+// palette entry to the *unshifted* pixel (Euclidean pick), so a solid palette
+// color cannot leave its cell under the isotropic channel shift.
 
 struct Params {
     img_w: u32,
@@ -42,8 +47,7 @@ fn rank_at(x: u32, y: u32) -> u32 {
     return word >> 16u;
 }
 
-fn nearest_rgb(r: u32, g: u32, b: u32) -> vec3<u32> {
-    // Global storage path so palette_len > 256 stays correct (§4 / 257 colors).
+fn nearest_idx(r: u32, g: u32, b: u32) -> u32 {
     let n = params.palette_len;
     var best_i = 0u;
     var best_d = 0x7fffffffu;
@@ -58,6 +62,11 @@ fn nearest_rgb(r: u32, g: u32, b: u32) -> vec3<u32> {
             best_i = i;
         }
     }
+    return best_i;
+}
+
+fn nearest_rgb(r: u32, g: u32, b: u32) -> vec3<u32> {
+    let best_i = nearest_idx(r, g, b);
     let p = palette[best_i];
     return vec3<u32>(unpack_r(p), unpack_g(p), unpack_b(p));
 }
@@ -71,13 +80,22 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let p = input_px[buf_idx(x, y)];
+    let pr = unpack_r(p);
+    let pg = unpack_g(p);
+    let pb = unpack_b(p);
+
+    let closest = nearest_idx(pr, pg, pb);
+    let half = unpack_a(palette[closest]); // half NN dist (u8)
+    let limit_q8 = i32(half) << 8;
+
     let rank = rank_at(x, y);
     // Fixed-point: t_q16 = rank * 4; shift_q8 = ((t_q16 - 32768) * spread) >> 8
     let t_q16 = i32(rank) * 4;
-    let shift_q8 = ((t_q16 - 32768) * i32(params.spread)) >> 8;
+    var shift_q8 = ((t_q16 - 32768) * i32(params.spread)) >> 8;
+    shift_q8 = clamp(shift_q8, -limit_q8, limit_q8);
 
     var out_c: array<u32, 3>;
-    let chs = array<u32, 3>(unpack_r(p), unpack_g(p), unpack_b(p));
+    let chs = array<u32, 3>(pr, pg, pb);
     for (var i = 0u; i < 3u; i++) {
         let v_q8 = i32(chs[i]) << 8;
         let shifted = clamp(v_q8 + shift_q8, 0, 255 << 8);

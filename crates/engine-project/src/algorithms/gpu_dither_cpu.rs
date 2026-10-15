@@ -126,6 +126,56 @@ pub fn nearest_palette_index(
     Ok(best_i)
 }
 
+/// Chebyshev distance in display-u8 RGB (`max(|dr|,|dg|,|db|)`).
+///
+/// Matches the blue-noise shift model (one scalar added to all channels): a
+/// channel shift of `s` moves Chebyshev distance `s`, so half-NN in this metric
+/// is the correct identity clamp. (Euclidean half-NN is too loose: equal-channel
+/// shift `s` moves `s·√3` in L2.)
+#[inline]
+pub fn chebyshev_u8(a: PaletteRgb, b: PaletteRgb) -> u32 {
+    let dr = (a.r as i32 - b.r as i32).unsigned_abs();
+    let dg = (a.g as i32 - b.g as i32).unsigned_abs();
+    let db = (a.b as i32 - b.b as i32).unsigned_abs();
+    dr.max(dg).max(db)
+}
+
+/// Per-entry half nearest-neighbor Chebyshev distance, clipped to 255.
+///
+/// Used to clamp blue-noise threshold shift so a solid palette color cannot leave
+/// its Voronoi cell (option A). Singleton palette → 255.
+pub fn palette_half_nn_dist(palette: &[PaletteRgb]) -> Vec<u8> {
+    let n = palette.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    if n == 1 {
+        return vec![255];
+    }
+    let mut out = vec![0u8; n];
+    for i in 0..n {
+        let mut min_d = u32::MAX;
+        for j in 0..n {
+            if i == j {
+                continue;
+            }
+            min_d = min_d.min(chebyshev_u8(palette[i], palette[j]));
+        }
+        out[i] = (min_d / 2).min(255) as u8;
+    }
+    out
+}
+
+/// Pack palette for the blue-noise GPU path: RGB + α = [`palette_half_nn_dist`].
+pub fn palette_rgba8_blue_noise(palette: &[PaletteRgb]) -> Vec<[u8; 4]> {
+    let half = palette_half_nn_dist(palette);
+    palette
+        .iter()
+        .zip(half)
+        .map(|(p, h)| [p.r, p.g, p.b, h])
+        .collect()
+}
+
 fn read_clamped(input: &[Rgba8], w: usize, h: usize, x: i32, y: i32) -> Rgba8 {
     let cx = x.clamp(0, w.saturating_sub(1) as i32) as usize;
     let cy = y.clamp(0, h.saturating_sub(1) as i32) as usize;
@@ -512,12 +562,17 @@ pub fn blue_noise_cpu(
             "blue_noise: buffer size",
         ));
     }
+    // Option A: clamp |shift| to half NN distance of the closest palette entry
+    // so a solid palette color cannot leave its Voronoi cell.
+    let half_nn = palette_half_nn_dist(palette);
     let mut output = Vec::with_capacity(input.len());
     for y in 0..h {
         for x in 0..w {
             let px = input[y * w + x];
             let rank = texture[(y % BLUE_NOISE_SIZE) * BLUE_NOISE_SIZE + (x % BLUE_NOISE_SIZE)];
-            let shift = blue_noise_shift_q8(rank, spread);
+            let closest = nearest_palette_index((px.r, px.g, px.b), palette)?;
+            let limit_q8 = (half_nn[closest] as i32) << 8;
+            let shift = blue_noise_shift_q8(rank, spread).clamp(-limit_q8, limit_q8);
             let mut shifted = [0u8; 3];
             for (i, ch) in [px.r, px.g, px.b].into_iter().enumerate() {
                 let shifted_q8 = clamp_adjusted_q8(u8_to_q8(ch) + shift);
@@ -662,7 +717,7 @@ mod tests {
         }
         let hash = format!("{:x}", Sha256::digest(&bytes));
         assert_eq!(
-            hash, "98ca5f93dd4f4f931b70687a52309b0618c73af557107eb5277ba50896fdef79",
+            hash, "5d577fcc96ee8d05fcf1c930a850a66ef8308bde15c6acd9642713d900c125c0",
             "blue_noise_cpu golden hash changed — update only if the VAC texture or formula intentionally changed"
         );
     }

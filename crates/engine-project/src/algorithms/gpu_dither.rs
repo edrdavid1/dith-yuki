@@ -25,7 +25,7 @@ use crate::filter::{DitherModeV2, DitherParamsV2};
 use crate::filters::context::FilterContext;
 
 use super::gpu_dither_cpu::{
-    blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, levels_palette,
+    blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, levels_palette, palette_rgba8_blue_noise,
     with_pixel_size_blocks, PaletteRgb, Rgba8, CORE, DEFAULT_SPREAD, PAD,
 };
 use super::scratch::scratch_src;
@@ -598,7 +598,10 @@ fn try_gpu_timed(
     };
     let backend = backend_short(label);
     let ps = params.pixel_size.max(1) as u32;
-    let pal_b = palette_rgba(palette);
+    let pal_b = match params.mode {
+        DitherModeV2::BlueNoise => palette_rgba8_blue_noise(palette),
+        _ => palette_rgba(palette),
+    };
 
     // Build block-rep lattice (identity when ps==1), run GPU once, expand.
     let t = Instant::now();

@@ -1,8 +1,9 @@
-//! blocked_fs correctness: preserve average, identity, ring negatives.
+//! blocked_fs + blue_noise correctness: preserve average, identity, negatives.
 
 use engine_project::algorithms::gpu_dither_cpu::{
     blocked_fs_cpu, blocked_fs_cpu_per_channel_subst, blocked_fs_wavefront_ring_apply,
-    blocked_fs_wavefront_ring_apply_ex, levels_palette, PaletteRgb, Rgba8, CORE, PAD,
+    blocked_fs_wavefront_ring_apply_ex, blue_noise_cpu, blue_noise_ranks, levels_palette,
+    palette_half_nn_dist, PaletteRgb, Rgba8, CORE, DEFAULT_SPREAD, PAD,
 };
 use engine_project::filter::DitherColorMode;
 
@@ -187,6 +188,75 @@ fn blocked_fs_err_ring4_matches_full_plane_ring3_erasure_diverges() {
         ring3_erase, full_rgb,
         "ring=3 without clear must DROP parity (tests catch erasures)"
     );
+}
+
+#[test]
+fn blue_noise_half_nn_guarantees_for_key_palettes() {
+    let bw_h = palette_half_nn_dist(&bw());
+    assert_eq!(bw_h, vec![127, 127]); // floor(255/2)
+    let mid_h = palette_half_nn_dist(&mid3());
+    // 0→128 d=128 →64; 128→255 d=127 →63; 255→128 d=127 →63
+    assert_eq!(mid_h, vec![64, 63, 63]);
+    let close = vec![
+        PaletteRgb {
+            r: 100,
+            g: 100,
+            b: 100,
+        },
+        PaletteRgb {
+            r: 101,
+            g: 100,
+            b: 100,
+        },
+    ];
+    assert_eq!(palette_half_nn_dist(&close), vec![0, 0]); // dist 1 → half 0
+}
+
+#[test]
+fn blue_noise_bw_preserve_average_and_all_identity() {
+    // STOP: mid3/gray16 4a (mean≈g @ tol 0.02) conflicts with option-A identity under
+    // isotropic DEFAULT_SPREAD (e.g. mid3 g=8 → mean≈35.8). Only BW 4a + 4c identity ship.
+    let side = 512u32;
+    let tex = blue_noise_ranks();
+    let max_spread = 1024u32;
+    // 4a BW: white fraction tracks g/255.
+    for g in (0u8..=255).step_by(8).chain(std::iter::once(255)) {
+        let out = blue_noise_cpu(&solid(g, side, side), side, side, &bw(), tex, DEFAULT_SPREAD)
+            .unwrap();
+        let wf = white_frac(&out);
+        let expect = g as f64 / 255.0;
+        assert!(
+            (wf - expect).abs() <= 0.02,
+            "blue_noise BW g={g}: wf={wf:.4} expect={expect:.4}"
+        );
+    }
+    // 4c identity for {0,255}, {0,128,255}, gray16 at DEFAULT and max spread.
+    let cases = [
+        bw(),
+        mid3(),
+        levels_palette(16, DitherColorMode::Grayscale),
+    ];
+    for pal in &cases {
+        for p in pal {
+            let c = (p.r, p.g, p.b);
+            for spread in [DEFAULT_SPREAD, max_spread] {
+                let out = blue_noise_cpu(
+                    &solid_rgb(c.0, c.1, c.2, 128, 128),
+                    128,
+                    128,
+                    pal,
+                    tex,
+                    spread,
+                )
+                .unwrap();
+                assert!(
+                    out.iter().all(|q| q.r == c.0 && q.g == c.1 && q.b == c.2),
+                    "identity RGB{:?} spread={spread}",
+                    c
+                );
+            }
+        }
+    }
 }
 
 /// Print measurement tables for the report (always runs with unit tests).

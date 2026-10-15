@@ -10,8 +10,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use super::gpu_dither_cpu::{
-    blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, with_pixel_size_blocks, PaletteRgb, Rgba8,
-    CORE, DEFAULT_SPREAD, PAD,
+    blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, palette_rgba8_blue_noise,
+    with_pixel_size_blocks, PaletteRgb, Rgba8, CORE, DEFAULT_SPREAD, PAD,
 };
 
 /// Frozen until geometry pick / first external ship (Part A §3.8).
@@ -655,7 +655,10 @@ fn run_gpu_case(
     };
     let src = lattice.as_deref().unwrap_or(&case.pixels);
     let in_b = rgba8_to_bytes(src);
-    let pal_b: Vec<[u8; 4]> = case.palette.iter().map(|p| [p.r, p.g, p.b, 255]).collect();
+    let pal_b: Vec<[u8; 4]> = match case.algo {
+        Algo::BlockedFs => case.palette.iter().map(|p| [p.r, p.g, p.b, 255]).collect(),
+        Algo::BlueNoise => palette_rgba8_blue_noise(&case.palette),
+    };
 
     let gpu = match case.algo {
         Algo::BlockedFs => engine_gpu::apply_blocked_fs_gpu_opts(

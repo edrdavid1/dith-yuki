@@ -12,7 +12,8 @@ use engine_gpu::{
     apply_blue_noise_gpu_opts, BlockedFsGpuOpts, BlueNoiseGpuOpts,
 };
 use engine_project::algorithms::gpu_dither_cpu::{
-    blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, PaletteRgb, Rgba8, CORE, DEFAULT_SPREAD, PAD,
+    blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, palette_rgba8_blue_noise, PaletteRgb, Rgba8,
+    CORE, DEFAULT_SPREAD, PAD,
 };
 
 fn gray_ramp(w: usize, h: usize) -> Vec<Rgba8> {
@@ -104,7 +105,7 @@ fn blue_noise_4k_forced_4mib_strips_match_full_and_cpu() {
     let input = gray_ramp(side as usize, side as usize);
     let pal = bw_pal();
     let in_b = to_bytes(&input);
-    let pal_b = pal_rgba(&pal);
+    let pal_b = palette_rgba8_blue_noise(&pal);
     let ranks = blue_noise_ranks();
     let cancel = AtomicBool::new(false);
 
@@ -164,6 +165,7 @@ fn huge_parity(side: u32) {
     assert_eq!(cpu, gpu, "blocked_fs {side}² GPU ≠ CPU");
 
     let ranks = blue_noise_ranks();
+    let pal_bn = palette_rgba8_blue_noise(&pal);
     let cpu_bn =
         to_bytes(&blue_noise_cpu(&input, side, side, &pal, ranks, DEFAULT_SPREAD).expect("cpu bn"));
     let gpu_bn = apply_blue_noise_gpu(
@@ -172,7 +174,7 @@ fn huge_parity(side: u32) {
         &in_b,
         side,
         side,
-        &pal_b,
+        &pal_bn,
         ranks,
         DEFAULT_SPREAD,
         &cancel,
