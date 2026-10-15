@@ -485,7 +485,8 @@ fn blocked_fs_cpu_impl(
                                 let color_u8 = q8_to_u8_rounded(clamped);
                                 let mut rgb = buffer[y * pw + x];
                                 rgb[ch] = color_u8;
-                                let (qr, qg, qb) = nearest_palette((rgb[0], rgb[1], rgb[2]), palette)?;
+                                let (qr, qg, qb) =
+                                    nearest_palette((rgb[0], rgb[1], rgb[2]), palette)?;
                                 let quantized = [qr, qg, qb][ch];
                                 let error = clamped - u8_to_q8(quantized);
                                 let (e7, e3, e5, e1) = distribute_fs(error);
@@ -597,8 +598,7 @@ pub fn blocked_fs_wavefront_ring_apply_ex(
         }
         // Phase 2: joint nearest + distribute (would be after barrier on GPU).
         for (x, y, clamped, color_u8) in pending {
-            let (qr, qg, qb) =
-                nearest_palette((color_u8[0], color_u8[1], color_u8[2]), palette)?;
+            let (qr, qg, qb) = nearest_palette((color_u8[0], color_u8[1], color_u8[2]), palette)?;
             let q = [qr, qg, qb];
             for ch in 0..3 {
                 let error = clamped[ch] - u8_to_q8(q[ch]);
@@ -663,8 +663,7 @@ pub fn blue_noise_cpu(
                 };
                 let a = lut[bright as usize] as u32;
                 let limit_q8 = ((a as i32) << 8) >> 1;
-                let shift =
-                    blue_noise_shift_scaled_q8(rank, spread, a).clamp(-limit_q8, limit_q8);
+                let shift = blue_noise_shift_scaled_q8(rank, spread, a).clamp(-limit_q8, limit_q8);
                 let shifted_q8 = clamp_adjusted_q8(u8_to_q8(bright) + shift);
                 let shifted_b = q8_to_u8_rounded(shifted_q8);
                 let (lo, hi) = gray_covering_neighbors(bright, &levels);
@@ -685,8 +684,7 @@ pub fn blue_noise_cpu(
                 let h = half_nn[closest] as u32;
                 let a = h.saturating_mul(2).min(255);
                 let limit_q8 = (h as i32) << 8;
-                let shift =
-                    blue_noise_shift_scaled_q8(rank, spread, a).clamp(-limit_q8, limit_q8);
+                let shift = blue_noise_shift_scaled_q8(rank, spread, a).clamp(-limit_q8, limit_q8);
                 let mut shifted = [0u8; 3];
                 for (i, ch) in [px.r, px.g, px.b].into_iter().enumerate() {
                     let shifted_q8 = clamp_adjusted_q8(u8_to_q8(ch) + shift);

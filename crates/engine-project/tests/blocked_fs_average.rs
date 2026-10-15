@@ -164,9 +164,7 @@ fn blocked_fs_solid_palette_color_identity() {
     ];
     let input = solid_rgb(200, 40, 40, side, side);
     let out = blocked_fs_cpu(&input, side, side, &pal2, CORE, CORE, PAD).unwrap();
-    assert!(out
-        .iter()
-        .all(|p| p.r == 200 && p.g == 40 && p.b == 40));
+    assert!(out.iter().all(|p| p.r == 200 && p.g == 40 && p.b == 40));
 }
 
 #[test]
@@ -333,15 +331,8 @@ fn blue_noise_color_identity_in_palette_mean_vs_nearest() {
     // Solid palette colors unchanged.
     for p in &pal {
         for spread in [DEFAULT_SPREAD, max_spread] {
-            let out = blue_noise_cpu(
-                &solid_rgb(p.r, p.g, p.b, 64, 64),
-                64,
-                64,
-                &pal,
-                tex,
-                spread,
-            )
-            .unwrap();
+            let out = blue_noise_cpu(&solid_rgb(p.r, p.g, p.b, 64, 64), 64, 64, &pal, tex, spread)
+                .unwrap();
             assert!(
                 out.iter().all(|q| q.r == p.r && q.g == p.g && q.b == p.b),
                 "color identity {:?} spread={spread}",
@@ -408,7 +399,8 @@ fn print_blocked_fs_measurement_tables() {
     eprintln!("=== blocked_fs white% vs g/255 (BW, step 8, 1024²) ===");
     eprintln!("g\tg/255\twhite%\tdelta");
     for g in (0u8..=255).step_by(8).chain(std::iter::once(255)) {
-        let out = blocked_fs_cpu(&solid(g, side, side), side, side, &bw(), CORE, CORE, PAD).unwrap();
+        let out =
+            blocked_fs_cpu(&solid(g, side, side), side, side, &bw(), CORE, CORE, PAD).unwrap();
         let wf = white_frac(&out);
         let e = g as f64 / 255.0;
         eprintln!("{g}\t{e:.4}\t{wf:.4}\t{:.4}", wf - e);
