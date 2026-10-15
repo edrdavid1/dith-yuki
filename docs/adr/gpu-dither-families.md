@@ -228,15 +228,29 @@ Spec: `.local-doc/Dither следующий этап GPU-семейства (pix
 
 | Variant | Core | Pad | Threads | Declared workgroup bytes | Apple M3 |
 |---|---|---|---|---|---|
-| **A (frozen)** | 56×56 | 8 | 64 | **33808** | ships |
-| B | 120×56 | 8 | 64 | 67088 | exceeds 32 KiB — not shipped |
-| C | 248×56 | 8 | 64 | 133648 | exceeds |
-| D | 248×120 | 8 | 128 | 265232 | exceeds |
+| **A (frozen)** | 56×56 | 8 | 64 | **3168** (memory C) | ships |
+| B | 120×56 | 8 | 64 | ring-scaled | not shipped |
+| C | 248×56 | 8 | 64 | ring-scaled | not shipped |
+| D | 248×120 | 8 | 128 | ring-scaled | not shipped |
 
-- **`algo_version = 1`** on `DitherParamsV2` (serde default 1; missing JSON → 1). Geometry A; **goldens unchanged**.
-- Declared workgroup memory for A: **33808** bytes (`GEOMETRY_A_WORKGROUP_BYTES` / tile `u32` + err atomics with +2 halo).
-- Apple M3 `max_compute_workgroup_storage_size` returned: **32768**. Metal still admits the A pipeline; device create uses a **32768** floor (`BLOCKED_FS_MIN_WORKGROUP_STORAGE`).
+- **`algo_version = 1`** on `DitherParamsV2` (serde default 1; missing JSON → 1). Geometry A **core/pad/threads unchanged**.
+- Declared workgroup memory for A (memory C, 2026-10-14): **3168** bytes = `3 ch × 4 ring slots × 66 rows × 4` (`GEOMETRY_A_WORKGROUP_BYTES`). No full tile cache; input read from storage. Safety margin vs M3 `max_compute_workgroup_storage_size` **32768**: ~29 KiB free.
+- Prior declared size was 33808 (full tile + one-channel err plane); that figure is historical only.
+- Apple M3 `max_compute_workgroup_storage_size` returned: **32768**. Device create still uses a **32768** floor (`BLOCKED_FS_MIN_WORKGROUP_STORAGE`).
 - Adapters reporting a **lower** workgroup-storage (or invocations) limit: startup self-test → **`Fail(limits)`**, GPU path stays closed, **CPU reference runs** (same bytes).
+
+### Joint nearest + display I/O (2026-10-14) — `algo_version` stays **1**
+
+**Bug:** per-channel palette substitution (probe RGB with only one channel error-adjusted) made bright solids (`din ≥ 192` on BW) lock to 100% white; average tone was not preserved.
+
+**Fix (blocked_fs only; exact ED untouched):**
+1. Display-referred I/O in `apply_gpu_dither_rgba`: `u8 = round(f32*255)`, `f32 = u8/255` (no `linear_to_srgb` / `srgb_to_linear`). Palette stays sRGB u8.
+2. Joint nearest: three Q8.8 error planes (GPU: ring of 4 slots/row/channel); one Euclidean display-u8 pick per pixel; lower index wins ties.
+3. Ring = 4 (shipped): destination at `t_d` receives writes from `t_d−1..t_d−3` (lifetime 1..=3 waves). With a read/clear | barrier | write schedule, ring **3** is mathematically enough after freeing `t` before writing `t+3`; shipped size stays **4** for margin. Negative test: ring 3 **without** clear mixes stale `t` into `t+3` and drops parity (catches erasures). Full err plane is **not** required for correctness under this schedule.
+
+**Goldens:** recreated **once** under `PARITY_RECORD_GOLDENS=1` for `blocked_fs`. Reason: prior parity only proved GPU≡CPU byte match, **not** average-correctness; I/O + nearest change intentionally retarget the CPU reference. `algo_version` remains 1 (no external format bump; geometry A unchanged).
+
+**Shared memory (print):** `GEOMETRY_A_WORKGROUP_BYTES = 3168` (= `3×4×66×4`). Floor gate remains 32768; margin ≈ 29 KiB.
 
 CPU warm median ms (20 reps; prior spike; B–D GPU not measured on M3):
 
