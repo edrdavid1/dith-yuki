@@ -23,8 +23,8 @@ fn gray_ramp_f32(w: u32, h: u32) -> Vec<f32> {
     for _y in 0..h {
         for x in 0..w {
             let g = (x * 255) / denom;
-            let lin = engine_color::palette::srgb_to_linear(g as u8);
-            v.extend_from_slice(&[lin, lin, lin, 1.0]);
+            let d = g as f32 / 255.0;
+            v.extend_from_slice(&[d, d, d, 1.0]);
         }
     }
     v
@@ -41,9 +41,9 @@ fn load_photo_f32(name: &str) -> (u32, u32, Vec<f32>) {
     let (w, h) = img.dimensions();
     let mut out = Vec::with_capacity((w * h * 4) as usize);
     for p in img.pixels() {
-        out.push(engine_color::palette::srgb_to_linear(p[0]));
-        out.push(engine_color::palette::srgb_to_linear(p[1]));
-        out.push(engine_color::palette::srgb_to_linear(p[2]));
+        out.push(p[0] as f32 / 255.0);
+        out.push(p[1] as f32 / 255.0);
+        out.push(p[2] as f32 / 255.0);
         out.push(p[3] as f32 / 255.0);
     }
     (w, h, out)
@@ -67,9 +67,9 @@ fn sha256_f32(rgba: &[f32]) -> String {
         .chunks_exact(4)
         .flat_map(|c| {
             [
-                engine_color::palette::linear_to_srgb(c[0]),
-                engine_color::palette::linear_to_srgb(c[1]),
-                engine_color::palette::linear_to_srgb(c[2]),
+                (c[0].clamp(0.0, 1.0) * 255.0).round() as u8,
+                (c[1].clamp(0.0, 1.0) * 255.0).round() as u8,
+                (c[2].clamp(0.0, 1.0) * 255.0).round() as u8,
                 (c[3].clamp(0.0, 1.0) * 255.0).round() as u8,
             ]
         })

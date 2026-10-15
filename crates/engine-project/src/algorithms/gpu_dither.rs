@@ -25,8 +25,8 @@ use crate::filter::{DitherModeV2, DitherParamsV2};
 use crate::filters::context::FilterContext;
 
 use super::gpu_dither_cpu::{
-    blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, levels_palette, with_pixel_size_blocks,
-    PaletteRgb, Rgba8, CORE, DEFAULT_SPREAD, PAD,
+    blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, levels_palette,
+    with_pixel_size_blocks, PaletteRgb, Rgba8, CORE, DEFAULT_SPREAD, PAD,
 };
 use super::scratch::scratch_src;
 
@@ -57,7 +57,8 @@ pub struct GpuDitherStatus {
     pub pack_upload_bytes_ms: f64,
     pub expand_ps_ms: f64,
     pub out_bytes_to_rgba8_ms: f64,
-    pub out_srgb_to_linear_ms: f64,
+    /// Host `u8 → f32` as `p / 255` (display-referred; not an sRGB transfer).
+    pub out_u8_to_f32_ms: f64,
     pub apply_misc_ms: f64,
 }
 
@@ -225,6 +226,7 @@ const BLUE_NOISE_SCHEMA: &[ParamField] = &[
 ];
 
 fn tile_to_rgba8(src: &PixelTile) -> Vec<Rgba8> {
+    // Display-referred tiles: u8 = round(f32 * 255).
     let w = TILE_SIZE as usize;
     let h = TILE_SIZE as usize;
     let mut out = Vec::with_capacity(w * h);
@@ -232,9 +234,9 @@ fn tile_to_rgba8(src: &PixelTile) -> Vec<Rgba8> {
         for x in 0..w {
             let sx = HALO as usize + x;
             let sy = HALO as usize + y;
-            let r = linear_to_srgb(src.at(sx as u32, sy as u32, 0));
-            let g = linear_to_srgb(src.at(sx as u32, sy as u32, 1));
-            let b = linear_to_srgb(src.at(sx as u32, sy as u32, 2));
+            let r = (src.at(sx as u32, sy as u32, 0).clamp(0.0, 1.0) * 255.0).round() as u8;
+            let g = (src.at(sx as u32, sy as u32, 1).clamp(0.0, 1.0) * 255.0).round() as u8;
+            let b = (src.at(sx as u32, sy as u32, 2).clamp(0.0, 1.0) * 255.0).round() as u8;
             let a = (src.at(sx as u32, sy as u32, 3).clamp(0.0, 1.0) * 255.0).round() as u8;
             out.push(Rgba8::new(r, g, b, a));
         }
@@ -243,15 +245,16 @@ fn tile_to_rgba8(src: &PixelTile) -> Vec<Rgba8> {
 }
 
 fn write_rgba8_to_tile(dst: &mut PixelTile, pixels: &[Rgba8]) {
+    // Display-referred: store u8/255 (not srgb_to_linear).
     let w = TILE_SIZE as usize;
     for y in 0..TILE_SIZE {
         for x in 0..TILE_SIZE {
             let p = pixels[(y as usize) * w + x as usize];
             let dx = HALO + x;
             let dy = HALO + y;
-            dst.set(dx, dy, 0, engine_color::palette::srgb_to_linear(p.r));
-            dst.set(dx, dy, 1, engine_color::palette::srgb_to_linear(p.g));
-            dst.set(dx, dy, 2, engine_color::palette::srgb_to_linear(p.b));
+            dst.set(dx, dy, 0, p.r as f32 / 255.0);
+            dst.set(dx, dy, 1, p.g as f32 / 255.0);
+            dst.set(dx, dy, 2, p.b as f32 / 255.0);
             dst.set(dx, dy, 3, p.a as f32 / 255.0);
         }
     }
@@ -327,13 +330,14 @@ pub fn apply_gpu_dither_rgba(
 
     let t = Instant::now();
     let mut input = vec![Rgba8::new(0, 0, 0, 0); n];
+    // Display-referred working buffer: u8 = round(f32 * 255) (no linear_to_srgb).
     crate::pixel_pool::install(|| {
         input.par_iter_mut().enumerate().for_each(|(i, px)| {
             let o = i * 4;
             *px = Rgba8::new(
-                linear_to_srgb(rgba[o]),
-                linear_to_srgb(rgba[o + 1]),
-                linear_to_srgb(rgba[o + 2]),
+                (rgba[o].clamp(0.0, 1.0) * 255.0).round() as u8,
+                (rgba[o + 1].clamp(0.0, 1.0) * 255.0).round() as u8,
+                (rgba[o + 2].clamp(0.0, 1.0) * 255.0).round() as u8,
                 (rgba[o + 3].clamp(0.0, 1.0) * 255.0).round() as u8,
             );
         });
@@ -495,17 +499,18 @@ pub fn apply_gpu_dither_rgba(
     }
 
     let t = Instant::now();
+    // Display-referred: f32 = u8 / 255 (no srgb_to_linear).
     crate::pixel_pool::install(|| {
         rgba.par_chunks_exact_mut(4)
             .zip(out.par_iter())
             .for_each(|(slot, p)| {
-                slot[0] = engine_color::palette::srgb_to_linear(p.r);
-                slot[1] = engine_color::palette::srgb_to_linear(p.g);
-                slot[2] = engine_color::palette::srgb_to_linear(p.b);
+                slot[0] = p.r as f32 / 255.0;
+                slot[1] = p.g as f32 / 255.0;
+                slot[2] = p.b as f32 / 255.0;
                 slot[3] = p.a as f32 / 255.0;
             });
     });
-    let out_srgb_to_linear_ms = ms_since(t);
+    let out_u8_to_f32_ms = ms_since(t);
 
     let elapsed_ms = ms_since(t_all);
     let accounted = in_f32_to_u8_ms
@@ -519,7 +524,7 @@ pub fn apply_gpu_dither_rgba(
         + phases.post_ms
         + expand_ps_ms
         + out_bytes_to_rgba8_ms
-        + out_srgb_to_linear_ms;
+        + out_u8_to_f32_ms;
     let apply_misc_ms = (elapsed_ms - accounted).max(0.0);
 
     log::info!(target: "gpu_dither", "{phase_log}");
@@ -544,7 +549,7 @@ pub fn apply_gpu_dither_rgba(
         pack_upload_bytes_ms,
         expand_ps_ms,
         out_bytes_to_rgba8_ms,
-        out_srgb_to_linear_ms,
+        out_u8_to_f32_ms,
         apply_misc_ms,
     });
     Ok(())

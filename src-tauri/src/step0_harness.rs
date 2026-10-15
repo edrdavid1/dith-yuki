@@ -168,7 +168,7 @@ fn step0_blocked_fs_fit_ten_runs() {
             apply_rows.iter().map(|r| r.out_bytes).collect(),
         ),
         (
-            "out_srgb_to_linear",
+            "out_u8_to_f32",
             apply_rows.iter().map(|r| r.out_linear).collect(),
         ),
         ("apply_misc", apply_rows.iter().map(|r| r.misc).collect()),
@@ -759,7 +759,7 @@ impl ApplyStages {
             post: s.post_ms,
             expand_ps: s.expand_ps_ms,
             out_bytes: s.out_bytes_to_rgba8_ms,
-            out_linear: s.out_srgb_to_linear_ms,
+            out_linear: s.out_u8_to_f32_ms,
             misc: s.apply_misc_ms,
             gpu_total: f64::from(s.elapsed_ms),
         }
@@ -1225,7 +1225,7 @@ fn scale_a_thirty_large() {
             eprintln!(
                 "  apply stages side={side}: in_f32={:.1} setup={:.1} lattice={:.1} pack={:.1} \
 prepare={:.1} upload={:.1} dispatch={:.1} readback={:.1} post={:.1} expand={:.1} \
-out_u8={:.1} out_lin={:.1} total={:.1}",
+out_u8={:.1} out_u8_to_f32={:.1} total={:.1}",
                 s.in_f32_to_u8_ms,
                 s.setup_hash_ms,
                 s.lattice_ps_ms,
@@ -1237,7 +1237,7 @@ out_u8={:.1} out_lin={:.1} total={:.1}",
                 s.post_ms,
                 s.expand_ps_ms,
                 s.out_bytes_to_rgba8_ms,
-                s.out_srgb_to_linear_ms,
+                s.out_u8_to_f32_ms,
                 s.elapsed_ms
             );
         }
@@ -1314,7 +1314,7 @@ fn color_diag_stage_matrix() {
                 apply_totals.push(s.elapsed_ms as f64);
                 in_f32.push(s.in_f32_to_u8_ms);
                 expand.push(s.expand_ps_ms);
-                out_lin.push(s.out_srgb_to_linear_ms);
+                out_lin.push(s.out_u8_to_f32_ms);
             }
             if let Some(f) = engine_project::filters::last_fd_render_stages() {
                 assemble.push(f.assemble_blit_ms);
@@ -1356,7 +1356,7 @@ fn color_diag_stage_matrix() {
             "SUMMARY side={side} ps={ps} n={n} | wall p50={w50:.1} p95={w95:.1} | apply p50={a50:.1} p95={a95:.1}"
         );
         eprintln!(
-            "  in_f32_to_u8 p50={i50:.1} p95={i95:.1} | expand_ps p50={e50:.1} p95={e95:.1} | out_srgb_to_linear p50={o50:.1} p95={o95:.1}"
+            "  in_f32_to_u8 p50={i50:.1} p95={i95:.1} | expand_ps p50={e50:.1} p95={e95:.1} | out_u8_to_f32 p50={o50:.1} p95={o95:.1}"
         );
         eprintln!(
             "  assemble_blit p50={as50:.1} p95={as95:.1} | promote_f32 p50={pr50:.1} p95={pr95:.1} | rss_peak_MiB={:.0}",

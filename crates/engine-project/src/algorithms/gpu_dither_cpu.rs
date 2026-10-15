@@ -94,12 +94,21 @@ pub fn nearest_palette(
     color: (u8, u8, u8),
     palette: &[PaletteRgb],
 ) -> Result<(u8, u8, u8), EngineError> {
+    let i = nearest_palette_index(color, palette)?;
+    let p = palette[i];
+    Ok((p.r, p.g, p.b))
+}
+
+/// Index of the Euclidean-nearest palette entry (lower index wins ties).
+pub fn nearest_palette_index(
+    color: (u8, u8, u8),
+    palette: &[PaletteRgb],
+) -> Result<usize, EngineError> {
     if palette.is_empty() {
         return Err(EngineError::invalid_filter_params("InvalidPalette: empty"));
     }
     if palette.len() == 1 {
-        let c = palette[0];
-        return Ok((c.r, c.g, c.b));
+        return Ok(0);
     }
     let (cr, cg, cb) = color;
     let mut best_i = 0usize;
@@ -114,8 +123,7 @@ pub fn nearest_palette(
             best_i = i;
         }
     }
-    let p = palette[best_i];
-    Ok((p.r, p.g, p.b))
+    Ok(best_i)
 }
 
 fn read_clamped(input: &[Rgba8], w: usize, h: usize, x: i32, y: i32) -> Rgba8 {
@@ -185,6 +193,9 @@ where
 ///
 /// `tile_w`/`tile_h` are the **core** stride (default [`CORE`]). Each tile
 /// processes a `(tile_w+pad)×(tile_h+pad)` region; only the core is written.
+///
+/// Joint nearest: each channel keeps its own Q8.8 error plane; palette pick uses
+/// the full corrected RGB vector (Euclidean display-u8, lower index wins ties).
 pub fn blocked_fs_cpu(
     input: &[Rgba8],
     width: u32,
@@ -193,6 +204,57 @@ pub fn blocked_fs_cpu(
     tile_w: u32,
     tile_h: u32,
     pad: u32,
+) -> Result<Vec<Rgba8>, EngineError> {
+    blocked_fs_cpu_impl(
+        input,
+        width,
+        height,
+        palette,
+        tile_w,
+        tile_h,
+        pad,
+        BlockedFsQuant::JointNearest,
+    )
+}
+
+/// Legacy per-channel substitution (pre-joint nearest). Kept only so tests can
+/// prove it fails average-preservation on bright solids.
+pub fn blocked_fs_cpu_per_channel_subst(
+    input: &[Rgba8],
+    width: u32,
+    height: u32,
+    palette: &[PaletteRgb],
+    tile_w: u32,
+    tile_h: u32,
+    pad: u32,
+) -> Result<Vec<Rgba8>, EngineError> {
+    blocked_fs_cpu_impl(
+        input,
+        width,
+        height,
+        palette,
+        tile_w,
+        tile_h,
+        pad,
+        BlockedFsQuant::PerChannelSubst,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum BlockedFsQuant {
+    JointNearest,
+    PerChannelSubst,
+}
+
+fn blocked_fs_cpu_impl(
+    input: &[Rgba8],
+    width: u32,
+    height: u32,
+    palette: &[PaletteRgb],
+    tile_w: u32,
+    tile_h: u32,
+    pad: u32,
+    quant: BlockedFsQuant,
 ) -> Result<Vec<Rgba8>, EngineError> {
     if palette.is_empty() {
         return Err(EngineError::invalid_filter_params("InvalidPalette: empty"));
@@ -230,53 +292,94 @@ pub fn blocked_fs_cpu(
                 }
             }
 
-            for ch in 0..3 {
-                let mut err = vec![0i32; (ph + 2) * (pw + 2)];
-                let stride = pw + 2;
-                let t_max = (pw.saturating_sub(1)) + 2 * (ph.saturating_sub(1));
-                for t in 0..=t_max {
-                    for y in 0..ph {
-                        let x_i = t as i32 - 2 * y as i32;
-                        if x_i < 0 || x_i >= pw as i32 {
-                            continue;
+            match quant {
+                BlockedFsQuant::JointNearest => {
+                    // Three independent Q8.8 planes; one shared palette pick per pixel.
+                    let plane = (ph + 2) * (pw + 2);
+                    let mut err = vec![0i32; 3 * plane];
+                    let stride = pw + 2;
+                    let t_max = (pw.saturating_sub(1)) + 2 * (ph.saturating_sub(1));
+                    for t in 0..=t_max {
+                        for y in 0..ph {
+                            let x_i = t as i32 - 2 * y as i32;
+                            if x_i < 0 || x_i >= pw as i32 {
+                                continue;
+                            }
+                            let x = x_i as usize;
+                            let ei = (y + 1) * stride + (x + 1);
+                            let mut color_u8 = [0u8; 3];
+                            let mut clamped = [0i32; 3];
+                            for ch in 0..3 {
+                                let v_q8 = u8_to_q8(buffer[y * pw + x][ch]);
+                                let adjusted = v_q8 + err[ch * plane + ei];
+                                clamped[ch] = clamp_adjusted_q8(adjusted);
+                                color_u8[ch] = q8_to_u8_rounded(clamped[ch]);
+                            }
+                            let (qr, qg, qb) =
+                                nearest_palette((color_u8[0], color_u8[1], color_u8[2]), palette)?;
+                            let q = [qr, qg, qb];
+                            for ch in 0..3 {
+                                let error = clamped[ch] - u8_to_q8(q[ch]);
+                                debug_assert!(error.abs() <= 65536);
+                                let (e7, e3, e5, e1) = distribute_fs(error);
+                                let base = ch * plane;
+                                err[base + ei + 1] += e7;
+                                if x > 0 {
+                                    err[base + ei + stride - 1] += e3;
+                                }
+                                err[base + ei + stride] += e5;
+                                err[base + ei + stride + 1] += e1;
+                            }
+                            buffer[y * pw + x] = q;
                         }
-                        let x = x_i as usize;
-                        let ei = (y + 1) * stride + (x + 1);
-                        let v_q8 = u8_to_q8(buffer[y * pw + x][ch]);
-                        let adjusted = v_q8 + err[ei];
-                        let clamped = clamp_adjusted_q8(adjusted);
-                        let color_u8 = q8_to_u8_rounded(clamped);
-                        // Nearest palette uses full RGB with this channel replaced.
-                        let mut rgb = buffer[y * pw + x];
-                        rgb[ch] = color_u8;
-                        let (qr, qg, qb) = nearest_palette((rgb[0], rgb[1], rgb[2]), palette)?;
-                        let quantized = [qr, qg, qb][ch];
-                        let error = clamped - u8_to_q8(quantized);
-                        debug_assert!(error.abs() <= 65536);
-                        let (e7, e3, e5, e1) = distribute_fs(error);
-                        err[ei + 1] += e7;
-                        if x > 0 {
-                            err[ei + stride - 1] += e3;
-                        }
-                        err[ei + stride] += e5;
-                        err[ei + stride + 1] += e1;
-                        buffer[y * pw + x][ch] = quantized;
                     }
                 }
-            }
-
-            // Re-quantize final RGB jointly so output uses palette only.
-            for ly in 0..ph {
-                for lx in 0..pw {
-                    let (qr, qg, qb) = nearest_palette(
-                        (
-                            buffer[ly * pw + lx][0],
-                            buffer[ly * pw + lx][1],
-                            buffer[ly * pw + lx][2],
-                        ),
-                        palette,
-                    )?;
-                    buffer[ly * pw + lx] = [qr, qg, qb];
+                BlockedFsQuant::PerChannelSubst => {
+                    for ch in 0..3 {
+                        let mut err = vec![0i32; (ph + 2) * (pw + 2)];
+                        let stride = pw + 2;
+                        let t_max = (pw.saturating_sub(1)) + 2 * (ph.saturating_sub(1));
+                        for t in 0..=t_max {
+                            for y in 0..ph {
+                                let x_i = t as i32 - 2 * y as i32;
+                                if x_i < 0 || x_i >= pw as i32 {
+                                    continue;
+                                }
+                                let x = x_i as usize;
+                                let ei = (y + 1) * stride + (x + 1);
+                                let v_q8 = u8_to_q8(buffer[y * pw + x][ch]);
+                                let adjusted = v_q8 + err[ei];
+                                let clamped = clamp_adjusted_q8(adjusted);
+                                let color_u8 = q8_to_u8_rounded(clamped);
+                                let mut rgb = buffer[y * pw + x];
+                                rgb[ch] = color_u8;
+                                let (qr, qg, qb) = nearest_palette((rgb[0], rgb[1], rgb[2]), palette)?;
+                                let quantized = [qr, qg, qb][ch];
+                                let error = clamped - u8_to_q8(quantized);
+                                let (e7, e3, e5, e1) = distribute_fs(error);
+                                err[ei + 1] += e7;
+                                if x > 0 {
+                                    err[ei + stride - 1] += e3;
+                                }
+                                err[ei + stride] += e5;
+                                err[ei + stride + 1] += e1;
+                                buffer[y * pw + x][ch] = quantized;
+                            }
+                        }
+                    }
+                    for ly in 0..ph {
+                        for lx in 0..pw {
+                            let (qr, qg, qb) = nearest_palette(
+                                (
+                                    buffer[ly * pw + lx][0],
+                                    buffer[ly * pw + lx][1],
+                                    buffer[ly * pw + lx][2],
+                                ),
+                                palette,
+                            )?;
+                            buffer[ly * pw + lx] = [qr, qg, qb];
+                        }
+                    }
                 }
             }
 
@@ -298,6 +401,91 @@ pub fn blocked_fs_cpu(
     }
     let _ = MAX_U8_Q8;
     Ok(output)
+}
+
+/// Wavefront FS error ring (GPU memory C). Indexed by `(ch, t mod ring, y)`.
+///
+/// Proof sketch (`t = x + 2y`): a destination at wave `t_d` receives writes from
+/// `t_d−1` (e7, e3), `t_d−2` (e5), `t_d−3` (e1). Contribution lifetime is 1..=3
+/// waves. At wave `t`, slots for `t..t+3` can be live → **ring ≥ 4**. Ring 3
+/// aliases `t+3 ≡ t (mod 3)` and drops / races contributions (see tests).
+pub fn blocked_fs_wavefront_ring_apply(
+    buffer: &mut [[u8; 3]],
+    pw: usize,
+    ph: usize,
+    palette: &[PaletteRgb],
+    ring_slots: usize,
+) -> Result<(), EngineError> {
+    blocked_fs_wavefront_ring_apply_ex(buffer, pw, ph, palette, ring_slots, true)
+}
+
+/// Like [`blocked_fs_wavefront_ring_apply`], but `clear_slot=false` leaves stale
+/// values in the aliased slot (models ring-too-small / missing clear — for tests).
+pub fn blocked_fs_wavefront_ring_apply_ex(
+    buffer: &mut [[u8; 3]],
+    pw: usize,
+    ph: usize,
+    palette: &[PaletteRgb],
+    ring_slots: usize,
+    clear_slot: bool,
+) -> Result<(), EngineError> {
+    assert!(ring_slots >= 1);
+    let rows = ph + 2;
+    let mut ring = vec![0i32; 3 * ring_slots * rows];
+    let idx = |ch: usize, slot: usize, y: i32| -> usize {
+        let row = (y + 1) as usize;
+        (ch * ring_slots + (slot % ring_slots)) * rows + row
+    };
+    let t_max = (pw.saturating_sub(1)) + 2 * (ph.saturating_sub(1));
+    for t in 0..=t_max {
+        let slot = t % ring_slots;
+        // Phase 1: always consume+clear current slot for every row (t+4 reuse safety).
+        let mut pending: Vec<(usize, usize, [i32; 3], [u8; 3])> = Vec::new();
+        for y in 0..ph {
+            let mut errs = [0i32; 3];
+            for ch in 0..3 {
+                errs[ch] = ring[idx(ch, slot, y as i32)];
+                if clear_slot {
+                    ring[idx(ch, slot, y as i32)] = 0;
+                }
+            }
+            let x_i = t as i32 - 2 * y as i32;
+            if x_i < 0 || x_i >= pw as i32 {
+                continue;
+            }
+            let x = x_i as usize;
+            let mut color_u8 = [0u8; 3];
+            let mut clamped = [0i32; 3];
+            for ch in 0..3 {
+                let v_q8 = u8_to_q8(buffer[y * pw + x][ch]);
+                clamped[ch] = clamp_adjusted_q8(v_q8 + errs[ch]);
+                color_u8[ch] = q8_to_u8_rounded(clamped[ch]);
+            }
+            pending.push((x, y, clamped, color_u8));
+        }
+        // Phase 2: joint nearest + distribute (would be after barrier on GPU).
+        for (x, y, clamped, color_u8) in pending {
+            let (qr, qg, qb) =
+                nearest_palette((color_u8[0], color_u8[1], color_u8[2]), palette)?;
+            let q = [qr, qg, qb];
+            for ch in 0..3 {
+                let error = clamped[ch] - u8_to_q8(q[ch]);
+                let (e7, e3, e5, e1) = distribute_fs(error);
+                if x + 1 < pw {
+                    ring[idx(ch, t + 1, y as i32)] += e7;
+                }
+                if x > 0 {
+                    ring[idx(ch, t + 1, y as i32 + 1)] += e3;
+                }
+                ring[idx(ch, t + 2, y as i32 + 1)] += e5;
+                if x + 1 < pw {
+                    ring[idx(ch, t + 3, y as i32 + 1)] += e1;
+                }
+            }
+            buffer[y * pw + x] = q;
+        }
+    }
+    Ok(())
 }
 
 /// Threshold-shift blue noise (§3.2.2).
@@ -557,7 +745,7 @@ mod tests {
         let hash = format!("{:x}", Sha256::digest(&bytes));
         // Captured once for geometry 56+8; bump only on intentional algorithm change.
         assert_eq!(
-            hash, "c5ba99f8fc2af14d27d9d7b936b97d47349fa5674ac33c8d0517d00328364062",
+            hash, "2049d38194ca78c6ec541999e635d7f53ba8b84392814284b4af6fa99a577f9a",
             "blocked_fs golden hash changed — update only on intentional geometry/algorithm change"
         );
     }

@@ -17,8 +17,8 @@ fn ramp(w: u32, h: u32) -> Vec<f32> {
     for _y in 0..h {
         for x in 0..w {
             let g = (x * 255) / denom;
-            let lin = engine_color::palette::srgb_to_linear(g as u8);
-            v.extend_from_slice(&[lin, lin, lin, 1.0]);
+            let d = g as f32 / 255.0;
+            v.extend_from_slice(&[d, d, d, 1.0]);
         }
     }
     v

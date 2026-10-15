@@ -15,8 +15,8 @@ fn gray_ramp_f32(w: u32, h: u32) -> Vec<f32> {
         for x in 0..w {
             let g = (x * 255) / denom;
             let _ = y;
-            let lin = engine_color::palette::srgb_to_linear(g as u8);
-            v.extend_from_slice(&[lin, lin, lin, 1.0]);
+            let d = g as f32 / 255.0;
+            v.extend_from_slice(&[d, d, d, 1.0]);
         }
     }
     v
@@ -44,9 +44,9 @@ fn f32_to_rgba8(rgba: &[f32]) -> Vec<u8> {
     rgba.chunks_exact(4)
         .flat_map(|c| {
             [
-                engine_color::palette::linear_to_srgb(c[0]),
-                engine_color::palette::linear_to_srgb(c[1]),
-                engine_color::palette::linear_to_srgb(c[2]),
+                (c[0].clamp(0.0, 1.0) * 255.0).round() as u8,
+                (c[1].clamp(0.0, 1.0) * 255.0).round() as u8,
+                (c[2].clamp(0.0, 1.0) * 255.0).round() as u8,
                 (c[3].clamp(0.0, 1.0) * 255.0).round() as u8,
             ]
         })

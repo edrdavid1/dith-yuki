@@ -214,7 +214,7 @@ fn run_gpu(
                 force_strip_h: strip_h,
                 force_max_bind: None,
             },
-        )?,
+        )?
     };
     if ps <= 1 {
         return Ok(gpu.rgba8);
@@ -298,10 +298,11 @@ fn run_app_path(case: &ParityCase, input: &[Rgba8], path: &str) -> Result<Vec<u8
     std::env::set_var("DITHER_GPU_PATH", path);
     let n = input.len();
     let mut rgba = Vec::with_capacity(n * 4);
+    // Display-referred FullDocument buffer (u8/255), matching apply_gpu_dither_rgba.
     for p in input {
-        rgba.push(engine_color::palette::srgb_to_linear(p.r));
-        rgba.push(engine_color::palette::srgb_to_linear(p.g));
-        rgba.push(engine_color::palette::srgb_to_linear(p.b));
+        rgba.push(p.r as f32 / 255.0);
+        rgba.push(p.g as f32 / 255.0);
+        rgba.push(p.b as f32 / 255.0);
         rgba.push(p.a as f32 / 255.0);
     }
     let mode = match case.algorithm {
@@ -326,9 +327,9 @@ fn run_app_path(case: &ParityCase, input: &[Rgba8], path: &str) -> Result<Vec<u8
         .map_err(|e| e.to_string())?;
     let mut out = Vec::with_capacity(n * 4);
     for chunk in rgba.chunks_exact(4) {
-        out.push(engine_color::palette::linear_to_srgb(chunk[0]));
-        out.push(engine_color::palette::linear_to_srgb(chunk[1]));
-        out.push(engine_color::palette::linear_to_srgb(chunk[2]));
+        out.push((chunk[0].clamp(0.0, 1.0) * 255.0).round() as u8);
+        out.push((chunk[1].clamp(0.0, 1.0) * 255.0).round() as u8);
+        out.push((chunk[2].clamp(0.0, 1.0) * 255.0).round() as u8);
         out.push((chunk[3].clamp(0.0, 1.0) * 255.0).round() as u8);
     }
     Ok(out)
