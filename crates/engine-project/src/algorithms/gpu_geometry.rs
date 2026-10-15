@@ -22,13 +22,11 @@ impl GeometryVariant {
         self.core_h + self.pad
     }
 
-    /// Declared workgroup storage bytes (tile u32 RGBA + err atomic i32 with +2 halo).
+    /// Declared workgroup storage bytes (memory C: err ring only, no tile cache).
+    /// `3 channels × 4 slots × (wg_h + 2) rows × 4 bytes`.
     pub const fn workgroup_bytes(self) -> u64 {
-        let wg_w = self.wg_w() as u64;
-        let wg_h = self.wg_h() as u64;
-        let tile = wg_w * wg_h * 4;
-        let err = (wg_w + 2) * (wg_h + 2) * 4;
-        tile + err
+        let rows = (self.wg_h() as u64) + 2;
+        3 * 4 * rows * 4
     }
 
     /// Meets the blocked_fs device-create floor (32 KiB reported limit).
@@ -94,8 +92,12 @@ mod tests {
 
     #[test]
     fn a_declared_bytes_match_constant() {
-        assert_eq!(VARIANT_A.workgroup_bytes(), 33808);
-        assert!(!VARIANT_A.meets_device_create_floor()); // 33808 > 32768 declared
-        assert!(!VARIANT_B.meets_device_create_floor());
+        assert_eq!(VARIANT_A.workgroup_bytes(), 3168);
+        assert_eq!(
+            VARIANT_A.workgroup_bytes(),
+            u64::from(engine_gpu::GEOMETRY_A_WORKGROUP_BYTES)
+        );
+        assert!(VARIANT_A.meets_device_create_floor()); // 3168 ≪ 32768
+        assert!(VARIANT_B.meets_device_create_floor());
     }
 }

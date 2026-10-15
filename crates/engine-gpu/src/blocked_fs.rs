@@ -539,10 +539,14 @@ pub fn warm_blocked_fs_pipelines() -> bool {
     true
 }
 
-/// Declared workgroup storage for geometry A (tile u32 + err atomics with +2 halo).
-/// Adapter `max_compute_workgroup_storage_size` may report lower (e.g. M3 = 32768)
-/// while Metal still admits the pipeline — device request uses the 32 KiB floor.
-pub const GEOMETRY_A_WORKGROUP_BYTES: u32 = 33808;
+/// Declared workgroup storage for geometry A after memory-C ring (no tile cache).
+/// `err_ring`: 3 channels × 4 slots × 66 rows × 4 bytes = **3168** (≪ 32768).
+/// Adapter `max_compute_workgroup_storage_size` may report 32768 (e.g. M3);
+/// device request still uses the 32 KiB floor for adapter gating.
+pub const GEOMETRY_A_WORKGROUP_BYTES: u32 = 3168;
+
+/// Channels × ring slots × rows in the WGSL `err_ring` array.
+pub const BLOCKED_FS_ERR_RING_ELEMS: u32 = 3 * 4 * 66;
 
 /// Minimum `max_compute_workgroup_storage_size` accepted for blocked_fs device create.
 pub const BLOCKED_FS_MIN_WORKGROUP_STORAGE: u32 = 32768;
