@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## 2.0.2-beta
+
+### Fixed
+
+- **blocked_fs** preserves average tone: display-referred `u8/255` I/O (no
+  linear↔sRGB around the dither buffer), joint Euclidean nearest with three
+  Q8.8 error planes, and a 4-slot workgroup err ring (3168 B). Geometry A and
+  `algo_version=1` unchanged.
+- **blue_noise** option A: scale the rank shift to interval width `A` (uniform
+  ±A/2) instead of clamp-only (which folded tails; mid-gray mean ~35.8 at g=8).
+  Gray palettes quantize to the covering `{lo,hi}` pair; solid palette colors
+  stay put at default and max spread.
+
+### Added
+
+- Startup GPU family self-test with `Fail(limits)` gate; release builds no
+  longer bypass self-test via `DITHER_GPU_PATH=gpu`.
+- `algo_version=1` on dither params; preserve-average / identity / ring-erasure
+  tests; color-diag stage harness prints pack/upload/dispatch/readback.
+
+### Performance
+
+- blocked_fs dispatch on 4096² ps=1 drops sharply with the err ring (~288→~37 ms
+  p50 in local stage matrix); upload/readback unchanged.
+
 ## 2.0.1-beta
 
 ### Performance
