@@ -6,7 +6,8 @@
 
 use crate::algorithms::blue_noise_texture::BlueNoiseTexture;
 use crate::algorithms::fixed_point::{
-    blue_noise_shift_q8, clamp_adjusted_q8, distribute_fs, q8_to_u8_rounded, u8_to_q8, MAX_U8_Q8,
+    blue_noise_shift_scaled_q8, clamp_adjusted_q8, distribute_fs, q8_to_u8_rounded, u8_to_q8,
+    MAX_U8_Q8,
 };
 use crate::error::EngineError;
 use crate::filter::DitherColorMode;
@@ -142,7 +143,7 @@ pub fn chebyshev_u8(a: PaletteRgb, b: PaletteRgb) -> u32 {
 
 /// Per-entry half nearest-neighbor Chebyshev distance, clipped to 255.
 ///
-/// Used to clamp blue-noise threshold shift so a solid palette color cannot leave
+/// Caps `|shift_q8|` after interval scaling so a solid palette color cannot leave
 /// its Voronoi cell (option A). Singleton palette → 255.
 pub fn palette_half_nn_dist(palette: &[PaletteRgb]) -> Vec<u8> {
     let n = palette.len();
@@ -166,7 +167,88 @@ pub fn palette_half_nn_dist(palette: &[PaletteRgb]) -> Vec<u8> {
     out
 }
 
+/// True when every palette entry is gray (`r == g == b`).
+pub fn is_gray_palette(palette: &[PaletteRgb]) -> bool {
+    !palette.is_empty() && palette.iter().all(|p| p.r == p.g && p.g == p.b)
+}
+
+/// Sorted unique gray levels for a gray palette (empty if not gray).
+pub fn gray_palette_levels(palette: &[PaletteRgb]) -> Vec<u8> {
+    if !is_gray_palette(palette) {
+        return Vec::new();
+    }
+    let mut levels: Vec<u8> = palette.iter().map(|p| p.r).collect();
+    levels.sort_unstable();
+    levels.dedup();
+    levels
+}
+
+/// Covering gray neighbors `(lo, hi)` for brightness `g` on sorted unique levels.
+///
+/// Strictly between levels → `(lo, hi)` with `lo < hi`. On a solid level (or
+/// outside the span) → `(c, c)` where `c` is the closest level (identity cell).
+pub fn gray_covering_neighbors(g: u8, levels: &[u8]) -> (u8, u8) {
+    if levels.is_empty() {
+        return (g, g);
+    }
+    if levels.len() == 1 {
+        return (levels[0], levels[0]);
+    }
+    let mut lo: Option<u8> = None;
+    let mut hi: Option<u8> = None;
+    for &l in levels {
+        if l <= g {
+            lo = Some(l);
+        }
+        if l >= g && hi.is_none() {
+            hi = Some(l);
+        }
+    }
+    match (lo, hi) {
+        (Some(a), Some(b)) if a < b => (a, b),
+        (Some(a), Some(b)) if a == b => (a, b),
+        (Some(a), None) => (a, a),
+        (None, Some(b)) => (b, b),
+        _ => (levels[0], levels[0]),
+    }
+}
+
+/// Interval width `A` (display-u8) for brightness `g` on a sorted gray level list.
+///
+/// When `g` lies strictly between two levels, `A = hi − lo`. On a solid level (or
+/// outside the span) fall back to `2 * half_nn` of the closest entry so identity
+/// stays exact under the post-scale cap.
+pub fn gray_interval_a(g: u8, levels: &[u8], half_nn_closest: u8) -> u8 {
+    let (lo, hi) = gray_covering_neighbors(g, levels);
+    if lo < hi {
+        hi - lo
+    } else {
+        half_nn_closest.saturating_mul(2).min(255)
+    }
+}
+
+/// Per-brightness `A` LUT (256 entries) built once from a gray palette.
+///
+/// `None` when the palette is not gray (caller uses `2 * half_nn` per pixel).
+pub fn palette_gray_interval_lut(palette: &[PaletteRgb]) -> Option<[u8; 256]> {
+    let levels = gray_palette_levels(palette);
+    if levels.is_empty() {
+        return None;
+    }
+    let half = palette_half_nn_dist(palette);
+    let mut lut = [0u8; 256];
+    for g in 0u16..=255 {
+        let g8 = g as u8;
+        let closest = nearest_palette_index((g8, g8, g8), palette).ok()?;
+        lut[g as usize] = gray_interval_a(g8, &levels, half[closest]);
+    }
+    Some(lut)
+}
+
 /// Pack palette for the blue-noise GPU path: RGB + α = [`palette_half_nn_dist`].
+///
+/// Interval width `A` is derived per pixel (gray LUT / `2·half_nn`); α only caps
+/// `|shift|` for solid identity.
 pub fn palette_rgba8_blue_noise(palette: &[PaletteRgb]) -> Vec<[u8; 4]> {
     let half = palette_half_nn_dist(palette);
     palette
@@ -562,23 +644,56 @@ pub fn blue_noise_cpu(
             "blue_noise: buffer size",
         ));
     }
-    // Option A: clamp |shift| to half NN distance of the closest palette entry
-    // so a solid palette color cannot leave its Voronoi cell.
+    // Option A: scale shift to interval width A (uniform ±A/2 at DEFAULT_SPREAD),
+    // then cap |shift|; gray quantizes to covering {lo,hi}, color to full palette.
     let half_nn = palette_half_nn_dist(palette);
+    let levels = gray_palette_levels(palette);
+    let gray_lut = palette_gray_interval_lut(palette);
     let mut output = Vec::with_capacity(input.len());
     for y in 0..h {
         for x in 0..w {
             let px = input[y * w + x];
             let rank = texture[(y % BLUE_NOISE_SIZE) * BLUE_NOISE_SIZE + (x % BLUE_NOISE_SIZE)];
             let closest = nearest_palette_index((px.r, px.g, px.b), palette)?;
-            let limit_q8 = (half_nn[closest] as i32) << 8;
-            let shift = blue_noise_shift_q8(rank, spread).clamp(-limit_q8, limit_q8);
-            let mut shifted = [0u8; 3];
-            for (i, ch) in [px.r, px.g, px.b].into_iter().enumerate() {
-                let shifted_q8 = clamp_adjusted_q8(u8_to_q8(ch) + shift);
-                shifted[i] = q8_to_u8_rounded(shifted_q8);
-            }
-            let (qr, qg, qb) = nearest_palette((shifted[0], shifted[1], shifted[2]), palette)?;
+            let (qr, qg, qb) = if let Some(lut) = &gray_lut {
+                let bright = if px.r == px.g && px.g == px.b {
+                    px.r
+                } else {
+                    ((px.r as u16 + px.g as u16 + px.b as u16) / 3) as u8
+                };
+                let a = lut[bright as usize] as u32;
+                let limit_q8 = ((a as i32) << 8) >> 1;
+                let shift =
+                    blue_noise_shift_scaled_q8(rank, spread, a).clamp(-limit_q8, limit_q8);
+                let shifted_q8 = clamp_adjusted_q8(u8_to_q8(bright) + shift);
+                let shifted_b = q8_to_u8_rounded(shifted_q8);
+                let (lo, hi) = gray_covering_neighbors(bright, &levels);
+                // Quantize to the covering pair only (full-palette nearest would
+                // leak into non-adjacent levels on asymmetric gaps).
+                let v = if lo >= hi {
+                    lo
+                } else {
+                    let mid = lo as i32 + ((hi - lo) as i32) / 2;
+                    if (shifted_b as i32) <= mid {
+                        lo
+                    } else {
+                        hi
+                    }
+                };
+                (v, v, v)
+            } else {
+                let h = half_nn[closest] as u32;
+                let a = h.saturating_mul(2).min(255);
+                let limit_q8 = (h as i32) << 8;
+                let shift =
+                    blue_noise_shift_scaled_q8(rank, spread, a).clamp(-limit_q8, limit_q8);
+                let mut shifted = [0u8; 3];
+                for (i, ch) in [px.r, px.g, px.b].into_iter().enumerate() {
+                    let shifted_q8 = clamp_adjusted_q8(u8_to_q8(ch) + shift);
+                    shifted[i] = q8_to_u8_rounded(shifted_q8);
+                }
+                nearest_palette((shifted[0], shifted[1], shifted[2]), palette)?
+            };
             output.push(Rgba8::new(qr, qg, qb, px.a));
         }
     }
@@ -717,7 +832,7 @@ mod tests {
         }
         let hash = format!("{:x}", Sha256::digest(&bytes));
         assert_eq!(
-            hash, "5d577fcc96ee8d05fcf1c930a850a66ef8308bde15c6acd9642713d900c125c0",
+            hash, "db1d9a5289012f0d868fadd7194084df67c3dd4d40585e49eaefd5e3b4d2078e",
             "blue_noise_cpu golden hash changed — update only if the VAC texture or formula intentionally changed"
         );
     }

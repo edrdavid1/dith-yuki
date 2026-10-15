@@ -51,10 +51,26 @@ pub fn distribute_fs(error: i32) -> (i32, i32, i32, i32) {
 ///
 /// `rank` is in `0..16384` (permutation). Mapped to `t_q16 ∈ [0, 65532]`, then
 /// `shift_q8 = ((t_q16 - 32768) * spread) >> 8`.
+///
+/// Prefer [`blue_noise_shift_scaled_q8`] when an interval width `A` is known
+/// (uniform ±A/2 at `spread=256`).
 #[inline]
 pub fn blue_noise_shift_q8(rank: u16, spread: u32) -> i32 {
     let t_q16 = (rank as i32) * 4;
     ((t_q16 - 32768) * (spread as i32)) >> 8
+}
+
+/// Rank → Q8.8 shift scaled to interval width `a_u8` (display-u8).
+///
+/// At `spread=256`: `shift_q8 = ((rank*4 − 32768) * (a_u8<<8)) >> 16`
+/// (= `((t−32768) * a_u8) >> 8`), so the distribution is uniform on ±`a_u8/2`
+/// (in u8). Other spreads multiply by `spread/256` afterward.
+#[inline]
+pub fn blue_noise_shift_scaled_q8(rank: u16, spread: u32, a_u8: u32) -> i32 {
+    let t_q16 = (rank as i32) * 4;
+    let a = a_u8.min(255) as i32;
+    let at_default = ((t_q16 - 32768) * a) >> 8;
+    ((at_default as i64 * spread as i64) >> 8) as i32
 }
 
 #[cfg(test)]

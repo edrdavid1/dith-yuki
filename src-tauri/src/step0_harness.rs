@@ -1295,6 +1295,10 @@ fn color_diag_stage_matrix() {
         let mut in_f32 = Vec::with_capacity(n);
         let mut expand = Vec::with_capacity(n);
         let mut out_lin = Vec::with_capacity(n);
+        let mut pack_up = Vec::with_capacity(n);
+        let mut upload = Vec::with_capacity(n);
+        let mut dispatch = Vec::with_capacity(n);
+        let mut readback = Vec::with_capacity(n);
         let mut assemble = Vec::with_capacity(n);
         let mut promote = Vec::with_capacity(n);
         let mut rss_peak = rss_bytes();
@@ -1315,6 +1319,10 @@ fn color_diag_stage_matrix() {
                 in_f32.push(s.in_f32_to_u8_ms);
                 expand.push(s.expand_ps_ms);
                 out_lin.push(s.out_u8_to_f32_ms);
+                pack_up.push(s.pack_upload_bytes_ms);
+                upload.push(s.upload_ms);
+                dispatch.push(s.dispatch_ms);
+                readback.push(s.readback_ms);
             }
             if let Some(f) = engine_project::filters::last_fd_render_stages() {
                 assemble.push(f.assemble_blit_ms);
@@ -1322,12 +1330,16 @@ fn color_diag_stage_matrix() {
             }
             rss_peak = rss_peak.max(rss_bytes());
             eprintln!(
-                "  side={side} ps={ps} run={run}/{n} wall={:.1} apply={:.1} in_f32={:.1} expand={:.1} out_lin={:.1} assemble={:.1} promote={:.1}",
+                "  side={side} ps={ps} run={run}/{n} wall={:.1} apply={:.1} in_f32={:.1} expand={:.1} out_lin={:.1} pack={:.1} upload={:.1} dispatch={:.1} readback={:.1} assemble={:.1} promote={:.1}",
                 walls[run],
                 apply_totals.last().copied().unwrap_or(0.0),
                 in_f32.last().copied().unwrap_or(0.0),
                 expand.last().copied().unwrap_or(0.0),
                 out_lin.last().copied().unwrap_or(0.0),
+                pack_up.last().copied().unwrap_or(0.0),
+                upload.last().copied().unwrap_or(0.0),
+                dispatch.last().copied().unwrap_or(0.0),
+                readback.last().copied().unwrap_or(0.0),
                 assemble.last().copied().unwrap_or(0.0),
                 promote.last().copied().unwrap_or(0.0),
             );
@@ -1350,6 +1362,10 @@ fn color_diag_stage_matrix() {
         let (i50, i95) = pair(&in_f32);
         let (e50, e95) = pair(&expand);
         let (o50, o95) = pair(&out_lin);
+        let (pk50, pk95) = pair(&pack_up);
+        let (u50, u95) = pair(&upload);
+        let (d50, d95) = pair(&dispatch);
+        let (r50, r95) = pair(&readback);
         let (as50, as95) = pair(&assemble);
         let (pr50, pr95) = pair(&promote);
         eprintln!(
@@ -1357,6 +1373,9 @@ fn color_diag_stage_matrix() {
         );
         eprintln!(
             "  in_f32_to_u8 p50={i50:.1} p95={i95:.1} | expand_ps p50={e50:.1} p95={e95:.1} | out_u8_to_f32 p50={o50:.1} p95={o95:.1}"
+        );
+        eprintln!(
+            "  pack_upload p50={pk50:.1} p95={pk95:.1} | upload p50={u50:.1} p95={u95:.1} | dispatch p50={d50:.1} p95={d95:.1} | readback p50={r50:.1} p95={r95:.1}"
         );
         eprintln!(
             "  assemble_blit p50={as50:.1} p95={as95:.1} | promote_f32 p50={pr50:.1} p95={pr95:.1} | rss_peak_MiB={:.0}",

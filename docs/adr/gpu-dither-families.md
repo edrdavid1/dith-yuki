@@ -252,23 +252,25 @@ Spec: `.local-doc/Dither следующий этап GPU-семейства (pix
 
 **Shared memory (print):** `GEOMETRY_A_WORKGROUP_BYTES = 3168` (= `3×4×66×4`). Floor gate remains 32768; margin ≈ 29 KiB.
 
-### Blue noise option A — solid palette identity (2026-10-15)
+### Blue noise option A — scale to interval width (2026-10-15)
 
-**Current `DEFAULT_SPREAD` (before clamp):** `DEFAULT_SPREAD = 256`.  
-`shift_q8 = ((rank*4 − 32768) * spread) >> 8` — **one scalar**, applied identically to R, G, and B, then joint Euclidean nearest. With `spread=256`, `|shift_q8|` reaches up to ~32768 (full ±128 u8), so a solid mid/black can leave its Voronoi cell when a nearer neighbor exists (e.g. `{0,128,255}`).
+**Problem with clamp-only:** at `DEFAULT_SPREAD=256`,  
+`shift_q8 = ((rank*4 − 32768) * spread) >> 8` is uniform on ±128 u8, then clipped to ±`half_nn`. Clipping **folds the tails**: ~28% of ranks sit on the +`half_nn` edge for `{0,128,255}` at `g=8` (closest=0, `half_nn=64`) → white fraction ≈0.28 → mean ≈ `0.28×128 = 35.8` instead of ~8.
 
-**Clamp:** for each palette entry `i`, `half_nn[i] = floor(d_nn(i)/2)` with integer **Chebyshev** u8 distance `max(|dr|,|dg|,|db|)` to the nearest other entry (singleton → 255). Per pixel: find closest entry to the *unshifted* color (Euclidean pick); clamp `|shift_q8| ≤ half_nn<<8`; then shift all channels and nearest. Chebyshev matches the isotropic channel shift; Euclidean half-NN is too loose by ~√3.
+**Fix — scale, then cap:** one scalar shift; gray quantizes to the covering pair, color to full Euclidean nearest.
+1. Interval width `A` (display-u8): **gray** palettes (`r=g=b`) → `A = hi−lo` for the brightness neighbors covering the pixel (LUT at palette build); on a solid level, `A = 2·half_nn`. **Color** palettes → `A = 2·half_nn` of the closest entry.
+2. `shift_q8 = ((rank*4 − 32768) * (A<<8)) >> 16` at `spread=256` (≡ `((t−32768)·A)>>8`), then ×`spread/256`. Distribution is uniform on ±`A/2`.
+3. Cap: gray → `|shift| ≤ (A/2)<<8` (equals `half_nn` on solids); color → `|shift| ≤ half_nn<<8` (α). Solids never leave their cell.
+4. Gray must snap to **`{lo,hi}` only** — full-palette nearest leaks into non-adjacent levels on asymmetric gaps (e.g. `{0,50,255}` at g=56 → mean 38 via black).
 
 **Guarantee sketch:**
-| Palette | half_nn | Solid stays |
-|---|---|---|
-| `{0,255}` | 127,127 | shift ≤127 → still nearer self (tie broken by lower index) |
-| `{0,128,255}` | 64,63,63 | gray128±63 ⊂ [65,191] stays nearer 128 |
-| two colors dist 1 | 0,0 | shift≡0 → exact identity |
+| Palette | half_nn / A | Solid stays | Average |
+|---|---|---|---|
+| `{0,255}` | 127 / A=255 | yes | white%≈g/255 |
+| `{0,128,255}` | 64,63,63 / A=128 or 127 | yes | mean≈g (g=8→~8) |
+| two colors dist 1 | 0 / A=0 | shift≡0 | exact |
 
-GPU packs `half_nn` in palette α. `algo_version` stays 1; BN goldens recreated once with this change.
-
-**Stop (mid3 / gray16 preserve-average):** option A identity + isotropic `DEFAULT_SPREAD` shift means non-palette grays near Voronoi edges cannot track `mean≈g` within 0.02 while solids stay exact (e.g. mid3 `g=8` → mean ≈ 35.8). Shipped tests lock BW white-fraction (4a) and solid identity (4c) for `{0,255}`, `{0,128,255}`, gray16; mid3/16 mean tracking is **not** asserted until a non-identity-breaking change is chosen.
+GPU packs `half_nn` in palette α; gray `A` is computed in-shader. `algo_version` stays 1; BN goldens recreated once (scale replaces fold).
 
 CPU warm median ms (20 reps; prior spike; B–D GPU not measured on M3):
 
