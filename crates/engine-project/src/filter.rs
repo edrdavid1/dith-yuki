@@ -555,6 +555,11 @@ pub struct DitherParamsV2 {
     /// this flag. Default false; result is approximate only.
     #[serde(default)]
     pub wrap_padding: bool,
+    /// Geometry / algorithm revision for GPU families (`blocked_fs`, `blue_noise`).
+    /// Default **1** = variant A (56×56 core + 8 pad). Missing JSON → 1.
+    /// Frozen after first external ship; bump only with an intentional geometry change.
+    #[serde(default = "default_algo_version")]
+    pub algo_version: u32,
 }
 
 fn default_threshold_scale() -> f32 {
@@ -585,6 +590,10 @@ fn default_dither_alpha() -> bool {
     true
 }
 
+fn default_algo_version() -> u32 {
+    1
+}
+
 fn default_nearest_metric() -> String {
     "oklab".to_string()
 }
@@ -610,6 +619,7 @@ impl Default for DitherParamsV2 {
             serpentine: false,
             dither_alpha: true,
             wrap_padding: false,
+            algo_version: default_algo_version(),
         }
     }
 }
@@ -664,6 +674,7 @@ impl From<(DitherMode, u8)> for DitherParamsV2 {
             serpentine: false,
             dither_alpha: true,
             wrap_padding: false,
+            algo_version: default_algo_version(),
         }
     }
 }

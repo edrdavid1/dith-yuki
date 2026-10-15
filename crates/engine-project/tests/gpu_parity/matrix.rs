@@ -85,10 +85,19 @@ fn small_axis_values() -> Vec<u32> {
     s
 }
 
-fn filter_substr() -> Option<String> {
+pub fn filter_substr() -> Option<String> {
     std::env::var("PARITY_FILTER")
         .ok()
         .filter(|s| !s.is_empty())
+}
+
+/// `PARITY_FILTER` may be a single needle or comma-separated list (id or group).
+pub fn filter_matches(id: &str, group: &str, filter: &str) -> bool {
+    filter
+        .split(',')
+        .map(str::trim)
+        .filter(|f| !f.is_empty())
+        .any(|f| id.contains(f) || group.contains(f))
 }
 
 fn case_tags(
@@ -164,7 +173,8 @@ fn push_case(
 ) {
     let id = ParityCase::make_id(algo, w, h, pal.tag, input_tag, seed);
     if let Some(f) = filter {
-        if !id.contains(f) {
+        // Match case id **or** group name (e.g. PARITY_FILTER=full_large,params_ps).
+        if !filter_matches(&id, group, f) {
             return;
         }
     }

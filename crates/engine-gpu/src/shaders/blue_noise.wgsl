@@ -1,6 +1,13 @@
 // Threshold-shift blue noise — one thread per pixel, workgroup 8×8.
 // Storage may be a strip: index as (y - buf_y0) * img_w + x.
 // Spec: `.local-doc/Dither GPU-аналоги ED — схема реализации.md` §2.
+//
+// Option A (identity + preserve average): scale rank into ±A/2 (uniform), then
+// cap |shift_q8| by palette α = half Chebyshev NN of the closest entry.
+//   shift_q8 = ((rank*4 - 32768) * (A<<8)) >> 16   at spread=256
+//            = ((t_q16 - 32768) * A) >> 8, then × spread/256.
+// Gray palettes: A = brightness gap (hi−lo) covering the pixel.
+// Color palettes: A = 2 * half_nn (α) of the closest entry.
 
 struct Params {
     img_w: u32,
@@ -42,8 +49,7 @@ fn rank_at(x: u32, y: u32) -> u32 {
     return word >> 16u;
 }
 
-fn nearest_rgb(r: u32, g: u32, b: u32) -> vec3<u32> {
-    // Global storage path so palette_len > 256 stays correct (§4 / 257 colors).
+fn nearest_idx(r: u32, g: u32, b: u32) -> u32 {
     let n = params.palette_len;
     var best_i = 0u;
     var best_d = 0x7fffffffu;
@@ -58,8 +64,64 @@ fn nearest_rgb(r: u32, g: u32, b: u32) -> vec3<u32> {
             best_i = i;
         }
     }
+    return best_i;
+}
+
+fn nearest_rgb(r: u32, g: u32, b: u32) -> vec3<u32> {
+    let best_i = nearest_idx(r, g, b);
     let p = palette[best_i];
     return vec3<u32>(unpack_r(p), unpack_g(p), unpack_b(p));
+}
+
+fn palette_is_gray() -> bool {
+    let n = params.palette_len;
+    for (var i = 0u; i < n; i++) {
+        let p = palette[i];
+        let r = unpack_r(p);
+        if (r != unpack_g(p) || r != unpack_b(p)) {
+            return false;
+        }
+    }
+    return n > 0u;
+}
+
+/// Covering gray neighbors (lo, hi) for brightness `g`.
+fn gray_covering(g: u32) -> vec2<u32> {
+    let n = params.palette_len;
+    var found_lo = false;
+    var found_hi = false;
+    var lo = 0u;
+    var hi = 255u;
+    for (var i = 0u; i < n; i++) {
+        let l = unpack_r(palette[i]);
+        if (l <= g && (!found_lo || l > lo)) {
+            lo = l;
+            found_lo = true;
+        }
+        if (l >= g && (!found_hi || l < hi)) {
+            hi = l;
+            found_hi = true;
+        }
+    }
+    if (found_lo && found_hi) {
+        return vec2<u32>(lo, hi);
+    }
+    if (found_lo) {
+        return vec2<u32>(lo, lo);
+    }
+    if (found_hi) {
+        return vec2<u32>(hi, hi);
+    }
+    let l0 = unpack_r(palette[0]);
+    return vec2<u32>(l0, l0);
+}
+
+fn gray_interval_a(g: u32, half_closest: u32) -> u32 {
+    let pair = gray_covering(g);
+    if (pair.x < pair.y) {
+        return pair.y - pair.x;
+    }
+    return min(half_closest * 2u, 255u);
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -71,13 +133,48 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let p = input_px[buf_idx(x, y)];
+    let pr = unpack_r(p);
+    let pg = unpack_g(p);
+    let pb = unpack_b(p);
+
+    let closest = nearest_idx(pr, pg, pb);
+    let half = unpack_a(palette[closest]); // half NN dist (u8)
+
     let rank = rank_at(x, y);
-    // Fixed-point: t_q16 = rank * 4; shift_q8 = ((t_q16 - 32768) * spread) >> 8
     let t_q16 = i32(rank) * 4;
-    let shift_q8 = ((t_q16 - 32768) * i32(params.spread)) >> 8;
+
+    if (palette_is_gray()) {
+        var bright = pr;
+        if (pr != pg || pg != pb) {
+            bright = (pr + pg + pb) / 3u;
+        }
+        let a_u8 = gray_interval_a(bright, half);
+        let limit_q8 = (i32(a_u8) << 8) >> 1;
+        var shift_q8 = ((t_q16 - 32768) * i32(a_u8)) >> 8;
+        shift_q8 = (shift_q8 * i32(params.spread)) >> 8;
+        shift_q8 = clamp(shift_q8, -limit_q8, limit_q8);
+        let shifted_q8 = clamp((i32(bright) << 8) + shift_q8, 0, 255 << 8);
+        let shifted_b = u32((shifted_q8 + 128) >> 8);
+        let pair = gray_covering(bright);
+        var v = pair.x;
+        if (pair.x < pair.y) {
+            let mid = i32(pair.x) + i32(pair.y - pair.x) / 2;
+            if (i32(shifted_b) > mid) {
+                v = pair.y;
+            }
+        }
+        output_px[buf_idx(x, y)] = pack_rgba(v, v, v, unpack_a(p));
+        return;
+    }
+
+    let a_u8 = min(half * 2u, 255u);
+    let limit_q8 = i32(half) << 8;
+    var shift_q8 = ((t_q16 - 32768) * i32(a_u8)) >> 8;
+    shift_q8 = (shift_q8 * i32(params.spread)) >> 8;
+    shift_q8 = clamp(shift_q8, -limit_q8, limit_q8);
 
     var out_c: array<u32, 3>;
-    let chs = array<u32, 3>(unpack_r(p), unpack_g(p), unpack_b(p));
+    let chs = array<u32, 3>(pr, pg, pb);
     for (var i = 0u; i < 3u; i++) {
         let v_q8 = i32(chs[i]) << 8;
         let shifted = clamp(v_q8 + shift_q8, 0, 255 << 8);

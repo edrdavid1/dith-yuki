@@ -11,8 +11,16 @@ import { useWorkspaceOptional } from '../features/workspace/WorkspaceContext';
 import { useAppSelector } from '../app/hooks';
 import { selectFiltersList } from '../app/slices/filtersSlice';
 import { getAsciiPreview, setAsciiPreview } from '../shared/ipc/ascii';
-import { onFullDocumentBusy, onGpuDitherStatus } from '../shared/ipc/events';
-import type { GpuDitherStatusPayload } from '../shared/ipc/events';
+import {
+  getGpuComputeCapability,
+  onFullDocumentBusy,
+  onGpuDitherStatus,
+  onGpuSelftestStatus,
+} from '../shared/ipc/events';
+import type {
+  GpuDitherStatusPayload,
+  GpuSelftestStatusPayload,
+} from '../shared/ipc/events';
 import { previewBackgroundStyle } from '../features/preview/previewBackground';
 import styles from '../features/preview/PreviewWindow.module.css';
 import previewStyles from '../features/preview/Preview.module.css';
@@ -80,6 +88,7 @@ export default function PreviewWindow({
   const [gpuDitherStatus, setGpuDitherStatus] = useState<GpuDitherStatusPayload | null>(
     null,
   );
+  const [gpuSelftest, setGpuSelftest] = useState<GpuSelftestStatusPayload | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
   const lastPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -126,21 +135,36 @@ export default function PreviewWindow({
   useEffect(() => {
     if (!showGpuDitherIndicator) {
       setGpuDitherStatus(null);
+      setGpuSelftest(null);
       return;
     }
     let cancelled = false;
-    let unlisten: (() => void) | undefined;
+    let unlistenStatus: (() => void) | undefined;
+    let unlistenSelftest: (() => void) | undefined;
     void onGpuDitherStatus((event) => {
       if (cancelled) return;
       if (event.payload.doc_id !== docId) return;
       setGpuDitherStatus(event.payload);
     }).then((fn) => {
       if (cancelled) fn();
-      else unlisten = fn;
+      else unlistenStatus = fn;
+    });
+    void getGpuComputeCapability()
+      .then((s) => {
+        if (!cancelled) setGpuSelftest(s);
+      })
+      .catch(() => {});
+    void onGpuSelftestStatus((event) => {
+      if (cancelled) return;
+      setGpuSelftest(event.payload);
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlistenSelftest = fn;
     });
     return () => {
       cancelled = true;
-      unlisten?.();
+      unlistenStatus?.();
+      unlistenSelftest?.();
     };
   }, [docId, showGpuDitherIndicator]);
 
@@ -318,21 +342,40 @@ export default function PreviewWindow({
           <span className={cn('pv-footer-size')}>
             {docWidth} × {docHeight}
           </span>
-          {showGpuDitherIndicator && gpuDitherStatus && (
+          {showGpuDitherIndicator && (
             <span
               className={cn('pv-gpu-dither')}
               title={
-                gpuDitherStatus.width && gpuDitherStatus.height
-                  ? `${gpuDitherStatus.width}×${gpuDitherStatus.height} · ps=${gpuDitherStatus.pixel_size ?? 1} · ${gpuDitherStatus.strips} strip(s)`
-                  : `${gpuDitherStatus.strips} strip(s)`
+                gpuSelftest?.adapter
+                  ? `adapter=${gpuSelftest.adapter}${gpuSelftest.reason ? ` · ${gpuSelftest.reason}` : ''}`
+                  : gpuDitherStatus?.width && gpuDitherStatus?.height
+                    ? `${gpuDitherStatus.width}×${gpuDitherStatus.height} · ps=${gpuDitherStatus.pixel_size ?? 1} · ${gpuDitherStatus.strips} strip(s)`
+                    : undefined
               }
               aria-label="GPU dither path"
             >
-              {gpuDitherStatus.algorithm} ·{' '}
-              {gpuDitherStatus.path === 'CPU'
-                ? 'CPU fallback'
-                : `GPU (${gpuDitherStatus.backend})`}{' '}
-              · {gpuDitherStatus.elapsed_ms} ms
+              {(() => {
+                const st = gpuSelftest?.state;
+                if (st === 'unknown') return 'проверка GPU…';
+                if (st === 'fail' || st === 'lost') {
+                  return 'CPU (проверка GPU не пройдена)';
+                }
+                if (gpuDitherStatus) {
+                  if (gpuDitherStatus.path === 'CPU') {
+                    return st === 'pass'
+                      ? `CPU · ${gpuDitherStatus.elapsed_ms} ms`
+                      : `CPU · ${gpuDitherStatus.elapsed_ms} ms`;
+                  }
+                  return `GPU (${gpuDitherStatus.backend}) · ${gpuDitherStatus.elapsed_ms} ms`;
+                }
+                if (st === 'pass') {
+                  return gpuSelftest?.backend
+                    ? `GPU (${gpuSelftest.backend})`
+                    : 'GPU';
+                }
+                if (st === 'unavailable') return 'CPU';
+                return 'CPU';
+              })()}
             </span>
           )}
           {hasAscii && (

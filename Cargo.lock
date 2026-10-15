@@ -1547,6 +1547,7 @@ dependencies = [
 name = "engine-gpu"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "bytemuck",
  "crossbeam",
  "crossbeam-channel",
@@ -1556,6 +1557,7 @@ dependencies = [
  "log",
  "objc",
  "pollster",
+ "serde",
  "thiserror 1.0.69",
  "wgpu",
 ]

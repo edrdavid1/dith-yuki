@@ -3,7 +3,7 @@
 use std::sync::atomic::AtomicBool;
 
 use engine_project::algorithms::gpu_dither_cpu::{
-    blue_noise_cpu, blue_noise_ranks, PaletteRgb, Rgba8, DEFAULT_SPREAD,
+    blue_noise_cpu, blue_noise_ranks, palette_rgba8_blue_noise, PaletteRgb, Rgba8, DEFAULT_SPREAD,
 };
 
 fn gray_ramp(w: usize, h: usize) -> Vec<Rgba8> {
@@ -47,7 +47,7 @@ fn blue_noise_gpu_matches_cpu_256() {
     for p in &input {
         in_bytes.extend_from_slice(&[p.r, p.g, p.b, p.a]);
     }
-    let pal_rgba: Vec<[u8; 4]> = pal.iter().map(|p| [p.r, p.g, p.b, 255]).collect();
+    let pal_rgba = palette_rgba8_blue_noise(&pal);
     let cancel = AtomicBool::new(false);
     let gpu = engine_gpu::apply_blue_noise_gpu(
         &device,

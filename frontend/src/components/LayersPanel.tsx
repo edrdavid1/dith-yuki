@@ -73,7 +73,9 @@ export interface LayersPanelProps {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function filterKindToName(kind: string): string {
+function filterKindToName(kind: string, algorithmId?: string | null): string {
+  if (algorithmId === 'nearest_color') return 'Nearest Color';
+  if (algorithmId === 'palette_quantize') return 'Palette Quantize';
   switch (kind) {
     case 'DitherV2': case 'Dither': return 'Dithering';
     case 'Glitch': return 'Glitching';
@@ -83,11 +85,14 @@ function filterKindToName(kind: string): string {
     case 'Crt': return 'CRT';
     case 'Adjust': return 'Adjust';
     case 'Ascii': return 'ASCII';
+    case 'PaletteQuantize': return 'Palette Quantize';
     default: return kind;
   }
 }
 
-function filterKindToIconType(kind: string): string {
+function filterKindToIconType(kind: string, algorithmId?: string | null): string {
+  if (algorithmId === 'nearest_color') return 'nearest_color';
+  if (algorithmId === 'palette_quantize') return 'palette_quantize';
   switch (kind) {
     case 'DitherV2': case 'Dither': return 'dithering';
     case 'Glitch': return 'glitching';
@@ -97,6 +102,7 @@ function filterKindToIconType(kind: string): string {
     case 'Crt': return 'crt';
     case 'Adjust': return 'adjust';
     case 'Ascii': return 'ascii';
+    case 'PaletteQuantize': return 'palette_quantize';
     default: return 'dithering';
   }
 }
@@ -537,7 +543,9 @@ export default function LayersPanel({
           {displayFilters.map((filter, idx) => {
             const isSelected = filter.id === selectedFilterId;
             const stableNumber = filterNumbers[filter.id] ?? '?';
-            const displayName = filterNames[filter.id] ?? filterKindToName(filter.kind);
+            const displayName =
+              filterNames[filter.id] ??
+              filterKindToName(filter.kind, filter.algorithm_id);
             const isEditing = editingFilterId === filter.id;
             const isBeingDragged = dragFilterId === filter.id && isDragging.current;
             const showDropBefore = dropTargetIndex === idx && dragFilterId !== null && isDragging.current;
@@ -602,7 +610,9 @@ export default function LayersPanel({
                   </div>
 
                   <div className={cn("lp-layer-icon")}>
-                    <EffectIconSvg type={filterKindToIconType(filter.kind)} />
+                    <EffectIconSvg
+                      type={filterKindToIconType(filter.kind, filter.algorithm_id)}
+                    />
                   </div>
                 </div>
               </div>
@@ -708,6 +718,10 @@ function EffectIconSvg({ type }: { type: string }) {
       return <Icon name="effect.adjust" width={18} height={18} />;
     case 'ascii':
       return <Icon name="effect.ascii" width={18} height={18} />;
+    case 'nearest_color':
+      return <Icon name="effect.nearest_color" width={18} height={18} />;
+    case 'palette_quantize':
+      return <Icon name="effect.palette_quantize" width={18} height={18} />;
     default:
       return <Icon name="effect.dithering" width={18} height={18} />;
   }

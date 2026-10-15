@@ -17,8 +17,8 @@ fn ramp(w: u32, h: u32) -> Vec<f32> {
     for _y in 0..h {
         for x in 0..w {
             let g = (x * 255) / denom;
-            let lin = engine_color::palette::srgb_to_linear(g as u8);
-            v.extend_from_slice(&[lin, lin, lin, 1.0]);
+            let d = g as f32 / 255.0;
+            v.extend_from_slice(&[d, d, d, 1.0]);
         }
     }
     v
@@ -64,6 +64,11 @@ fn p95(mut v: Vec<f64>) -> f64 {
 }
 
 fn run_once(path: &str, mode: DitherModeV2, w: u32, h: u32, ps: u8, pal_n: usize) -> f64 {
+    if path.eq_ignore_ascii_case("gpu") {
+        engine_project::algorithms::gpu_selftest::set_state(
+            engine_project::algorithms::gpu_selftest::SelftestState::Pass,
+        );
+    }
     std::env::set_var("DITHER_GPU_PATH", path);
     let mut rgba = ramp(w, h);
     let params = DitherParamsV2 {

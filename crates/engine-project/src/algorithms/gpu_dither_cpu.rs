@@ -6,7 +6,8 @@
 
 use crate::algorithms::blue_noise_texture::BlueNoiseTexture;
 use crate::algorithms::fixed_point::{
-    blue_noise_shift_q8, clamp_adjusted_q8, distribute_fs, q8_to_u8_rounded, u8_to_q8, MAX_U8_Q8,
+    blue_noise_shift_scaled_q8, clamp_adjusted_q8, distribute_fs, q8_to_u8_rounded, u8_to_q8,
+    MAX_U8_Q8,
 };
 use crate::error::EngineError;
 use crate::filter::DitherColorMode;
@@ -94,12 +95,21 @@ pub fn nearest_palette(
     color: (u8, u8, u8),
     palette: &[PaletteRgb],
 ) -> Result<(u8, u8, u8), EngineError> {
+    let i = nearest_palette_index(color, palette)?;
+    let p = palette[i];
+    Ok((p.r, p.g, p.b))
+}
+
+/// Index of the Euclidean-nearest palette entry (lower index wins ties).
+pub fn nearest_palette_index(
+    color: (u8, u8, u8),
+    palette: &[PaletteRgb],
+) -> Result<usize, EngineError> {
     if palette.is_empty() {
         return Err(EngineError::invalid_filter_params("InvalidPalette: empty"));
     }
     if palette.len() == 1 {
-        let c = palette[0];
-        return Ok((c.r, c.g, c.b));
+        return Ok(0);
     }
     let (cr, cg, cb) = color;
     let mut best_i = 0usize;
@@ -114,8 +124,138 @@ pub fn nearest_palette(
             best_i = i;
         }
     }
-    let p = palette[best_i];
-    Ok((p.r, p.g, p.b))
+    Ok(best_i)
+}
+
+/// Chebyshev distance in display-u8 RGB (`max(|dr|,|dg|,|db|)`).
+///
+/// Matches the blue-noise shift model (one scalar added to all channels): a
+/// channel shift of `s` moves Chebyshev distance `s`, so half-NN in this metric
+/// is the correct identity clamp. (Euclidean half-NN is too loose: equal-channel
+/// shift `s` moves `s·√3` in L2.)
+#[inline]
+pub fn chebyshev_u8(a: PaletteRgb, b: PaletteRgb) -> u32 {
+    let dr = (a.r as i32 - b.r as i32).unsigned_abs();
+    let dg = (a.g as i32 - b.g as i32).unsigned_abs();
+    let db = (a.b as i32 - b.b as i32).unsigned_abs();
+    dr.max(dg).max(db)
+}
+
+/// Per-entry half nearest-neighbor Chebyshev distance, clipped to 255.
+///
+/// Caps `|shift_q8|` after interval scaling so a solid palette color cannot leave
+/// its Voronoi cell (option A). Singleton palette → 255.
+pub fn palette_half_nn_dist(palette: &[PaletteRgb]) -> Vec<u8> {
+    let n = palette.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    if n == 1 {
+        return vec![255];
+    }
+    let mut out = vec![0u8; n];
+    for i in 0..n {
+        let mut min_d = u32::MAX;
+        for j in 0..n {
+            if i == j {
+                continue;
+            }
+            min_d = min_d.min(chebyshev_u8(palette[i], palette[j]));
+        }
+        out[i] = (min_d / 2).min(255) as u8;
+    }
+    out
+}
+
+/// True when every palette entry is gray (`r == g == b`).
+pub fn is_gray_palette(palette: &[PaletteRgb]) -> bool {
+    !palette.is_empty() && palette.iter().all(|p| p.r == p.g && p.g == p.b)
+}
+
+/// Sorted unique gray levels for a gray palette (empty if not gray).
+pub fn gray_palette_levels(palette: &[PaletteRgb]) -> Vec<u8> {
+    if !is_gray_palette(palette) {
+        return Vec::new();
+    }
+    let mut levels: Vec<u8> = palette.iter().map(|p| p.r).collect();
+    levels.sort_unstable();
+    levels.dedup();
+    levels
+}
+
+/// Covering gray neighbors `(lo, hi)` for brightness `g` on sorted unique levels.
+///
+/// Strictly between levels → `(lo, hi)` with `lo < hi`. On a solid level (or
+/// outside the span) → `(c, c)` where `c` is the closest level (identity cell).
+pub fn gray_covering_neighbors(g: u8, levels: &[u8]) -> (u8, u8) {
+    if levels.is_empty() {
+        return (g, g);
+    }
+    if levels.len() == 1 {
+        return (levels[0], levels[0]);
+    }
+    let mut lo: Option<u8> = None;
+    let mut hi: Option<u8> = None;
+    for &l in levels {
+        if l <= g {
+            lo = Some(l);
+        }
+        if l >= g && hi.is_none() {
+            hi = Some(l);
+        }
+    }
+    match (lo, hi) {
+        (Some(a), Some(b)) if a < b => (a, b),
+        (Some(a), Some(b)) if a == b => (a, b),
+        (Some(a), None) => (a, a),
+        (None, Some(b)) => (b, b),
+        _ => (levels[0], levels[0]),
+    }
+}
+
+/// Interval width `A` (display-u8) for brightness `g` on a sorted gray level list.
+///
+/// When `g` lies strictly between two levels, `A = hi − lo`. On a solid level (or
+/// outside the span) fall back to `2 * half_nn` of the closest entry so identity
+/// stays exact under the post-scale cap.
+pub fn gray_interval_a(g: u8, levels: &[u8], half_nn_closest: u8) -> u8 {
+    let (lo, hi) = gray_covering_neighbors(g, levels);
+    if lo < hi {
+        hi - lo
+    } else {
+        half_nn_closest.saturating_mul(2).min(255)
+    }
+}
+
+/// Per-brightness `A` LUT (256 entries) built once from a gray palette.
+///
+/// `None` when the palette is not gray (caller uses `2 * half_nn` per pixel).
+pub fn palette_gray_interval_lut(palette: &[PaletteRgb]) -> Option<[u8; 256]> {
+    let levels = gray_palette_levels(palette);
+    if levels.is_empty() {
+        return None;
+    }
+    let half = palette_half_nn_dist(palette);
+    let mut lut = [0u8; 256];
+    for g in 0u16..=255 {
+        let g8 = g as u8;
+        let closest = nearest_palette_index((g8, g8, g8), palette).ok()?;
+        lut[g as usize] = gray_interval_a(g8, &levels, half[closest]);
+    }
+    Some(lut)
+}
+
+/// Pack palette for the blue-noise GPU path: RGB + α = [`palette_half_nn_dist`].
+///
+/// Interval width `A` is derived per pixel (gray LUT / `2·half_nn`); α only caps
+/// `|shift|` for solid identity.
+pub fn palette_rgba8_blue_noise(palette: &[PaletteRgb]) -> Vec<[u8; 4]> {
+    let half = palette_half_nn_dist(palette);
+    palette
+        .iter()
+        .zip(half)
+        .map(|(p, h)| [p.r, p.g, p.b, h])
+        .collect()
 }
 
 fn read_clamped(input: &[Rgba8], w: usize, h: usize, x: i32, y: i32) -> Rgba8 {
@@ -185,6 +325,9 @@ where
 ///
 /// `tile_w`/`tile_h` are the **core** stride (default [`CORE`]). Each tile
 /// processes a `(tile_w+pad)×(tile_h+pad)` region; only the core is written.
+///
+/// Joint nearest: each channel keeps its own Q8.8 error plane; palette pick uses
+/// the full corrected RGB vector (Euclidean display-u8, lower index wins ties).
 pub fn blocked_fs_cpu(
     input: &[Rgba8],
     width: u32,
@@ -193,6 +336,57 @@ pub fn blocked_fs_cpu(
     tile_w: u32,
     tile_h: u32,
     pad: u32,
+) -> Result<Vec<Rgba8>, EngineError> {
+    blocked_fs_cpu_impl(
+        input,
+        width,
+        height,
+        palette,
+        tile_w,
+        tile_h,
+        pad,
+        BlockedFsQuant::JointNearest,
+    )
+}
+
+/// Legacy per-channel substitution (pre-joint nearest). Kept only so tests can
+/// prove it fails average-preservation on bright solids.
+pub fn blocked_fs_cpu_per_channel_subst(
+    input: &[Rgba8],
+    width: u32,
+    height: u32,
+    palette: &[PaletteRgb],
+    tile_w: u32,
+    tile_h: u32,
+    pad: u32,
+) -> Result<Vec<Rgba8>, EngineError> {
+    blocked_fs_cpu_impl(
+        input,
+        width,
+        height,
+        palette,
+        tile_w,
+        tile_h,
+        pad,
+        BlockedFsQuant::PerChannelSubst,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum BlockedFsQuant {
+    JointNearest,
+    PerChannelSubst,
+}
+
+fn blocked_fs_cpu_impl(
+    input: &[Rgba8],
+    width: u32,
+    height: u32,
+    palette: &[PaletteRgb],
+    tile_w: u32,
+    tile_h: u32,
+    pad: u32,
+    quant: BlockedFsQuant,
 ) -> Result<Vec<Rgba8>, EngineError> {
     if palette.is_empty() {
         return Err(EngineError::invalid_filter_params("InvalidPalette: empty"));
@@ -230,53 +424,95 @@ pub fn blocked_fs_cpu(
                 }
             }
 
-            for ch in 0..3 {
-                let mut err = vec![0i32; (ph + 2) * (pw + 2)];
-                let stride = pw + 2;
-                let t_max = (pw.saturating_sub(1)) + 2 * (ph.saturating_sub(1));
-                for t in 0..=t_max {
-                    for y in 0..ph {
-                        let x_i = t as i32 - 2 * y as i32;
-                        if x_i < 0 || x_i >= pw as i32 {
-                            continue;
+            match quant {
+                BlockedFsQuant::JointNearest => {
+                    // Three independent Q8.8 planes; one shared palette pick per pixel.
+                    let plane = (ph + 2) * (pw + 2);
+                    let mut err = vec![0i32; 3 * plane];
+                    let stride = pw + 2;
+                    let t_max = (pw.saturating_sub(1)) + 2 * (ph.saturating_sub(1));
+                    for t in 0..=t_max {
+                        for y in 0..ph {
+                            let x_i = t as i32 - 2 * y as i32;
+                            if x_i < 0 || x_i >= pw as i32 {
+                                continue;
+                            }
+                            let x = x_i as usize;
+                            let ei = (y + 1) * stride + (x + 1);
+                            let mut color_u8 = [0u8; 3];
+                            let mut clamped = [0i32; 3];
+                            for ch in 0..3 {
+                                let v_q8 = u8_to_q8(buffer[y * pw + x][ch]);
+                                let adjusted = v_q8 + err[ch * plane + ei];
+                                clamped[ch] = clamp_adjusted_q8(adjusted);
+                                color_u8[ch] = q8_to_u8_rounded(clamped[ch]);
+                            }
+                            let (qr, qg, qb) =
+                                nearest_palette((color_u8[0], color_u8[1], color_u8[2]), palette)?;
+                            let q = [qr, qg, qb];
+                            for ch in 0..3 {
+                                let error = clamped[ch] - u8_to_q8(q[ch]);
+                                debug_assert!(error.abs() <= 65536);
+                                let (e7, e3, e5, e1) = distribute_fs(error);
+                                let base = ch * plane;
+                                err[base + ei + 1] += e7;
+                                if x > 0 {
+                                    err[base + ei + stride - 1] += e3;
+                                }
+                                err[base + ei + stride] += e5;
+                                err[base + ei + stride + 1] += e1;
+                            }
+                            buffer[y * pw + x] = q;
                         }
-                        let x = x_i as usize;
-                        let ei = (y + 1) * stride + (x + 1);
-                        let v_q8 = u8_to_q8(buffer[y * pw + x][ch]);
-                        let adjusted = v_q8 + err[ei];
-                        let clamped = clamp_adjusted_q8(adjusted);
-                        let color_u8 = q8_to_u8_rounded(clamped);
-                        // Nearest palette uses full RGB with this channel replaced.
-                        let mut rgb = buffer[y * pw + x];
-                        rgb[ch] = color_u8;
-                        let (qr, qg, qb) = nearest_palette((rgb[0], rgb[1], rgb[2]), palette)?;
-                        let quantized = [qr, qg, qb][ch];
-                        let error = clamped - u8_to_q8(quantized);
-                        debug_assert!(error.abs() <= 65536);
-                        let (e7, e3, e5, e1) = distribute_fs(error);
-                        err[ei + 1] += e7;
-                        if x > 0 {
-                            err[ei + stride - 1] += e3;
-                        }
-                        err[ei + stride] += e5;
-                        err[ei + stride + 1] += e1;
-                        buffer[y * pw + x][ch] = quantized;
                     }
                 }
-            }
-
-            // Re-quantize final RGB jointly so output uses palette only.
-            for ly in 0..ph {
-                for lx in 0..pw {
-                    let (qr, qg, qb) = nearest_palette(
-                        (
-                            buffer[ly * pw + lx][0],
-                            buffer[ly * pw + lx][1],
-                            buffer[ly * pw + lx][2],
-                        ),
-                        palette,
-                    )?;
-                    buffer[ly * pw + lx] = [qr, qg, qb];
+                BlockedFsQuant::PerChannelSubst => {
+                    for ch in 0..3 {
+                        let mut err = vec![0i32; (ph + 2) * (pw + 2)];
+                        let stride = pw + 2;
+                        let t_max = (pw.saturating_sub(1)) + 2 * (ph.saturating_sub(1));
+                        for t in 0..=t_max {
+                            for y in 0..ph {
+                                let x_i = t as i32 - 2 * y as i32;
+                                if x_i < 0 || x_i >= pw as i32 {
+                                    continue;
+                                }
+                                let x = x_i as usize;
+                                let ei = (y + 1) * stride + (x + 1);
+                                let v_q8 = u8_to_q8(buffer[y * pw + x][ch]);
+                                let adjusted = v_q8 + err[ei];
+                                let clamped = clamp_adjusted_q8(adjusted);
+                                let color_u8 = q8_to_u8_rounded(clamped);
+                                let mut rgb = buffer[y * pw + x];
+                                rgb[ch] = color_u8;
+                                let (qr, qg, qb) =
+                                    nearest_palette((rgb[0], rgb[1], rgb[2]), palette)?;
+                                let quantized = [qr, qg, qb][ch];
+                                let error = clamped - u8_to_q8(quantized);
+                                let (e7, e3, e5, e1) = distribute_fs(error);
+                                err[ei + 1] += e7;
+                                if x > 0 {
+                                    err[ei + stride - 1] += e3;
+                                }
+                                err[ei + stride] += e5;
+                                err[ei + stride + 1] += e1;
+                                buffer[y * pw + x][ch] = quantized;
+                            }
+                        }
+                    }
+                    for ly in 0..ph {
+                        for lx in 0..pw {
+                            let (qr, qg, qb) = nearest_palette(
+                                (
+                                    buffer[ly * pw + lx][0],
+                                    buffer[ly * pw + lx][1],
+                                    buffer[ly * pw + lx][2],
+                                ),
+                                palette,
+                            )?;
+                            buffer[ly * pw + lx] = [qr, qg, qb];
+                        }
+                    }
                 }
             }
 
@@ -298,6 +534,90 @@ pub fn blocked_fs_cpu(
     }
     let _ = MAX_U8_Q8;
     Ok(output)
+}
+
+/// Wavefront FS error ring (GPU memory C). Indexed by `(ch, t mod ring, y)`.
+///
+/// Proof sketch (`t = x + 2y`): a destination at wave `t_d` receives writes from
+/// `t_d−1` (e7, e3), `t_d−2` (e5), `t_d−3` (e1). Contribution lifetime is 1..=3
+/// waves. At wave `t`, slots for `t..t+3` can be live → **ring ≥ 4**. Ring 3
+/// aliases `t+3 ≡ t (mod 3)` and drops / races contributions (see tests).
+pub fn blocked_fs_wavefront_ring_apply(
+    buffer: &mut [[u8; 3]],
+    pw: usize,
+    ph: usize,
+    palette: &[PaletteRgb],
+    ring_slots: usize,
+) -> Result<(), EngineError> {
+    blocked_fs_wavefront_ring_apply_ex(buffer, pw, ph, palette, ring_slots, true)
+}
+
+/// Like [`blocked_fs_wavefront_ring_apply`], but `clear_slot=false` leaves stale
+/// values in the aliased slot (models ring-too-small / missing clear — for tests).
+pub fn blocked_fs_wavefront_ring_apply_ex(
+    buffer: &mut [[u8; 3]],
+    pw: usize,
+    ph: usize,
+    palette: &[PaletteRgb],
+    ring_slots: usize,
+    clear_slot: bool,
+) -> Result<(), EngineError> {
+    assert!(ring_slots >= 1);
+    let rows = ph + 2;
+    let mut ring = vec![0i32; 3 * ring_slots * rows];
+    let idx = |ch: usize, slot: usize, y: i32| -> usize {
+        let row = (y + 1) as usize;
+        (ch * ring_slots + (slot % ring_slots)) * rows + row
+    };
+    let t_max = (pw.saturating_sub(1)) + 2 * (ph.saturating_sub(1));
+    for t in 0..=t_max {
+        let slot = t % ring_slots;
+        // Phase 1: always consume+clear current slot for every row (t+4 reuse safety).
+        let mut pending: Vec<(usize, usize, [i32; 3], [u8; 3])> = Vec::new();
+        for y in 0..ph {
+            let mut errs = [0i32; 3];
+            for ch in 0..3 {
+                errs[ch] = ring[idx(ch, slot, y as i32)];
+                if clear_slot {
+                    ring[idx(ch, slot, y as i32)] = 0;
+                }
+            }
+            let x_i = t as i32 - 2 * y as i32;
+            if x_i < 0 || x_i >= pw as i32 {
+                continue;
+            }
+            let x = x_i as usize;
+            let mut color_u8 = [0u8; 3];
+            let mut clamped = [0i32; 3];
+            for ch in 0..3 {
+                let v_q8 = u8_to_q8(buffer[y * pw + x][ch]);
+                clamped[ch] = clamp_adjusted_q8(v_q8 + errs[ch]);
+                color_u8[ch] = q8_to_u8_rounded(clamped[ch]);
+            }
+            pending.push((x, y, clamped, color_u8));
+        }
+        // Phase 2: joint nearest + distribute (would be after barrier on GPU).
+        for (x, y, clamped, color_u8) in pending {
+            let (qr, qg, qb) = nearest_palette((color_u8[0], color_u8[1], color_u8[2]), palette)?;
+            let q = [qr, qg, qb];
+            for ch in 0..3 {
+                let error = clamped[ch] - u8_to_q8(q[ch]);
+                let (e7, e3, e5, e1) = distribute_fs(error);
+                if x + 1 < pw {
+                    ring[idx(ch, t + 1, y as i32)] += e7;
+                }
+                if x > 0 {
+                    ring[idx(ch, t + 1, y as i32 + 1)] += e3;
+                }
+                ring[idx(ch, t + 2, y as i32 + 1)] += e5;
+                if x + 1 < pw {
+                    ring[idx(ch, t + 3, y as i32 + 1)] += e1;
+                }
+            }
+            buffer[y * pw + x] = q;
+        }
+    }
+    Ok(())
 }
 
 /// Threshold-shift blue noise (§3.2.2).
@@ -324,18 +644,54 @@ pub fn blue_noise_cpu(
             "blue_noise: buffer size",
         ));
     }
+    // Option A: scale shift to interval width A (uniform ±A/2 at DEFAULT_SPREAD),
+    // then cap |shift|; gray quantizes to covering {lo,hi}, color to full palette.
+    let half_nn = palette_half_nn_dist(palette);
+    let levels = gray_palette_levels(palette);
+    let gray_lut = palette_gray_interval_lut(palette);
     let mut output = Vec::with_capacity(input.len());
     for y in 0..h {
         for x in 0..w {
             let px = input[y * w + x];
             let rank = texture[(y % BLUE_NOISE_SIZE) * BLUE_NOISE_SIZE + (x % BLUE_NOISE_SIZE)];
-            let shift = blue_noise_shift_q8(rank, spread);
-            let mut shifted = [0u8; 3];
-            for (i, ch) in [px.r, px.g, px.b].into_iter().enumerate() {
-                let shifted_q8 = clamp_adjusted_q8(u8_to_q8(ch) + shift);
-                shifted[i] = q8_to_u8_rounded(shifted_q8);
-            }
-            let (qr, qg, qb) = nearest_palette((shifted[0], shifted[1], shifted[2]), palette)?;
+            let closest = nearest_palette_index((px.r, px.g, px.b), palette)?;
+            let (qr, qg, qb) = if let Some(lut) = &gray_lut {
+                let bright = if px.r == px.g && px.g == px.b {
+                    px.r
+                } else {
+                    ((px.r as u16 + px.g as u16 + px.b as u16) / 3) as u8
+                };
+                let a = lut[bright as usize] as u32;
+                let limit_q8 = ((a as i32) << 8) >> 1;
+                let shift = blue_noise_shift_scaled_q8(rank, spread, a).clamp(-limit_q8, limit_q8);
+                let shifted_q8 = clamp_adjusted_q8(u8_to_q8(bright) + shift);
+                let shifted_b = q8_to_u8_rounded(shifted_q8);
+                let (lo, hi) = gray_covering_neighbors(bright, &levels);
+                // Quantize to the covering pair only (full-palette nearest would
+                // leak into non-adjacent levels on asymmetric gaps).
+                let v = if lo >= hi {
+                    lo
+                } else {
+                    let mid = lo as i32 + ((hi - lo) as i32) / 2;
+                    if (shifted_b as i32) <= mid {
+                        lo
+                    } else {
+                        hi
+                    }
+                };
+                (v, v, v)
+            } else {
+                let h = half_nn[closest] as u32;
+                let a = h.saturating_mul(2).min(255);
+                let limit_q8 = (h as i32) << 8;
+                let shift = blue_noise_shift_scaled_q8(rank, spread, a).clamp(-limit_q8, limit_q8);
+                let mut shifted = [0u8; 3];
+                for (i, ch) in [px.r, px.g, px.b].into_iter().enumerate() {
+                    let shifted_q8 = clamp_adjusted_q8(u8_to_q8(ch) + shift);
+                    shifted[i] = q8_to_u8_rounded(shifted_q8);
+                }
+                nearest_palette((shifted[0], shifted[1], shifted[2]), palette)?
+            };
             output.push(Rgba8::new(qr, qg, qb, px.a));
         }
     }
@@ -474,7 +830,7 @@ mod tests {
         }
         let hash = format!("{:x}", Sha256::digest(&bytes));
         assert_eq!(
-            hash, "98ca5f93dd4f4f931b70687a52309b0618c73af557107eb5277ba50896fdef79",
+            hash, "db1d9a5289012f0d868fadd7194084df67c3dd4d40585e49eaefd5e3b4d2078e",
             "blue_noise_cpu golden hash changed — update only if the VAC texture or formula intentionally changed"
         );
     }
@@ -557,7 +913,7 @@ mod tests {
         let hash = format!("{:x}", Sha256::digest(&bytes));
         // Captured once for geometry 56+8; bump only on intentional algorithm change.
         assert_eq!(
-            hash, "c5ba99f8fc2af14d27d9d7b936b97d47349fa5674ac33c8d0517d00328364062",
+            hash, "2049d38194ca78c6ec541999e635d7f53ba8b84392814284b4af6fa99a577f9a",
             "blocked_fs golden hash changed — update only on intentional geometry/algorithm change"
         );
     }

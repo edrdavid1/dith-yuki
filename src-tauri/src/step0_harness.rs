@@ -168,7 +168,7 @@ fn step0_blocked_fs_fit_ten_runs() {
             apply_rows.iter().map(|r| r.out_bytes).collect(),
         ),
         (
-            "out_srgb_to_linear",
+            "out_u8_to_f32",
             apply_rows.iter().map(|r| r.out_linear).collect(),
         ),
         ("apply_misc", apply_rows.iter().map(|r| r.misc).collect()),
@@ -759,7 +759,7 @@ impl ApplyStages {
             post: s.post_ms,
             expand_ps: s.expand_ps_ms,
             out_bytes: s.out_bytes_to_rgba8_ms,
-            out_linear: s.out_srgb_to_linear_ms,
+            out_linear: s.out_u8_to_f32_ms,
             misc: s.apply_misc_ms,
             gpu_total: f64::from(s.elapsed_ms),
         }
@@ -855,17 +855,21 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
 }
 
 fn blocked_fs_doc() -> Document {
-    blocked_fs_doc_side(SIDE)
+    blocked_fs_doc_side_ps(SIDE, 5)
 }
 
 fn blocked_fs_doc_side(side: u32) -> Document {
+    blocked_fs_doc_side_ps(side, 5)
+}
+
+fn blocked_fs_doc_side_ps(side: u32, pixel_size: u8) -> Document {
     let mut doc = Document::new(DocumentId::new(1), side, side);
     let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, side, side);
     layer.filters.push(FilterInstance::new(
         FilterKind::Dither,
         FilterParams::DitherV2(DitherParamsV2 {
             mode: DitherModeV2::BlockedFs,
-            pixel_size: 5,
+            pixel_size,
             levels: 2,
             ..DitherParamsV2::default()
         }),
@@ -1221,7 +1225,7 @@ fn scale_a_thirty_large() {
             eprintln!(
                 "  apply stages side={side}: in_f32={:.1} setup={:.1} lattice={:.1} pack={:.1} \
 prepare={:.1} upload={:.1} dispatch={:.1} readback={:.1} post={:.1} expand={:.1} \
-out_u8={:.1} out_lin={:.1} total={:.1}",
+out_u8={:.1} out_u8_to_f32={:.1} total={:.1}",
                 s.in_f32_to_u8_ms,
                 s.setup_hash_ms,
                 s.lattice_ps_ms,
@@ -1233,7 +1237,7 @@ out_u8={:.1} out_lin={:.1} total={:.1}",
                 s.post_ms,
                 s.expand_ps_ms,
                 s.out_bytes_to_rgba8_ms,
-                s.out_srgb_to_linear_ms,
+                s.out_u8_to_f32_ms,
                 s.elapsed_ms
             );
         }
@@ -1245,6 +1249,139 @@ out_u8={:.1} out_lin={:.1} total={:.1}",
 If wall scaled with area alone, 8192 ≈ 4×4096 and 16384 ≈ 16×4096. \
 Deviations come from publish∝tiles, FD assemble∝pixels, GPU strips, cache pressure."
     );
+
+    crate::tile_pipeline::reset_fd_publish_claims();
+    crate::preview_diag::clear_test_state();
+}
+
+/// Color diagnostic STEP 2: stage table for 4096² ps=1/5 (30 runs) and 8192² ps=5 (10 runs).
+/// Measurement / counters only — no algorithm or golden changes.
+#[test]
+#[ignore = "color-diag: cargo test -p dither --release color_diag_stage_matrix -- --ignored --nocapture --test-threads=1"]
+fn color_diag_stage_matrix() {
+    let _gate = crate::preview_diag::test_gate();
+    let _ = engine_gpu::warm_blocked_fs_pipelines();
+    engine_project::algorithms::gpu_selftest::set_state(
+        engine_project::algorithms::gpu_selftest::SelftestState::Pass,
+    );
+
+    let cases: &[(u32, u8, usize)] = &[(4096, 1, 30), (4096, 5, 30), (8192, 5, 10)];
+    eprintln!("=== color_diag_stage_matrix ===");
+
+    for &(side, ps, n) in cases {
+        let budget = match side {
+            4096 => 2 * 1024 * 1024 * 1024,
+            _ => 4 * 1024 * 1024 * 1024usize,
+        };
+        let state = Arc::new(AppState::empty_process(None, budget, true));
+        crate::preview_diag::sync_from_config(true, 1);
+        state.spawn_session(blocked_fs_doc_side_ps(side, ps));
+        fill_raw_tiles_side(&state, side);
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let cores = std::thread::available_parallelism()
+            .map(|c| c.get())
+            .unwrap_or(1);
+        let mut joins = Vec::new();
+        for _ in 0..cores {
+            let state = Arc::clone(&state);
+            let stop = Arc::clone(&stop);
+            joins.push(thread::spawn(move || worker_loop(state, stop)));
+        }
+
+        let fit = (VIEW_W / side as f64).min(VIEW_H / side as f64);
+        let mut walls = Vec::with_capacity(n);
+        let mut apply_totals = Vec::with_capacity(n);
+        let mut in_f32 = Vec::with_capacity(n);
+        let mut expand = Vec::with_capacity(n);
+        let mut out_lin = Vec::with_capacity(n);
+        let mut pack_up = Vec::with_capacity(n);
+        let mut upload = Vec::with_capacity(n);
+        let mut dispatch = Vec::with_capacity(n);
+        let mut readback = Vec::with_capacity(n);
+        let mut assemble = Vec::with_capacity(n);
+        let mut promote = Vec::with_capacity(n);
+        let mut rss_peak = rss_bytes();
+
+        for run in 0..n {
+            crate::preview_diag::clear_test_state();
+            crate::preview_diag::sync_from_config(true, 1);
+            crate::tile_pipeline::reset_fd_publish_claims();
+            let gen = bump_and_invalidate(&state);
+            let t0 = Instant::now();
+            let _ = ViewportService::new(Arc::clone(&state))
+                .set_viewport(fit, 0.0, 0.0, VIEW_W, VIEW_H)
+                .expect("set_viewport");
+            let _line = wait_s0(&state, gen, Duration::from_secs(600));
+            walls.push(t0.elapsed().as_secs_f64() * 1000.0);
+            if let Some(s) = engine_project::algorithms::gpu_dither::last_gpu_dither_status() {
+                apply_totals.push(s.elapsed_ms as f64);
+                in_f32.push(s.in_f32_to_u8_ms);
+                expand.push(s.expand_ps_ms);
+                out_lin.push(s.out_u8_to_f32_ms);
+                pack_up.push(s.pack_upload_bytes_ms);
+                upload.push(s.upload_ms);
+                dispatch.push(s.dispatch_ms);
+                readback.push(s.readback_ms);
+            }
+            if let Some(f) = engine_project::filters::last_fd_render_stages() {
+                assemble.push(f.assemble_blit_ms);
+                promote.push(f.promote_f32_ms);
+            }
+            rss_peak = rss_peak.max(rss_bytes());
+            eprintln!(
+                "  side={side} ps={ps} run={run}/{n} wall={:.1} apply={:.1} in_f32={:.1} expand={:.1} out_lin={:.1} pack={:.1} upload={:.1} dispatch={:.1} readback={:.1} assemble={:.1} promote={:.1}",
+                walls[run],
+                apply_totals.last().copied().unwrap_or(0.0),
+                in_f32.last().copied().unwrap_or(0.0),
+                expand.last().copied().unwrap_or(0.0),
+                out_lin.last().copied().unwrap_or(0.0),
+                pack_up.last().copied().unwrap_or(0.0),
+                upload.last().copied().unwrap_or(0.0),
+                dispatch.last().copied().unwrap_or(0.0),
+                readback.last().copied().unwrap_or(0.0),
+                assemble.last().copied().unwrap_or(0.0),
+                promote.last().copied().unwrap_or(0.0),
+            );
+        }
+
+        stop.store(true, Ordering::Release);
+        for join in joins {
+            let _ = join.join();
+        }
+
+        let pair = |v: &[f64]| {
+            if v.is_empty() {
+                (0.0, 0.0)
+            } else {
+                pct_pair(v)
+            }
+        };
+        let (w50, w95) = pair(&walls);
+        let (a50, a95) = pair(&apply_totals);
+        let (i50, i95) = pair(&in_f32);
+        let (e50, e95) = pair(&expand);
+        let (o50, o95) = pair(&out_lin);
+        let (pk50, pk95) = pair(&pack_up);
+        let (u50, u95) = pair(&upload);
+        let (d50, d95) = pair(&dispatch);
+        let (r50, r95) = pair(&readback);
+        let (as50, as95) = pair(&assemble);
+        let (pr50, pr95) = pair(&promote);
+        eprintln!(
+            "SUMMARY side={side} ps={ps} n={n} | wall p50={w50:.1} p95={w95:.1} | apply p50={a50:.1} p95={a95:.1}"
+        );
+        eprintln!(
+            "  in_f32_to_u8 p50={i50:.1} p95={i95:.1} | expand_ps p50={e50:.1} p95={e95:.1} | out_u8_to_f32 p50={o50:.1} p95={o95:.1}"
+        );
+        eprintln!(
+            "  pack_upload p50={pk50:.1} p95={pk95:.1} | upload p50={u50:.1} p95={u95:.1} | dispatch p50={d50:.1} p95={d95:.1} | readback p50={r50:.1} p95={r95:.1}"
+        );
+        eprintln!(
+            "  assemble_blit p50={as50:.1} p95={as95:.1} | promote_f32 p50={pr50:.1} p95={pr95:.1} | rss_peak_MiB={:.0}",
+            rss_peak as f64 / (1024.0 * 1024.0)
+        );
+    }
 
     crate::tile_pipeline::reset_fd_publish_claims();
     crate::preview_diag::clear_test_state();

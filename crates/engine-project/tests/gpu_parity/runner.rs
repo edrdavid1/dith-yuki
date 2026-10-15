@@ -2,8 +2,8 @@ use engine_gpu::{
     apply_blocked_fs_gpu_opts, apply_blue_noise_gpu_opts, BlockedFsGpuOpts, BlueNoiseGpuOpts,
 };
 use engine_project::algorithms::gpu_dither_cpu::{
-    blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, with_pixel_size_blocks, PaletteRgb, Rgba8,
-    CORE, PAD,
+    blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, palette_rgba8_blue_noise,
+    with_pixel_size_blocks, PaletteRgb, Rgba8, CORE, PAD,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -200,21 +200,24 @@ fn run_gpu(
                 },
             )?
         }
-        Algorithm::BlueNoise => apply_blue_noise_gpu_opts(
-            device,
-            queue,
-            &in_b,
-            tw,
-            th,
-            &case.palette,
-            blue_noise_ranks(),
-            case.params.spread,
-            cancel,
-            BlueNoiseGpuOpts {
-                force_strip_h: strip_h,
-                force_max_bind: None,
-            },
-        )?,
+        Algorithm::BlueNoise => {
+            let pal_bn = palette_rgba8_blue_noise(&palette_rgb(&case.palette));
+            apply_blue_noise_gpu_opts(
+                device,
+                queue,
+                &in_b,
+                tw,
+                th,
+                &pal_bn,
+                blue_noise_ranks(),
+                case.params.spread,
+                cancel,
+                BlueNoiseGpuOpts {
+                    force_strip_h: strip_h,
+                    force_max_bind: None,
+                },
+            )?
+        }
     };
     if ps <= 1 {
         return Ok(gpu.rgba8);
@@ -289,14 +292,20 @@ fn check_properties(case: &ParityCase, input: &[Rgba8], out: &[u8]) -> Result<()
 /// App FullDocument path (`apply_gpu_dither_rgba`) — used for `params_ps`.
 fn run_app_path(case: &ParityCase, input: &[Rgba8], path: &str) -> Result<Vec<u8>, String> {
     use engine_project::algorithms::gpu_dither::apply_gpu_dither_rgba;
+    use engine_project::algorithms::gpu_selftest::{set_state, SelftestState};
     use engine_project::filter::{DitherModeV2, DitherParamsV2};
+    // Release lib: `DITHER_GPU_PATH=gpu` no longer bypasses an Unknown/Fail gate.
+    if path.eq_ignore_ascii_case("gpu") {
+        set_state(SelftestState::Pass);
+    }
     std::env::set_var("DITHER_GPU_PATH", path);
     let n = input.len();
     let mut rgba = Vec::with_capacity(n * 4);
+    // Display-referred FullDocument buffer (u8/255), matching apply_gpu_dither_rgba.
     for p in input {
-        rgba.push(engine_color::palette::srgb_to_linear(p.r));
-        rgba.push(engine_color::palette::srgb_to_linear(p.g));
-        rgba.push(engine_color::palette::srgb_to_linear(p.b));
+        rgba.push(p.r as f32 / 255.0);
+        rgba.push(p.g as f32 / 255.0);
+        rgba.push(p.b as f32 / 255.0);
         rgba.push(p.a as f32 / 255.0);
     }
     let mode = match case.algorithm {
@@ -321,9 +330,9 @@ fn run_app_path(case: &ParityCase, input: &[Rgba8], path: &str) -> Result<Vec<u8
         .map_err(|e| e.to_string())?;
     let mut out = Vec::with_capacity(n * 4);
     for chunk in rgba.chunks_exact(4) {
-        out.push(engine_color::palette::linear_to_srgb(chunk[0]));
-        out.push(engine_color::palette::linear_to_srgb(chunk[1]));
-        out.push(engine_color::palette::linear_to_srgb(chunk[2]));
+        out.push((chunk[0].clamp(0.0, 1.0) * 255.0).round() as u8);
+        out.push((chunk[1].clamp(0.0, 1.0) * 255.0).round() as u8);
+        out.push((chunk[2].clamp(0.0, 1.0) * 255.0).round() as u8);
         out.push((chunk[3].clamp(0.0, 1.0) * 255.0).round() as u8);
     }
     Ok(out)
@@ -777,7 +786,14 @@ pub fn run_parity_matrix() {
     }
 
     let mut required_skip_fail = false;
+    let filter = super::matrix::filter_substr();
     for g in REQUIRED_NO_SKIP_GROUPS {
+        // Filtered runs only enforce required groups that the filter selects.
+        if let Some(ref f) = filter {
+            if !super::matrix::filter_matches("", g, f) {
+                continue;
+            }
+        }
         let sk = stats.by_group.get(*g).map(|s| s.skipped).unwrap_or(0);
         if sk > 0 {
             eprintln!("REQUIRED group {g}: skipped={sk} (must be 0)");

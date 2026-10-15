@@ -111,6 +111,18 @@ function CategoryIcon({ category }: { category: EffectCategory }) {
   }
 }
 
+/** Per-algorithm icons so palette/registry rows stay unique without remapping other effects. */
+function AlgorithmIcon({ algorithmId, category }: { algorithmId: string; category: EffectCategory }) {
+  switch (algorithmId) {
+    case 'nearest_color':
+      return <Icon name="effect.nearest_color" width={20} height={20} />;
+    case 'palette_quantize':
+      return <Icon name="effect.palette_quantize" width={20} height={20} />;
+    default:
+      return <CategoryIcon category={category} />;
+  }
+}
+
 /** Levels is not in the Registry; keep it as a static chooser row. */
 const LEGACY_CHOOSER: { type: EffectType; label: string }[] = [
   { type: 'RGBChannels', label: 'RGB channels' },
@@ -280,7 +292,7 @@ export default function EffectSettingsPanel({
                       {mapped ? (
                         <EffectIcon type={mapped.type} />
                       ) : (
-                        <CategoryIcon category={algo.category} />
+                        <AlgorithmIcon algorithmId={algo.id} category={algo.category} />
                       )}
                     </div>
                     <div className={cn("effect-chooser-row-label")}>
