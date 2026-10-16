@@ -125,7 +125,9 @@ Tree is committed on `feature/gpu-dither-families`. Re-run after integration fix
    allow; otherwise identical CPU reference. Never silently substitute exact ED.
 4. File format feature ids `blocked-fs` and `blue-noise` at version **1.2**
    (reuse existing feature-id mechanism; no `feature_level` field).
-5. Runtime flag `experimental.gpu_dither_families` defaults **false**.
+5. Runtime flag `experimental.gpu_dither_families` defaults **true** (config
+   schema ≥2; v1→v2 migration enables it for existing installs). GPU vs CPU
+   path remains self-test gated.
 6. Parity policy: **quick** on every CI commit; **full** before release (not in ordinary CI).
 
 ## Consequences

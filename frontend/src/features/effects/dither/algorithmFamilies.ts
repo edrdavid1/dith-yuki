@@ -98,10 +98,10 @@ export const ALGORITHM_FAMILIES: AlgorithmFamily[] = [
     label: 'Error Diffusion — GPU',
     tradeoff: 'fast, approximate',
     tooltip:
-      'Approximate GPU dither families. Deterministic fixed-point; not bit-identical to exact ED. Enable via experimental.gpu_dither_families.',
+      'Approximate GPU dither families. Deterministic fixed-point; not bit-identical to exact ED. GPU path when self-test passes; otherwise CPU reference.',
     defaultVariant: 'blue_noise',
-    // Hidden until experimental.gpu_dither_families is true (ED-on-GPU.md §12.1).
-    available: false,
+    // Off only when experimental.gpu_dither_families is false (defaults on, schema ≥2).
+    available: true,
     variants: [
       {
         id: 'blocked_fs',

@@ -93,7 +93,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [workspace, setWorkspaceState] = useState<Workspace>('general');
   const [visibility, setVisibility] = useState<UiVisibility>(DEFAULT_VISIBILITY);
   const [tilingAdvanced, setTilingAdvancedState] = useState(false);
-  const [gpuDitherFamilies, setGpuDitherFamilies] = useState(false);
+  // Default on to match config schema ≥2; get_app_config may still flip it off.
+  const [gpuDitherFamilies, setGpuDitherFamilies] = useState(true);
   const [showWorkspacePrompt, setShowPrompt] = useState(false);
   const [hintVisible, setHintVisible] = useState(false);
   const [hintShownThisSession, setHintShownThisSession] = useState(false);

@@ -1,7 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { AlgorithmSelector } from './AlgorithmSelector';
 import type { AlgorithmSelectorValue } from './algorithmFamilies';
+import { setGpuDitherFamiliesAvailable } from './algorithmFamilies';
+import * as WorkspaceContext from '../../workspace/WorkspaceContext';
 
 function openLabeledDropdown(ariaLabel: string) {
   fireEvent.click(screen.getByLabelText(ariaLabel));
@@ -13,6 +15,11 @@ function selectOption(label: string) {
 }
 
 describe('AlgorithmSelector', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    setGpuDitherFamiliesAvailable(true);
+  });
+
   it('renders_two_dropdowns', () => {
     render(
       <AlgorithmSelector
@@ -112,6 +119,9 @@ describe('AlgorithmSelector', () => {
   });
 
   it('unavailable_family_is_disabled', () => {
+    vi.spyOn(WorkspaceContext, 'useWorkspaceOptional').mockReturnValue({
+      gpuDitherFamilies: false,
+    } as ReturnType<typeof WorkspaceContext.useWorkspaceOptional>);
     render(
       <AlgorithmSelector
         value={{ family: 'cpu_ed', variant: 'floyd_steinberg' }}
@@ -123,6 +133,10 @@ describe('AlgorithmSelector', () => {
     const gpu = within(list).getByText('Error Diffusion — GPU (unavailable)');
     expect(gpu).toBeInTheDocument();
     expect(gpu.closest('[role="option"]')).toHaveAttribute('aria-disabled', 'true');
+    expect(gpu.closest('[role="option"]')).toHaveAttribute(
+      'title',
+      'Disabled: experimental.gpu_dither_families is off in config.json',
+    );
   });
 
   it('onchange_emits_full_pair', () => {

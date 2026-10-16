@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 2.0.3-beta
+
+### Fixed
+
+- **GPU dither families selectable by default:** `experimental.gpu_dither_families`
+  defaults on; config schema **2** migrates existing installs that had the flag
+  stuck off (no Preferences toggle). Self-test still chooses GPU vs CPU path.
+  Unavailable rows show why in the tooltip when the flag is off.
+
 ## 2.0.2-beta
 
 ### Fixed
@@ -55,8 +64,9 @@
 - **GPU dither families (experimental):** `blocked_fs` (fast approximate error
   diffusion) and `blue_noise` (threshold-shift). Fixed-point Q8.8 CPU reference
   is canonical; GPU path is capability-gated. Enable with
-  `experimental.gpu_dither_families` in config (off by default). Files that use
-  these modes require format **1.2** feature ids `blocked-fs` / `blue-noise`.
+  `experimental.gpu_dither_families` in config (off by default until 2.0.3-beta).
+  Files that use these modes require format **1.2** feature ids `blocked-fs` /
+  `blue-noise`.
   See `docs/adr/gpu-dither-families.md`.
 - Preview keeps the prior frame while dither recomputes (GPU or CPU), with a
   small corner busy indicator; identical filter updates no longer thrash the

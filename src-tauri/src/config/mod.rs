@@ -83,15 +83,34 @@ impl Default for PreviewDiagnosticsConfig {
     }
 }
 
-/// Experimental feature flags (`ED-on-GPU.md` §12.1). Off by default.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+fn default_gpu_dither_families() -> bool {
+    true
+}
+
+/// Experimental feature flags (`ED-on-GPU.md` §12.1).
+///
+/// `gpu_dither_families` defaults **on** (schema ≥2) so `blocked_fs` / `blue_noise`
+/// are selectable; GPU vs CPU path remains self-test gated.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExperimentalConfig {
     /// When true, UI may offer `blocked_fs` / `blue_noise` GPU dither families.
-    #[serde(default, alias = "gpuDitherFamilies")]
+    #[serde(
+        default = "default_gpu_dither_families",
+        alias = "gpuDitherFamilies"
+    )]
     pub gpu_dither_families: bool,
     /// Gesture / tile timing. Hot path reads an atomic copied from this struct.
     #[serde(default)]
     pub preview_diagnostics: PreviewDiagnosticsConfig,
+}
+
+impl Default for ExperimentalConfig {
+    fn default() -> Self {
+        Self {
+            gpu_dither_families: true,
+            preview_diagnostics: PreviewDiagnosticsConfig::default(),
+        }
+    }
 }
 
 /// Persisted application config at `{app_data_dir}/config.json` (FR-2, NFR-2).
@@ -226,8 +245,18 @@ impl ConfigStore {
         let path = app_data_dir.join(CONFIG_FILENAME);
         match std::fs::read(&path) {
             Ok(bytes) => match parse_and_migrate(&bytes) {
-                Ok(cfg) => {
+                Ok((cfg, migrated)) => {
                     log::info!("workspace.active workspace={}", cfg.workspace.as_str());
+                    if migrated {
+                        if let Err(e) = write_config_atomic(&path, &cfg) {
+                            log::warn!("failed to persist migrated config.json ({e})");
+                        } else {
+                            log::info!(
+                                "config.json migrated to schema_version={}",
+                                cfg.schema_version
+                            );
+                        }
+                    }
                     (path, cfg, false)
                 }
                 Err(e) => {
@@ -442,13 +471,13 @@ impl ConfigStore {
     }
 }
 
-fn parse_and_migrate(bytes: &[u8]) -> Result<AppConfig, String> {
+fn parse_and_migrate(bytes: &[u8]) -> Result<(AppConfig, bool), String> {
     let mut value: Value = serde_json::from_slice(bytes).map_err(|e| format!("json: {e}"))?;
     let had_workspace = value
         .as_object()
         .map(|o| o.contains_key("workspace"))
         .unwrap_or(false);
-    value = migrate_config_value(value);
+    let (value, migrated) = migrate_config_value(value);
     let mut cfg: AppConfig = serde_json::from_value(value).map_err(|e| format!("decode: {e}"))?;
     if !had_workspace {
         // Upgrade path (FR-8): prompt until remembered or 3 launches.
@@ -456,7 +485,7 @@ fn parse_and_migrate(bytes: &[u8]) -> Result<AppConfig, String> {
         cfg.workspace_prompt_launches = 0;
         cfg.workspace = Workspace::General;
     }
-    Ok(cfg)
+    Ok((cfg, migrated))
 }
 
 fn write_config_atomic(path: &Path, cfg: &AppConfig) -> Result<(), String> {
@@ -559,20 +588,31 @@ mod tests {
     #[test]
     fn preview_diagnostics_defaults_off_when_key_missing() {
         let raw = br#"{"schema_version":1,"workspace":"general"}"#;
-        let cfg = parse_and_migrate(raw).unwrap();
+        let (cfg, _) = parse_and_migrate(raw).unwrap();
         assert!(!cfg.experimental.preview_diagnostics.enabled);
         assert_eq!(cfg.experimental.preview_diagnostics.level, 1);
         assert!(!cfg.experimental.preview_diagnostics.save_session_reports);
+        assert!(cfg.experimental.gpu_dither_families);
     }
 
     #[test]
     fn migration_v0_to_v1_adds_fields() {
         let raw = br#"{"autoExtractPalettes":true}"#;
-        let cfg = parse_and_migrate(raw).unwrap();
+        let (cfg, migrated) = parse_and_migrate(raw).unwrap();
+        assert!(migrated);
         assert_eq!(cfg.schema_version, CURRENT_SCHEMA_VERSION);
         assert_eq!(cfg.workspace, Workspace::General);
         assert!(!cfg.advanced.tiling_advanced);
         assert!(!cfg.workspace_choice_remembered);
+        assert!(cfg.experimental.gpu_dither_families);
+    }
+
+    #[test]
+    fn gpu_dither_families_defaults_on() {
+        assert!(AppConfig::default().experimental.gpu_dither_families);
+        let raw = br#"{"schema_version":2,"workspace":"general","experimental":{}}"#;
+        let (cfg, _) = parse_and_migrate(raw).unwrap();
+        assert!(cfg.experimental.gpu_dither_families);
     }
 
     #[test]

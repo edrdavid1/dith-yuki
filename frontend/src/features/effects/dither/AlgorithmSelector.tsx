@@ -30,7 +30,8 @@ export function AlgorithmSelector({
   disabled = false,
 }: AlgorithmSelectorProps) {
   const tradeoffId = useId();
-  const gpuDitherFamilies = useWorkspaceOptional()?.gpuDitherFamilies ?? false;
+  // Match config default (schema ≥2); WorkspaceProvider overrides when ready.
+  const gpuDitherFamilies = useWorkspaceOptional()?.gpuDitherFamilies ?? true;
   // Catalog is a module singleton; keep it aligned before we read `available`.
   setGpuDitherFamiliesAvailable(gpuDitherFamilies);
 
@@ -64,19 +65,29 @@ export function AlgorithmSelector({
     onChange({ family: family.id, variant: nextVariant });
   }, [value.family, value.variant, onChange, gpuDitherFamilies]);
 
-  const familyOptions = ALGORITHM_FAMILIES.map((family) => ({
-    value: family.id,
-    label: family.available ? family.label : `${family.label} (unavailable)`,
-    disabled: !family.available,
-    title: family.tooltip,
-  }));
+  const familyOptions = ALGORITHM_FAMILIES.map((family) => {
+    const unavailableReason =
+      !family.available && family.id === 'gpu_ed'
+        ? 'Disabled: experimental.gpu_dither_families is off in config.json'
+        : family.tooltip;
+    return {
+      value: family.id,
+      label: family.available ? family.label : `${family.label} (unavailable)`,
+      disabled: !family.available,
+      title: unavailableReason,
+    };
+  });
 
   const variantOptions = activeFamily.variants.map((variant) => {
     const available = variant.available !== false;
+    const unavailableReason =
+      !available && (variant.id === 'blocked_fs' || variant.id === 'blue_noise')
+        ? 'Disabled: experimental.gpu_dither_families is off in config.json'
+        : (variant.tooltip ?? '');
     return {
       value: variant.id,
       label: available ? variant.label : `${variant.label} (unavailable)`,
-      title: variant.tooltip ?? '',
+      title: unavailableReason,
       disabled: !available,
     };
   });
