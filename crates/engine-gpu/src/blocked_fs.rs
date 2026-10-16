@@ -707,12 +707,8 @@ pub fn request_blocked_fs_device_with_info(
 
     let lim = device.limits();
     eprintln!(
-        "blocked_fs device: {} ({:?}) max_storage_buffer_binding_size={} max_buffer_size={} timestamp_query={}",
-        info.name,
-        info.backend,
-        lim.max_storage_buffer_binding_size,
-        lim.max_buffer_size,
-        granted_ts
+        "blocked_fs device: {} ({:?}) max_storage_buffer_binding_size={} max_buffer_size={}",
+        info.name, info.backend, lim.max_storage_buffer_binding_size, lim.max_buffer_size
     );
 
     Some((

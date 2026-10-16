@@ -51,15 +51,15 @@ pub fn requested_timestamp_features(adapter: &wgpu::Adapter) -> wgpu::Features {
 /// Record whether the created device actually has TIMESTAMP_QUERY.
 pub fn set_device_timestamp_available(granted: bool, adapter_had: bool) {
     TS_AVAILABLE.store(granted, Ordering::Relaxed);
-    if !FEATURES_LOGGED.swap(true, Ordering::Relaxed) {
+    // Log only when profiling — avoid production Info noise on every device create.
+    if profile_on() && !FEATURES_LOGGED.swap(true, Ordering::Relaxed) {
         log::info!(
             target: "diag_gpu_timestamp",
-            "timestamp_query adapter_advertised={} device_granted={} dither_profile={}",
+            "timestamp_query adapter_advertised={} device_granted={} dither_profile=true",
             adapter_had,
-            granted,
-            profile_on()
+            granted
         );
-        if profile_on() && !granted {
+        if !granted {
             log::info!(
                 target: "diag_gpu_timestamp",
                 "timestamp_query=unsupported"
