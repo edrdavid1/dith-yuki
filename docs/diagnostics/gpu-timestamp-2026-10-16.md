@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-16  
 **Spec:** `.local-doc/time-test-2.md` (`gpu_timestamp_diag_v1`)  
-**Working tree:** instrumentation in `crates/engine-gpu` (timestamp feature + `[diag/gpu_timestamp]` logs); base commit `36daa6d` plus uncommitted diag changes at measurement time.  
+**Commit:** `d8c1249` (TIMESTAMP_QUERY diag). Measured with that instrumentation on Apple M3.  
 **Raw lines:** `profiling/results/2026-10-16/gpu_timestamp_lines.log` (copied from harness stderr)
 
 This report produces numbers only. **No fix is proposed.**
