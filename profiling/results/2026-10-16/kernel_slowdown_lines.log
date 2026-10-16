@@ -1,0 +1,65 @@
+   Compiling engine-gpu v0.1.0 (/Users/dave/Prahramavannie/dither-yuki-2/crates/engine-gpu)
+warning: variable does not need to be mutable
+   --> crates/engine-gpu/src/timestamp_diag.rs:212:9
+    |
+212 |         mut self,
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: `engine-gpu` (lib) generated 1 warning (run `cargo fix --lib -p engine-gpu` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 4.08s
+warning: the following packages contain code that will be rejected by a future version of Rust: block v0.1.6
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `target/release/examples/kernel_slowdown_diag`
+blocked_fs device: Apple M3 (Metal) max_storage_buffer_binding_size=4294967295 max_buffer_size=9534832640 timestamp_query=true
+[diag/kernel_slowdown] adapter=Apple M3 (Metal) timestamp_query=true max_wg_x=1024 max_inv=1024 wg_storage=32768
+[diag/gpu_timestamp] {"dispatch_wall_ms":9.259,"dispatches":1,"kernel_max_ms":3.033,"kernel_ms":"available","kernel_sum_ms":3.033,"mode":"diag","poll_ms":8.724,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.524,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":1.317,"dispatches":1,"kernel_max_ms":0.278,"kernel_ms":"available","kernel_sum_ms":0.278,"mode":"diag","poll_ms":1.264,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.053,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":1.305,"dispatches":1,"kernel_max_ms":0.239,"kernel_ms":"available","kernel_sum_ms":0.239,"mode":"diag","poll_ms":1.28,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.025,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":5.12,"dispatches":1,"kernel_max_ms":2.243,"kernel_ms":"available","kernel_sum_ms":2.243,"mode":"diag","poll_ms":5.052,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.068,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":1.328,"dispatches":1,"kernel_max_ms":0.28,"kernel_ms":"available","kernel_sum_ms":0.28,"mode":"diag","poll_ms":1.262,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.066,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":1.297,"dispatches":1,"kernel_max_ms":0.222,"kernel_ms":"available","kernel_sum_ms":0.222,"mode":"diag","poll_ms":1.257,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.039,"timestamp_query":"available"}
+[diag/kernel_slowdown] exp=A name=pass_through size=1920x1080 kernel_ms=0.280
+[diag/gpu_timestamp] {"dispatch_wall_ms":13.822,"dispatches":1,"kernel_max_ms":10.961,"kernel_ms":"available","kernel_sum_ms":10.961,"mode":"blue_noise","poll_ms":13.704,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.11,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":9.284,"dispatches":1,"kernel_max_ms":7.138,"kernel_ms":"available","kernel_sum_ms":7.138,"mode":"blocked_fs","poll_ms":9.209,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.066,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":7.595,"dispatches":1,"kernel_max_ms":5.925,"kernel_ms":"available","kernel_sum_ms":5.925,"mode":"diag","poll_ms":7.542,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.052,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":6.4,"dispatches":1,"kernel_max_ms":4.909,"kernel_ms":"available","kernel_sum_ms":4.909,"mode":"diag","poll_ms":6.355,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.045,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":7.545,"dispatches":1,"kernel_max_ms":5.868,"kernel_ms":"available","kernel_sum_ms":5.868,"mode":"diag","poll_ms":7.515,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.03,"timestamp_query":"available"}
+[diag/kernel_slowdown] exp=B_baseline name=blue_noise size=1920x1080 kernel_ms=5.868
+[diag/gpu_timestamp] {"dispatch_wall_ms":2.637,"dispatches":1,"kernel_max_ms":0.14,"kernel_ms":"available","kernel_sum_ms":0.14,"mode":"diag","poll_ms":2.528,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.108,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":1.283,"dispatches":1,"kernel_max_ms":0.101,"kernel_ms":"available","kernel_sum_ms":0.101,"mode":"diag","poll_ms":1.255,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.029,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":1.286,"dispatches":1,"kernel_max_ms":0.115,"kernel_ms":"available","kernel_sum_ms":0.115,"mode":"diag","poll_ms":1.257,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.029,"timestamp_query":"available"}
+[diag/kernel_slowdown] exp=B name=blue_noise_nopalette size=1920x1080 kernel_ms=0.115 baseline=5.868 ratio=50.967
+[diag/gpu_timestamp] {"dispatch_wall_ms":7.438,"dispatches":1,"kernel_max_ms":4.544,"kernel_ms":"available","kernel_sum_ms":4.544,"mode":"diag","poll_ms":7.374,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.064,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":6.138,"dispatches":1,"kernel_max_ms":4.828,"kernel_ms":"available","kernel_sum_ms":4.828,"mode":"diag","poll_ms":6.102,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.036,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":7.535,"dispatches":1,"kernel_max_ms":6.284,"kernel_ms":"available","kernel_sum_ms":6.284,"mode":"diag","poll_ms":7.505,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.029,"timestamp_query":"available"}
+[diag/kernel_slowdown] exp=C_baseline name=blocked_fs size=1920x1080 kernel_ms=4.828
+[diag/gpu_timestamp] {"dispatch_wall_ms":7.489,"dispatches":1,"kernel_max_ms":4.951,"kernel_ms":"available","kernel_sum_ms":4.951,"mode":"diag","poll_ms":7.43,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.058,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":6.181,"dispatches":1,"kernel_max_ms":5.164,"kernel_ms":"available","kernel_sum_ms":5.164,"mode":"diag","poll_ms":6.143,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.037,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":7.565,"dispatches":1,"kernel_max_ms":6.912,"kernel_ms":"available","kernel_sum_ms":6.912,"mode":"diag","poll_ms":7.531,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.033,"timestamp_query":"available"}
+[diag/kernel_slowdown] exp=C name=blocked_fs_nobar size=1920x1080 kernel_ms=5.164 baseline=4.828 ratio=0.935
+[diag/gpu_timestamp] {"dispatch_wall_ms":10.194,"dispatches":1,"kernel_max_ms":8.588,"kernel_ms":"available","kernel_sum_ms":8.588,"mode":"diag","poll_ms":10.132,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.061,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":6.105,"dispatches":1,"kernel_max_ms":4.75,"kernel_ms":"available","kernel_sum_ms":4.75,"mode":"diag","poll_ms":6.059,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.045,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":7.595,"dispatches":1,"kernel_max_ms":5.972,"kernel_ms":"available","kernel_sum_ms":5.972,"mode":"diag","poll_ms":7.555,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.041,"timestamp_query":"available"}
+[diag/kernel_slowdown] exp=D name=blocked_fs_coalesced size=1920x1080 kernel_ms=5.972 baseline=4.828 ratio=0.808
+[diag/gpu_timestamp] {"dispatch_wall_ms":5.097,"dispatches":1,"kernel_max_ms":3.648,"kernel_ms":"available","kernel_sum_ms":3.648,"mode":"diag","poll_ms":5.039,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.058,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":2.545,"dispatches":1,"kernel_max_ms":2.234,"kernel_ms":"available","kernel_sum_ms":2.234,"mode":"diag","poll_ms":2.509,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.036,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":3.624,"dispatches":1,"kernel_max_ms":2.404,"kernel_ms":"available","kernel_sum_ms":2.404,"mode":"diag","poll_ms":3.603,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.021,"timestamp_query":"available"}
+[diag/kernel_slowdown] exp=E name=bn_wg64 size=1920x1080 kernel_ms=2.404
+[diag/gpu_timestamp] {"dispatch_wall_ms":5.084,"dispatches":1,"kernel_max_ms":3.178,"kernel_ms":"available","kernel_sum_ms":3.178,"mode":"diag","poll_ms":5.038,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.046,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":3.781,"dispatches":1,"kernel_max_ms":2.689,"kernel_ms":"available","kernel_sum_ms":2.689,"mode":"diag","poll_ms":3.754,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.027,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":3.817,"dispatches":1,"kernel_max_ms":2.352,"kernel_ms":"available","kernel_sum_ms":2.352,"mode":"diag","poll_ms":3.788,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.028,"timestamp_query":"available"}
+[diag/kernel_slowdown] exp=E name=bn_wg256 size=1920x1080 kernel_ms=2.689
+[diag/gpu_timestamp] {"dispatch_wall_ms":5.128,"dispatches":1,"kernel_max_ms":2.506,"kernel_ms":"available","kernel_sum_ms":2.506,"mode":"diag","poll_ms":5.079,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.048,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":3.575,"dispatches":1,"kernel_max_ms":2.589,"kernel_ms":"available","kernel_sum_ms":2.589,"mode":"diag","poll_ms":3.55,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.025,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":3.818,"dispatches":1,"kernel_max_ms":2.922,"kernel_ms":"available","kernel_sum_ms":2.922,"mode":"diag","poll_ms":3.794,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.024,"timestamp_query":"available"}
+[diag/kernel_slowdown] exp=E name=bn_wg1024 size=1920x1080 kernel_ms=2.589
+[diag/kernel_slowdown] exp=E name=bfs_wg64 size=1920x1080 kernel_ms=4.828
+[diag/gpu_timestamp] {"dispatch_wall_ms":8.787,"dispatches":1,"kernel_max_ms":6.69,"kernel_ms":"available","kernel_sum_ms":6.69,"mode":"diag","poll_ms":8.726,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.061,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":6.489,"dispatches":1,"kernel_max_ms":4.872,"kernel_ms":"available","kernel_sum_ms":4.872,"mode":"diag","poll_ms":6.433,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.056,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":6.331,"dispatches":1,"kernel_max_ms":5.436,"kernel_ms":"available","kernel_sum_ms":5.436,"mode":"diag","poll_ms":6.289,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.042,"timestamp_query":"available"}
+[diag/kernel_slowdown] exp=E name=bfs_wg128 size=1920x1080 kernel_ms=5.436
+[diag/kernel_slowdown] done
