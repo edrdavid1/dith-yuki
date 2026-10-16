@@ -9,6 +9,7 @@ import {
   type HapticMotionState,
 } from '../../hooks/sliderHaptics';
 import { nudgeByDisplayPrecision } from '../../hooks/arrowNudge';
+import { notePointerUp } from '../../diagnostics/ditherProfile';
 const cn = bind({ ...styles, ...retro });
 
 // Immediate onChange for local/parent state. IPC debounce (100ms default;
@@ -148,6 +149,7 @@ function Slider({
 
     const handleMouseUp = () => {
       draggingRef.current = false;
+      notePointerUp();
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };

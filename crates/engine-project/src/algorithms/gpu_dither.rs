@@ -317,6 +317,7 @@ pub fn apply_gpu_dither_rgba(
     palette: &[PaletteRgb],
     should_cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<(), FilterError> {
+    crate::dither_profile::mark("apply_start");
     let t_all = Instant::now();
     let n = (width as usize)
         .checked_mul(height as usize)
@@ -343,6 +344,7 @@ pub fn apply_gpu_dither_rgba(
         });
     });
     let in_f32_to_u8_ms = ms_since(t);
+    crate::dither_profile::mark("host_f32_to_u8_done");
 
     let t = Instant::now();
     let algo = algo_name(&params.mode);
@@ -380,9 +382,12 @@ pub fn apply_gpu_dither_rgba(
 
     let (out, path_label, backend, strips, phase_log, phases) = match choice {
         PathChoice::ForceCpu => {
+            crate::dither_profile::mark("pixel_size_done");
+            crate::dither_profile::mark("cpu_kernel_start");
             let t_cpu = Instant::now();
             let out = run_cpu(&input, width, height, params, palette)?;
             let total = ms_since(t_cpu);
+            crate::dither_profile::mark("cpu_kernel_end");
             let log = format!(
                 "{algo} | path=cpu | {width}x{height} | ps={ps} | strips=1 | pipeline=n/a | total={total:.0}ms\n  prepare=0 upload=0 dispatch=0 readback=0 post=0\n  req={req} params_hash={params_hash:x} input_hash={input_hash:x} trigger={trigger} cancelled=no threads={threads}"
             );
@@ -408,9 +413,12 @@ pub fn apply_gpu_dither_rgba(
                 }
                 crate::algorithms::gpu_selftest::SelftestState::Pass => "selftest_gate",
             };
+            crate::dither_profile::mark("pixel_size_done");
+            crate::dither_profile::mark("cpu_kernel_start");
             let t_cpu = Instant::now();
             let out = run_cpu(&input, width, height, params, palette)?;
             let total = ms_since(t_cpu);
+            crate::dither_profile::mark("cpu_kernel_end");
             let log = format!(
                 "{algo} | path=cpu | {width}x{height} | ps={ps} | strips=1 | pipeline=n/a | total={total:.0}ms\n  prepare=0 upload=0 dispatch=0 readback=0 post=0\n  req={req} params_hash={params_hash:x} input_hash={input_hash:x} trigger={trigger} cancelled=no fallback={reason}"
             );
@@ -439,6 +447,27 @@ pub fn apply_gpu_dither_rgba(
                 &mut expand_ps_ms,
             ) {
                 Ok((bytes, backend, strips, timing)) => {
+                    crate::dither_profile::mark_extra(
+                        "gpu_prepare_done",
+                        Some(serde_json::json!({ "prepare_ms": timing.prepare_ms })),
+                    );
+                    crate::dither_profile::mark_extra(
+                        "gpu_upload_done",
+                        Some(serde_json::json!({ "upload_ms": timing.upload_ms })),
+                    );
+                    crate::dither_profile::mark_extra(
+                        "gpu_dispatch_done",
+                        Some(serde_json::json!({
+                            "dispatch_ms_wall": timing.dispatch_ms,
+                            "timestamp_query": "not measured",
+                            "reason": "wgpu Features::TIMESTAMP_QUERY not requested on device",
+                            "strips": strips,
+                        })),
+                    );
+                    crate::dither_profile::mark_extra(
+                        "gpu_readback_done",
+                        Some(serde_json::json!({ "readback_ms": timing.readback_ms })),
+                    );
                     let t = Instant::now();
                     let out = bytes_to_rgba8(&bytes);
                     out_bytes_to_rgba8_ms = ms_since(t);
@@ -467,9 +496,11 @@ pub fn apply_gpu_dither_rgba(
                             "{algo}: GPU unavailable ({reason}); using CPU"
                         );
                     }
+                    crate::dither_profile::mark("cpu_kernel_start");
                     let t_cpu = Instant::now();
                     let out = run_cpu(&input, width, height, params, palette)?;
                     let total = ms_since(t_cpu);
+                    crate::dither_profile::mark("cpu_kernel_end");
                     let cflag = if cancelled { "yes" } else { "no" };
                     let log = format!(
                         "{algo} | path=cpu | {width}x{height} | ps={ps} | strips=1 | pipeline=n/a | total={total:.0}ms\n  prepare=0 upload=0 dispatch=0 readback=0 post=0\n  req={req} params_hash={params_hash:x} input_hash={input_hash:x} trigger={trigger} cancelled={cflag} fallback={reason}"
@@ -511,6 +542,8 @@ pub fn apply_gpu_dither_rgba(
             });
     });
     let out_u8_to_f32_ms = ms_since(t);
+    crate::dither_profile::mark("host_u8_to_f32_done");
+    crate::dither_profile::mark("apply_end");
 
     let elapsed_ms = ms_since(t_all);
     let accounted = in_f32_to_u8_ms
@@ -623,6 +656,10 @@ fn try_gpu_timed(
         (bw, bh, Some(small))
     };
     *lattice_ps_ms = ms_since(t);
+    crate::dither_profile::mark_extra(
+        "pixel_size_done",
+        Some(serde_json::json!({ "lattice_ps_ms": *lattice_ps_ms, "pixel_size": ps })),
+    );
 
     let src: &[Rgba8] = lattice.as_deref().unwrap_or(input);
     let t = Instant::now();

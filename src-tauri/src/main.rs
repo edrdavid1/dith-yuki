@@ -25,6 +25,9 @@ mod macos_title;
 mod memory_budget;
 mod native_menu;
 mod pattern_library;
+mod dither_profile_host;
+#[cfg(test)]
+mod dither_profile_harness;
 mod preview_diag;
 #[cfg(test)]
 mod preview_latency_diag;
@@ -57,6 +60,7 @@ fn main() {
     // `%APPDATA%\com.dither.app\logs\app.log` (or the macOS/Linux equivalent)
     // before any window exists.
     file_log::init();
+    dither_profile_host::init();
 
     // B4c: affinity enabled on all platforms — Flex popout completes via JS mouseup,
     // not global_mouseup (which was unavailable on Linux).
@@ -557,6 +561,11 @@ fn main() {
             commands::evaluate_workspace_hint,
             commands::resolve_workspace_hint,
             commands::note_tile_export,
+            // DITHER_PROFILE (time-testing.md) — no-ops when env unset
+            dither_profile_host::dither_profile_enabled,
+            dither_profile_host::dither_profile_begin,
+            dither_profile_host::dither_profile_mark,
+            dither_profile_host::dither_profile_active,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

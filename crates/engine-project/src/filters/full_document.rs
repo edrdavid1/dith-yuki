@@ -756,6 +756,8 @@ fn ensure_full_document_ex_inner(
     timed: bool,
     trace: &mut EnsureTrace,
 ) -> Result<FullDocumentResult, EngineError> {
+    crate::dither_profile::set_generation(document_gen);
+    crate::dither_profile::mark("ensure_full_doc_start");
     let key = FullDocumentKey {
         doc: doc.id.0,
         layer: layer.id.0,

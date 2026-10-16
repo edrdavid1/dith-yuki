@@ -108,6 +108,13 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
         if let Some(task) = state.tiles.scheduler.dequeue() {
             // One relaxed load per task. Diagnostics stay off this path when it is 0.
             let diag = crate::preview_diag::level();
+            if engine_project::dither_profile::enabled()
+                && task.key.stage == CacheStage::Composite
+                && task.key.coord.level == 0
+            {
+                engine_project::dither_profile::set_generation(task.generation);
+                engine_project::dither_profile::mark("worker_dequeue");
+            }
             state.preview_pass_inflight.fetch_add(1, Ordering::AcqRel);
 
             // Staleness check (requirement 10.5), including Composite layer 0.
@@ -259,6 +266,9 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
                                     "tile-ready",
                                     payload,
                                 );
+                                if engine_project::dither_profile::enabled() {
+                                    engine_project::dither_profile::mark("tile_ready_emitted");
+                                }
                                 if let Some(t0) = t_emit {
                                     crate::preview_diag::record_emit(
                                         task.key.doc,

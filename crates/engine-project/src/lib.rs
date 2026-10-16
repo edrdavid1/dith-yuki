@@ -14,6 +14,7 @@
 pub mod algorithms;
 pub mod commands;
 pub mod compositor;
+pub mod dither_profile;
 pub mod document;
 pub mod dto;
 pub mod error;
