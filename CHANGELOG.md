@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 2.0.4-beta
+
+### Added
+
+- Opt-in `DITHER_PROFILE=1` release→pixels timing marks and GPU
+  `TIMESTAMP_QUERY` dispatch breakdown (off by default; no production log noise).
+- Diagnostic reports for GPU/CPU palette nearest-cost and dependency-chain
+  hypothesis tests under `docs/diagnostics/`.
+
 ## 2.0.3-beta
 
 ### Fixed
