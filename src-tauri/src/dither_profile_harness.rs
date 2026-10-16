@@ -278,12 +278,18 @@ fn dither_profile_harness_main_grid() {
         ));
     }
 
+    // One manual 4k blue_noise sample (blocked_fs 4k already covered above on GPU).
+    if backend != "cpu" {
+        eprintln!("manual 4k blue_noise sample…");
+        let _ = run_apply(DitherModeV2::BlueNoise, 4000, 3000, 16, 1, run_id);
+    }
+
     summary.push_str("\n## Notes\n\n");
     summary.push_str(
-        "- `gpu_dispatch_done` GPU timestamp-query: **not measured** (device created without `TIMESTAMP_QUERY`).\n",
+        "- See stderr `[diag/gpu_timestamp]` lines for submit/poll/kernel breakdown (DITHER_PROFILE=1).\n",
     );
     summary.push_str(
-        "- `dispatch_wall` includes GPU wait intertwined with submit/poll (wall clock).\n",
+        "- `dispatch_wall` is still host wall around submit+poll; kernel_sum_ms is GPU timestamp when available.\n",
     );
     summary.push_str(
         "- Full T0–T23 UI chain requires release app with `DITHER_PROFILE=1` and slider gestures; marks land in `profiling/results/<date>/marks.jsonl`.\n",

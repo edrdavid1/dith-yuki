@@ -27,6 +27,7 @@ mod prefer;
 pub mod resident;
 mod stats;
 mod strip_bind;
+mod timestamp_diag;
 mod void_and_cluster;
 mod void_and_cluster_matrix;
 mod vram_budget;
@@ -76,6 +77,7 @@ pub use resident::{
 };
 pub use stats::not_worse_than;
 pub use strip_bind::{effective_max_bind, max_blocked_fs_strip_cores, max_blue_noise_strip_h};
+pub use timestamp_diag::timestamp_query_available;
 pub use void_and_cluster::{
     apply_void_and_cluster_gpu, void_and_cluster_ranks, VoidAndClusterGpuParams,
 };

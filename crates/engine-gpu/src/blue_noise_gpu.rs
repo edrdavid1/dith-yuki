@@ -9,6 +9,7 @@ use wgpu::util::DeviceExt;
 
 use crate::blocked_fs::GpuPhaseTiming;
 use crate::strip_bind::{effective_max_bind, max_blue_noise_strip_h, row_bytes};
+use crate::timestamp_diag::DispatchTimestampDiag;
 
 /// WGSL source (self-test cache key + pipeline).
 pub const BLUE_NOISE_SHADER_SRC: &str = include_str!("shaders/blue_noise.wgsl");
@@ -143,6 +144,7 @@ pub fn apply_blue_noise_gpu_opts(
     let upload_ms;
     let mut dispatch_ms = 0.0;
     let mut readback_ms = 0.0;
+    let mut ts_diag = DispatchTimestampDiag::begin(device, "blue_noise", width, height);
 
     if use_full {
         let input_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -184,11 +186,28 @@ pub fn apply_blue_noise_gpu_opts(
                 h,
                 0,
             );
-            dispatch_bn(device, queue, pipeline, &bind_group, width, h);
+            let groups_x = width.div_ceil(8);
+            let groups_y = h.div_ceil(8);
+            if let Some(ref mut diag) = ts_diag {
+                diag.dispatch_submit(
+                    device,
+                    queue,
+                    pipeline,
+                    &bind_group,
+                    groups_x,
+                    groups_y,
+                    "bn",
+                );
+            } else {
+                dispatch_bn(device, queue, pipeline, &bind_group, width, h);
+            }
             strips += 1;
             y0 += h;
         }
         device.poll(wgpu::Maintain::Wait);
+        if let Some(ref mut diag) = ts_diag {
+            diag.note_poll_end(false);
+        }
         dispatch_ms = t_d0.elapsed().as_secs_f64() * 1000.0;
         let t_r0 = Instant::now();
         out_u32 = readback_u32(device, queue, &output_buf, full_bytes)?;
@@ -242,8 +261,25 @@ pub fn apply_blue_noise_gpu_opts(
                 y0, // buf_y0 == strip start
             );
             let t_d0 = Instant::now();
-            dispatch_bn(device, queue, pipeline, &bind_group, width, h);
+            let groups_x = width.div_ceil(8);
+            let groups_y = h.div_ceil(8);
+            if let Some(ref mut diag) = ts_diag {
+                diag.dispatch_submit(
+                    device,
+                    queue,
+                    pipeline,
+                    &bind_group,
+                    groups_x,
+                    groups_y,
+                    "bn-strip",
+                );
+            } else {
+                dispatch_bn(device, queue, pipeline, &bind_group, width, h);
+            }
             device.poll(wgpu::Maintain::Wait);
+            if let Some(ref mut diag) = ts_diag {
+                diag.note_poll_end(true);
+            }
             dispatch_ms += t_d0.elapsed().as_secs_f64() * 1000.0;
             strips += 1;
             let t_r0 = Instant::now();
@@ -254,6 +290,11 @@ pub fn apply_blue_noise_gpu_opts(
         }
     }
 
+    let strips_out = strips.max(1);
+    if let Some(diag) = ts_diag.take() {
+        diag.finish(device, queue, strips_out, dispatch_ms);
+    }
+
     let t_post0 = Instant::now();
     let mut out = Vec::with_capacity(n * 4);
     for &p in &out_u32 {
@@ -262,7 +303,7 @@ pub fn apply_blue_noise_gpu_opts(
     let post_ms = t_post0.elapsed().as_secs_f64() * 1000.0;
     Ok(crate::blocked_fs::GpuImageResult {
         rgba8: out,
-        strips: strips.max(1),
+        strips: strips_out,
         timing: GpuPhaseTiming {
             prepare_ms,
             upload_ms,

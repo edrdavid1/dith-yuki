@@ -15,6 +15,9 @@ use wgpu::util::DeviceExt;
 use crate::strip_bind::{
     blocked_fs_strip_rows, effective_max_bind, max_blocked_fs_strip_cores, row_bytes,
 };
+use crate::timestamp_diag::{
+    requested_timestamp_features, set_device_timestamp_available, DispatchTimestampDiag,
+};
 
 /// Workgroup / padded-tile side.
 pub const WG_SIZE: u32 = 64;
@@ -218,6 +221,7 @@ pub fn apply_blocked_fs_gpu_opts(
     let upload_ms;
     let mut dispatch_ms = 0.0;
     let mut readback_ms = 0.0;
+    let mut ts_diag = DispatchTimestampDiag::begin(device, "blocked_fs", width, height);
 
     if use_full {
         // Single full-image binding; strip only for cancel checkpoints.
@@ -271,12 +275,27 @@ pub fn apply_blocked_fs_gpu_opts(
                 ty * CORE,
                 0,
             );
-            dispatch_strip(device, queue, &pipe.pipeline, &bind_group, tiles_x, rows);
+            if let Some(ref mut diag) = ts_diag {
+                diag.dispatch_submit(
+                    device,
+                    queue,
+                    &pipe.pipeline,
+                    &bind_group,
+                    tiles_x,
+                    rows,
+                    "bfs",
+                );
+            } else {
+                dispatch_strip(device, queue, &pipe.pipeline, &bind_group, tiles_x, rows);
+            }
             strips += 1;
             ty += rows;
         }
         // Wait for GPU work before attributing time solely to readback.
         device.poll(wgpu::Maintain::Wait);
+        if let Some(ref mut diag) = ts_diag {
+            diag.note_poll_end(false);
+        }
         dispatch_ms = t_disp0.elapsed().as_secs_f64() * 1000.0;
 
         let t_rb0 = Instant::now();
@@ -346,8 +365,23 @@ pub fn apply_blocked_fs_gpu_opts(
                 buf_y0,
             );
             let t_d0 = Instant::now();
-            dispatch_strip(device, queue, &pipe.pipeline, &bind_group, tiles_x, rows);
+            if let Some(ref mut diag) = ts_diag {
+                diag.dispatch_submit(
+                    device,
+                    queue,
+                    &pipe.pipeline,
+                    &bind_group,
+                    tiles_x,
+                    rows,
+                    "bfs-strip",
+                );
+            } else {
+                dispatch_strip(device, queue, &pipe.pipeline, &bind_group, tiles_x, rows);
+            }
             device.poll(wgpu::Maintain::Wait);
+            if let Some(ref mut diag) = ts_diag {
+                diag.note_poll_end(true);
+            }
             dispatch_ms += t_d0.elapsed().as_secs_f64() * 1000.0;
             strips += 1;
             let t_r0 = Instant::now();
@@ -367,6 +401,11 @@ pub fn apply_blocked_fs_gpu_opts(
         }
     }
 
+    let strips_out = strips.max(1);
+    if let Some(diag) = ts_diag.take() {
+        diag.finish(device, queue, strips_out, dispatch_ms);
+    }
+
     let t_post0 = Instant::now();
     let mut out = Vec::with_capacity(n * 4);
     for &p in &out_u32 {
@@ -375,7 +414,7 @@ pub fn apply_blocked_fs_gpu_opts(
     let post_ms = t_post0.elapsed().as_secs_f64() * 1000.0;
     Ok(GpuImageResult {
         rgba8: out,
-        strips: strips.max(1),
+        strips: strips_out,
         timing: GpuPhaseTiming {
             prepare_ms,
             upload_ms,
@@ -641,16 +680,24 @@ pub fn request_blocked_fs_device_with_info(
         .max_buffer_size
         .max(u64::from(required.max_storage_buffer_binding_size));
 
+    let adapter_had_ts = adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
+    let required_features = requested_timestamp_features(&adapter);
+
     let (device, queue) = pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: Some("blocked_fs"),
-            required_features: wgpu::Features::empty(),
+            required_features,
             required_limits: required,
             memory_hints: wgpu::MemoryHints::default(),
         },
         None,
     ))
     .ok()?;
+
+    let granted_ts = device
+        .features()
+        .contains(wgpu::Features::TIMESTAMP_QUERY);
+    set_device_timestamp_available(granted_ts, adapter_had_ts);
 
     // Log validation / GPU errors instead of panicking the overnight harness.
     device.on_uncaptured_error(Box::new(|err| {
@@ -660,8 +707,12 @@ pub fn request_blocked_fs_device_with_info(
 
     let lim = device.limits();
     eprintln!(
-        "blocked_fs device: {} ({:?}) max_storage_buffer_binding_size={} max_buffer_size={}",
-        info.name, info.backend, lim.max_storage_buffer_binding_size, lim.max_buffer_size
+        "blocked_fs device: {} ({:?}) max_storage_buffer_binding_size={} max_buffer_size={} timestamp_query={}",
+        info.name,
+        info.backend,
+        lim.max_storage_buffer_binding_size,
+        lim.max_buffer_size,
+        granted_ts
     );
 
     Some((
