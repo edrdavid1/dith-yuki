@@ -1269,7 +1269,7 @@ dependencies = [
 
 [[package]]
 name = "dither"
-version = "2.0.3-beta"
+version = "2.0.4-beta"
 dependencies = [
  "base64 0.22.1",
  "block",
@@ -1558,6 +1558,7 @@ dependencies = [
  "objc",
  "pollster",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "wgpu",
 ]

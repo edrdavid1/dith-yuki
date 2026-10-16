@@ -7,6 +7,12 @@ import type { FilterParams } from '../types';
 import { EFFECT_TO_FILTER_KIND } from '../types/effects';
 import type { EffectType } from '../types/effects';
 import { unwrapFilterParams } from '../shared/unwrapFilterParams';
+import {
+  activeProfileRunId,
+  noteDebounceFired,
+  noteIpcInvokeStart,
+  probeDitherProfile,
+} from '../diagnostics/ditherProfile';
 
 export interface UseEffectLayerReturn {
   effectType: EffectType | null;
@@ -89,6 +95,10 @@ export function useEffectLayer(
 
   layerIdRef.current = layerId;
   docIdRef.current = docId;
+
+  useEffect(() => {
+    void probeDitherProfile();
+  }, []);
 
   const storeFilter = useMemo(() => {
     if (layerId === null) return null;
@@ -191,6 +201,7 @@ export function useEffectLayer(
     );
 
     debounceRef.current = setTimeout(async () => {
+      noteDebounceFired(activeProfileRunId());
       const fullParams = (): Record<string, unknown> => {
         const current = paramsRef.current as unknown as Record<string, unknown> | null;
         if (!current) return params;
@@ -205,8 +216,11 @@ export function useEffectLayer(
         }
         inflightRef.current = true;
         noteIpcSent('update_filter');
+        noteIpcInvokeStart(activeProfileRunId());
         try {
-          await updateFilter(targetDocId, layerIdRef.current, filterIdRef.current, patch);
+          await updateFilter(targetDocId, layerIdRef.current, filterIdRef.current, patch, {
+            profileRunId: activeProfileRunId(),
+          });
         } catch (err) {
           logIpcError('useEffectLayer.updateFilter', err);
           setOptimisticParams(prevParams);

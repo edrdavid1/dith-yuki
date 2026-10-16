@@ -241,6 +241,7 @@ pub fn compute_processed_tile(
                 .insert_fresh_gen(processed_key, Arc::clone(&arc), compute_gen);
         if inserted {
             state.evict_for_pressure_if_needed();
+            engine_project::dither_profile::mark("tiles_published");
         }
         reschedule_if_insert_rejected(state, processed_key, inserted);
         return Ok(arc);

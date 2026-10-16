@@ -1,0 +1,42 @@
+   Compiling engine-gpu v0.1.0 (/Users/dave/Prahramavannie/dither-yuki-2/crates/engine-gpu)
+warning: variable does not need to be mutable
+   --> crates/engine-gpu/src/timestamp_diag.rs:212:9
+    |
+212 |         mut self,
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: `engine-gpu` (lib) generated 1 warning (run `cargo fix --lib -p engine-gpu` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 4.04s
+warning: the following packages contain code that will be rejected by a future version of Rust: block v0.1.6
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `target/release/examples/palette_chain_diag`
+blocked_fs device: Apple M3 (Metal) max_storage_buffer_binding_size=4294967295 max_buffer_size=9534832640 timestamp_query=true
+[diag/palette_chain] adapter=Apple M3 (Metal) timestamp_query=true palette_len=4096 size=1920x1080
+[diag/palette_chain] parity=pass variant=unroll4 mismatches=0
+[diag/gpu_timestamp] {"dispatch_wall_ms":319.968,"dispatches":1,"kernel_max_ms":318.642,"kernel_ms":"available","kernel_sum_ms":318.642,"mode":"diag","poll_ms":319.816,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.153,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":318.963,"dispatches":1,"kernel_max_ms":317.276,"kernel_ms":"available","kernel_sum_ms":317.276,"mode":"diag","poll_ms":318.899,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.064,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":318.338,"dispatches":1,"kernel_max_ms":316.483,"kernel_ms":"available","kernel_sum_ms":316.483,"mode":"diag","poll_ms":318.185,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.152,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":316.778,"dispatches":1,"kernel_max_ms":314.331,"kernel_ms":"available","kernel_sum_ms":314.331,"mode":"diag","poll_ms":316.695,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.083,"timestamp_query":"available"}
+[diag/palette_chain] variant=baseline kernel_ms=316.483
+[diag/gpu_timestamp] {"dispatch_wall_ms":215.04,"dispatches":1,"kernel_max_ms":212.049,"kernel_ms":"available","kernel_sum_ms":212.049,"mode":"diag","poll_ms":214.892,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.148,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":213.631,"dispatches":1,"kernel_max_ms":211.226,"kernel_ms":"available","kernel_sum_ms":211.226,"mode":"diag","poll_ms":213.549,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.081,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":211.191,"dispatches":1,"kernel_max_ms":210.416,"kernel_ms":"available","kernel_sum_ms":210.416,"mode":"diag","poll_ms":211.134,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.056,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":213.54,"dispatches":1,"kernel_max_ms":212.486,"kernel_ms":"available","kernel_sum_ms":212.486,"mode":"diag","poll_ms":213.46,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.08,"timestamp_query":"available"}
+[diag/palette_chain] variant=unroll2 kernel_ms=211.226 speedup=1.498
+[diag/gpu_timestamp] {"dispatch_wall_ms":191.043,"dispatches":1,"kernel_max_ms":185.685,"kernel_ms":"available","kernel_sum_ms":185.685,"mode":"diag","poll_ms":190.981,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.062,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":189.556,"dispatches":1,"kernel_max_ms":186.306,"kernel_ms":"available","kernel_sum_ms":186.306,"mode":"diag","poll_ms":189.495,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.061,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":187.205,"dispatches":1,"kernel_max_ms":185.65,"kernel_ms":"available","kernel_sum_ms":185.65,"mode":"diag","poll_ms":187.135,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.071,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":187.308,"dispatches":1,"kernel_max_ms":186.536,"kernel_ms":"available","kernel_sum_ms":186.536,"mode":"diag","poll_ms":187.248,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.06,"timestamp_query":"available"}
+[diag/palette_chain] variant=unroll4 kernel_ms=186.306 speedup=1.699
+[diag/palette_chain] gate1=PASS unroll4_speedup=1.699
+[diag/gpu_timestamp] {"dispatch_wall_ms":249.805,"dispatches":1,"kernel_max_ms":243.18,"kernel_ms":"available","kernel_sum_ms":243.18,"mode":"diag","poll_ms":249.667,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.138,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":198.831,"dispatches":1,"kernel_max_ms":197.339,"kernel_ms":"available","kernel_sum_ms":197.339,"mode":"diag","poll_ms":198.742,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.089,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":190.897,"dispatches":1,"kernel_max_ms":189.622,"kernel_ms":"available","kernel_sum_ms":189.622,"mode":"diag","poll_ms":190.825,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.071,"timestamp_query":"available"}
+[diag/gpu_timestamp] {"dispatch_wall_ms":203.734,"dispatches":1,"kernel_max_ms":188.784,"kernel_ms":"available","kernel_sum_ms":188.784,"mode":"diag","poll_ms":203.64,"poll_per_dispatch":false,"size":"1920x1080","strips":1,"submit_sum_ms":0.093,"timestamp_query":"available"}
+[diag/palette_chain] variant=unroll8 kernel_ms=189.622 speedup=1.669 vs_unroll4=0.983
+[diag/palette_chain] gate2=SATURATED unroll8 vs unroll4 < 1.2×
+[diag/palette_chain] done

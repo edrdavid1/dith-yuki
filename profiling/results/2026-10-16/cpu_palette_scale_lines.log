@@ -1,0 +1,201 @@
+   Compiling dither v2.0.3-beta (/Users/dave/Prahramavannie/dither-yuki-2/src-tauri)
+warning: unused imports: `DitherColorMode` and `DitherModeV2`
+   --> src-tauri/src/commands/tests.rs:569:9
+    |
+569 |         DitherColorMode, DitherModeV2, DitherParamsV2, FilterInstance, FilterKind, FilterParams,
+    |         ^^^^^^^^^^^^^^^  ^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `Ordering`
+  --> src-tauri/src/dither_profile_harness.rs:11:37
+   |
+11 | use std::sync::atomic::{AtomicBool, Ordering};
+   |                                     ^^^^^^^^
+
+warning: unused import: `Mutex`
+ --> src-tauri/src/preview_latency_diag.rs:9:22
+  |
+9 | use std::sync::{Arc, Mutex};
+  |                      ^^^^^
+
+warning: unused import: `engine_project::document::DocumentHandle`
+  --> src-tauri/src/preview_latency_diag.rs:15:5
+   |
+15 | use engine_project::document::DocumentHandle;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Scheduler` and `TileCache`
+  --> src-tauri/src/preview_latency_diag.rs:24:47
+   |
+24 |     CacheStage, InvalidationEvent, PixelTile, Scheduler, TileCache, TileCoord, TileKey, HALO,
+   |                                               ^^^^^^^^^  ^^^^^^^^^
+
+warning: unused import: `crate::worker::WorkerWake`
+  --> src-tauri/src/preview_latency_diag.rs:36:5
+   |
+36 | use crate::worker::WorkerWake;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::viewport::ViewportState`
+    --> src-tauri/src/tile_pipeline.rs:1062:9
+     |
+1062 |     use crate::viewport::ViewportState;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::worker::WorkerWake`
+    --> src-tauri/src/tile_pipeline.rs:1063:9
+     |
+1063 |     use crate::worker::WorkerWake;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `engine_project::document::DocumentHandle`
+    --> src-tauri/src/tile_pipeline.rs:1064:9
+     |
+1064 |     use engine_project::document::DocumentHandle;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Scheduler` and `TileCache`
+    --> src-tauri/src/tile_pipeline.rs:1069:36
+     |
+1069 |     use engine_tiles::{CacheStage, Scheduler, TileCache, TileCoord, TileKey};
+     |                                    ^^^^^^^^^  ^^^^^^^^^
+
+warning: unused import: `std::sync::Mutex`
+    --> src-tauri/src/tile_pipeline.rs:1070:9
+     |
+1070 |     use std::sync::Mutex;
+     |         ^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> src-tauri/src/commands/tests.rs:611:9
+    |
+611 |     let mut session = state.must_active();
+    |         ----^^^^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src-tauri/src/config/mod.rs:475:9
+    |
+475 |     let mut value: Value = serde_json::from_slice(bytes).map_err(|e| format!("json: {e}"))?;
+    |         ----^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: value assigned to `last_rgba` is never read
+    --> src-tauri/src/preview_latency_diag.rs:2283:25
+     |
+2283 |     let mut last_rgba = Vec::new();
+     |                         ^^^^^^^^^^ this value is reassigned later and never used
+...
+2303 |         last_rgba = rgba;
+     |         --------- `last_rgba` is overwritten here before the previous value is read
+     |
+     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> src-tauri/src/tile_pipeline.rs:1489:13
+     |
+1489 |         let mut state = make_app_state_with_layer(1, false);
+     |             ----^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src-tauri/src/tile_pipeline.rs:1609:13
+     |
+1609 |         let mut state = make_app_state_with_layer(1, false);
+     |             ----^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src-tauri/src/tile_pipeline.rs:1659:13
+     |
+1659 |         let mut state = make_app_state_with_layer(1, false);
+     |             ----^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src-tauri/src/tile_pipeline.rs:1806:13
+     |
+1806 |         let mut state = make_app_state_with_layer(1, false);
+     |             ----^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src-tauri/src/tile_pipeline.rs:1858:13
+     |
+1858 |         let mut state = make_app_state_with_layer(1, false);
+     |             ----^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: method `write_count` is never used
+   --> src-tauri/src/config/mod.rs:302:12
+    |
+218 | impl ConfigStore {
+    | ---------------- method in this implementation
+...
+302 |     pub fn write_count(&self) -> u64 {
+    |            ^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `mean` is never read
+   --> src-tauri/src/preview_latency_diag.rs:551:5
+    |
+548 | struct SampleStats {
+    |        ----------- field in this struct
+...
+551 |     mean: f64,
+    |     ^^^^
+
+warning: function `reference_copy_tile` is never used
+    --> src-tauri/src/tile_pipeline.rs:1047:8
+     |
+1047 | pub fn reference_copy_tile(src: &PixelTile) -> PixelTile {
+     |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `reference_f32_tile_to_rgba8` is never used
+   --> src-tauri/src/tile_protocol.rs:328:8
+    |
+328 | pub fn reference_f32_tile_to_rgba8(tile: &PixelTile) -> Vec<u8> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `dither` (bin "dither" test) generated 23 warnings (run `cargo fix --bin "dither" -p dither --tests` to apply 18 suggestions)
+    Finished `release` profile [optimized] target(s) in 32.50s
+warning: the following packages contain code that will be rejected by a future version of Rust: block v0.1.6
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/main.rs (target/release/deps/dither-c06b1b02c9580635)
+
+running 1 test
+test cpu_palette_scale_harness::cpu_palette_scale_blue_noise ... [diag/cpu_palette] palettes confirmed lens=16 256 4096
+[diag/cpu_palette] palette_len=16 size=748x1024 wall_ms=20.4
+[diag/cpu_palette] palette_len=16 size=748x1024 wall_ms=20.1
+[diag/cpu_palette] palette_len=16 size=748x1024 wall_ms=18.5
+[diag/cpu_palette] palette_len=16 size=748x1024 wall_ms=18.9
+[diag/cpu_palette] palette_len=16 size=748x1024 wall_ms=18.8
+[diag/cpu_palette] palette_len=16 size=748x1024 wall_ms=18.9 (median)
+[diag/cpu_palette] palette_len=256 size=748x1024 wall_ms=239.6
+[diag/cpu_palette] palette_len=256 size=748x1024 wall_ms=241.2
+[diag/cpu_palette] palette_len=256 size=748x1024 wall_ms=240.6
+[diag/cpu_palette] palette_len=256 size=748x1024 wall_ms=242.2
+[diag/cpu_palette] palette_len=256 size=748x1024 wall_ms=239.4
+[diag/cpu_palette] palette_len=256 size=748x1024 wall_ms=240.6 (median)
+[diag/cpu_palette] palette_len=4096 size=748x1024 wall_ms=3712.8
+[diag/cpu_palette] palette_len=4096 size=748x1024 wall_ms=3667.1
+[diag/cpu_palette] palette_len=4096 size=748x1024 wall_ms=3683.1
+[diag/cpu_palette] palette_len=4096 size=748x1024 wall_ms=3694.9
+[diag/cpu_palette] palette_len=4096 size=748x1024 wall_ms=3695.6
+[diag/cpu_palette] palette_len=4096 size=748x1024 wall_ms=3694.9 (median)
+[diag/cpu_palette_summary] p16=18.9 p256=240.6 p4096=3694.9 ratio_16_4096=195.54
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 285 filtered out; finished in 23.77s
+

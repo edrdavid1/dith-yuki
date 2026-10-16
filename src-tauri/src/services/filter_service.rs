@@ -40,6 +40,9 @@ pub struct UpdateFilterRequest {
     pub blend_mode: Option<String>,
     #[serde(default)]
     pub enabled: Option<bool>,
+    /// Optional gesture id for `DITHER_PROFILE=1` (ignored when profiling is off).
+    #[serde(default, alias = "profileRunId")]
+    pub profile_run_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -713,6 +716,24 @@ impl FilterService {
         req: UpdateFilterRequest,
     ) -> Result<(), AppError> {
         let doc_id = req.doc_id;
+        if engine_project::dither_profile::enabled() {
+            if let Some(run_id) = req.profile_run_id {
+                let gen = self
+                    .state
+                    .session(doc_id)
+                    .ok()
+                    .map(|s| {
+                        s.document_handle
+                            .snapshot()
+                            .generations
+                            .document_gen
+                            .load(std::sync::atomic::Ordering::Acquire)
+                    })
+                    .unwrap_or(0);
+                engine_project::dither_profile::begin_run(run_id, gen);
+            }
+            engine_project::dither_profile::mark("ipc_received");
+        }
 
         let uuid = uuid::Uuid::parse_str(&req.filter_id)
             .map_err(|e| AppError::InvalidOperation(format!("Invalid filter_id: {}", e)))?;
@@ -1258,6 +1279,19 @@ impl FilterService {
                     layer_id,
                 ),
             );
+
+            if engine_project::dither_profile::enabled() {
+                let gen = self
+                    .state
+                    .require_session(doc_id)?
+                    .document_handle
+                    .snapshot()
+                    .generations
+                    .document_gen
+                    .load(std::sync::atomic::Ordering::Acquire);
+                engine_project::dither_profile::set_generation(gen);
+                engine_project::dither_profile::mark("invalidate_done");
+            }
 
             emit_document_changed(app_handle, "filter_updated", Some(layer_id), Some(doc_id));
             Ok(())

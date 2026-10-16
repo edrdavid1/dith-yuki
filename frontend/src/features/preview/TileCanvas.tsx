@@ -23,6 +23,12 @@ import {
   noteUserInput,
   stampWorkerMessage,
 } from '../../diagnostics/level1';
+import {
+  activeProfileRunId,
+  ditherProfileEnabled,
+  noteFeMark,
+  probeDitherProfile,
+} from '../../diagnostics/ditherProfile';
 
 const cn = bind(styles);
 
@@ -574,8 +580,15 @@ export default function TileCanvas({
       rafRef.current = null;
       drawTiles();
       noteFramePainted();
+      if (ditherProfileEnabled()) {
+        noteFeMark('frame_drawn', activeProfileRunId());
+      }
     });
   }, [drawTiles]);
+
+  useEffect(() => {
+    void probeDitherProfile();
+  }, []);
 
   useEffect(() => {
     if (previewBackground === 'pattern') {
@@ -600,6 +613,9 @@ export default function TileCanvas({
       if (old && old !== next) old.close();
       displayed.set(k, next);
       pending.delete(k);
+    }
+    if (ditherProfileEnabled()) {
+      noteFeMark('commit_applied', activeProfileRunId());
     }
     scheduleRedraw();
   }, [scheduleRedraw]);
@@ -654,6 +670,17 @@ export default function TileCanvas({
             }
           : undefined,
       );
+
+      if (ditherProfileEnabled()) {
+        const profile = msg.profile as
+          | { runId?: number; protocol_epoch_ms: number; decoded_epoch_ms: number }
+          | undefined;
+        const runId = profile?.runId ?? activeProfileRunId();
+        if (profile) {
+          noteFeMark('tile_protocol_response', runId);
+        }
+        noteFeMark('tile_decoded', runId);
+      }
 
       const metric = softProofMetricRef.current;
       if (metric && decodedRev === metric.rev && metric.expected.has(key)) {
@@ -854,6 +881,10 @@ export default function TileCanvas({
         vp.canvasWidth,
         vp.canvasHeight,
       );
+      if (ditherProfileEnabled()) {
+        noteFeMark('tile_ready_received', activeProfileRunId());
+        noteFeMark('fetch_tile_posted', activeProfileRunId());
+      }
       workerRef.current?.postMessage(stampWorkerMessage({
         type: 'fetch-tile',
         level,
@@ -862,6 +893,8 @@ export default function TileCanvas({
         docId,
         rev: tileRevRef.current,
         protocolBase: workerTileProtocolBase(),
+        profile: ditherProfileEnabled() || undefined,
+        profileRunId: activeProfileRunId() ?? undefined,
       }));
     });
     return () => { unlisten.then((fn) => fn()); };

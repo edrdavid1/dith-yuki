@@ -27,7 +27,13 @@ export async function updateFilter(
   layerId: number,
   filterId: string,
   params: Record<string, unknown>,
-  extras?: { opacity?: number; blend_mode?: string; enabled?: boolean }
+  extras?: {
+    opacity?: number;
+    blend_mode?: string;
+    enabled?: boolean;
+    /** `DITHER_PROFILE=1` gesture id (ignored when profiling is off). */
+    profileRunId?: number | null;
+  }
 ): Promise<void> {
   return invoke<void>('update_filter', {
     req: withDocId(docId, {
@@ -37,6 +43,7 @@ export async function updateFilter(
       opacity: extras?.opacity ?? null,
       blend_mode: extras?.blend_mode ?? null,
       enabled: extras?.enabled ?? null,
+      profile_run_id: extras?.profileRunId ?? null,
     }),
   });
 }
