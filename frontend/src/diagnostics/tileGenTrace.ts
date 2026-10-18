@@ -202,6 +202,8 @@ export type TraceCameraApi = {
   getTileRev: () => number;
   /** Push current camera to BE with zero debounce (quiet-check sync). */
   flushViewport?: () => void;
+  /** Place the visible set over the document bottom-right corner (Z3 cold). */
+  panToBottomRight?: () => void;
 };
 
 declare global {
