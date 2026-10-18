@@ -23,6 +23,8 @@ export type VpViolationClass =
   | 'TILE_SERVED_NOT_DRAWN'
   | 'DRAWN_NOT_VISIBLE'
   | 'WORKER_SPIN'
+  | 'TIME_TO_FRESH'
+  | 'VISIBLE_HOLES'
   | 'INJECT_SELFCHECK_FAILED';
 
 export type VpViolation = {
@@ -278,15 +280,29 @@ export async function backendViewportSnapshot(): Promise<{
   }
 }
 
+export type QuietFreshnessMetrics = {
+  /** Wall ms from `freshnessT0` to quiet with zero visible holes; null if not fresh. */
+  timeToFreshMs: number | null;
+  /** Visible tiles lacking a draw at the current camera hash after silence. */
+  holes: number;
+  visible: number;
+  drawnAtCurrent: number;
+};
+
 export async function runQuietThenCheck(args: {
   getFeSnapshot: () => FeVpSnapshot;
   trace: SeriesTileTrace;
   /** Optional: flush FE camera → BE before comparing hashes. */
   flushViewport?: () => void;
+  /** performance.now() when the freshness clock started (e.g. final zoom). */
+  freshnessT0?: number;
+  /** Flag TIME_TO_FRESH when wall ms exceeds this (optional). */
+  timeToFreshBudgetMs?: number;
 }): Promise<{
   silence: 'ok' | 'STUCK_BUSY' | 'STUCK_MOVING';
   violations: VpViolation[];
   cache: Record<string, unknown>[];
+  freshness: QuietFreshnessMetrics;
 }> {
   // CPU floyd_steinberg after zoom-out can keep the queue busy well past 30s.
   const beSilence = await waitForSilence(120_000, 1500);
@@ -335,6 +351,41 @@ export async function runQuietThenCheck(args: {
     }
   }
 
+  const visibleKeys = fe.tiles.map((t) => `${t.level}/${t.x}/${t.y}`);
+  const holes = visibleKeys.filter((k) => !args.trace.drawnAtCurrentHash.has(k)).length;
+  const drawnAtCurrent = visibleKeys.filter((k) =>
+    args.trace.drawnAtCurrentHash.has(k),
+  ).length;
+  const timeToFreshMs =
+    silence === 'ok' && holes === 0 && args.freshnessT0 != null
+      ? performance.now() - args.freshnessT0
+      : null;
+  const freshness: QuietFreshnessMetrics = {
+    timeToFreshMs,
+    holes,
+    visible: visibleKeys.length,
+    drawnAtCurrent,
+  };
+
+  if (holes > 0 && silence === 'ok') {
+    violations.push({
+      class: 'VISIBLE_HOLES',
+      detail: `holes=${holes}/${visibleKeys.length} after silence`,
+    });
+  }
+  if (
+    args.timeToFreshBudgetMs != null &&
+    (timeToFreshMs == null || timeToFreshMs > args.timeToFreshBudgetMs)
+  ) {
+    violations.push({
+      class: 'TIME_TO_FRESH',
+      detail:
+        timeToFreshMs == null
+          ? `not fresh after silence (holes=${holes}, silence=${silence}); budget=${args.timeToFreshBudgetMs}ms`
+          : `time_to_fresh=${timeToFreshMs.toFixed(0)}ms > budget=${args.timeToFreshBudgetMs}ms`,
+    });
+  }
+
   noteTraceEvent('vp_invariant_result', {
     details: {
       silence,
@@ -345,10 +396,13 @@ export async function runQuietThenCheck(args: {
       be_hash: be?.vp_hash ?? null,
       last_sent_hash: args.trace.lastSentHash,
       busy: await busySnapshot(),
+      time_to_fresh_ms: timeToFreshMs,
+      holes,
+      visible: visibleKeys.length,
     },
   });
 
-  return { silence, violations, cache };
+  return { silence, violations, cache, freshness };
 }
 
 export function feSnapshotFromTiles(
