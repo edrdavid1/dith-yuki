@@ -13,6 +13,13 @@ import {
   noteIpcInvokeStart,
   probeDitherProfile,
 } from '../diagnostics/ditherProfile';
+import {
+  installTraceStressHook,
+  noteIpcUpdateFilter,
+  noteUiParamChange,
+  probeTileGenTrace,
+  tileGenTraceEnabled,
+} from '../diagnostics/tileGenTrace';
 
 export interface UseEffectLayerReturn {
   effectType: EffectType | null;
@@ -98,6 +105,9 @@ export function useEffectLayer(
 
   useEffect(() => {
     void probeDitherProfile();
+    void probeTileGenTrace().then((on) => {
+      if (on) installTraceStressHook();
+    });
   }, []);
 
   const storeFilter = useMemo(() => {
@@ -175,6 +185,9 @@ export function useEffectLayer(
       'mode' in params ? 'algo_switch' : 'pixel_size' in params ? 'pixel_size' : 'slider';
     const mode = typeof params.mode === 'string' ? params.mode : null;
     noteUserInput(scenario, mode);
+    if (tileGenTraceEnabled()) {
+      noteUiParamChange(params);
+    }
 
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
@@ -217,6 +230,9 @@ export function useEffectLayer(
         inflightRef.current = true;
         noteIpcSent('update_filter');
         noteIpcInvokeStart(activeProfileRunId());
+        if (tileGenTraceEnabled()) {
+          noteIpcUpdateFilter(patch);
+        }
         try {
           await updateFilter(targetDocId, layerIdRef.current, filterIdRef.current, patch, {
             profileRunId: activeProfileRunId(),

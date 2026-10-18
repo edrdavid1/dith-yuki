@@ -193,19 +193,38 @@ pub fn try_publish_gpu_preview_viewport(state: &AppState) -> std::collections::H
     use std::collections::HashSet;
 
     let empty = HashSet::new();
+    let emit_gpu = |empty_why: &str, published_n: usize, vp_hash: &str, level: u8| {
+        if crate::tile_gen_trace::enabled() {
+            crate::tile_gen_trace::emit_simple(
+                "gpu_preview_publish",
+                serde_json::json!({
+                    "empty": published_n == 0,
+                    "why": empty_why,
+                    "published": published_n,
+                    "vp_hash": vp_hash,
+                    "level": level,
+                }),
+            );
+        }
+    };
     if engine_gpu::force_cpu() {
+        emit_gpu("force_cpu", 0, "", 0);
         return empty;
     }
     let Some(ctx) = state.gpu.as_ref() else {
+        emit_gpu("no_gpu_ctx", 0, "", 0);
         return empty;
     };
     let Some(gpu_cache) = state.gpu_resident.as_ref() else {
+        emit_gpu("no_gpu_resident", 0, "", 0);
         return empty;
     };
     let Some(executor_mtx) = state.gpu_executor.as_ref() else {
+        emit_gpu("no_gpu_executor", 0, "", 0);
         return empty;
     };
     let Ok(session) = state.active_session() else {
+        emit_gpu("no_session", 0, "", 0);
         return empty;
     };
 
@@ -244,7 +263,10 @@ pub fn try_publish_gpu_preview_viewport(state: &AppState) -> std::collections::H
         })
         .collect();
 
+    let (vp_hash_s, _, _, _, _) =
+        crate::tile_gen_trace::vp_hash_from_coords(viewport.level, &viewport.visible_tiles);
     if dirty_l0.is_empty() {
+        emit_gpu("no_dirty_l0", 0, &vp_hash_s, viewport.level);
         return empty;
     }
 
@@ -278,10 +300,12 @@ pub fn try_publish_gpu_preview_viewport(state: &AppState) -> std::collections::H
     }
 
     if download_coords.is_empty() && compute_coords.is_empty() {
+        emit_gpu("all_cpu_dispatch", 0, &vp_hash_s, viewport.level);
         return empty;
     }
 
     let Ok(executor) = executor_mtx.lock() else {
+        emit_gpu("executor_lock_failed", 0, &vp_hash_s, viewport.level);
         return empty;
     };
 
@@ -409,6 +433,12 @@ pub fn try_publish_gpu_preview_viewport(state: &AppState) -> std::collections::H
         }
     }
 
+    let why = if published.is_empty() {
+        "download_or_insert_failed"
+    } else {
+        "ok"
+    };
+    emit_gpu(why, published.len(), &vp_hash_s, viewport_level);
     published
 }
 

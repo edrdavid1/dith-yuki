@@ -12,6 +12,31 @@ import {
 import { logIpcError, setViewport as setViewportIPC } from '../shared/ipc';
 import { noteIpcDone, noteIpcSent, noteUserInput } from '../diagnostics/level1';
 import { nextZoomPreset, prevZoomPreset } from '../types/effects';
+import {
+  noteTraceEvent,
+  tileGenTraceEnabled,
+} from '../diagnostics/tileGenTrace';
+import {
+  computePyramidLevel,
+  computeVisibleTiles,
+} from '../features/preview/TileCanvas';
+import { tileRangeFromCoords } from '../diagnostics/vpHash';
+
+let vpSendSeq = 0;
+let injectSkipNextVpSend = 0;
+
+/** DEV + DITHER_TRACE_INJECT: skip next N `set_viewport` IPC sends (self-check). */
+export function armInjectSkipVpSend(n = 1): void {
+  const dev =
+    typeof import.meta !== 'undefined' &&
+    Boolean((import.meta as { env?: { DEV?: boolean } }).env?.DEV);
+  if (!dev) return;
+  injectSkipNextVpSend = n;
+}
+
+export function injectSkipVpSendArmed(): number {
+  return injectSkipNextVpSend;
+}
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
 
@@ -93,6 +118,8 @@ export interface UseViewportReturn {
   setCanvasSize: (width: number, height: number) => void;
   zoomToNextPreset: () => void;
   zoomToPrevPreset: () => void;
+  /** Trace/stress: send current camera to BE immediately (no debounce). */
+  flushViewport: () => void;
 }
 
 /**
@@ -131,15 +158,63 @@ export function useViewport(docWidth: number, docHeight: number): UseViewportRet
     wantIntegerSnap: boolean;
   } | null>(null);
 
+  const lastSentHashRef = useRef<string | null>(null);
+  const docSizeRef = useRef({ w: docWidth, h: docHeight });
+  docSizeRef.current = { w: docWidth, h: docHeight };
+  const viewportLiveRef = useRef(viewport);
+  viewportLiveRef.current = viewport;
+
   const sendViewportToBackend = useCallback((vp: ViewportState) => {
     if (debounceTimerRef.current !== null) {
       clearTimeout(debounceTimerRef.current);
     }
     const delay = ipcDebounceMsRef.current;
+    const { w: docW, h: docH } = docSizeRef.current;
+    const level =
+      docW > 0 && docH > 0 ? computePyramidLevel(vp.zoom, docW, docH) : 0;
+    const tiles =
+      docW > 0 && docH > 0 ? computeVisibleTiles(vp, docW, docH) : [];
+    const range = tileRangeFromCoords(level, tiles);
+
     debounceTimerRef.current = setTimeout(() => {
       debounceTimerRef.current = null;
       ipcDebounceMsRef.current = IPC_DEBOUNCE_MS;
       if (vp.canvasWidth > 0 && vp.canvasHeight > 0) {
+        if (tileGenTraceEnabled() && injectSkipNextVpSend > 0) {
+          injectSkipNextVpSend -= 1;
+          noteTraceEvent('vp_not_sent', {
+            details: {
+              reason: 'inject_skip',
+              vp_hash: range.vp_hash,
+              level,
+              zoom: vp.zoom,
+            },
+          });
+          return;
+        }
+        vpSendSeq += 1;
+        const seq = vpSendSeq;
+        if (tileGenTraceEnabled()) {
+          noteTraceEvent('vp_sent_ipc', {
+            details: {
+              zoom: vp.zoom,
+              x: vp.panX,
+              y: vp.panY,
+              width: vp.canvasWidth,
+              height: vp.canvasHeight,
+              level,
+              x0: range.x0,
+              y0: range.y0,
+              x1: range.x1,
+              y1: range.y1,
+              tile_count: range.count,
+              vp_hash: range.vp_hash,
+              trace_seq: seq,
+              debounce_ms: delay,
+            },
+          });
+        }
+        lastSentHashRef.current = range.vp_hash;
         noteIpcSent('set_viewport');
         setViewportIPC({
           zoom: vp.zoom,
@@ -147,16 +222,38 @@ export function useViewport(docWidth: number, docHeight: number): UseViewportRet
           y: vp.panY,
           width: vp.canvasWidth,
           height: vp.canvasHeight,
+          traceSeq: tileGenTraceEnabled() ? seq : undefined,
         })
-          .then(() => noteIpcDone())
+          .then(() => {
+            noteIpcDone();
+            if (tileGenTraceEnabled()) {
+              // Command completed ⇒ backend ran set_viewport (vp_received).
+              noteTraceEvent('vp_ipc_ack', {
+                details: { trace_seq: seq, vp_hash: range.vp_hash },
+              });
+            }
+          })
           .catch((err) => {
             noteIpcDone();
             // Viewport is local-first; log failures without rolling back camera
             logIpcError('useViewport.setViewport', err);
           });
+      } else if (tileGenTraceEnabled()) {
+        noteTraceEvent('vp_not_sent', {
+          details: { reason: 'zero_canvas', vp_hash: range.vp_hash },
+        });
       }
     }, delay);
   }, []);
+
+  const flushViewport = useCallback(() => {
+    if (debounceTimerRef.current !== null) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    ipcDebounceMsRef.current = 0;
+    sendViewportToBackend(viewportLiveRef.current);
+  }, [sendViewportToBackend]);
 
   // Clean up debounce / rAF on unmount
   useEffect(() => {
@@ -440,6 +537,7 @@ export function useViewport(docWidth: number, docHeight: number): UseViewportRet
     handlePanDrag,
     fitToView,
     setZoom,
+    flushViewport,
     setCanvasSize,
     zoomToNextPreset,
     zoomToPrevPreset,

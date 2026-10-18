@@ -790,6 +790,10 @@ pub fn schedule_ed_for_viewport(state: &AppState) {
     });
 }
 
+pub fn collect_ed_layer_ids(nodes: &[LayerNode], out: &mut Vec<u32>) {
+    collect_ed_layers(nodes, &mut |id| out.push(id));
+}
+
 fn collect_ed_layers(nodes: &[LayerNode], f: &mut impl FnMut(u32)) {
     for node in nodes {
         match node {

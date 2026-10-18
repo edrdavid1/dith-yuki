@@ -337,6 +337,16 @@ impl AppState {
                     crate::preview_diag::record_evict(snap.id.0, gen, stats.passes, stats.removed);
                 }
             }
+            if crate::tile_gen_trace::enabled() {
+                let live = self.active_session().ok().map(|s| {
+                    s.document_handle
+                        .snapshot()
+                        .generations
+                        .document_gen
+                        .load(Ordering::Acquire)
+                });
+                crate::tile_gen_trace::note_cache_evict(stats.removed, "memory_pressure", live);
+            }
         }
         if let Some(gpu) = self.gpu_resident.as_ref() {
             gpu.set_evict_policy(&ctx);
@@ -370,6 +380,8 @@ impl AppState {
         self.tiles.palette_lut_cache.evict_document(doc);
         self.tiles.full_document.clear(); // per-doc eviction not needed yet (few entries)
         self.delayed_requeue.cancel_doc(doc);
+        crate::tile_gen_trace::clear_spin_for_doc(doc);
+        crate::pending_tiles::clear_doc(doc);
 
         let mut active = self.active_id.lock().map_err(|e| e.to_string())?;
         if *active == Some(doc) {

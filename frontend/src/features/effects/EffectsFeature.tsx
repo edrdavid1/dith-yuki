@@ -14,6 +14,8 @@ import type { EffectType } from '../../types/effects';
 import type { FilterInfo } from '../../types';
 import type { PanelChromeProps } from '../panels/PanelChrome';
 import { usePatternsUi } from '../patterns/PatternsUiContext';
+import TileGenStressPanel from '../../diagnostics/TileGenStressPanel';
+import { unwrapFilterParams } from '../../shared/unwrapFilterParams';
 
 function findLayerById(
   layers: { id: number; name: string; children?: unknown[] }[],
@@ -259,42 +261,77 @@ export default function EffectsFeature({
     [dispatch, docId, layers]
   );
 
+  const stressBaseParams =
+    effectLayer.effectParams != null
+      ? ({
+          ...(unwrapFilterParams(
+            effectLayer.effectParams as unknown as Record<string, unknown>,
+          ) as Record<string, unknown>),
+          type: (effectLayer.effectParams as unknown as { type?: string }).type,
+        } as Record<string, unknown>)
+      : null;
+
   return (
-    <EffectSettingsPanel
-      selectedLayer={selectedLayerWithFilters}
-      onUpdateParams={handleUpdateParams}
-      onSelectEffect={handleSelectEffect}
-      onSelectAlgorithm={handleSelectAlgorithm}
-      onSelectPreset={handleSelectPreset}
-      onTitleBarMouseDown={onTitleBarMouseDown}
-      dockSide={dockSide}
-      onMoveToSide={onMoveToSide}
-      hideChrome={hideChrome}
-      onPopOut={onPopOut}
-      onDockBack={onDockBack}
-      targetLayerId={currentLayerForEffect ?? selectedLayerId}
-      onExportPattern={() => {
-        const layerId = currentLayerForEffect ?? selectedLayerId;
-        void (async () => {
-          const path = await doc.exportPattern(layerId);
-          if (!path) return;
-          try {
-            await importPatternToLibrary(path);
-          } catch (err) {
-            logIpcError('EffectsFeature.exportPatternLibrary', err);
-            dispatch(
-              setDocumentMeta({
-                error: formatIpcError(err),
-              })
-            );
-          }
-        })();
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        minHeight: 0,
+        overflow: 'hidden',
       }}
-      onImportPattern={() =>
-        void doc.importPattern(currentLayerForEffect ?? selectedLayerId)
-      }
-      onSavePattern={() => openPatternManager('save')}
-      onLoadPattern={() => openPatternManager('browse')}
-    />
+    >
+      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        <EffectSettingsPanel
+          selectedLayer={selectedLayerWithFilters}
+          onUpdateParams={handleUpdateParams}
+          onSelectEffect={handleSelectEffect}
+          onSelectAlgorithm={handleSelectAlgorithm}
+          onSelectPreset={handleSelectPreset}
+          onTitleBarMouseDown={onTitleBarMouseDown}
+          dockSide={dockSide}
+          onMoveToSide={onMoveToSide}
+          hideChrome={hideChrome}
+          onPopOut={onPopOut}
+          onDockBack={onDockBack}
+          targetLayerId={currentLayerForEffect ?? selectedLayerId}
+          onExportPattern={() => {
+            const layerId = currentLayerForEffect ?? selectedLayerId;
+            void (async () => {
+              const path = await doc.exportPattern(layerId);
+              if (!path) return;
+              try {
+                await importPatternToLibrary(path);
+              } catch (err) {
+                logIpcError('EffectsFeature.exportPatternLibrary', err);
+                dispatch(
+                  setDocumentMeta({
+                    error: formatIpcError(err),
+                  })
+                );
+              }
+            })();
+          }}
+          onImportPattern={() =>
+            void doc.importPattern(currentLayerForEffect ?? selectedLayerId)
+          }
+          onSavePattern={() => openPatternManager('save')}
+          onLoadPattern={() => openPatternManager('browse')}
+        />
+      </div>
+      <TileGenStressPanel
+        baseParams={stressBaseParams}
+        updateParams={(params) => {
+          effectLayer.updateParams(params);
+        }}
+        layerId={currentLayerForEffect ?? selectedLayerId}
+        getVisibleKeys={() =>
+          window.__ditherTileGenTrace?.canvas?.getVisibleKeys() ?? []
+        }
+        getViewportLevel={() =>
+          window.__ditherTileGenTrace?.canvas?.getViewportLevel() ?? 0
+        }
+      />
+    </div>
   );
 }
