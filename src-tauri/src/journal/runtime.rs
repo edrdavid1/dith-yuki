@@ -56,6 +56,10 @@ impl JournalRuntime {
 }
 
 pub fn set_recovery_dir(state: &AppState, dir: PathBuf) {
+    if !super::enabled() {
+        log::info!(target: "journal", "DITHER_JOURNAL=0 — recovery dir not set");
+        return;
+    }
     if let Ok(mut guard) = state.journal.lock() {
         let _ = std::fs::create_dir_all(&dir);
         guard.recovery_dir = Some(dir);
@@ -64,6 +68,9 @@ pub fn set_recovery_dir(state: &AppState, dir: PathBuf) {
 
 /// Called when a document becomes dirty (or stays dirty after an edit).
 pub fn schedule_dirty(app: Option<&AppHandle>, state: &AppState, doc_id: u32) {
+    if !super::enabled() {
+        return;
+    }
     let Some(app) = app else {
         return;
     };
@@ -108,6 +115,9 @@ pub fn schedule_dirty(app: Option<&AppHandle>, state: &AppState, doc_id: u32) {
 
 /// Start a process-wide heartbeat that flushes stale dirty journals.
 pub fn start_heartbeat(app: AppHandle) {
+    if !super::enabled() {
+        return;
+    }
     {
         let state = app.state::<Arc<AppState>>();
         let Ok(mut guard) = state.journal.lock() else {

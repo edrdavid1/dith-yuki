@@ -31,7 +31,15 @@ pub fn delete_journal_for_session(state: &AppState, session: &DocumentSession) {
 }
 
 /// Serialize the live document into the recovery journal (or skip if too large).
+///
+/// Payload path: `save_project_to_bytes` → layer Raw PNGs + **processed**
+/// `composite.png` / thumbnail via [`build_processed_composite_rgba8`]
+/// (re-applies enabled filters, including ED dither). Does not enqueue
+/// Composite tile tasks, but **does** compete for CPU with the tile worker.
 pub fn write_journal_for_doc(state: &AppState, doc_id: u32) -> Result<(), String> {
+    if !super::enabled() {
+        return Ok(());
+    }
     let session = state.require_session(doc_id)?;
     let recovery_dir = {
         let guard = state.journal.lock().map_err(|e| e.to_string())?;

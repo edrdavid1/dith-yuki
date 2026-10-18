@@ -369,12 +369,17 @@ fn main() {
                 }
 
                 // Crash-recovery journal root: {app_data}/recovery/
-                crate::journal::set_recovery_dir(
-                    &state,
-                    crate::journal::recovery_subdir(&app_data_dir),
-                );
-                crate::journal::start_heartbeat(app_handle.clone());
-                crate::journal::signals::install_signal_flush(app_handle.clone());
+                // Skip when DITHER_JOURNAL=0 (A/B: journal must not contend with dither).
+                if crate::journal::enabled() {
+                    crate::journal::set_recovery_dir(
+                        &state,
+                        crate::journal::recovery_subdir(&app_data_dir),
+                    );
+                    crate::journal::start_heartbeat(app_handle.clone());
+                    crate::journal::signals::install_signal_flush(app_handle.clone());
+                } else {
+                    log::info!("DITHER_JOURNAL=0 — crash-recovery journal disabled");
+                }
 
                 match crate::services::ProofService::new(&app_data_dir) {
                     Ok(svc) => {
