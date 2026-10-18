@@ -94,6 +94,17 @@ export default function PreviewFeature({
           computePyramidLevel(viewportRef.current.zoom, docWidth, docHeight),
         getTileRev: () =>
           window.__ditherTileGenTrace?.canvas?.getTileRev?.() ?? 0,
+        panToBottomRight: () => {
+          const vp = viewportRef.current;
+          if (vp.zoom <= 0 || vp.canvasWidth <= 0 || vp.canvasHeight <= 0) return;
+          const targetX = Math.max(0, docWidth - vp.canvasWidth / vp.zoom);
+          const targetY = Math.max(0, docHeight - vp.canvasHeight / vp.zoom);
+          // handlePanDrag(dx): panX -= dx/zoom  →  dx = (panX - target) * zoom
+          handlePanDrag(
+            (vp.panX - targetX) * vp.zoom,
+            (vp.panY - targetY) * vp.zoom,
+          );
+        },
       };
     });
   }, [setZoom, handlePanDrag, fitToView, flushViewport, docWidth, docHeight]);

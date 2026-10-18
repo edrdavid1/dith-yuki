@@ -122,9 +122,16 @@ fn append_event(ev: &TraceEvent) {
     }
 }
 
-/// Optional override path for harnesses (must be called before first emit sink use).
+/// Optional override path for harnesses. Installs the file sink if missing
+/// (harness tests call `force_enable` without `init()`, so without this
+/// events only sit in `TEST_EVENTS` and never reach disk).
 pub fn set_out_path_for_tests(path: PathBuf) {
     let _ = OUT_PATH.set(path);
+    if tile_gen_trace::enabled() {
+        let _ = tile_gen_trace::set_sink(Box::new(move |ev| {
+            append_event(&ev);
+        }));
+    }
 }
 
 #[tauri::command]
@@ -442,6 +449,47 @@ pub fn tile_gen_trace_cache_probe(
             "fresh": false,
         }),
     }
+}
+
+/// Trace-only: evict Processed + Composite for the active doc (keep Raw).
+/// Emits `cache_cold_start` so GUI Z3 can prove a cold cache before apply/zoom.
+#[tauri::command]
+pub fn tile_gen_trace_cold_cache(state: State<'_, Arc<AppState>>) -> Result<Value, String> {
+    if !tile_gen_trace::enabled() {
+        return Err("DITHER_TRACE not enabled".into());
+    }
+    let Ok(session) = state.active_session() else {
+        return Err("no active session".into());
+    };
+    let snap = session.document_handle.snapshot();
+    let doc = snap.id.0;
+    let before = state.tiles.tile_cache.entries.len();
+    state.tiles.tile_cache.evict_stages(
+        doc,
+        &[
+            engine_tiles::CacheStage::Processed,
+            engine_tiles::CacheStage::Composite,
+        ],
+    );
+    state.tiles.error_residuals.evict_document(doc);
+    state.tiles.ed_frontier.clear();
+    let after = state.tiles.tile_cache.entries.len();
+    tile_gen_trace::emit_simple(
+        "cache_cold_start",
+        json!({
+            "doc_id": doc,
+            "evicted_stages": ["Processed", "Composite"],
+            "entries_before": before,
+            "entries_after": after,
+            "kept": "Raw",
+        }),
+    );
+    Ok(json!({
+        "ok": true,
+        "doc_id": doc,
+        "entries_before": before,
+        "entries_after": after,
+    }))
 }
 
 /// Trace-only: force dither compute path (`cpu` / `gpu` / `auto`).

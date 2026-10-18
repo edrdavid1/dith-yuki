@@ -212,6 +212,44 @@ impl EdFrontier {
         self.blocked.len()
     }
 
+    /// Snapshot blocked tasks for diagnostics (key, stage, unsatisfied dep count).
+    pub fn blocked_diagnostics(&self, cache: &TileCache) -> Vec<(TileKey, usize, usize)> {
+        self.blocked
+            .iter()
+            .map(|e| {
+                let key = *e.key();
+                let deps = e.value().deps.len();
+                let unsat = e
+                    .value()
+                    .deps
+                    .iter()
+                    .filter(|d| !dep_satisfied(cache, **d))
+                    .count();
+                (key, deps, unsat)
+            })
+            .collect()
+    }
+
+    /// Re-queue blocked tasks whose deps are already satisfied (lost-wake recovery).
+    pub fn take_ready_lost_wakes(&self, cache: &TileCache) -> Vec<RecomputeTask> {
+        let mut ready = Vec::new();
+        let keys: Vec<TileKey> = self.blocked.iter().map(|e| *e.key()).collect();
+        for waiter_key in keys {
+            let Some(entry) = self.blocked.get(&waiter_key).map(|e| e.clone()) else {
+                continue;
+            };
+            let satisfied = match entry.task.key.stage {
+                CacheStage::Processed => ed_ready(cache, entry.task.key, true),
+                _ => all_deps_satisfied(cache, &entry.deps),
+            };
+            if satisfied {
+                self.unblock_key(waiter_key);
+                ready.push(entry.task);
+            }
+        }
+        ready
+    }
+
     pub fn clear(&self) {
         self.waiting_on.clear();
         self.blocked.clear();
@@ -229,11 +267,20 @@ impl EdFrontier {
     }
 
     /// Park `task` on an explicit dependency set.
-    pub fn block_on(&self, task: RecomputeTask, deps: Vec<TileKey>) {
+    ///
+    /// Returns the task immediately when `deps` is empty **or** when every dep
+    /// is already satisfied after registration (retain→insert→park race:
+    /// insert wake ran before `waiting_on` had this waiter).
+    pub fn block_on(
+        &self,
+        task: RecomputeTask,
+        deps: Vec<TileKey>,
+        cache: &TileCache,
+    ) -> Option<RecomputeTask> {
         let key = task.key;
         self.unblock_key(key);
         if deps.is_empty() {
-            return;
+            return Some(task);
         }
         note_blocked();
         let dep_set: HashSet<TileKey> = deps.into_iter().collect();
@@ -243,16 +290,24 @@ impl EdFrontier {
         self.blocked.insert(
             key,
             BlockedEntry {
-                task,
-                deps: dep_set,
+                task: task.clone(),
+                deps: dep_set.clone(),
             },
         );
+        // Lost-wake window: a dep may have inserted between the caller's
+        // freshness check and the waiting_on publish above.
+        if all_deps_satisfied(cache, &dep_set) {
+            self.unblock_key(key);
+            return Some(task);
+        }
+        None
     }
 
     /// Park ED Processed until [`ed_missing_deps`] are satisfied.
-    pub fn block(&self, task: RecomputeTask, cache: &TileCache) {
+    /// Returns the task if it should run immediately (deps already met).
+    pub fn block(&self, task: RecomputeTask, cache: &TileCache) -> Option<RecomputeTask> {
         let missing = ed_missing_deps(cache, task.key);
-        self.block_on(task, missing);
+        self.block_on(task, missing, cache)
     }
 
     fn unblock_key(&self, key: TileKey) {
@@ -283,14 +338,18 @@ impl EdFrontier {
                 self.unblock_key(waiter_key);
                 ready.push(entry.task);
             } else if entry.task.key.stage == CacheStage::Processed {
-                self.block(entry.task, cache);
+                if let Some(t) = self.block(entry.task, cache) {
+                    ready.push(t);
+                }
             } else {
                 let still: Vec<TileKey> = entry
                     .deps
                     .into_iter()
                     .filter(|d| !dep_satisfied(cache, *d))
                     .collect();
-                self.block_on(entry.task, still);
+                if let Some(t) = self.block_on(entry.task, still, cache) {
+                    ready.push(t);
+                }
             }
         }
         ready
@@ -308,8 +367,8 @@ impl EdFrontier {
                 if ed_ready(cache, dep_key, true) {
                     self.unblock_key(dep_key);
                     ready.push(entry.task);
-                } else {
-                    self.block(entry.task, cache);
+                } else if let Some(t) = self.block(entry.task, cache) {
+                    ready.push(t);
                 }
             }
         }
@@ -410,7 +469,7 @@ mod tests {
             layer_generation: 0,
             priority: Priority::Immediate,
         };
-        frontier.block(task, &cache);
+        assert!(frontier.block(task, &cache).is_none());
         assert_eq!(frontier.blocked_count(), 1);
 
         insert_processed_fresh(&cache, 0, 0);
@@ -441,15 +500,21 @@ mod tests {
             layer_generation: 0,
             priority: Priority::Immediate,
         };
-        frontier.block_on(task, vec![processed]);
+        assert!(
+            frontier
+                .block_on(task, vec![processed], &cache)
+                .is_none()
+        );
         assert_eq!(frontier.blocked_count(), 1);
         assert!(frontier.wake(processed, &cache).is_empty());
         insert_processed_fresh(&cache, 0, 0);
         let woken = frontier.wake(processed, &cache);
-        // First wake consumed waiting_on before insert — re-block pattern:
-        // block_on again after insert via direct check
-        let _ = woken;
-        frontier.block_on(
+        assert_eq!(woken.len(), 1);
+        assert_eq!(woken[0].key.stage, CacheStage::Composite);
+        assert_eq!(frontier.blocked_count(), 0);
+
+        // Park-after-ready: dep already fresh → block_on returns the task.
+        let immediate = frontier.block_on(
             RecomputeTask {
                 key: composite,
                 generation: 1,
@@ -457,24 +522,10 @@ mod tests {
                 priority: Priority::Immediate,
             },
             vec![processed],
+            &cache,
         );
-        // processed already fresh → all_deps_satisfied on wake of unrelated won't help.
-        // Wake with a fake completed that composite waited on — already fresh so:
-        let ready = {
-            // Simulate: composite blocked on processed; processed is fresh; wake(processed)
-            frontier.block_on(
-                RecomputeTask {
-                    key: composite,
-                    generation: 1,
-                    layer_generation: 0,
-                    priority: Priority::Immediate,
-                },
-                vec![processed],
-            );
-            frontier.wake(processed, &cache)
-        };
-        assert_eq!(ready.len(), 1);
-        assert_eq!(ready[0].key.stage, CacheStage::Composite);
+        assert!(immediate.is_some());
+        assert_eq!(frontier.blocked_count(), 0);
     }
 
     #[test]

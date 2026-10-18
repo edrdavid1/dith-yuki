@@ -202,12 +202,31 @@ pub fn tile_worker_loop<R: tauri::Runtime>(state: Arc<AppState>, app_handle: tau
                 match task.key.stage {
                     CacheStage::Raw => load_raw_tile(task.key, &state),
                     CacheStage::Processed => {
+                        // CPU ED is L0-only; drop stray L>0 ED Processed (e.g. old
+                        // schedule_ed_for_viewport bug) instead of parking on missing Raw.
+                        if task.key.coord.level > 0
+                            && crate::tile_pipeline::layer_has_error_diffusion(
+                                &snapshot.root,
+                                task.key.layer,
+                            )
+                        {
+                            state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
+                            crate::commands::on_preview_task_finished(&state);
+                            diag_task_finished(diag, &state, &task);
+                            continue;
+                        }
                         if crate::tile_pipeline::layer_has_error_diffusion(
                             &snapshot.root,
                             task.key.layer,
                         ) && !engine_tiles::ed_ready(&state.tiles.tile_cache, task.key, true)
                         {
-                            state.tiles.ed_frontier.block(task, &state.tiles.tile_cache);
+                            if let Some(ready) =
+                                state.tiles.ed_frontier.block(task, &state.tiles.tile_cache)
+                            {
+                                // Deps met during park publish — run now.
+                                state.tiles.scheduler.enqueue_or_bump(ready);
+                                state.worker_wake.notify_one();
+                            }
                             state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
                             crate::commands::on_preview_task_finished(&state);
                             diag_task_finished(diag, &state, &task);
@@ -328,7 +347,15 @@ pub fn tile_worker_loop<R: tauri::Runtime>(state: Arc<AppState>, app_handle: tau
                                         );
                                     }
                                     // Woken by wake_ed_frontier_after_insert when a dep inserts.
-                                    state.tiles.ed_frontier.block_on(task, deps);
+                                    // block_on returns Some on retain→insert→park lost-wake.
+                                    if let Some(ready) = state.tiles.ed_frontier.block_on(
+                                        task,
+                                        deps,
+                                        &state.tiles.tile_cache,
+                                    ) {
+                                        state.tiles.scheduler.enqueue_or_bump(ready);
+                                        state.worker_wake.notify_one();
+                                    }
                                 }
                                 state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
                                 crate::commands::on_preview_task_finished(&state);

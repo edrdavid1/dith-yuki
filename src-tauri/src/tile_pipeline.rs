@@ -701,7 +701,12 @@ fn retry_pyramid_parent(
     key: TileKey,
     doc_gen: u64,
 ) -> Result<Arc<PixelTile>, EngineError> {
-    enqueue_composite_dedup(state, key, doc_gen, engine_tiles::Priority::ViewportCenter);
+    // Children were already enqueued by the caller. Do **not** requeue the parent
+    // here: under zoom-out load that creates a dequeue→pending→requeue spin that
+    // starves L0 Composite (Z3 harness: 320k pending, 0 L2 tile-ready). Parent
+    // wakes via [`enqueue_coarser_parent`] when a child inserts. Keep `doc_gen`
+    // in the signature for call-site symmetry / future trace.
+    let _ = (state, key, doc_gen);
     Err(EngineError::PyramidChildrenPending)
 }
 
@@ -742,7 +747,16 @@ pub fn schedule_ed_prefix_closure(
                 layer_generation: layer_gen,
                 priority,
             };
-            state.tiles.ed_frontier.block_on(task, vec![raw]);
+            if let Some(ready) =
+                state
+                    .tiles
+                    .ed_frontier
+                    .block_on(task, vec![raw], &state.tiles.tile_cache)
+            {
+                if state.tiles.scheduler.enqueue_or_bump(ready) {
+                    enqueued += 1;
+                }
+            }
             continue;
         }
         let task = RecomputeTask {
@@ -763,6 +777,10 @@ pub fn schedule_ed_prefix_closure(
 }
 
 /// Schedule ED prefix for every visible ED leaf toward each viewport coord.
+///
+/// CPU ED Processed exists only at **L0**. Visible L>0 tiles must expand to their
+/// L0 footprint (`[0..=x1]×[0..=y1]` of the covering L0 max corner) — scheduling
+/// at `coord.level` parks forever on missing L>0 Raw (harness Z3 holes=12).
 pub fn schedule_ed_for_viewport(state: &AppState) {
     let viewport = state.ui.viewport.lock().unwrap().clone();
     let Ok(session) = state.active_session() else {
@@ -775,13 +793,21 @@ pub fn schedule_ed_for_viewport(state: &AppState) {
     collect_ed_layers(&snapshot.root, &mut |layer_id| {
         let layer_gen = snapshot.generations.get_layer_gen(layer_id);
         for coord in &viewport.visible_tiles {
+            let (level, max_x, max_y) = if coord.level == 0 {
+                (0u8, coord.x, coord.y)
+            } else {
+                let shift = coord.level;
+                let x1 = ((coord.x + 1) << shift).saturating_sub(1);
+                let y1 = ((coord.y + 1) << shift).saturating_sub(1);
+                (0u8, x1, y1)
+            };
             schedule_ed_prefix_closure(
                 state,
                 doc,
                 layer_id,
-                coord.level,
-                coord.x,
-                coord.y,
+                level,
+                max_x,
+                max_y,
                 Priority::Immediate,
                 doc_gen,
                 layer_gen,
@@ -859,16 +885,30 @@ pub fn composite_ed_park_deps(
     doc: u32,
     coord: engine_tiles::TileCoord,
 ) -> Vec<TileKey> {
-    let mut deps = pending_ed_processed_at_coord(state, nodes, doc, coord);
     let cache = &state.tiles.tile_cache;
+    // CPU ED Processed exists only at L0. Do not seed deps from Processed at
+    // `coord.level` when L>0 (phantom keys → forever blocked; harness holes=12).
+    let mut deps = if coord.level == 0 {
+        pending_ed_processed_at_coord(state, nodes, doc, coord)
+    } else {
+        Vec::new()
+    };
+    let (max_x, max_y) = if coord.level == 0 {
+        (coord.x, coord.y)
+    } else {
+        let shift = coord.level;
+        let x1 = ((coord.x + 1) << shift).saturating_sub(1);
+        let y1 = ((coord.y + 1) << shift).saturating_sub(1);
+        (x1, y1)
+    };
     collect_ed_layers(nodes, &mut |layer_id| {
-        for py in 0..=coord.y {
-            for px in 0..=coord.x {
+        for py in 0..=max_y {
+            for px in 0..=max_x {
                 let key = TileKey {
                     doc,
                     layer: layer_id,
                     coord: engine_tiles::TileCoord {
-                        level: coord.level,
+                        level: 0,
                         x: px,
                         y: py,
                     },
@@ -876,9 +916,9 @@ pub fn composite_ed_park_deps(
                 };
                 if !engine_tiles::tile_fresh(cache, key) {
                     deps.push(key);
-                }
-                for miss in engine_tiles::ed_missing_deps(cache, key) {
-                    deps.push(miss);
+                    for miss in engine_tiles::ed_missing_deps(cache, key) {
+                        deps.push(miss);
+                    }
                 }
             }
         }
@@ -905,6 +945,12 @@ pub fn composite_ed_park_deps(
             ))
     });
     deps.dedup();
+    // Drop deps that are already satisfied — otherwise block_on waits for an
+    // insert wake that will never come (race: L0 finished before Composite parked).
+    deps.retain(|d| match d.stage {
+        CacheStage::Raw => !cache.entries.contains_key(d),
+        _ => !engine_tiles::tile_fresh(cache, *d),
+    });
     deps
 }
 
@@ -1271,7 +1317,10 @@ mod tests {
                 continue;
             }
             if !engine_tiles::ed_ready(&state.tiles.tile_cache, task.key, true) {
-                state.tiles.ed_frontier.block(task, &state.tiles.tile_cache);
+                if let Some(ready) = state.tiles.ed_frontier.block(task, &state.tiles.tile_cache)
+                {
+                    state.tiles.scheduler.enqueue_or_bump(ready);
+                }
                 continue;
             }
             let _ = compute_processed_tile(task.key, state);
@@ -1594,6 +1643,94 @@ mod tests {
             }),
             "must wait on left neighbor Processed (0,0), got {deps:?}"
         );
+    }
+
+    #[test]
+    fn composite_ed_park_deps_l2_uses_l0_and_empty_when_fresh() {
+        // Zoomed-out Composite must not invent Processed deps at L2.
+        let state = make_ed_layer_state();
+        for y in 0..4u32 {
+            for x in 0..4u32 {
+                let coord = TileCoord { level: 0, x, y };
+                state.tiles.tile_cache.insert_fresh(
+                    TileKey {
+                        doc: 1,
+                        layer: 1,
+                        coord,
+                        stage: CacheStage::Raw,
+                    },
+                    Arc::new(PixelTile::new()),
+                );
+                state.tiles.tile_cache.insert_fresh(
+                    TileKey {
+                        doc: 1,
+                        layer: 1,
+                        coord,
+                        stage: CacheStage::Processed,
+                    },
+                    Arc::new(PixelTile::new()),
+                );
+            }
+        }
+        let snap = state.must_active().document_handle.snapshot();
+        let l2 = TileCoord {
+            level: 2,
+            x: 0,
+            y: 0,
+        };
+        let deps = composite_ed_park_deps(&state, &snap.root, 1, l2);
+        assert!(
+            deps.iter().all(|k| k.coord.level == 0),
+            "ED park deps must be L0, got {deps:?}"
+        );
+        assert!(
+            deps.is_empty(),
+            "when L0 Processed footprint is fresh, park deps must be empty (else lost-wake), got {deps:?}"
+        );
+    }
+
+    #[test]
+    fn schedule_ed_for_viewport_l2_enqueues_l0_only() {
+        let state = make_ed_layer_state();
+        // Seed Raw at L0 so prefix enqueue does not park on missing Raw.
+        for y in 0..4u32 {
+            for x in 0..4u32 {
+                state.tiles.tile_cache.insert_fresh(
+                    TileKey {
+                        doc: 1,
+                        layer: 1,
+                        coord: TileCoord { level: 0, x, y },
+                        stage: CacheStage::Raw,
+                    },
+                    Arc::new(PixelTile::new()),
+                );
+            }
+        }
+        {
+            let mut vp = state.ui.viewport.lock().unwrap();
+            vp.level = 2;
+            vp.visible_tiles = vec![TileCoord {
+                level: 2,
+                x: 0,
+                y: 0,
+            }];
+        }
+        schedule_ed_for_viewport(&state);
+        let mut saw_l0 = false;
+        while let Some(task) = state.tiles.scheduler.dequeue() {
+            assert_eq!(
+                task.key.stage,
+                CacheStage::Processed,
+                "ED viewport schedule should only enqueue Processed"
+            );
+            assert_eq!(
+                task.key.coord.level, 0,
+                "ED must not enqueue L>0 Processed (got {:?})",
+                task.key.coord
+            );
+            saw_l0 = true;
+        }
+        assert!(saw_l0, "expected L0 Processed prefix for L2 viewport tile");
     }
 
     #[test]

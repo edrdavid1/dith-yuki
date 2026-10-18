@@ -181,15 +181,40 @@ export async function runZoomScenario(args: {
 
       let freshnessT0: number | undefined;
       if (args.scenario === 'Z3') {
+        // Cold Processed/Composite (keep Raw); prove via `cache_cold_start` in trace.
+        try {
+          await invoke('tile_gen_trace_cold_cache');
+          noteTraceEvent('z3_cold_cache_ok', { details: { via: 'tile_gen_trace_cold_cache' } });
+        } catch (e) {
+          noteTraceEvent('z3_cold_cache_failed', {
+            details: { error: String(e) },
+          });
+        }
+        // Visible set over the document bottom-right before mid-pass zooms.
+        cam.panToBottomRight?.();
+        cam.flushViewport?.();
+        await sleep(50);
+        noteTraceEvent('z3_viewport_corner', {
+          details: {
+            corner: 'bottom_right',
+            visible: cam.getVisibleTiles(),
+            level: cam.getLevel(),
+            zoom: cam.getZoom(),
+          },
+        });
         if (args.applyFilter) void args.applyFilter();
         await sleep(30);
         cam.setZoom(0.5);
+        cam.panToBottomRight?.();
         await sleep(jitter);
         cam.setZoom(2);
+        cam.panToBottomRight?.();
         await sleep(jitter);
         // Freshness clock: final zoom-out (cold pyramid level under load).
         freshnessT0 = performance.now();
         cam.setZoom(0.25);
+        cam.panToBottomRight?.();
+        cam.flushViewport?.();
       } else if (args.scenario === 'Z5') {
         // no filter
         freshnessT0 = performance.now();

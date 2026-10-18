@@ -590,6 +590,7 @@ fn main() {
             tile_gen_trace_host::tile_gen_trace_spin_snapshot,
             tile_gen_trace_host::tile_gen_trace_layer_gen,
             tile_gen_trace_host::tile_gen_trace_cache_probe,
+            tile_gen_trace_host::tile_gen_trace_cold_cache,
             tile_gen_trace_host::tile_gen_trace_viewport_snapshot,
             tile_gen_trace_host::tile_gen_trace_set_compute_path,
             tile_gen_trace_host::tile_gen_trace_get_compute_path,

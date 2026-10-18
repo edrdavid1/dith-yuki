@@ -101,6 +101,10 @@ interface EdProgressPayload {
 type EventDrivenPending = {
   reason: string;
   rev: number;
+  /** True while a wake fetch for this key is outstanding (≤1 in-flight). */
+  inflight: boolean;
+  /** performance.now() of last safety_timer wake for this key. */
+  lastSafetyAt: number;
 };
 
 interface TileCoord {
@@ -510,6 +514,7 @@ export default function TileCanvas({
       const visible = new Set(
         visibleTilesForPreview(vp, w, h, tileRepeatRef.current).map(tileKey),
       );
+      const now = performance.now();
       for (const [key, entry] of [...map.entries()]) {
         if (entry.rev !== rev) {
           map.delete(key);
@@ -519,6 +524,15 @@ export default function TileCanvas({
           map.delete(key);
           continue;
         }
+        // At most one in-flight wake fetch per tile.
+        if (entry.inflight) continue;
+        // Safety timer: at most one fire per tile per PENDING_SAFETY_RETRY_MS window.
+        if (reason === 'safety_timer') {
+          if (now - entry.lastSafetyAt < PENDING_SAFETY_RETRY_MS) continue;
+          entry.lastSafetyAt = now;
+        }
+        entry.inflight = true;
+        map.set(key, entry);
         const [level, x, y] = key.split('/').map(Number);
         if (tileGenTraceEnabled()) {
           noteTraceEvent('fetch_tile_posted', {
@@ -531,6 +545,7 @@ export default function TileCanvas({
               via: 'event_driven_pending',
               wake: reason,
               pending_reason: entry.reason,
+              coalesced: true,
             },
           });
           noteTraceEvent('tile_requested', {
@@ -839,6 +854,8 @@ export default function TileCanvas({
             eventDrivenPendingRef.current.set(key, {
               reason: pendingReason,
               rev: pendingRev,
+              inflight: false,
+              lastSafetyAt: 0,
             });
           }
         }
@@ -870,6 +887,12 @@ export default function TileCanvas({
         return;
       }
       if (!shouldAcceptDecodedRev(decodedRev, tileRevRef.current)) {
+        // Allow another wake fetch for this still-pending key.
+        const pend = eventDrivenPendingRef.current.get(key);
+        if (pend) {
+          pend.inflight = false;
+          eventDrivenPendingRef.current.set(key, pend);
+        }
         if (tileGenTraceEnabled()) {
           const [lvl, xx, yy] = key.split('/').map(Number);
           recordDropped(key, 'tileRev_mismatch');
@@ -1216,7 +1239,8 @@ export default function TileCanvas({
     };
   }, [docId, refetchEventDrivenPending]);
 
-  // Safety re-query (1–2s) while event-driven pending tiles remain visible.
+  // One global safety interval (not per-tile). Per-tile coalescing lives in
+  // refetchEventDrivenPending (inflight + lastSafetyAt).
   useEffect(() => {
     const id = window.setInterval(() => {
       if (eventDrivenPendingRef.current.size === 0) return;
@@ -1307,6 +1331,8 @@ export default function TileCanvas({
         const reqDetails = {
           tileRev: tileRevRef.current,
           set: 'visible' as const,
+          via: 'event_driven_pending' as const,
+          wake: 'tile_ready' as const,
         };
         noteTraceEvent('fetch_tile_posted', { level, x, y, details: reqDetails });
         noteTraceEvent('tile_requested', { level, x, y, details: reqDetails });
@@ -1314,6 +1340,15 @@ export default function TileCanvas({
       if (ditherProfileEnabled()) {
         noteFeMark('tile_ready_received', activeProfileRunId());
         noteFeMark('fetch_tile_posted', activeProfileRunId());
+      }
+      const pend = eventDrivenPendingRef.current.get(key);
+      if (pend) {
+        if (pend.inflight) {
+          // Already have a wake fetch in flight for this tile — skip duplicate.
+          return;
+        }
+        pend.inflight = true;
+        eventDrivenPendingRef.current.set(key, pend);
       }
       workerRef.current?.postMessage(stampWorkerMessage({
         type: 'fetch-tile',
