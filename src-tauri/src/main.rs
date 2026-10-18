@@ -28,6 +28,13 @@ mod pattern_library;
 mod dither_profile_host;
 #[cfg(test)]
 mod dither_profile_harness;
+mod delayed_requeue;
+mod ed_progress;
+mod pending_tiles;
+mod tile_gen_trace;
+mod tile_gen_trace_host;
+#[cfg(test)]
+mod tile_gen_trace_harness;
 mod preview_diag;
 #[cfg(test)]
 mod preview_latency_diag;
@@ -36,7 +43,6 @@ mod services;
 mod state;
 #[cfg(test)]
 mod step0_harness;
-mod delayed_requeue;
 mod tile_pipeline;
 mod tile_protocol;
 mod tile_serve;
@@ -62,6 +68,7 @@ fn main() {
     // before any window exists.
     file_log::init();
     dither_profile_host::init();
+    tile_gen_trace_host::init();
 
     // B4c: affinity enabled on all platforms — Flex popout completes via JS mouseup,
     // not global_mouseup (which was unavailable on Linux).
@@ -369,7 +376,7 @@ fn main() {
                 }
 
                 // Crash-recovery journal root: {app_data}/recovery/
-                // Skip when DITHER_JOURNAL=0 (A/B: journal must not contend with dither).
+                // Skip when DITHER_JOURNAL=0 (A/B kill switch; do not touch journal logic here).
                 if crate::journal::enabled() {
                     crate::journal::set_recovery_dir(
                         &state,
@@ -572,6 +579,20 @@ fn main() {
             dither_profile_host::dither_profile_begin,
             dither_profile_host::dither_profile_mark,
             dither_profile_host::dither_profile_active,
+            // DITHER_TRACE (lost-tiles generation trace) — no-ops when env unset
+            tile_gen_trace_host::tile_gen_trace_enabled,
+            tile_gen_trace_host::tile_gen_trace_fe_event,
+            tile_gen_trace_host::tile_gen_trace_begin_run,
+            tile_gen_trace_host::tile_gen_trace_stress_param,
+            tile_gen_trace_host::tile_gen_trace_busy_snapshot,
+            tile_gen_trace_host::tile_gen_trace_inject_enabled,
+            tile_gen_trace_host::tile_gen_trace_inject_spin_enabled,
+            tile_gen_trace_host::tile_gen_trace_spin_snapshot,
+            tile_gen_trace_host::tile_gen_trace_layer_gen,
+            tile_gen_trace_host::tile_gen_trace_cache_probe,
+            tile_gen_trace_host::tile_gen_trace_viewport_snapshot,
+            tile_gen_trace_host::tile_gen_trace_set_compute_path,
+            tile_gen_trace_host::tile_gen_trace_get_compute_path,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -701,6 +722,30 @@ fn handle_tile_request(
     };
 
     let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
+    let (serve_vp_hash, serve_level) = {
+        let vp = state.ui.viewport.lock().unwrap();
+        let (h, _, _, _, _) =
+            tile_gen_trace::vp_hash_from_coords(vp.level, &vp.visible_tiles);
+        (h, vp.level)
+    };
+    if tile_gen_trace::enabled() {
+        tile_gen_trace::emit(
+            "tile_serve_request",
+            Some(layer_id),
+            Some(doc_gen),
+            Some(snapshot.generations.get_layer_gen(layer_id)),
+            Some(tile_gen_trace::tile(parsed.level, parsed.x, parsed.y)),
+            None,
+            serde_json::json!({
+                "stage": format!("{:?}", parsed.stage),
+                // Requested generation is not in the URL today.
+                "requested_gen": "not_in_url",
+                "requested_level": parsed.level,
+                "viewport_level": serve_level,
+                "vp_hash": serve_vp_hash,
+            }),
+        );
+    }
     let proof_cfg_hash = tile_serve::preview_config_hash(&snapshot.soft_proof);
     let proof_xform = if snapshot.soft_proof.enabled {
         state
@@ -732,30 +777,100 @@ fn handle_tile_request(
         state.worker_wake.notify_one();
     }
 
+    let pending_info = matches!(&served, tile_serve::PreviewServe::Pending)
+        .then(|| pending_tiles::classify_pending(&state, key));
+
+    let (status, served_gen, kind) = match &served {
+        tile_serve::PreviewServe::Fresh { generation, .. } => (200u16, Some(*generation), "fresh"),
+        tile_serve::PreviewServe::Stale { generation, .. } => (200, Some(*generation), "stale"),
+        tile_serve::PreviewServe::PyramidFallback { .. } => (200, None, "pyramid"),
+        tile_serve::PreviewServe::Pending => (202, None, "pending"),
+    };
+    if tile_gen_trace::enabled() {
+        let mut details = serde_json::json!({
+            "status": status,
+            "kind": kind,
+            "live_gen": doc_gen,
+            "served_gen": served_gen,
+            "requested_level": parsed.level,
+            "viewport_level": serve_level,
+            "vp_hash": serve_vp_hash,
+            "source_id": ed_progress::source_id_cpu_ed(),
+        });
+        if let Some(ref info) = pending_info {
+            details["pending_reason"] = serde_json::json!(info.pending_reason);
+            if let Some(ref dep) = info.missing_dep {
+                details["missing_dep"] = serde_json::json!({
+                    "stage": dep.stage,
+                    "level": dep.level,
+                    "x": dep.x,
+                    "y": dep.y,
+                    "layer": dep.layer,
+                });
+            }
+        }
+        tile_gen_trace::emit(
+            "tile_serve_response",
+            Some(layer_id),
+            Some(doc_gen),
+            Some(snapshot.generations.get_layer_gen(layer_id)),
+            Some(tile_gen_trace::tile(parsed.level, parsed.x, parsed.y)),
+            served_gen,
+            details,
+        );
+    }
+
     match served {
         tile_serve::PreviewServe::Fresh { rgba8, generation } => tile_response(
             200,
             "application/octet-stream",
             rgba8,
             Some(generation),
-            &[],
+            &[
+                ("X-Tile-Quality", "fresh"),
+                ("X-Tile-Source", ed_progress::source_id_cpu_ed()),
+            ],
         ),
         tile_serve::PreviewServe::Stale { rgba8, generation } => tile_response(
             200,
             "application/octet-stream",
             rgba8,
             Some(generation),
-            &[("X-Dither-Tile-Stale", "1")],
+            &[
+                ("X-Dither-Tile-Stale", "1"),
+                ("X-Tile-Quality", "stale"),
+                ("X-Tile-Source", ed_progress::source_id_cpu_ed()),
+            ],
         ),
         tile_serve::PreviewServe::PyramidFallback { rgba8 } => tile_response(
             200,
             "application/octet-stream",
             rgba8,
             None,
-            &[("X-Dither-Tile-Fallback", "pyramid")],
+            &[
+                ("X-Dither-Tile-Fallback", "pyramid"),
+                ("X-Tile-Quality", "upsample"),
+                ("X-Tile-Source", ed_progress::source_id_cpu_ed()),
+            ],
         ),
         tile_serve::PreviewServe::Pending => {
-            tile_response(202, "application/octet-stream", Vec::new(), None, &[])
+            pending_tiles::register(parsed.doc_id, parsed.level, parsed.x, parsed.y, doc_gen);
+            let info = pending_info.unwrap_or(pending_tiles::PendingReasonInfo {
+                pending_reason: "queued",
+                missing_dep: None,
+            });
+            let reason = info.pending_reason;
+            let dep_hdr = info.missing_dep.as_ref().map(|dep| {
+                format!("{}/{}/{}/{}", dep.stage, dep.level, dep.x, dep.y)
+            });
+            let mut pairs: Vec<(&str, &str)> = vec![
+                ("X-Tile-Pending-Reason", reason),
+                ("X-Tile-Source", ed_progress::source_id_cpu_ed()),
+            ];
+            if let Some(ref d) = dep_hdr {
+                pairs.push(("X-Tile-Missing-Dep", d.as_str()));
+            }
+            tile_response(202, "application/octet-stream", Vec::new(), None, &pairs)
         }
     }
 }

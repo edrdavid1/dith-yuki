@@ -5,38 +5,17 @@
 //! executes tile computations (Raw/Processed/Composite), inserts fresh results
 //! into the TileCache, and emits `tile-ready` events to the frontend.
 
-use std::collections::HashMap;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
-use tauri::Emitter;
-
-/// Backoff for the rare empty-deps Composite path. Caps at 16ms.
+/// Backoff for the rare empty-deps Composite path (H8 last resort). Caps at 16ms.
 fn composite_empty_deps_backoff_ms(attempt: u32) -> u64 {
     1u64 << attempt.min(4)
 }
 
-fn empty_deps_attempt(doc: u32, level: u8, x: u32, y: u32, gen: u64) -> u32 {
-    static MAP: OnceLock<Mutex<HashMap<(u32, u8, u32, u32, u64), u32>>> = OnceLock::new();
-    let map = MAP.get_or_init(|| Mutex::new(HashMap::new()));
-    let Ok(mut g) = map.lock() else {
-        return 1;
-    };
-    let e = g.entry((doc, level, x, y, gen)).or_insert(0);
-    *e = e.saturating_add(1);
-    *e
-}
-
-fn clear_empty_deps_attempt(doc: u32, level: u8, x: u32, y: u32, gen: u64) {
-    static MAP: OnceLock<Mutex<HashMap<(u32, u8, u32, u32, u64), u32>>> = OnceLock::new();
-    if let Some(map) = MAP.get() {
-        if let Ok(mut g) = map.lock() {
-            g.remove(&(doc, level, x, y, gen));
-        }
-    }
-}
+use serde::Serialize;
+use tauri::Emitter;
 
 use engine_project::Document;
 use engine_tiles::{CacheStage, PixelTile, RecomputeTask, TileKey};
@@ -64,6 +43,13 @@ impl WorkerWake {
         let mut has_tasks = self.mutex.lock().unwrap();
         *has_tasks = true;
         self.condvar.notify_one();
+    }
+
+    /// Wake every parked worker (harness teardown / shutdown).
+    pub fn notify_all(&self) {
+        let mut has_tasks = self.mutex.lock().unwrap();
+        *has_tasks = true;
+        self.condvar.notify_all();
     }
 
     /// Wait until tasks are available.
@@ -129,7 +115,7 @@ pub struct TileReadyPayload {
 ///
 /// * `state` - Shared application state (Arc-wrapped for thread safety)
 /// * `app_handle` - Tauri AppHandle for emitting events to the frontend
-pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
+pub fn tile_worker_loop<R: tauri::Runtime>(state: Arc<AppState>, app_handle: tauri::AppHandle<R>) {
     loop {
         if let Some(task) = state.tiles.scheduler.dequeue() {
             // One relaxed load per task. Diagnostics stay off this path when it is 0.
@@ -158,7 +144,48 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
                 }
             };
 
+            let live_doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
+            if crate::tile_gen_trace::enabled() {
+                crate::tile_gen_trace::emit(
+                    "worker_dequeue",
+                    Some(task.key.layer),
+                    Some(live_doc_gen),
+                    Some(snapshot.generations.get_layer_gen(task.key.layer)),
+                    Some(crate::tile_gen_trace::tile(
+                        task.key.coord.level,
+                        task.key.coord.x,
+                        task.key.coord.y,
+                    )),
+                    Some(task.generation),
+                    serde_json::json!({
+                        "task_gen": task.generation,
+                        "live_doc_gen": live_doc_gen,
+                        "stage": format!("{:?}", task.key.stage),
+                    }),
+                );
+            }
+
             if task_is_stale(&task, &snapshot) {
+                if crate::tile_gen_trace::enabled() {
+                    crate::tile_gen_trace::emit(
+                        "task_discarded_stale",
+                        Some(task.key.layer),
+                        Some(live_doc_gen),
+                        Some(snapshot.generations.get_layer_gen(task.key.layer)),
+                        Some(crate::tile_gen_trace::tile(
+                            task.key.coord.level,
+                            task.key.coord.x,
+                            task.key.coord.y,
+                        )),
+                        Some(task.generation),
+                        serde_json::json!({
+                            "reason": "generation_mismatch",
+                            "task_gen": task.generation,
+                            "live_doc_gen": live_doc_gen,
+                            "replacement_enqueued": "unknown_pre_existing",
+                        }),
+                    );
+                }
                 state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
                 crate::commands::on_preview_task_finished(&state);
                 diag_task_finished(diag, &state, &task);
@@ -193,8 +220,50 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
                         l0_started = l0_compute_started(diag, &task);
                         match compute_composite_tile(task.key, &state) {
                             Err(engine_project::error::EngineError::EdPrefixPending) => {
-                                // Expand beyond dirty-at-this-coord: empty deps +
-                                // immediate enqueue_or_bump was a tight worker spin.
+                                // Expand beyond dirty-at-this-coord (H8 / step 2.5):
+                                // empty deps + enqueue_or_bump was a tight spin.
+                                let attempt = crate::tile_gen_trace::bump_requeue_attempt(
+                                    task.key.doc,
+                                    task.key.coord.level,
+                                    task.key.coord.x,
+                                    task.key.coord.y,
+                                    task.generation,
+                                );
+                                // Red-path self-check: force the pre-fix immediate requeue.
+                                if crate::tile_gen_trace::inject_spin_enabled() {
+                                    crate::tile_gen_trace::note_spin_requeue(
+                                        task.key.doc,
+                                        task.key.coord.level,
+                                        task.key.coord.x,
+                                        task.key.coord.y,
+                                        task.generation,
+                                    );
+                                    if crate::tile_gen_trace::enabled() {
+                                        crate::tile_gen_trace::emit(
+                                            "worker_requeue",
+                                            Some(task.key.layer),
+                                            Some(live_doc_gen),
+                                            Some(snapshot.generations.get_layer_gen(task.key.layer)),
+                                            Some(crate::tile_gen_trace::tile(
+                                                task.key.coord.level,
+                                                task.key.coord.x,
+                                                task.key.coord.y,
+                                            )),
+                                            Some(task.generation),
+                                            serde_json::json!({
+                                                "reason": "inject_spin_immediate",
+                                                "attempt": attempt,
+                                                "stage": "Composite",
+                                            }),
+                                        );
+                                    }
+                                    state.tiles.scheduler.enqueue_or_bump(task);
+                                    state.worker_wake.notify_one();
+                                    state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
+                                    crate::commands::on_preview_task_finished(&state);
+                                    diag_task_finished(diag, &state, &task);
+                                    continue;
+                                }
                                 let deps = crate::tile_pipeline::composite_ed_park_deps(
                                     &state,
                                     &snapshot.root,
@@ -202,21 +271,62 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
                                     task.key.coord,
                                 );
                                 if deps.is_empty() {
-                                    let attempt = empty_deps_attempt(
+                                    // Last resort: single-thread delayed requeue (never notify immediately).
+                                    crate::tile_gen_trace::note_spin_requeue(
                                         task.key.doc,
                                         task.key.coord.level,
                                         task.key.coord.x,
                                         task.key.coord.y,
                                         task.generation,
                                     );
+                                    let backoff_ms = composite_empty_deps_backoff_ms(attempt);
+                                    if crate::tile_gen_trace::enabled() {
+                                        crate::tile_gen_trace::emit(
+                                            "worker_requeue",
+                                            Some(task.key.layer),
+                                            Some(live_doc_gen),
+                                            Some(snapshot.generations.get_layer_gen(task.key.layer)),
+                                            Some(crate::tile_gen_trace::tile(
+                                                task.key.coord.level,
+                                                task.key.coord.x,
+                                                task.key.coord.y,
+                                            )),
+                                            Some(task.generation),
+                                            serde_json::json!({
+                                                "reason": "ed_prefix_pending_empty_deps",
+                                                "attempt": attempt,
+                                                "stage": "Composite",
+                                                "backoff_ms": backoff_ms,
+                                            }),
+                                        );
+                                    }
                                     state.delayed_requeue.schedule(
                                         Arc::clone(&state),
                                         task,
-                                        Duration::from_millis(composite_empty_deps_backoff_ms(
-                                            attempt,
-                                        )),
+                                        Duration::from_millis(backoff_ms),
                                     );
                                 } else {
+                                    if crate::tile_gen_trace::enabled() {
+                                        crate::tile_gen_trace::emit(
+                                            "worker_requeue",
+                                            Some(task.key.layer),
+                                            Some(live_doc_gen),
+                                            Some(snapshot.generations.get_layer_gen(task.key.layer)),
+                                            Some(crate::tile_gen_trace::tile(
+                                                task.key.coord.level,
+                                                task.key.coord.x,
+                                                task.key.coord.y,
+                                            )),
+                                            Some(task.generation),
+                                            serde_json::json!({
+                                                "reason": "input_not_ready",
+                                                "attempt": attempt,
+                                                "stage": "Composite",
+                                                "deps": deps.len(),
+                                                "park": "ed_frontier",
+                                            }),
+                                        );
+                                    }
                                     // Woken by wake_ed_frontier_after_insert when a dep inserts.
                                     state.tiles.ed_frontier.block_on(task, deps);
                                 }
@@ -243,6 +353,27 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
                 };
                 if task_is_stale(&task, &snapshot) {
                     // Discarded; current gen should already be queued or pending refresh.
+                    if crate::tile_gen_trace::enabled() {
+                        let live = snapshot.generations.document_gen.load(Ordering::Acquire);
+                        crate::tile_gen_trace::emit(
+                            "task_discarded_stale",
+                            Some(task.key.layer),
+                            Some(live),
+                            Some(snapshot.generations.get_layer_gen(task.key.layer)),
+                            Some(crate::tile_gen_trace::tile(
+                                task.key.coord.level,
+                                task.key.coord.x,
+                                task.key.coord.y,
+                            )),
+                            Some(task.generation),
+                            serde_json::json!({
+                                "reason": "stale_after_compute",
+                                "task_gen": task.generation,
+                                "live_doc_gen": live,
+                                "wrote_cache": false,
+                            }),
+                        );
+                    }
                 } else {
                     if diag >= 1 {
                         if let Some(t0) = l0_started {
@@ -270,10 +401,28 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
                     match task.key.stage {
                         // Raw is already in cache; load_raw_tile returns the shared Arc.
                         CacheStage::Raw => {
+                            crate::tile_gen_trace::note_compute_done(
+                                task.key.doc,
+                                task.key.coord.level,
+                                task.key.coord.x,
+                                task.key.coord.y,
+                                task.generation,
+                            );
+                            let live = snapshot.generations.document_gen.load(Ordering::Acquire);
                             let inserted = state.tiles.tile_cache.insert_fresh_gen(
                                 task.key,
                                 tile,
                                 task.generation,
+                            );
+                            crate::tile_gen_trace::note_cache_write(
+                                task.key.layer,
+                                task.key.coord.level,
+                                task.key.coord.x,
+                                task.key.coord.y,
+                                task.generation,
+                                live,
+                                "raw",
+                                inserted,
                             );
                             if inserted {
                                 state.evict_for_pressure_if_needed();
@@ -288,49 +437,100 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
                         }
                         // Processed / Composite: pipeline already published a single Arc.
                         CacheStage::Processed | CacheStage::Composite => {
-                            if task.key.stage == CacheStage::Composite {
-                                clear_empty_deps_attempt(
+                            crate::tile_gen_trace::clear_requeue_attempt(
+                                task.key.doc,
+                                task.key.coord.level,
+                                task.key.coord.x,
+                                task.key.coord.y,
+                                task.generation,
+                            );
+                            if task.key.stage == CacheStage::Processed
+                                && task.key.coord.level == 0
+                            {
+                                crate::ed_progress::maybe_emit(
+                                    &state,
+                                    &app_handle,
+                                    task.key.doc,
+                                    false,
+                                );
+                                crate::ed_progress::note_ed_pass_maybe_complete(
+                                    &state,
+                                    task.key.doc,
+                                );
+                            }
+                            let viewport_level = state.ui.viewport.lock().unwrap().level;
+                            let in_cache =
+                                state.tiles.tile_cache.get_entry(task.key).is_some();
+                            if task.key.stage == CacheStage::Composite && in_cache {
+                                // Always notify if FE registered a 202 (any level).
+                                // Also keep the legacy viewport-level emit for tiles
+                                // that arrived without going through 202.
+                                let was_pending = crate::pending_tiles::is_pending(
                                     task.key.doc,
                                     task.key.coord.level,
                                     task.key.coord.x,
                                     task.key.coord.y,
-                                    task.generation,
                                 );
-                            }
-                            let viewport_level = state.ui.viewport.lock().unwrap().level;
-                            if task.key.stage == CacheStage::Composite
-                                && task.key.coord.level == viewport_level
-                                && state.tiles.tile_cache.get_entry(task.key).is_some()
-                            {
-                                let payload = TileReadyPayload {
-                                    doc_id: snapshot.id.0,
-                                    layer_id: task.key.layer,
-                                    stage: "composite".to_string(),
-                                    level: task.key.coord.level,
-                                    x: task.key.coord.x,
-                                    y: task.key.coord.y,
-                                };
-                                let t_emit = (diag >= 1).then(std::time::Instant::now);
-                                let _ = app_handle.emit_to(
-                                    tauri::EventTarget::Any,
-                                    "tile-ready",
-                                    payload,
-                                );
-                                if engine_project::dither_profile::enabled() {
-                                    engine_project::dither_profile::mark("tile_ready_emitted");
-                                }
-                                if let Some(t0) = t_emit {
-                                    crate::preview_diag::record_emit(
-                                        task.key.doc,
-                                        task.generation,
-                                        t0.elapsed(),
+                                if was_pending {
+                                    crate::pending_tiles::notify_if_pending(
+                                        &state,
+                                        &app_handle,
+                                        task.key,
+                                        snapshot.id.0,
                                     );
                                 }
-                                if diag >= 1 {
-                                    crate::preview_diag::record_display_ready(
-                                        task.key.doc,
-                                        task.generation,
+                                if !was_pending && task.key.coord.level == viewport_level {
+                                    let payload = TileReadyPayload {
+                                        doc_id: snapshot.id.0,
+                                        layer_id: task.key.layer,
+                                        stage: "composite".to_string(),
+                                        level: task.key.coord.level,
+                                        x: task.key.coord.x,
+                                        y: task.key.coord.y,
+                                    };
+                                    if crate::tile_gen_trace::enabled() {
+                                        let live = snapshot
+                                            .generations
+                                            .document_gen
+                                            .load(Ordering::Acquire);
+                                        crate::tile_gen_trace::emit(
+                                            "tile_ready_emitted",
+                                            Some(task.key.layer),
+                                            Some(live),
+                                            None,
+                                            Some(crate::tile_gen_trace::tile(
+                                                task.key.coord.level,
+                                                task.key.coord.x,
+                                                task.key.coord.y,
+                                            )),
+                                            Some(task.generation),
+                                            serde_json::json!({
+                                                "viewport_level": viewport_level,
+                                            }),
+                                        );
+                                    }
+                                    let t_emit = (diag >= 1).then(std::time::Instant::now);
+                                    let _ = app_handle.emit_to(
+                                        tauri::EventTarget::Any,
+                                        "tile-ready",
+                                        payload,
                                     );
+                                    if engine_project::dither_profile::enabled() {
+                                        engine_project::dither_profile::mark("tile_ready_emitted");
+                                    }
+                                    if let Some(t0) = t_emit {
+                                        crate::preview_diag::record_emit(
+                                            task.key.doc,
+                                            task.generation,
+                                            t0.elapsed(),
+                                        );
+                                    }
+                                    if diag >= 1 {
+                                        crate::preview_diag::record_display_ready(
+                                            task.key.doc,
+                                            task.generation,
+                                        );
+                                    }
                                 }
                             }
                         }

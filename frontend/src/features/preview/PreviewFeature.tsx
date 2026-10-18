@@ -8,6 +8,14 @@ import { useShell } from '../../app/shell/ShellContext';
 import { previewBackgroundStyle } from './previewBackground';
 import { useViewport } from '../../hooks/useViewport';
 import { logIpcError, setViewport } from '../../shared/ipc';
+import {
+  installTraceStressHook,
+  probeTileGenTrace,
+} from '../../diagnostics/tileGenTrace';
+import {
+  computePyramidLevel,
+  computeVisibleTiles,
+} from './TileCanvas';
 import type { PanelChromeProps } from '../panels/PanelChrome';
 import type { WelcomeActions } from '../../hooks/useWelcomeScreen';
 
@@ -49,6 +57,7 @@ export default function PreviewFeature({
     setCanvasSize,
     fitToView,
     setZoom,
+    flushViewport,
     zoomToNextPreset,
     zoomToPrevPreset,
   } = useViewport(docWidth, docHeight);
@@ -66,6 +75,28 @@ export default function PreviewFeature({
   const viewportRef = useRef(viewport);
   viewportRef.current = viewport;
   const fittedDocKeyRef = useRef<string | null>(null);
+
+  // Trace-only camera API for Z1–Z7 (same handlers as UI wheel/buttons).
+  useEffect(() => {
+    void probeTileGenTrace().then((on) => {
+      if (!on || typeof window === 'undefined') return;
+      installTraceStressHook();
+      if (!window.__ditherTileGenTrace) return;
+      window.__ditherTileGenTrace.camera = {
+        setZoom,
+        panBy: handlePanDrag,
+        fit: fitToView,
+        flushViewport,
+        getZoom: () => viewportRef.current.zoom,
+        getVisibleTiles: () =>
+          computeVisibleTiles(viewportRef.current, docWidth, docHeight),
+        getLevel: () =>
+          computePyramidLevel(viewportRef.current.zoom, docWidth, docHeight),
+        getTileRev: () =>
+          window.__ditherTileGenTrace?.canvas?.getTileRev?.() ?? 0,
+      };
+    });
+  }, [setZoom, handlePanDrag, fitToView, flushViewport, docWidth, docHeight]);
 
   useEffect(() => {
     const el = containerRef.current;

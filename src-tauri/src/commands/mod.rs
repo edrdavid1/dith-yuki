@@ -65,7 +65,7 @@ pub struct AppState {
     pub active_id: Mutex<Option<u32>>,
     pub tiles: crate::state::TileState,
     pub worker_wake: WorkerWake,
-    /// Last-resort Composite backoff (one sleeper thread; cancel on doc close).
+    /// H8 last-resort Composite backoff (one sleeper thread; cancel on doc close).
     pub delayed_requeue: Arc<crate::delayed_requeue::DelayedRequeue>,
     pub gpu: Option<std::sync::Arc<engine_gpu::GpuContext>>,
     pub gpu_resident: Option<std::sync::Arc<engine_gpu::GpuTileCache>>,
@@ -195,6 +195,29 @@ fn clear_full_document_busy(state: &AppState, doc_id: u32) {
 }
 
 fn emit_full_document_busy(state: &AppState, busy: bool, doc_id: u32) {
+    if crate::tile_gen_trace::enabled() {
+        let pending = state
+            .pending_preview_refresh
+            .lock()
+            .ok()
+            .map(|g| g.is_some())
+            .unwrap_or(false);
+        crate::tile_gen_trace::emit(
+            "busy_changed",
+            None,
+            None,
+            None,
+            None,
+            None,
+            serde_json::json!({
+                "busy": busy,
+                "doc_id": doc_id,
+                "queued": state.tiles.scheduler.queued_len(),
+                "inflight": state.preview_pass_inflight.load(Ordering::Acquire),
+                "pending_refresh": pending,
+            }),
+        );
+    }
     let Ok(guard) = state.app_handle.lock() else {
         return;
     };
@@ -241,6 +264,10 @@ pub(crate) fn invalidate_after_document_replace(state: &AppState) {
 }
 
 pub(crate) fn schedule_dirty_viewport_tiles(state: &AppState) {
+    schedule_dirty_viewport_tiles_with_reason(state, "unspecified");
+}
+
+pub(crate) fn schedule_dirty_viewport_tiles_with_reason(state: &AppState, reason: &'static str) {
     use std::sync::atomic::Ordering;
 
     let viewport = state.ui.viewport.lock().unwrap().clone();
@@ -248,13 +275,41 @@ pub(crate) fn schedule_dirty_viewport_tiles(state: &AppState) {
         return;
     };
     let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
+    let (vp_hash, x0, y0, x1, y1) =
+        crate::tile_gen_trace::vp_hash_from_coords(viewport.level, &viewport.visible_tiles);
+    let visible_n = viewport.visible_tiles.len();
+
+    if crate::tile_gen_trace::enabled() {
+        crate::tile_gen_trace::emit(
+            "schedule_enter",
+            None,
+            Some(doc_gen),
+            None,
+            None,
+            Some(doc_gen),
+            serde_json::json!({
+                "reason": reason,
+                "level": viewport.level,
+                "zoom": viewport.zoom,
+                "x0": x0, "y0": y0, "x1": x1, "y1": y1,
+                "visible_count": visible_n,
+                "vp_hash": vp_hash,
+            }),
+        );
+    }
 
     crate::tile_pipeline::schedule_ed_for_viewport(state);
 
     let gpu_authored_l0 = crate::gpu_resident_shadow::try_publish_gpu_preview_viewport(state);
 
+    let mut dirty = 0usize;
+    let mut enqueued = 0usize;
+    let mut skipped_gpu = 0usize;
+    let mut skipped_clean = 0usize;
+
     for coord in &viewport.visible_tiles {
         if gpu_authored_l0.contains(coord) {
+            skipped_gpu += 1;
             continue;
         }
 
@@ -271,6 +326,7 @@ pub(crate) fn schedule_dirty_viewport_tiles(state: &AppState) {
         };
 
         if is_dirty {
+            dirty += 1;
             let task = RecomputeTask {
                 key,
                 generation: doc_gen,
@@ -279,7 +335,46 @@ pub(crate) fn schedule_dirty_viewport_tiles(state: &AppState) {
             };
             state.tiles.scheduler.enqueue_dedup(task);
             state.worker_wake.notify_one();
+            enqueued += 1;
+            if crate::tile_gen_trace::enabled() {
+                crate::tile_gen_trace::emit(
+                    "tile_enqueued",
+                    None,
+                    Some(doc_gen),
+                    None,
+                    Some(crate::tile_gen_trace::tile(coord.level, coord.x, coord.y)),
+                    Some(doc_gen),
+                    serde_json::json!({
+                        "reason": reason,
+                        "set": "visible",
+                        "vp_hash": vp_hash,
+                    }),
+                );
+            }
+        } else {
+            skipped_clean += 1;
         }
+    }
+
+    if crate::tile_gen_trace::enabled() {
+        crate::tile_gen_trace::emit(
+            "schedule_result",
+            None,
+            Some(doc_gen),
+            None,
+            None,
+            Some(doc_gen),
+            serde_json::json!({
+                "reason": reason,
+                "vp_hash": vp_hash,
+                "level": viewport.level,
+                "visible_count": visible_n,
+                "dirty": dirty,
+                "enqueued": enqueued,
+                "skipped_gpu_authored": skipped_gpu,
+                "skipped_clean_or_cached": skipped_clean,
+            }),
+        );
     }
 
     crate::gpu_resident_shadow::enqueue_resident_shadow_viewport(state);
@@ -327,12 +422,50 @@ pub(crate) fn request_preview_refresh(state: &AppState, layer_id: u32, clear_res
             layer_id,
             clear_residuals: clear,
         });
+        if crate::tile_gen_trace::enabled() {
+            crate::tile_gen_trace::emit(
+                "refresh_requested",
+                Some(layer_id),
+                None,
+                None,
+                None,
+                None,
+                serde_json::json!({
+                    "coalesced": true,
+                    "pending_preview_refresh": {
+                        "layer_id": layer_id,
+                        "clear_residuals": clear,
+                    },
+                    "queued": state.tiles.scheduler.queued_len(),
+                    "inflight": state.preview_pass_inflight.load(Ordering::Acquire),
+                }),
+            );
+        }
         return;
     }
-    run_preview_refresh(state, layer_id, clear_residuals);
+    if crate::tile_gen_trace::enabled() {
+        crate::tile_gen_trace::emit(
+            "refresh_requested",
+            Some(layer_id),
+            None,
+            None,
+            None,
+            None,
+            serde_json::json!({
+                "coalesced": false,
+                "pending_preview_refresh": null,
+            }),
+        );
+    }
+    run_preview_refresh(state, layer_id, clear_residuals, "param_change");
 }
 
-fn run_preview_refresh(state: &AppState, layer_id: u32, clear_residuals: bool) {
+fn run_preview_refresh(
+    state: &AppState,
+    layer_id: u32,
+    clear_residuals: bool,
+    reason: &'static str,
+) {
     let Ok(session) = state.active_session() else {
         return;
     };
@@ -348,6 +481,7 @@ fn run_preview_refresh(state: &AppState, layer_id: u32, clear_residuals: bool) {
             .evict_layer(doc_id, layer_id);
         state.tiles.full_document.invalidate_layer(doc_id, layer_id);
     }
+    let dirty_before = state.tiles.tile_cache.entries.len();
     engine_tiles::invalidation::invalidate(
         &state.tiles.tile_cache,
         engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
@@ -358,7 +492,33 @@ fn run_preview_refresh(state: &AppState, layer_id: u32, clear_residuals: bool) {
     // Hold the corner spinner for the whole filter refresh wave (CPU tiled ED
     // included). Nested full-document begin/end inside workers nest on top.
     begin_full_document_busy(state, doc_id);
-    schedule_dirty_viewport_tiles(state);
+    let queued_before = state.tiles.scheduler.queued_len();
+    schedule_dirty_viewport_tiles_with_reason(state, reason);
+    crate::ed_progress::note_ed_pass_start(state, doc_id);
+    let queued_after = state.tiles.scheduler.queued_len();
+    if crate::tile_gen_trace::enabled() {
+        let snap = session.document_handle.snapshot();
+        let doc_gen = snap
+            .generations
+            .document_gen
+            .load(Ordering::Acquire);
+        crate::tile_gen_trace::emit(
+            "refresh_started",
+            Some(layer_id),
+            Some(doc_gen),
+            Some(snap.generations.get_layer_gen(layer_id)),
+            None,
+            Some(doc_gen),
+            serde_json::json!({
+                "cache_entries": dirty_before,
+                "queued_before": queued_before,
+                "queued_after": queued_after,
+                "enqueued_delta": queued_after.saturating_sub(queued_before),
+                "clear_residuals": clear_residuals,
+                "schedule_reason": reason,
+            }),
+        );
+    }
     if !preview_pass_busy(state) {
         // Nothing queued (empty viewport / already fresh) — don't leave the chip on.
         end_full_document_busy(state, doc_id);
@@ -375,8 +535,25 @@ pub(crate) fn on_preview_task_finished(state: &AppState) {
         clear_full_document_busy(state, doc_id);
     }
     let pending = state.pending_preview_refresh.lock().unwrap().take();
+    if crate::tile_gen_trace::enabled() {
+        crate::tile_gen_trace::emit(
+            "pending_drained",
+            pending.as_ref().map(|p| p.layer_id),
+            None,
+            None,
+            None,
+            None,
+            serde_json::json!({
+                "had_pending": pending.is_some(),
+                "pending": pending.as_ref().map(|p| serde_json::json!({
+                    "layer_id": p.layer_id,
+                    "clear_residuals": p.clear_residuals,
+                })),
+            }),
+        );
+    }
     if let Some(p) = pending {
-        run_preview_refresh(state, p.layer_id, p.clear_residuals);
+        run_preview_refresh(state, p.layer_id, p.clear_residuals, "deferred_refresh");
     }
 }
 

@@ -40,6 +40,8 @@ export interface RequestTilesMessage {
   /** `DITHER_PROFILE=1` — attach protocol/decode epoch marks (no dither change). */
   profile?: boolean;
   profileRunId?: number;
+  /** `DITHER_TRACE=1` — always read X-Tile-Generation for FE events. */
+  trace?: boolean;
 }
 
 export interface FetchTileMessage {
@@ -55,6 +57,8 @@ export interface FetchTileMessage {
   /** `DITHER_PROFILE=1` — attach protocol/decode epoch marks (no dither change). */
   profile?: boolean;
   profileRunId?: number;
+  /** `DITHER_TRACE=1` — always read X-Tile-Generation for FE events. */
+  trace?: boolean;
 }
 
 export type WorkerInMessage = RequestTilesMessage | FetchTileMessage;
@@ -65,6 +69,9 @@ export interface TileDecodedMessage {
   bitmap: ImageBitmap;
   rev?: number;
   docId: number;
+  /** Present when `diag` or `trace` requested generation from `X-Tile-Generation`. */
+  gen?: number | null;
+  httpStatus?: number;
   /** Present only when the request set `diag: true` (diagnostic.md §5). */
   diag?: TileFetchDiag;
   /** Present only when the request set `profile: true` (time-testing.md). */
@@ -105,12 +112,12 @@ export type WorkerOutMessage = TileDecodedMessage | TilePendingMessage | TileErr
 const TILE_SIZE = 256;
 const TILE_BYTE_LENGTH = TILE_SIZE * TILE_SIZE * 4; // 262,144 bytes RGBA8
 
-function responseMeta(response: Response, diag: boolean): {
+function responseMeta(response: Response, readHeaders: boolean): {
   gen: number | null;
   stale: boolean;
   pyramid: boolean;
 } {
-  if (!diag || response.headers == null || typeof response.headers.get !== 'function') {
+  if (!readHeaders || response.headers == null || typeof response.headers.get !== 'function') {
     return { gen: null, stale: false, pyramid: false };
   }
   const raw = response.headers.get('X-Tile-Generation');
@@ -138,10 +145,12 @@ async function fetchAndDecodeTile(
   diag = false,
   profile = false,
   profileRunId?: number,
+  trace = false,
 ): Promise<void> {
   const key = `${tile.level}/${tile.x}/${tile.y}`;
   const url = buildTileUrl(docId, tile, rev, { base: protocolBase });
   const epoch = () => performance.timeOrigin + performance.now();
+  const readHeaders = diag || trace;
 
   const postDecoded = (
     bitmap: ImageBitmap,
@@ -155,6 +164,10 @@ async function fetchAndDecodeTile(
     protocolEpochMs?: number,
   ) => {
     const msg: TileDecodedMessage = { type: 'tile-decoded', key, bitmap, rev, docId };
+    if (trace) {
+      msg.gen = meta.gen;
+      msg.httpStatus = status;
+    }
     if (diag) {
       msg.diag = {
         retries,
@@ -217,7 +230,7 @@ async function fetchAndDecodeTile(
         0,
         0,
         200,
-        responseMeta(response, diag),
+        responseMeta(response, readHeaders),
         buffer.byteLength,
         protocolEpochMs,
       );
@@ -253,7 +266,7 @@ async function fetchAndDecodeTile(
                 retries,
                 retryWait,
                 200,
-                responseMeta(retryResponse, diag),
+                responseMeta(retryResponse, readHeaders),
                 retryBuffer.byteLength,
                 retryProtocolEpoch,
               );
@@ -306,6 +319,7 @@ self.onmessage = async (e: MessageEvent<WorkerInMessage>) => {
           msg.diag === true,
           msg.profile === true,
           msg.profileRunId,
+          msg.trace === true,
         ),
       ),
     );
@@ -322,6 +336,7 @@ self.onmessage = async (e: MessageEvent<WorkerInMessage>) => {
       msg.diag === true,
       msg.profile === true,
       msg.profileRunId,
+      msg.trace === true,
     );
   }
 };

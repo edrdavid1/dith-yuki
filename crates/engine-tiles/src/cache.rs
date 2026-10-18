@@ -24,8 +24,25 @@ use crossbeam::queue::SegQueue;
 use dashmap::DashMap;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
+
+/// Optional observer for per-tile eviction (`cache_evict` tracing).
+/// Args: `(key, entry_generation, reason)` where reason is `"memory"` or `"invalidation"`.
+pub type EvictTileHook = Box<dyn Fn(TileKey, u64, &'static str) + Send + Sync>;
+
+static EVICT_TILE_HOOK: OnceLock<EvictTileHook> = OnceLock::new();
+
+/// Install a once-only eviction observer (idempotent; later calls ignored).
+pub fn set_evict_tile_hook(hook: EvictTileHook) {
+    let _ = EVICT_TILE_HOOK.set(hook);
+}
+
+fn notify_evict(key: TileKey, generation: u64, reason: &'static str) {
+    if let Some(hook) = EVICT_TILE_HOOK.get() {
+        hook(key, generation, reason);
+    }
+}
 
 /// Context for doc-aware budget pressure eviction.
 ///
@@ -268,8 +285,9 @@ impl TileCache {
 
     fn retain_removed(&self, mut drop_key: impl FnMut(&TileKey) -> bool) {
         let mut removed = 0usize;
-        self.entries.retain(|key, _| {
+        self.entries.retain(|key, entry| {
             if drop_key(key) {
+                notify_evict(*key, entry.generation, "invalidation");
                 removed += 1;
                 false
             } else {
@@ -412,7 +430,8 @@ impl TileCache {
                         continue;
                     }
 
-                    if self.entries.remove(&key).is_some() {
+                    if let Some((_, entry)) = self.entries.remove(&key) {
+                        notify_evict(key, entry.generation, "memory");
                         self.used_bytes.fetch_sub(TILE_BYTES, Ordering::Relaxed);
                         removed_this_pass += 1;
                     }

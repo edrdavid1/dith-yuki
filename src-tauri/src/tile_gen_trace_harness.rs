@@ -1,0 +1,981 @@
+//! Backend stress harness for lost-tile generation tracing.
+//!
+//! ```text
+//! DITHER_TRACE_QUICK=1 cargo test -p dither \
+//!   tile_gen_trace_stress_s1_s3_matrix -- --ignored --nocapture --test-threads=1
+//! ```
+//!
+//! Drives real `request_preview_refresh` + production-shaped worker tasks.
+//! Does not use Tauri `AppHandle` (mock runtime cannot satisfy `tile_worker_loop`),
+//! so `tile_ready_emitted` IPC is not exercised here — compute/cache/refresh are.
+
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
+
+use engine_project::filter::{DitherModeV2, DitherParamsV2};
+use engine_project::layer::{Layer, LayerNode};
+use engine_project::types::{DocumentId, LayerId, LayerKind};
+use engine_project::{Document, FilterInstance, FilterKind, FilterParams};
+use engine_tiles::{CacheStage, PixelTile, TileCoord, TileKey};
+use serde_json::json;
+
+use crate::commands::{request_preview_refresh, AppState};
+use crate::services::viewport_service::ViewportService;
+use crate::tile_gen_trace;
+use crate::tile_pipeline;
+use crate::worker::task_is_stale;
+
+const SERIES_PER_CELL: usize = 50;
+const SILENCE_SETTLE_MS: u64 = 1500;
+const STUCK_BUSY_MS: u64 = 30_000;
+
+#[derive(Clone, Copy)]
+struct SizeSpec {
+    w: u32,
+    h: u32,
+    label: &'static str,
+}
+
+const SIZES: &[SizeSpec] = &[
+    SizeSpec {
+        w: 748,
+        h: 1024,
+        label: "748x1024",
+    },
+    SizeSpec {
+        w: 1920,
+        h: 1080,
+        label: "1920x1080",
+    },
+    SizeSpec {
+        w: 4000,
+        h: 3000,
+        label: "4000x3000",
+    },
+];
+
+#[derive(Clone, Copy)]
+enum Mode {
+    BlockedFs,
+    BlueNoise,
+    Bayer4x4,
+    FloydSteinberg,
+}
+
+impl Mode {
+    fn label(self) -> &'static str {
+        match self {
+            Mode::BlockedFs => "blocked_fs",
+            Mode::BlueNoise => "blue_noise",
+            Mode::Bayer4x4 => "bayer_4x4",
+            Mode::FloydSteinberg => "floyd_steinberg",
+        }
+    }
+
+    fn dither_mode(self) -> DitherModeV2 {
+        match self {
+            Mode::BlockedFs => DitherModeV2::BlockedFs,
+            Mode::BlueNoise => DitherModeV2::BlueNoise,
+            Mode::Bayer4x4 => DitherModeV2::Bayer4x4,
+            Mode::FloydSteinberg => DitherModeV2::FloydSteinberg,
+        }
+    }
+}
+
+#[derive(Default)]
+struct ViolationCounts {
+    stuck_busy: u64,
+    silent_ok: u64,
+    series: u64,
+}
+
+fn dither_doc(mode: Mode, w: u32, h: u32) -> Document {
+    let mut doc = Document::new(DocumentId::new(1), w, h);
+    let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, w, h);
+    layer.filters.push(FilterInstance::new(
+        FilterKind::Dither,
+        FilterParams::DitherV2(DitherParamsV2 {
+            mode: mode.dither_mode(),
+            pixel_size: 1,
+            levels: 16,
+            ..DitherParamsV2::default()
+        }),
+    ));
+    doc.root.push(LayerNode::Leaf(layer));
+    doc
+}
+
+fn fill_raw(state: &AppState, w: u32, h: u32) {
+    let cols = w.div_ceil(engine_tiles::TILE_SIZE);
+    let rows = h.div_ceil(engine_tiles::TILE_SIZE);
+    let mut tile = PixelTile::new();
+    tile.data.fill(0.45);
+    let arc = Arc::new(tile);
+    for y in 0..rows {
+        for x in 0..cols {
+            let key = TileKey {
+                doc: 1,
+                layer: 1,
+                coord: TileCoord { level: 0, x, y },
+                stage: CacheStage::Raw,
+            };
+            state
+                .tiles
+                .tile_cache
+                .insert_fresh_gen(key, Arc::clone(&arc), 0);
+        }
+    }
+}
+
+fn silence_settle_ms() -> u64 {
+    if std::env::var("DITHER_TRACE_QUICK").map(|v| v == "1").unwrap_or(false) {
+        200
+    } else {
+        SILENCE_SETTLE_MS
+    }
+}
+
+fn wait_silence(state: &AppState, timeout: Duration) -> bool {
+    let start = Instant::now();
+    let settle = silence_settle_ms();
+    loop {
+        let queued = state.tiles.scheduler.queued_len();
+        let inflight = state.preview_pass_inflight.load(Ordering::Acquire);
+        let pending = state
+            .pending_preview_refresh
+            .lock()
+            .map(|g| g.is_some())
+            .unwrap_or(false);
+        let busy = state.full_document_busy.load(Ordering::Acquire);
+        let blocked = state.tiles.ed_frontier.blocked_count();
+        if queued == 0 && inflight == 0 && !pending && busy == 0 && blocked == 0 {
+            thread::sleep(Duration::from_millis(settle));
+            let queued2 = state.tiles.scheduler.queued_len();
+            let inflight2 = state.preview_pass_inflight.load(Ordering::Acquire);
+            let pending2 = state
+                .pending_preview_refresh
+                .lock()
+                .map(|g| g.is_some())
+                .unwrap_or(false);
+            let busy2 = state.full_document_busy.load(Ordering::Acquire);
+            let blocked2 = state.tiles.ed_frontier.blocked_count();
+            if queued2 == 0 && inflight2 == 0 && !pending2 && busy2 == 0 && blocked2 == 0 {
+                return true;
+            }
+        }
+        if start.elapsed() > timeout {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Wait until every L0 Processed tile for ED layers is fresh (full pass).
+fn wait_ed_l0_complete(state: &AppState, doc: u32, timeout: Duration) -> bool {
+    let start = Instant::now();
+    loop {
+        let queued = state.tiles.scheduler.queued_len();
+        let inflight = state.preview_pass_inflight.load(Ordering::Acquire);
+        let blocked = state.tiles.ed_frontier.blocked_count();
+        let (done, total, _, _) =
+            crate::ed_progress::count_l0_ed_progress(state, doc).unwrap_or((0, 0, 0, 0));
+        if total > 0 && done == total && queued == 0 && inflight == 0 && blocked == 0 {
+            // Short settle — avoid baking SILENCE_SETTLE into the baseline wall.
+            thread::sleep(Duration::from_millis(50));
+            let (done2, total2, _, _) =
+                crate::ed_progress::count_l0_ed_progress(state, doc).unwrap_or((0, 0, 0, 0));
+            let queued2 = state.tiles.scheduler.queued_len();
+            let inflight2 = state.preview_pass_inflight.load(Ordering::Acquire);
+            let blocked2 = state.tiles.ed_frontier.blocked_count();
+            if total2 > 0 && done2 == total2 && queued2 == 0 && inflight2 == 0 && blocked2 == 0 {
+                return true;
+            }
+        }
+        if start.elapsed() > timeout {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn next_f64(seed: &mut u64) -> f64 {
+    *seed ^= *seed << 13;
+    *seed ^= *seed >> 7;
+    *seed ^= *seed << 17;
+    (*seed as f64) / (u64::MAX as f64)
+}
+
+fn jitter_ms(seed: &mut u64, nominal: u64) -> u64 {
+    if nominal == 0 {
+        return 0;
+    }
+    let f = 0.5 + next_f64(seed);
+    ((nominal as f64) * f).round() as u64
+}
+
+/// Mirror `FilterService::update_filter` mutate + refresh (no Tauri emit).
+fn apply_threshold(state: &AppState, mode: Mode, threshold_scale: f32) {
+    let new_params = FilterParams::DitherV2(DitherParamsV2 {
+        mode: mode.dither_mode(),
+        pixel_size: 1,
+        levels: 16,
+        threshold_scale,
+        ..DitherParamsV2::default()
+    });
+
+    // No-op detection (same idea as production).
+    {
+        let snap = state.must_active().document_handle.snapshot();
+        if let LayerNode::Leaf(layer) = &snap.root[0] {
+            if let Some(cur) = layer.filters.first() {
+                let same = serde_json::to_value(&cur.params).ok()
+                    == serde_json::to_value(&new_params).ok();
+                if same {
+                    let doc_gen = snap
+                        .generations
+                        .document_gen
+                        .load(Ordering::Acquire);
+                    let hash = tile_gen_trace::params_hash(
+                        &serde_json::to_value(&cur.params).unwrap_or(json!(null)),
+                    );
+                    tile_gen_trace::emit(
+                        "update_filter_in",
+                        Some(1),
+                        Some(doc_gen),
+                        Some(snap.generations.get_layer_gen(1)),
+                        None,
+                        Some(doc_gen),
+                        json!({
+                            "params_hash_before": format!("{hash:x}"),
+                            "params_hash_after": format!("{hash:x}"),
+                            "noop": true,
+                            "via": "harness",
+                        }),
+                    );
+                    return;
+                }
+            }
+        }
+    }
+
+    let gen_before = state
+        .must_active()
+        .document_handle
+        .snapshot()
+        .generations
+        .document_gen
+        .load(Ordering::Acquire);
+
+    let before_hash = {
+        let snap = state.must_active().document_handle.snapshot();
+        match &snap.root[0] {
+            LayerNode::Leaf(layer) => layer
+                .filters
+                .first()
+                .and_then(|f| serde_json::to_value(&f.params).ok())
+                .map(|v| tile_gen_trace::params_hash(&v))
+                .unwrap_or(0),
+            _ => 0,
+        }
+    };
+    let after_hash =
+        tile_gen_trace::params_hash(&serde_json::to_value(&new_params).unwrap_or(json!(null)));
+    tile_gen_trace::emit(
+        "update_filter_in",
+        Some(1),
+        Some(gen_before),
+        None,
+        None,
+        Some(gen_before),
+        json!({
+            "params_hash_before": format!("{before_hash:x}"),
+            "params_hash_after": format!("{after_hash:x}"),
+            "noop": false,
+            "via": "harness",
+        }),
+    );
+
+    state.must_active().document_handle.mutate(|doc| {
+        if let LayerNode::Leaf(layer) = &mut doc.root[0] {
+            if let Some(f) = layer.filters.first_mut() {
+                f.params = new_params.clone();
+            }
+        }
+        doc.increment_generation();
+    });
+    state
+        .must_active()
+        .document_handle
+        .snapshot()
+        .generations
+        .increment_layer_gen(1);
+
+    let gen_after = state
+        .must_active()
+        .document_handle
+        .snapshot()
+        .generations
+        .document_gen
+        .load(Ordering::Acquire);
+    tile_gen_trace::emit(
+        "gen_bumped",
+        Some(1),
+        Some(gen_after),
+        Some(
+            state
+                .must_active()
+                .document_handle
+                .snapshot()
+                .generations
+                .get_layer_gen(1),
+        ),
+        None,
+        Some(gen_after),
+        json!({ "doc_gen_before": gen_before, "doc_gen_after": gen_after, "via": "harness" }),
+    );
+
+    let needs_reset = matches!(
+        mode,
+        Mode::BlockedFs
+            | Mode::BlueNoise
+            | Mode::Bayer4x4
+            | Mode::FloydSteinberg
+    );
+    request_preview_refresh(state, 1, needs_reset);
+}
+
+fn harness_worker_loop(state: Arc<AppState>, stop: Arc<AtomicBool>) {
+    while !stop.load(Ordering::Relaxed) {
+        if let Some(task) = state.tiles.scheduler.dequeue() {
+            let live = state
+                .session(task.key.doc)
+                .ok()
+                .map(|s| {
+                    s.document_handle
+                        .snapshot()
+                        .generations
+                        .document_gen
+                        .load(Ordering::Acquire)
+                })
+                .unwrap_or(0);
+            tile_gen_trace::emit(
+                "worker_dequeue",
+                Some(task.key.layer),
+                Some(live),
+                None,
+                Some(tile_gen_trace::tile(
+                    task.key.coord.level,
+                    task.key.coord.x,
+                    task.key.coord.y,
+                )),
+                Some(task.generation),
+                json!({ "via": "harness_worker", "stage": format!("{:?}", task.key.stage) }),
+            );
+            state.preview_pass_inflight.fetch_add(1, Ordering::AcqRel);
+            let snapshot = match state.session(task.key.doc) {
+                Ok(s) => s.document_handle.snapshot(),
+                Err(_) => {
+                    state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
+                    crate::commands::on_preview_task_finished(&state);
+                    continue;
+                }
+            };
+            if task_is_stale(&task, &snapshot) {
+                tile_gen_trace::emit(
+                    "task_discarded_stale",
+                    Some(task.key.layer),
+                    Some(live),
+                    None,
+                    Some(tile_gen_trace::tile(
+                        task.key.coord.level,
+                        task.key.coord.x,
+                        task.key.coord.y,
+                    )),
+                    Some(task.generation),
+                    json!({ "reason": "generation_mismatch", "via": "harness_worker" }),
+                );
+                state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
+                crate::commands::on_preview_task_finished(&state);
+                continue;
+            }
+            let result = match task.key.stage {
+                CacheStage::Raw => state.tiles.tile_cache.get_entry(task.key).ok_or_else(|| {
+                    engine_project::error::EngineError::invalid_state("raw missing")
+                }),
+                CacheStage::Processed => tile_pipeline::compute_processed_tile(task.key, &state),
+                CacheStage::Composite => tile_pipeline::compute_composite_tile(task.key, &state),
+            };
+            if let Ok(_tile) = result {
+                let live2 = snapshot.generations.document_gen.load(Ordering::Acquire);
+                if !task_is_stale(&task, &snapshot) {
+                    if task.key.stage == CacheStage::Processed && task.key.coord.level == 0 {
+                        crate::ed_progress::note_ed_pass_maybe_complete(&state, task.key.doc);
+                        // Trace-only progress (no AppHandle in harness).
+                        if let Some((done, total, doc_gen, parallel)) =
+                            crate::ed_progress::count_l0_ed_progress(&state, task.key.doc)
+                        {
+                            tile_gen_trace::emit_simple(
+                                "ed_progress",
+                                json!({
+                                    "level": 0,
+                                    "done": done,
+                                    "total": total,
+                                    "doc_gen": doc_gen,
+                                    "source_id": "cpu_ed",
+                                    "doc_id": task.key.doc,
+                                    "parallel_ed_passes": parallel,
+                                    "via": "harness_worker",
+                                }),
+                            );
+                        }
+                    }
+                    // Composite publish happens inside compute_*; log synthetic ready.
+                    if task.key.stage == CacheStage::Composite {
+                        tile_gen_trace::emit(
+                            "tile_ready_emitted",
+                            Some(task.key.layer),
+                            Some(live2),
+                            None,
+                            Some(tile_gen_trace::tile(
+                                task.key.coord.level,
+                                task.key.coord.x,
+                                task.key.coord.y,
+                            )),
+                            Some(task.generation),
+                            json!({
+                                "via": "harness_worker",
+                                "ipc": "skipped_no_app_handle",
+                            }),
+                        );
+                    }
+                }
+            }
+            state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
+            crate::commands::on_preview_task_finished(&state);
+        } else {
+            state.worker_wake.wait();
+        }
+    }
+}
+
+fn setup(mode: Mode, size: SizeSpec, budget: usize) -> (Arc<AppState>, Arc<AtomicBool>, Vec<thread::JoinHandle<()>>) {
+    let state = Arc::new(AppState::empty_process(None, budget, true));
+    state.spawn_session(dither_doc(mode, size.w, size.h));
+    fill_raw(&state, size.w, size.h);
+    let zoom = (1200.0 / size.w as f64).min(800.0 / size.h as f64).min(1.0);
+    let _ = ViewportService::new(Arc::clone(&state)).set_viewport(zoom, 0.0, 0.0, 1200.0, 800.0);
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2)
+        .clamp(1, 4);
+    let mut joins = Vec::new();
+    for _ in 0..cores {
+        let st = Arc::clone(&state);
+        let stop = Arc::clone(&stop);
+        joins.push(thread::spawn(move || harness_worker_loop(st, stop)));
+    }
+    (state, stop, joins)
+}
+
+fn teardown(state: &AppState, stop: &AtomicBool, joins: Vec<thread::JoinHandle<()>>) {
+    stop.store(true, Ordering::Relaxed);
+    // Every parked worker must wake; do not block forever on join in this harness.
+    state.worker_wake.notify_all();
+    for j in joins {
+        // Detach: joining Condvar waiters has hung under load; process exit reaps.
+        std::mem::forget(j);
+    }
+}
+
+fn run_s1(
+    state: &AppState,
+    mode: Mode,
+    interval_ms: u64,
+    seed: u64,
+    run_id: u64,
+    changes: usize,
+) -> bool {
+    tile_gen_trace::begin_run(run_id);
+    tile_gen_trace::emit_simple(
+        "run_begin",
+        json!({
+            "scenario": "S1",
+            "mode": mode.label(),
+            "interval_ms": interval_ms,
+            "seed": seed,
+            "changes": changes,
+        }),
+    );
+    let mut seed = seed;
+    for i in 0..changes {
+        apply_threshold(state, mode, 0.8 + (i as f32) * 0.01);
+        let wait = jitter_ms(&mut seed, interval_ms);
+        if wait > 0 {
+            thread::sleep(Duration::from_millis(wait));
+        }
+    }
+    wait_silence(state, Duration::from_millis(stuck_busy_ms()))
+}
+
+fn stuck_busy_ms() -> u64 {
+    if std::env::var("DITHER_TRACE_QUICK").map(|v| v == "1").unwrap_or(false) {
+        10_000
+    } else {
+        STUCK_BUSY_MS
+    }
+}
+
+fn run_s2(state: &AppState, mode: Mode, pause_ms: u64, seed: u64, run_id: u64) -> bool {
+    tile_gen_trace::begin_run(run_id);
+    tile_gen_trace::emit_simple(
+        "run_begin",
+        json!({
+            "scenario": "S2",
+            "mode": mode.label(),
+            "pause_ms": pause_ms,
+            "seed": seed,
+        }),
+    );
+    apply_threshold(state, mode, 1.0);
+    if pause_ms > 0 {
+        thread::sleep(Duration::from_millis(pause_ms));
+    }
+    apply_threshold(state, mode, 1.2);
+    if pause_ms > 0 {
+        thread::sleep(Duration::from_millis(pause_ms));
+    }
+    apply_threshold(state, mode, 1.0);
+    wait_silence(state, Duration::from_millis(stuck_busy_ms()))
+}
+
+fn run_s3(state: &AppState, mode: Mode, delay_ms: u64, seed: u64, run_id: u64) -> bool {
+    tile_gen_trace::begin_run(run_id);
+    tile_gen_trace::emit_simple(
+        "run_begin",
+        json!({
+            "scenario": "S3",
+            "mode": mode.label(),
+            "delay_ms": delay_ms,
+            "seed": seed,
+        }),
+    );
+    apply_threshold(state, mode, 0.9);
+    thread::sleep(Duration::from_millis(delay_ms));
+    apply_threshold(state, mode, 1.1);
+    wait_silence(state, Duration::from_millis(stuck_busy_ms()))
+}
+
+#[test]
+fn tile_gen_trace_disabled_by_default() {
+    // Isolated from force_enable used in ignored stress test.
+    let prev = tile_gen_trace::enabled();
+    tile_gen_trace::force_enable(false);
+    assert!(!tile_gen_trace::enabled());
+    tile_gen_trace::force_enable(prev);
+}
+
+#[test]
+#[ignore]
+fn tile_gen_trace_stress_s1_s3_matrix() {
+    tile_gen_trace::force_enable(true);
+    crate::tile_gen_trace_host::install_evict_hook_if_needed();
+
+    let date = "2026-10-17";
+    let out_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("profiling")
+        .join("results")
+        .join(date)
+        .join("trace");
+    let _ = std::fs::create_dir_all(&out_dir);
+    let events_path = out_dir.join("events.jsonl");
+    {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        use std::sync::Mutex;
+        let path = events_path.clone();
+        let lock = Mutex::new(());
+        let _ = tile_gen_trace::set_sink(Box::new(move |ev| {
+            let _g = lock.lock();
+            if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
+                if let Ok(line) = serde_json::to_string(&ev) {
+                    let _ = writeln!(f, "{line}");
+                }
+            }
+        }));
+    }
+
+    let quick = std::env::var("DITHER_TRACE_QUICK")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    let series_n = if quick { 2 } else { SERIES_PER_CELL };
+    let sizes: &[SizeSpec] = if quick { &SIZES[..1] } else { SIZES };
+    let modes: &[Mode] = if quick {
+        &[Mode::BlockedFs]
+    } else {
+        &[Mode::BlockedFs, Mode::BlueNoise]
+    };
+    let intervals: &[u64] = if quick {
+        &[50]
+    } else {
+        &[0, 10, 50, 150, 300]
+    };
+    let s1_changes = if quick { 5usize } else { 20 };
+
+    let mut summary = String::from("# tile_gen_trace stress summary (backend harness)\n\n");
+    summary.push_str(&format!("quick={quick} series_per_cell={series_n}\n\n"));
+    summary.push_str("| scenario | mode | size | series | silent_ok | STUCK_BUSY |\n");
+    summary.push_str("| --- | --- | --- | ---: | ---: | ---: |\n");
+
+    let budget = 512 * 1024 * 1024;
+    let mut run_counter = 1u64;
+
+    for &mode in modes {
+        for size in sizes {
+            for &interval in intervals {
+                let mut counts = ViolationCounts::default();
+                for s in 0..series_n {
+                    let seed = 0xC0FFEE_u64
+                        .wrapping_mul(interval + 1)
+                        .wrapping_add(s as u64)
+                        .wrapping_mul(size.w as u64);
+                    let (state, stop, joins) = setup(mode, *size, budget);
+                    let _ = wait_silence(&state, Duration::from_secs(15));
+                    let run_id = run_counter;
+                    run_counter += 1;
+                    let ok = run_s1(&state, mode, interval, seed, run_id, s1_changes);
+                    eprintln!(
+                        "[trace] finished S1 series={s} ok={ok} run_id={run_id}"
+                    );
+                    counts.series += 1;
+                    if ok {
+                        counts.silent_ok += 1;
+                    } else {
+                        counts.stuck_busy += 1;
+                        tile_gen_trace::emit_simple(
+                            "violation",
+                            json!({"class": "STUCK_BUSY", "scenario": "S1"}),
+                        );
+                    }
+                    teardown(&state, &stop, joins);
+                }
+                summary.push_str(&format!(
+                    "| S1@{interval}ms | {} | {} | {} | {} | {} |\n",
+                    mode.label(),
+                    size.label,
+                    counts.series,
+                    counts.silent_ok,
+                    counts.stuck_busy
+                ));
+                eprintln!(
+                    "[trace] S1 interval={interval} mode={} size={} ok={}/{}",
+                    mode.label(),
+                    size.label,
+                    counts.silent_ok,
+                    counts.series
+                );
+            }
+        }
+    }
+
+    for &mode in modes {
+        for size in sizes {
+            let pauses: &[u64] = if quick {
+                &[0, 200]
+            } else {
+                &[0, 50, 200, 500, 2000]
+            };
+            for &pause in pauses {
+                let mut counts = ViolationCounts::default();
+                for s in 0..series_n {
+                    let seed = 0xBEEF_u64.wrapping_add(s as u64).wrapping_mul(pause + 1);
+                    let (state, stop, joins) = setup(mode, *size, budget);
+                    let _ = wait_silence(&state, Duration::from_secs(90));
+                    let run_id = run_counter;
+                    run_counter += 1;
+                    let ok = run_s2(&state, mode, pause, seed, run_id);
+                    counts.series += 1;
+                    if ok {
+                        counts.silent_ok += 1;
+                    } else {
+                        counts.stuck_busy += 1;
+                    }
+                    teardown(&state, &stop, joins);
+                }
+                summary.push_str(&format!(
+                    "| S2@{pause}ms | {} | {} | {} | {} | {} |\n",
+                    mode.label(),
+                    size.label,
+                    counts.series,
+                    counts.silent_ok,
+                    counts.stuck_busy
+                ));
+            }
+        }
+    }
+
+    for &mode in modes {
+        for size in sizes {
+            let delays: &[u64] = if quick { &[50] } else { &[5, 50, 200] };
+            for &delay in delays {
+                let mut counts = ViolationCounts::default();
+                for _s in 0..series_n {
+                    let (state, stop, joins) = setup(mode, *size, budget);
+                    let _ = wait_silence(&state, Duration::from_secs(90));
+                    let run_id = run_counter;
+                    run_counter += 1;
+                    let ok = run_s3(&state, mode, delay, run_id, run_id);
+                    counts.series += 1;
+                    if ok {
+                        counts.silent_ok += 1;
+                    } else {
+                        counts.stuck_busy += 1;
+                    }
+                    teardown(&state, &stop, joins);
+                }
+                summary.push_str(&format!(
+                    "| S3@{delay}ms | {} | {} | {} | {} | {} |\n",
+                    mode.label(),
+                    size.label,
+                    counts.series,
+                    counts.silent_ok,
+                    counts.stuck_busy
+                ));
+            }
+        }
+    }
+
+    if !quick {
+        let mode = Mode::Bayer4x4;
+        let size = sizes[0];
+        let mut counts = ViolationCounts::default();
+        for s in 0..series_n.min(10) {
+            let (state, stop, joins) = setup(mode, size, budget);
+            let _ = wait_silence(&state, Duration::from_secs(90));
+            let run_id = run_counter;
+            run_counter += 1;
+            let ok = run_s1(&state, mode, 50, s as u64, run_id, s1_changes);
+            counts.series += 1;
+            if ok {
+                counts.silent_ok += 1;
+            } else {
+                counts.stuck_busy += 1;
+            }
+            teardown(&state, &stop, joins);
+        }
+        summary.push_str(&format!(
+            "| S1@50ms | bayer_4x4 | {} | {} | {} | {} |\n",
+            size.label, counts.series, counts.silent_ok, counts.stuck_busy
+        ));
+    }
+
+    // S6 — cache pressure (small RAM budget)
+    {
+        let mode = Mode::BlockedFs;
+        let size = sizes[0];
+        // One f32 tile ≈ TILE_BYTES (~1 MiB). Sub-MiB budget forces pressure mid-series.
+        let low_budget = 2 * 1024 * 1024;
+        let n = series_n.min(if quick { 2 } else { 10 });
+        let mut counts = ViolationCounts::default();
+        let mut evict_events = 0u64;
+        let mut current_gen_evicts = 0u64;
+        for s in 0..n {
+            #[cfg(test)]
+            tile_gen_trace::clear_test_state();
+            tile_gen_trace::force_enable(true);
+            crate::tile_gen_trace_host::install_evict_hook_if_needed();
+            let (state, stop, joins) = setup(mode, size, low_budget);
+            let _ = wait_silence(&state, Duration::from_secs(30));
+            let run_id = run_counter;
+            run_counter += 1;
+            let ok = run_s1(&state, mode, 50, s as u64 + 9000, run_id, s1_changes.min(8));
+            #[cfg(test)]
+            {
+                for ev in tile_gen_trace::test_events() {
+                    if ev.event == "cache_evict" {
+                        evict_events += 1;
+                        if let Some(g) = ev.gen {
+                            if ev.doc_gen == Some(g) || ev.details.get("tile_gen") == Some(&json!(g))
+                            {
+                                // Approximate: tile_gen present; compare to live later in FE.
+                                current_gen_evicts += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            counts.series += 1;
+            if ok {
+                counts.silent_ok += 1;
+            } else {
+                counts.stuck_busy += 1;
+            }
+            teardown(&state, &stop, joins);
+        }
+        summary.push_str(&format!(
+            "| S6@50ms budget=2MiB | {} | {} | {} | {} | {} |\n",
+            mode.label(),
+            size.label,
+            counts.series,
+            counts.silent_ok,
+            counts.stuck_busy
+        ));
+        summary.push_str(&format!(
+            "\nS6 cache_evict events≈{evict_events} (tile_gen_marked≈{current_gen_evicts}; see events.jsonl)\n"
+        ));
+        eprintln!(
+            "[trace] S6 budget=2MiB ok={}/{} evict_events≈{}",
+            counts.silent_ok, counts.series, evict_events
+        );
+    }
+
+    summary.push_str("\n## Not run / not measured\n\n");
+    summary.push_str("- S4/S5/S7: not automated in this harness (need UI / GPU fail inject)\n");
+    summary.push_str("- Frontend MISSING/STALE/MIXED/STUCK_202/LOST_EVENT (IPC): use live app Stress button + DITHER_TRACE=1\n");
+    summary.push_str("- `tile_ready` Tauri emit skipped (no AppHandle); synthetic `tile_ready_emitted` logged\n");
+
+    let path = out_dir.join("harness_summary.md");
+    let _ = std::fs::write(&path, &summary);
+    eprintln!("wrote {}", path.display());
+    eprintln!("{summary}");
+}
+
+/// Step 1 baseline: wall time for a full Floyd–Steinberg L0 Processed pass
+/// on three document sizes (no viewport zoom mid-pass).
+#[test]
+#[ignore]
+fn ed_l0_pass_baseline_three_sizes() {
+    use std::io::Write;
+
+    #[cfg(test)]
+    tile_gen_trace::clear_test_state();
+    tile_gen_trace::force_enable(true);
+    crate::tile_gen_trace_host::install_evict_hook_if_needed();
+
+    let out_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("profiling")
+        .join("results")
+        .join("2026-10-18")
+        .join("trace_viewport");
+    let _ = std::fs::create_dir_all(&out_dir);
+    let events = out_dir.join("events_ed_l0_baseline.jsonl");
+    crate::tile_gen_trace_host::set_out_path_for_tests(events.clone());
+
+    let budget = 512 * 1024 * 1024;
+    let mode = Mode::FloydSteinberg;
+    let mut rows = String::from(
+        "# ED L0 pass baseline (Step 1)\n\n\
+         Mode: Floyd–Steinberg, pixel_size=1, levels=16.\n\
+         Cold pass: Processed/Composite evicted before apply; full-document L0 prefix scheduled.\n\
+         Metric: wall ms from `apply_threshold` until all L0 Processed tiles are fresh\n\
+         (scheduler + ed_frontier idle).\n\n\
+         | size | tiles_l0 | wall_ms | ok |\n\
+         | --- | ---: | ---: | --- |\n",
+    );
+
+    for (i, size) in SIZES.iter().enumerate() {
+        #[cfg(test)]
+        tile_gen_trace::clear_test_state();
+        tile_gen_trace::force_enable(true);
+        let (state, stop, joins) = setup(mode, *size, budget);
+        // Warm Raw only; do not precompute Processed (cold L0 pass).
+        let _ = wait_silence(&state, Duration::from_secs(30));
+        state
+            .tiles
+            .tile_cache
+            .evict_stages(1, &[CacheStage::Processed, CacheStage::Composite]);
+        state.tiles.error_residuals.evict_document(1);
+        state.tiles.ed_frontier.clear();
+
+        let tiles_l0 = {
+            let cols = size.w.div_ceil(engine_tiles::TILE_SIZE);
+            let rows = size.h.div_ceil(engine_tiles::TILE_SIZE);
+            cols * rows
+        };
+
+        tile_gen_trace::begin_run(10_000 + i as u64);
+        tile_gen_trace::emit_simple(
+            "ed_l0_baseline_begin",
+            json!({
+                "size": size.label,
+                "tiles_l0": tiles_l0,
+                "mode": mode.label(),
+            }),
+        );
+
+        let t0 = Instant::now();
+        apply_threshold(&state, mode, 1.0);
+        // Full-document L0 prefix (not only viewport closure) for the baseline metric.
+        {
+            let snap = state.must_active().document_handle.snapshot();
+            let doc_gen = snap
+                .generations
+                .document_gen
+                .load(Ordering::Acquire);
+            let max_tx = size.w.saturating_sub(1) / engine_tiles::TILE_SIZE;
+            let max_ty = size.h.saturating_sub(1) / engine_tiles::TILE_SIZE;
+            tile_pipeline::schedule_ed_prefix_closure(
+                &state,
+                1,
+                1,
+                0,
+                max_tx,
+                max_ty,
+                engine_tiles::Priority::Immediate,
+                doc_gen,
+                snap.generations.get_layer_gen(1),
+            );
+            crate::ed_progress::note_ed_pass_start(&state, 1);
+        }
+        let ok = wait_ed_l0_complete(&state, 1, Duration::from_secs(300));
+        let wall_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+        let (done, total, _, parallel) =
+            crate::ed_progress::count_l0_ed_progress(&state, 1).unwrap_or((0, 0, 0, 0));
+        crate::ed_progress::note_ed_pass_maybe_complete(&state, 1);
+
+        tile_gen_trace::emit_simple(
+            "ed_l0_baseline_end",
+            json!({
+                "size": size.label,
+                "tiles_l0": tiles_l0,
+                "wall_ms": wall_ms,
+                "ok": ok,
+                "done": done,
+                "total": total,
+                "parallel_ed_passes": parallel,
+            }),
+        );
+
+        rows.push_str(&format!(
+            "| {} | {} | {:.1} | {} |\n",
+            size.label,
+            tiles_l0,
+            wall_ms,
+            if ok && done == total && total > 0 {
+                "yes"
+            } else {
+                "NO"
+            }
+        ));
+        eprintln!(
+            "[ed_l0_baseline] {} tiles={} wall_ms={:.1} done={}/{} parallel={} ok={}",
+            size.label, tiles_l0, wall_ms, done, total, parallel, ok
+        );
+        teardown(&state, &stop, joins);
+    }
+
+    rows.push_str("\n`PARALLEL_ED_PASSES` here is the count of ED layers with unfinished L0 Processed (one layer → 0 or 1).\n");
+    rows.push_str(&format!("\nEvents: `{}`\n", events.display()));
+    let summary_path = out_dir.join("ed_l0_baseline.md");
+    let _ = std::fs::write(&summary_path, &rows);
+    eprintln!("wrote {}", summary_path.display());
+    eprintln!("{rows}");
+    let _ = std::io::stderr().flush();
+}
