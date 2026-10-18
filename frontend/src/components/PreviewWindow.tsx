@@ -6,6 +6,7 @@ import WindowTitlebar from '../shared/ui/WindowTitlebar';
 import Icon from '../icons/iconRegistry';
 import Tooltip from '../shared/ui/Tooltip';
 import SoftProofControls from '../features/soft-proof/SoftProofControls';
+import EdProgressIndicator from '../features/preview/EdProgressIndicator';
 import { useShell } from '../app/shell/ShellContext';
 import { useWorkspaceOptional } from '../features/workspace/WorkspaceContext';
 import { useAppSelector } from '../app/hooks';
@@ -463,6 +464,7 @@ export default function PreviewWindow({
           </Tooltip>
         </div>
         <div className={cn('pv-footer-actions')}>
+          <EdProgressIndicator docId={docId} />
           <SoftProofControls docId={docId} layout="footer" />
           <Tooltip label="Actual size — 1 document pixel = 1 screen pixel (100%)">
             <button

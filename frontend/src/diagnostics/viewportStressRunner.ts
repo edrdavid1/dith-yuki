@@ -58,6 +58,10 @@ export type ZoomSeriesReport = {
   series: number;
   silence: 'ok' | 'STUCK_BUSY' | 'STUCK_MOVING';
   violations: VpViolation[];
+  /** Present after quiet check (Z3 and others). */
+  timeToFreshMs?: number | null;
+  holes?: number;
+  visible?: number;
 };
 
 export async function runZoomScenario(args: {
@@ -175,6 +179,7 @@ export async function runZoomScenario(args: {
         await waitForSilence(120_000);
       }
 
+      let freshnessT0: number | undefined;
       if (args.scenario === 'Z3') {
         if (args.applyFilter) void args.applyFilter();
         await sleep(30);
@@ -182,11 +187,15 @@ export async function runZoomScenario(args: {
         await sleep(jitter);
         cam.setZoom(2);
         await sleep(jitter);
+        // Freshness clock: final zoom-out (cold pyramid level under load).
+        freshnessT0 = performance.now();
         cam.setZoom(0.25);
       } else if (args.scenario === 'Z5') {
         // no filter
+        freshnessT0 = performance.now();
         cam.setZoom(0.25);
       } else {
+        freshnessT0 = performance.now();
         cam.setZoom(0.25);
       }
 
@@ -196,14 +205,17 @@ export async function runZoomScenario(args: {
           feSnapshotFromTiles(cam.getLevel(), cam.getVisibleTiles(), cam.getTileRev()),
         trace,
         flushViewport: () => cam.flushViewport?.(),
+        freshnessT0,
+        // 12 MPix cold ED zoom-out budget from Step 1 baseline (~2s L0 + headroom).
+        timeToFreshBudgetMs: args.scenario === 'Z3' ? 30_000 : undefined,
       };
 
-      let { silence, violations } = await runQuietThenCheck(quietArgs);
+      let { silence, violations, freshness } = await runQuietThenCheck(quietArgs);
 
       if (args.scenario === 'Z4' && violations.length > 0) {
         cam.panBy(8, 0);
         await sleep(jitter);
-        ({ silence, violations } = await runQuietThenCheck(quietArgs));
+        ({ silence, violations, freshness } = await runQuietThenCheck(quietArgs));
       }
 
       if (args.scenario === 'Z7' && violations.length > 0) {
@@ -225,6 +237,7 @@ export async function runZoomScenario(args: {
         noteTraceEvent('z7_after_restore_scale', { details: { n: r.violations.length } });
         silence = r.silence;
         violations = r.violations;
+        freshness = r.freshness;
       }
 
       noteTraceEvent('series_trace_summary', {
@@ -236,10 +249,21 @@ export async function runZoomScenario(args: {
           sent_seqs: trace.sentSeqs.length,
           violation_count: violations.length,
           classes: violations.map((v) => v.class),
+          time_to_fresh_ms: freshness.timeToFreshMs,
+          holes: freshness.holes,
+          visible: freshness.visible,
         },
       });
 
-      reports.push({ scenario: args.scenario, series: s, silence, violations });
+      reports.push({
+        scenario: args.scenario,
+        series: s,
+        silence,
+        violations,
+        timeToFreshMs: freshness.timeToFreshMs,
+        holes: freshness.holes,
+        visible: freshness.visible,
+      });
     } finally {
       detach();
     }
@@ -252,14 +276,24 @@ export function summarizeZoomReports(reports: ZoomSeriesReport[]): string {
   const byClass = new Map<string, number>();
   let withV = 0;
   let stuck = 0;
+  const freshSamples: number[] = [];
+  let holeSum = 0;
   for (const r of reports) {
     if (r.silence !== 'ok') stuck += 1;
     if (r.violations.length) withV += 1;
+    if (typeof r.timeToFreshMs === 'number') freshSamples.push(r.timeToFreshMs);
+    holeSum += r.holes ?? 0;
     for (const v of r.violations) {
       byClass.set(v.class, (byClass.get(v.class) ?? 0) + 1);
     }
   }
   const classes = [...byClass.entries()].map(([k, n]) => `${k}=${n}`).join(' ') || 'none';
   const stuckBit = stuck ? `, ${stuck} not-quiet (${reports.filter((r) => r.silence !== 'ok').map((r) => r.silence).join('|')})` : '';
-  return `${reports.length} series, ${withV} with violations${stuckBit}; ${classes}`;
+  const freshBit =
+    freshSamples.length > 0
+      ? `, TIME_TO_FRESH ms=[${freshSamples.map((n) => n.toFixed(0)).join(',')}] holes_sum=${holeSum}`
+      : holeSum > 0
+        ? `, holes_sum=${holeSum}`
+        : '';
+  return `${reports.length} series, ${withV} with violations${stuckBit}${freshBit}; ${classes}`;
 }

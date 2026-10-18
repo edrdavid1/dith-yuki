@@ -408,50 +408,88 @@ fn harness_worker_loop(state: Arc<AppState>, stop: Arc<AtomicBool>) {
                 CacheStage::Processed => tile_pipeline::compute_processed_tile(task.key, &state),
                 CacheStage::Composite => tile_pipeline::compute_composite_tile(task.key, &state),
             };
-            if let Ok(_tile) = result {
-                let live2 = snapshot.generations.document_gen.load(Ordering::Acquire);
-                if !task_is_stale(&task, &snapshot) {
-                    if task.key.stage == CacheStage::Processed && task.key.coord.level == 0 {
-                        crate::ed_progress::note_ed_pass_maybe_complete(&state, task.key.doc);
-                        // Trace-only progress (no AppHandle in harness).
-                        if let Some((done, total, doc_gen, parallel)) =
-                            crate::ed_progress::count_l0_ed_progress(&state, task.key.doc)
-                        {
-                            tile_gen_trace::emit_simple(
-                                "ed_progress",
+            match result {
+                Ok(_tile) => {
+                    let live2 = snapshot.generations.document_gen.load(Ordering::Acquire);
+                    if !task_is_stale(&task, &snapshot) {
+                        tile_pipeline::wake_ed_frontier_after_insert(&state, task.key);
+                        if task.key.stage == CacheStage::Processed && task.key.coord.level == 0 {
+                            crate::ed_progress::note_ed_pass_maybe_complete(&state, task.key.doc);
+                            if let Some((done, total, doc_gen, parallel)) =
+                                crate::ed_progress::count_l0_ed_progress(&state, task.key.doc)
+                            {
+                                tile_gen_trace::emit_simple(
+                                    "ed_progress",
+                                    json!({
+                                        "level": 0,
+                                        "done": done,
+                                        "total": total,
+                                        "doc_gen": doc_gen,
+                                        "source_id": "cpu_ed",
+                                        "doc_id": task.key.doc,
+                                        "parallel_ed_passes": parallel,
+                                        "via": "harness_worker",
+                                    }),
+                                );
+                            }
+                        }
+                        if task.key.stage == CacheStage::Composite {
+                            tile_gen_trace::emit(
+                                "tile_ready_emitted",
+                                Some(task.key.layer),
+                                Some(live2),
+                                None,
+                                Some(tile_gen_trace::tile(
+                                    task.key.coord.level,
+                                    task.key.coord.x,
+                                    task.key.coord.y,
+                                )),
+                                Some(task.generation),
                                 json!({
-                                    "level": 0,
-                                    "done": done,
-                                    "total": total,
-                                    "doc_gen": doc_gen,
-                                    "source_id": "cpu_ed",
-                                    "doc_id": task.key.doc,
-                                    "parallel_ed_passes": parallel,
                                     "via": "harness_worker",
+                                    "ipc": "skipped_no_app_handle",
                                 }),
                             );
                         }
                     }
-                    // Composite publish happens inside compute_*; log synthetic ready.
+                }
+                Err(engine_project::error::EngineError::EdPrefixPending)
+                | Err(engine_project::error::EngineError::EdDependenciesPending)
+                | Err(engine_project::error::EngineError::PyramidChildrenPending) => {
                     if task.key.stage == CacheStage::Composite {
-                        tile_gen_trace::emit(
-                            "tile_ready_emitted",
-                            Some(task.key.layer),
-                            Some(live2),
-                            None,
-                            Some(tile_gen_trace::tile(
-                                task.key.coord.level,
-                                task.key.coord.x,
-                                task.key.coord.y,
-                            )),
-                            Some(task.generation),
-                            json!({
-                                "via": "harness_worker",
-                                "ipc": "skipped_no_app_handle",
-                            }),
+                        let deps = tile_pipeline::composite_ed_park_deps(
+                            &state,
+                            &snapshot.root,
+                            task.key.doc,
+                            task.key.coord,
                         );
+                        if deps.is_empty() {
+                            thread::sleep(Duration::from_millis(50));
+                            state.tiles.scheduler.enqueue_or_bump(task);
+                            state.worker_wake.notify_one();
+                        } else {
+                            state.tiles.ed_frontier.block_on(task, deps);
+                        }
+                    } else if task.key.stage == CacheStage::Processed {
+                        let deps = engine_tiles::ed_dependency_keys(task.key);
+                        let missing: Vec<_> = deps
+                            .into_iter()
+                            .filter(|d| !engine_tiles::tile_fresh(&state.tiles.tile_cache, *d))
+                            .collect();
+                        if missing.is_empty() {
+                            thread::sleep(Duration::from_millis(20));
+                            state.tiles.scheduler.enqueue_or_bump(task);
+                            state.worker_wake.notify_one();
+                        } else {
+                            state.tiles.ed_frontier.block_on(task, missing);
+                        }
+                    } else {
+                        thread::sleep(Duration::from_millis(20));
+                        state.tiles.scheduler.enqueue_or_bump(task);
+                        state.worker_wake.notify_one();
                     }
                 }
+                Err(_) => {}
             }
             state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
             crate::commands::on_preview_task_finished(&state);
@@ -869,15 +907,20 @@ fn ed_l0_pass_baseline_three_sizes() {
 
     let budget = 512 * 1024 * 1024;
     let mode = Mode::FloydSteinberg;
-    let mut rows = String::from(
-        "# ED L0 pass baseline (Step 1)\n\n\
-         Mode: Floyd–Steinberg, pixel_size=1, levels=16.\n\
-         Cold pass: Processed/Composite evicted before apply; full-document L0 prefix scheduled.\n\
-         Metric: wall ms from `apply_threshold` until all L0 Processed tiles are fresh\n\
-         (scheduler + ed_frontier idle).\n\n\
-         | size | tiles_l0 | wall_ms | ok |\n\
-         | --- | ---: | ---: | --- |\n",
-    );
+    let profile = if cfg!(debug_assertions) {
+        "dev"
+    } else {
+        "release"
+    };
+    let json_path = out_dir.join("ed_l0_baseline.json");
+    let mut merged = if let Ok(bytes) = std::fs::read(&json_path) {
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or_else(|_| json!({}))
+    } else {
+        json!({})
+    };
+    if !merged.is_object() {
+        merged = json!({});
+    }
 
     for (i, size) in SIZES.iter().enumerate() {
         #[cfg(test)]
@@ -940,42 +983,289 @@ fn ed_l0_pass_baseline_three_sizes() {
             crate::ed_progress::count_l0_ed_progress(&state, 1).unwrap_or((0, 0, 0, 0));
         crate::ed_progress::note_ed_pass_maybe_complete(&state, 1);
 
+        let pass_ok = ok && done == total && total > 0;
         tile_gen_trace::emit_simple(
             "ed_l0_baseline_end",
             json!({
                 "size": size.label,
                 "tiles_l0": tiles_l0,
                 "wall_ms": wall_ms,
-                "ok": ok,
+                "profile": profile,
+                "ok": pass_ok,
                 "done": done,
                 "total": total,
                 "parallel_ed_passes": parallel,
             }),
         );
 
-        rows.push_str(&format!(
-            "| {} | {} | {:.1} | {} |\n",
-            size.label,
-            tiles_l0,
-            wall_ms,
-            if ok && done == total && total > 0 {
-                "yes"
-            } else {
-                "NO"
-            }
-        ));
+        let entry = merged
+            .as_object_mut()
+            .unwrap()
+            .entry(size.label.to_string())
+            .or_insert_with(|| json!({ "tiles_l0": tiles_l0 }));
+        entry["tiles_l0"] = json!(tiles_l0);
+        entry[format!("wall_ms_{profile}")] = json!(wall_ms);
+        entry[format!("ok_{profile}")] = json!(pass_ok);
+
         eprintln!(
-            "[ed_l0_baseline] {} tiles={} wall_ms={:.1} done={}/{} parallel={} ok={}",
-            size.label, tiles_l0, wall_ms, done, total, parallel, ok
+            "[ed_l0_baseline] profile={profile} {} tiles={} wall_ms={:.1} done={}/{} parallel={} ok={}",
+            size.label, tiles_l0, wall_ms, done, total, parallel, pass_ok
         );
         teardown(&state, &stop, joins);
     }
 
-    rows.push_str("\n`PARALLEL_ED_PASSES` here is the count of ED layers with unfinished L0 Processed (one layer → 0 or 1).\n");
+    let _ = std::fs::write(
+        &json_path,
+        serde_json::to_vec_pretty(&merged).unwrap_or_default(),
+    );
+
+    let mut rows = String::from(
+        "# ED L0 pass baseline (Step 1)\n\n\
+         Mode: Floyd–Steinberg, pixel_size=1, levels=16.\n\
+         Cold pass: Processed/Composite evicted before apply; full-document L0 prefix scheduled.\n\
+         Metric: wall ms from `apply_threshold` until all L0 Processed tiles are fresh\n\
+         (scheduler + ed_frontier idle).\n\n\
+         | size | tiles_l0 | wall_ms_release | wall_ms_dev | ok |\n\
+         | --- | ---: | ---: | ---: | --- |\n",
+    );
+    for size in SIZES {
+        let Some(entry) = merged.get(size.label) else {
+            continue;
+        };
+        let tiles = entry.get("tiles_l0").and_then(|v| v.as_u64()).unwrap_or(0);
+        let rel = entry
+            .get("wall_ms_release")
+            .and_then(|v| v.as_f64())
+            .map(|v| format!("{v:.1}"))
+            .unwrap_or_else(|| "—".into());
+        let dev = entry
+            .get("wall_ms_dev")
+            .and_then(|v| v.as_f64())
+            .map(|v| format!("{v:.1}"))
+            .unwrap_or_else(|| "—".into());
+        let ok_rel = entry
+            .get("ok_release")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let ok_dev = entry
+            .get("ok_dev")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let ok = match (
+            entry.get("wall_ms_release").is_some(),
+            entry.get("wall_ms_dev").is_some(),
+        ) {
+            (true, true) => {
+                if ok_rel && ok_dev {
+                    "yes"
+                } else {
+                    "NO"
+                }
+            }
+            (true, false) => {
+                if ok_rel {
+                    "yes*"
+                } else {
+                    "NO"
+                }
+            }
+            (false, true) => {
+                if ok_dev {
+                    "yes*"
+                } else {
+                    "NO"
+                }
+            }
+            _ => "—",
+        };
+        rows.push_str(&format!(
+            "| {} | {} | {} | {} | {} |\n",
+            size.label, tiles, rel, dev, ok
+        ));
+    }
+    rows.push_str(
+        "\n`PARALLEL_ED_PASSES` here is the count of ED layers with unfinished L0 Processed (one layer → 0 or 1).\n",
+    );
+    rows.push_str(&format!(
+        "\nLast profile run: `{profile}`. Merge file: `{}`\n",
+        json_path.display()
+    ));
     rows.push_str(&format!("\nEvents: `{}`\n", events.display()));
     let summary_path = out_dir.join("ed_l0_baseline.md");
     let _ = std::fs::write(&summary_path, &rows);
     eprintln!("wrote {}", summary_path.display());
     eprintln!("{rows}");
     let _ = std::io::stderr().flush();
+}
+
+/// Z3-like: apply Floyd–Steinberg on ≥12 MPix, zoom-out mid-pass (cold cache),
+/// measure TIME_TO_FRESH for the final viewport Composite set + hole count.
+#[test]
+#[ignore]
+fn z3_cold_12mp_time_to_fresh() {
+    use std::io::Write;
+
+    #[cfg(test)]
+    tile_gen_trace::clear_test_state();
+    tile_gen_trace::force_enable(true);
+    crate::tile_gen_trace_host::install_evict_hook_if_needed();
+
+    let out_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("profiling")
+        .join("results")
+        .join("2026-10-18")
+        .join("trace_viewport");
+    let _ = std::fs::create_dir_all(&out_dir);
+    let profile = if cfg!(debug_assertions) {
+        "dev"
+    } else {
+        "release"
+    };
+    let events = out_dir.join(format!("events_z3_cold_{profile}.jsonl"));
+    crate::tile_gen_trace_host::set_out_path_for_tests(events.clone());
+
+    // 4000×3000 = 12 MPix. Need Raw+Processed+Composite headroom (~3×192 tiles).
+    let size = SizeSpec {
+        w: 4000,
+        h: 3000,
+        label: "4000x3000",
+    };
+    let budget = 2048 * 1024 * 1024;
+    let mode = Mode::FloydSteinberg;
+    let (state, stop, joins) = setup(mode, size, budget);
+    let _ = wait_silence(&state, Duration::from_secs(60));
+    state
+        .tiles
+        .tile_cache
+        .evict_stages(1, &[CacheStage::Processed, CacheStage::Composite]);
+    state.tiles.error_residuals.evict_document(1);
+    state.tiles.ed_frontier.clear();
+
+    // Zoomed-in start (like Z3), then apply + rapid zoom-outs.
+    let _ = ViewportService::new(Arc::clone(&state)).set_viewport(2.0, 0.0, 0.0, 1200.0, 800.0);
+    apply_threshold(&state, mode, 1.0);
+    thread::sleep(Duration::from_millis(30));
+    let _ = ViewportService::new(Arc::clone(&state)).set_viewport(0.5, 0.0, 0.0, 1200.0, 800.0);
+    thread::sleep(Duration::from_millis(40));
+    let _ = ViewportService::new(Arc::clone(&state)).set_viewport(2.0, 0.0, 0.0, 1200.0, 800.0);
+    thread::sleep(Duration::from_millis(40));
+
+    let t0 = Instant::now();
+    let _ = ViewportService::new(Arc::clone(&state)).set_viewport(0.25, 0.0, 0.0, 1200.0, 800.0);
+    crate::commands::schedule_dirty_viewport_tiles(&state);
+    // Full-doc L0 prefix so the mid-pass zoom still finishes the ED pass (Z3 stress).
+    {
+        let snap = state.must_active().document_handle.snapshot();
+        let doc_gen = snap
+            .generations
+            .document_gen
+            .load(Ordering::Acquire);
+        let max_tx = size.w.saturating_sub(1) / engine_tiles::TILE_SIZE;
+        let max_ty = size.h.saturating_sub(1) / engine_tiles::TILE_SIZE;
+        tile_pipeline::schedule_ed_prefix_closure(
+            &state,
+            1,
+            1,
+            0,
+            max_tx,
+            max_ty,
+            engine_tiles::Priority::Immediate,
+            doc_gen,
+            snap.generations.get_layer_gen(1),
+        );
+    }
+    crate::ed_progress::note_ed_pass_start(&state, 1);
+
+    let timeout = Duration::from_secs(120);
+    let start = Instant::now();
+    let mut composite_holes = usize::MAX;
+    let mut visible_n = 0usize;
+    let mut time_to_fresh_ms = None;
+    let mut l0_done = 0u32;
+    let mut l0_total = 0u32;
+    loop {
+        let vp = state.ui.viewport.lock().unwrap().clone();
+        visible_n = vp.visible_tiles.len();
+        let mut missing = 0usize;
+        for coord in &vp.visible_tiles {
+            let key = TileKey {
+                doc: 1,
+                layer: 0,
+                coord: *coord,
+                stage: CacheStage::Composite,
+            };
+            if !engine_tiles::tile_fresh(&state.tiles.tile_cache, key) {
+                missing += 1;
+            }
+        }
+        composite_holes = missing;
+        let (done, total, _, _) =
+            crate::ed_progress::count_l0_ed_progress(&state, 1).unwrap_or((0, 0, 0, 0));
+        l0_done = done;
+        l0_total = total;
+        // Primary freshness: full L0 Processed pass (ED causal). Composite holes reported separately.
+        if total > 0 && done == total {
+            thread::sleep(Duration::from_millis(50));
+            let (done2, total2, _, _) =
+                crate::ed_progress::count_l0_ed_progress(&state, 1).unwrap_or((0, 0, 0, 0));
+            if total2 > 0 && done2 == total2 {
+                time_to_fresh_ms = Some(t0.elapsed().as_secs_f64() * 1000.0);
+                l0_done = done2;
+                l0_total = total2;
+                break;
+            }
+        }
+        if start.elapsed() > timeout {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+        static LAST_LOG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let secs = start.elapsed().as_secs();
+        let prev = LAST_LOG.load(Ordering::Relaxed);
+        if secs >= prev + 5
+            && LAST_LOG
+                .compare_exchange(prev, secs, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+        {
+            eprintln!(
+                "[z3_cold] t={secs}s visible={visible_n} comp_holes={composite_holes} l0={l0_done}/{l0_total} queued={} blocked={}",
+                state.tiles.scheduler.queued_len(),
+                state.tiles.ed_frontier.blocked_count(),
+            );
+        }
+    }
+
+    let wall = t0.elapsed().as_secs_f64() * 1000.0;
+    let line = format!(
+        "# Z3 cold ≥12 MPix TIME_TO_FRESH ({profile})\n\n\
+         Doc: 4000×3000 (12 MPix), Floyd–Steinberg, cold Processed/Composite.\n\
+         Sequence: zoom-in → apply → mid-pass zooms → final zoom 0.25 + full L0 prefix.\n\
+         `time_to_fresh_ms` = wall until L0 Processed done==total (ED pass).\n\
+         `composite_holes` = visible Composite still missing at that moment.\n\n\
+         | profile | visible | composite_holes | l0_done/total | time_to_fresh_ms | wall_ms |\n\
+         | --- | ---: | ---: | --- | ---: | ---: |\n\
+         | {profile} | {visible_n} | {composite_holes} | {l0_done}/{l0_total} | {} | {wall:.1} |\n",
+        time_to_fresh_ms
+            .map(|v| format!("{v:.1}"))
+            .unwrap_or_else(|| "TIMEOUT".into()),
+    );
+    tile_gen_trace::emit_simple(
+        "z3_cold_result",
+        json!({
+            "profile": profile,
+            "visible": visible_n,
+            "composite_holes": composite_holes,
+            "l0_done": l0_done,
+            "l0_total": l0_total,
+            "time_to_fresh_ms": time_to_fresh_ms,
+            "wall_ms": wall,
+        }),
+    );
+    let path = out_dir.join(format!("z3_cold_12mp_{profile}.md"));
+    let _ = std::fs::write(&path, &line);
+    eprintln!("wrote {}", path.display());
+    eprintln!("{line}");
+    let _ = std::io::stderr().flush();
+    teardown(&state, &stop, joins);
 }

@@ -94,11 +94,28 @@ export interface TileFetchDiag {
   bytes: number;
 }
 
+export type TilePendingReason =
+  | 'ed_prefix'
+  | 'waiting_children'
+  | 'computing'
+  | 'queued'
+  | string;
+
 export interface TilePendingMessage {
   type: 'tile-pending';
   key: string;
   docId: number;
+  /** From `X-Tile-Pending-Reason` when present. */
+  pendingReason?: TilePendingReason;
+  rev?: number;
 }
+
+/** No 5-retry ceiling — main thread re-fetches on tile-ready / ed-progress / safety. */
+const EVENT_DRIVEN_PENDING = new Set([
+  'ed_prefix',
+  'waiting_children',
+  'computing',
+]);
 
 export interface TileErrorMessage {
   type: 'tile-error';
@@ -127,6 +144,14 @@ function responseMeta(response: Response, readHeaders: boolean): {
     stale: response.headers.get('X-Dither-Tile-Stale') != null,
     pyramid: response.headers.get('X-Dither-Tile-Fallback') != null,
   };
+}
+
+function pendingReasonOf(response: Response): string | undefined {
+  if (response.headers == null || typeof response.headers.get !== 'function') {
+    return undefined;
+  }
+  const raw = response.headers.get('X-Tile-Pending-Reason');
+  return raw == null || raw === '' ? undefined : raw;
 }
 
 /**
@@ -235,12 +260,23 @@ async function fetchAndDecodeTile(
         protocolEpochMs,
       );
     } else if (response.status === 202) {
-      // Tile is pending computation — retry with exponential backoff.
-      // This is more reliable than depending solely on tile-ready events
-      // which can be missed during React re-renders or viewport changes.
-      postMessage({ type: 'tile-pending', key, docId } satisfies TilePendingMessage);
+      // Always read pending reason (protocol header); not gated on diag/trace.
+      const reason = pendingReasonOf(response) ?? 'queued';
+      postMessage({
+        type: 'tile-pending',
+        key,
+        docId,
+        pendingReason: reason,
+        rev,
+      } satisfies TilePendingMessage);
 
-      // Retry up to 5 times with increasing delays: 50, 100, 200, 400, 800ms
+      // ed_prefix / waiting_children / computing: no 5-retry ceiling.
+      // Main thread re-queries on tile-ready, ed-progress, and a 1–2s safety timer.
+      if (EVENT_DRIVEN_PENDING.has(reason)) {
+        return;
+      }
+
+      // queued (and unknown): keep bounded exponential backoff.
       let retryWait = 0;
       let retries = 0;
       for (let attempt = 0; attempt < 5; attempt++) {
@@ -271,11 +307,10 @@ async function fetchAndDecodeTile(
                 retryProtocolEpoch,
               );
             }
-            break; // Success, stop retrying
+            break;
           }
-          // Still 202 — continue loop
         } catch {
-          break; // Network error, stop retrying
+          break;
         }
       }
     } else {

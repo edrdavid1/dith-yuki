@@ -1,0 +1,23 @@
+{
+  "1920x1080": {
+    "ok_dev": true,
+    "ok_release": true,
+    "tiles_l0": 40,
+    "wall_ms_dev": 394.877125,
+    "wall_ms_release": 259.2
+  },
+  "4000x3000": {
+    "ok_dev": true,
+    "ok_release": true,
+    "tiles_l0": 192,
+    "wall_ms_dev": 3201.871375,
+    "wall_ms_release": 1655.1
+  },
+  "748x1024": {
+    "ok_dev": true,
+    "ok_release": true,
+    "tiles_l0": 12,
+    "wall_ms_dev": 91.762625,
+    "wall_ms_release": 90.3
+  }
+}
