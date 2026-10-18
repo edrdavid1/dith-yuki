@@ -842,7 +842,72 @@ pub fn pending_ed_processed_at_coord(
         .collect()
 }
 
+/// Deps for parking a Composite task after [`EngineError::EdPrefixPending`].
+///
+/// `pending_ed_processed_at_coord` only lists dirty keys **at this coord**. ED
+/// readiness often fails because **prefix neighbors** are not fresh yet, which
+/// left the worker with an empty dep list and a tight `enqueue_or_bump` spin.
+/// Expand to every non-fresh Processed tile in the causal prefix `[0..=x]×[0..=y]`
+/// for each visible ED layer.
+pub fn composite_ed_park_deps(
+    state: &AppState,
+    nodes: &[LayerNode],
+    doc: u32,
+    coord: engine_tiles::TileCoord,
+) -> Vec<TileKey> {
+    let mut deps = pending_ed_processed_at_coord(state, nodes, doc, coord);
+    let cache = &state.tiles.tile_cache;
+    collect_ed_layers(nodes, &mut |layer_id| {
+        for py in 0..=coord.y {
+            for px in 0..=coord.x {
+                let key = TileKey {
+                    doc,
+                    layer: layer_id,
+                    coord: engine_tiles::TileCoord {
+                        level: coord.level,
+                        x: px,
+                        y: py,
+                    },
+                    stage: CacheStage::Processed,
+                };
+                if !engine_tiles::tile_fresh(cache, key) {
+                    deps.push(key);
+                }
+                for miss in engine_tiles::ed_missing_deps(cache, key) {
+                    deps.push(miss);
+                }
+            }
+        }
+    });
+    deps.sort_by(|a, b| {
+        let stage_ord = |s: CacheStage| match s {
+            CacheStage::Raw => 0u8,
+            CacheStage::Processed => 1,
+            CacheStage::Composite => 2,
+        };
+        (
+            a.layer,
+            a.coord.level,
+            a.coord.y,
+            a.coord.x,
+            stage_ord(a.stage),
+        )
+            .cmp(&(
+                b.layer,
+                b.coord.level,
+                b.coord.y,
+                b.coord.x,
+                stage_ord(b.stage),
+            ))
+    });
+    deps.dedup();
+    deps
+}
+
 /// Wake EdFrontier after a successful Processed/Raw insert and re-enqueue ready tasks.
+///
+/// Composite tasks parked via [`EdFrontier::block_on`] on Processed deps are returned
+/// here when those deps insert — without this wake, park would become a silent hang.
 pub fn wake_ed_frontier_after_insert(state: &AppState, completed: TileKey) {
     let ready = if completed.stage == CacheStage::Processed {
         state
@@ -1492,6 +1557,39 @@ mod tests {
             .document_handle
             .store(std::sync::Arc::new(doc));
         state
+    }
+
+    #[test]
+    fn composite_ed_park_deps_includes_prefix_not_only_this_coord() {
+        // When left Processed is missing, park deps must be non-empty so the
+        // worker can block_on instead of tight-loop enqueue_or_bump.
+        let state = make_ed_layer_state();
+        let coord = TileCoord {
+            level: 0,
+            x: 1,
+            y: 0,
+        };
+        state.tiles.tile_cache.get_or_insert(
+            TileKey {
+                doc: 1,
+                layer: 1,
+                coord,
+                stage: CacheStage::Raw,
+            },
+            Arc::new(PixelTile::new()),
+        );
+        let snap = state.must_active().document_handle.snapshot();
+        let deps = composite_ed_park_deps(&state, &snap.root, 1, coord);
+        assert!(
+            !deps.is_empty(),
+            "park deps must be non-empty when ED prefix is incomplete"
+        );
+        assert!(
+            deps.iter().any(|k| {
+                k.stage == CacheStage::Processed && k.coord.x == 0 && k.coord.y == 0
+            }),
+            "must wait on left neighbor Processed (0,0), got {deps:?}"
+        );
     }
 
     #[test]

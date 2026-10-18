@@ -36,6 +36,7 @@ mod services;
 mod state;
 #[cfg(test)]
 mod step0_harness;
+mod delayed_requeue;
 mod tile_pipeline;
 mod tile_protocol;
 mod tile_serve;

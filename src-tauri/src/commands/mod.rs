@@ -65,6 +65,8 @@ pub struct AppState {
     pub active_id: Mutex<Option<u32>>,
     pub tiles: crate::state::TileState,
     pub worker_wake: WorkerWake,
+    /// Last-resort Composite backoff (one sleeper thread; cancel on doc close).
+    pub delayed_requeue: Arc<crate::delayed_requeue::DelayedRequeue>,
     pub gpu: Option<std::sync::Arc<engine_gpu::GpuContext>>,
     pub gpu_resident: Option<std::sync::Arc<engine_gpu::GpuTileCache>>,
     pub gpu_executor: Option<std::sync::Mutex<engine_gpu::GpuExecutor>>,

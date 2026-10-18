@@ -105,6 +105,7 @@ impl AppState {
             active_id: Mutex::new(None),
             tiles: crate::state::TileState::new(cache_bytes),
             worker_wake: crate::worker::WorkerWake::new(),
+            delayed_requeue: std::sync::Arc::new(crate::delayed_requeue::DelayedRequeue::new()),
             gpu,
             gpu_resident,
             gpu_executor,
@@ -368,6 +369,7 @@ impl AppState {
         self.tiles.palette_cache.evict_document(doc);
         self.tiles.palette_lut_cache.evict_document(doc);
         self.tiles.full_document.clear(); // per-doc eviction not needed yet (few entries)
+        self.delayed_requeue.cancel_doc(doc);
 
         let mut active = self.active_id.lock().map_err(|e| e.to_string())?;
         if *active == Some(doc) {
