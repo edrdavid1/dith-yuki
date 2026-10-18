@@ -5,12 +5,38 @@
 //! executes tile computations (Raw/Processed/Composite), inserts fresh results
 //! into the TileCache, and emits `tile-ready` events to the frontend.
 
+use std::collections::HashMap;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::Emitter;
+
+/// Backoff for the rare empty-deps Composite path. Caps at 16ms.
+fn composite_empty_deps_backoff_ms(attempt: u32) -> u64 {
+    1u64 << attempt.min(4)
+}
+
+fn empty_deps_attempt(doc: u32, level: u8, x: u32, y: u32, gen: u64) -> u32 {
+    static MAP: OnceLock<Mutex<HashMap<(u32, u8, u32, u32, u64), u32>>> = OnceLock::new();
+    let map = MAP.get_or_init(|| Mutex::new(HashMap::new()));
+    let Ok(mut g) = map.lock() else {
+        return 1;
+    };
+    let e = g.entry((doc, level, x, y, gen)).or_insert(0);
+    *e = e.saturating_add(1);
+    *e
+}
+
+fn clear_empty_deps_attempt(doc: u32, level: u8, x: u32, y: u32, gen: u64) {
+    static MAP: OnceLock<Mutex<HashMap<(u32, u8, u32, u32, u64), u32>>> = OnceLock::new();
+    if let Some(map) = MAP.get() {
+        if let Ok(mut g) = map.lock() {
+            g.remove(&(doc, level, x, y, gen));
+        }
+    }
+}
 
 use engine_project::Document;
 use engine_tiles::{CacheStage, PixelTile, RecomputeTask, TileKey};
@@ -167,16 +193,31 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
                         l0_started = l0_compute_started(diag, &task);
                         match compute_composite_tile(task.key, &state) {
                             Err(engine_project::error::EngineError::EdPrefixPending) => {
-                                let deps = crate::tile_pipeline::pending_ed_processed_at_coord(
+                                // Expand beyond dirty-at-this-coord: empty deps +
+                                // immediate enqueue_or_bump was a tight worker spin.
+                                let deps = crate::tile_pipeline::composite_ed_park_deps(
                                     &state,
                                     &snapshot.root,
                                     task.key.doc,
                                     task.key.coord,
                                 );
                                 if deps.is_empty() {
-                                    state.tiles.scheduler.enqueue_or_bump(task);
-                                    state.worker_wake.notify_one();
+                                    let attempt = empty_deps_attempt(
+                                        task.key.doc,
+                                        task.key.coord.level,
+                                        task.key.coord.x,
+                                        task.key.coord.y,
+                                        task.generation,
+                                    );
+                                    state.delayed_requeue.schedule(
+                                        Arc::clone(&state),
+                                        task,
+                                        Duration::from_millis(composite_empty_deps_backoff_ms(
+                                            attempt,
+                                        )),
+                                    );
                                 } else {
+                                    // Woken by wake_ed_frontier_after_insert when a dep inserts.
                                     state.tiles.ed_frontier.block_on(task, deps);
                                 }
                                 state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
@@ -247,6 +288,15 @@ pub fn tile_worker_loop(state: Arc<AppState>, app_handle: tauri::AppHandle) {
                         }
                         // Processed / Composite: pipeline already published a single Arc.
                         CacheStage::Processed | CacheStage::Composite => {
+                            if task.key.stage == CacheStage::Composite {
+                                clear_empty_deps_attempt(
+                                    task.key.doc,
+                                    task.key.coord.level,
+                                    task.key.coord.x,
+                                    task.key.coord.y,
+                                    task.generation,
+                                );
+                            }
                             let viewport_level = state.ui.viewport.lock().unwrap().level;
                             if task.key.stage == CacheStage::Composite
                                 && task.key.coord.level == viewport_level
