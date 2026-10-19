@@ -42,6 +42,8 @@ mod fs_ed_b1_merge_tests;
 #[cfg(test)]
 mod journal_baseline_harness;
 #[cfg(test)]
+mod journal_premerge_harness;
+#[cfg(test)]
 mod journal_session_harness;
 mod preview_diag;
 #[cfg(test)]

@@ -76,6 +76,10 @@ pub fn write_journal_for_doc_from(
         stats::note_kill_switch_noop();
         return Ok(());
     }
+    // Clean (unchanged vs last Save) documents must not create `.state` / blobs.
+    if !crate::undo::is_dirty_doc(state, doc_id) {
+        return Ok(());
+    }
     let _inflight = stats::InFlightGuard::enter();
     let t0 = Instant::now();
 

@@ -5,7 +5,7 @@
 //! `{uuid}.dyproj.journal` files are still readable (Step 4); new writes use
 //! the state+blobs format only.
 
-mod assemble;
+pub(crate) mod assemble;
 pub(crate) mod cleanup;
 pub mod clean_exit;
 pub mod commands;
@@ -13,6 +13,8 @@ pub mod commands;
 mod fail_tests;
 #[cfg(test)]
 pub(crate) mod failpoint;
+#[cfg(test)]
+mod premerge_tests;
 mod fsutil;
 mod meta;
 pub mod roster;

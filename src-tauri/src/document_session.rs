@@ -177,11 +177,21 @@ impl AppState {
     }
 
     pub fn spawn_session(&self, doc: Document) -> Arc<DocumentSession> {
+        self.spawn_session_with_recovery(doc, uuid::Uuid::new_v4())
+    }
+
+    /// Same as [`Self::spawn_session`], but with a fixed crash-journal UUID
+    /// (kill-loop harness / tests that share an on-disk recovery id across processes).
+    pub fn spawn_session_with_recovery(
+        &self,
+        doc: Document,
+        recovery_id: uuid::Uuid,
+    ) -> Arc<DocumentSession> {
         let id = doc.id;
         self.bump_next_past(id.0);
         let session = Arc::new(DocumentSession {
             id,
-            recovery_id: uuid::Uuid::new_v4(),
+            recovery_id,
             document_handle: DocumentHandle::new(doc),
             history: crate::state::HistoryState::new(),
             project_path: Mutex::new(None),

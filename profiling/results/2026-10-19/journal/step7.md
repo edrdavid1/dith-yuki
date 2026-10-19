@@ -54,14 +54,19 @@ cargo test -p dither --release journal_baseline_sizes_release \
 - **Sustained disk**: after the one-time blob, debounce refreshes only ~2 KiB state → ≪1 MiB/min vs ~2 GiB/min baseline.
 - **Concurrent peak:** 1 (single-flight).
 
+## Pre-merge follow-up
+
+See [`premerge.md`](./premerge.md): 25 MPix restore **997 ms**, kill -9 **200/200**, Raw/Processed equivalence, clean-doc guard, delete/undo blob reuse. Windows build still author/CI.
+
 ## Still author-owned
 
 - Z3 TIME_TO_FRESH A/B with `DITHER_JOURNAL=0` (≤2% delta).
 - Interactive pan/zoom feel; core ≤5% during interactive work.
 - Full Z1–Z7 / ED golden regression suite after merge.
+- Windows `cargo test` matrix.
 
 ## Residual risks
 
 - First-open blob encode still O(pixels) on cold journal (background thread, but competes briefly).
 - Soft-discarded journals kept until Discard / clean exit (by design).
-- Step 6 thumbnail path not started.
+- Step 6 thumbnail path deferred to a third PR after merge.
