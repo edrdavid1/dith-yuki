@@ -40,6 +40,8 @@ export interface RequestTilesMessage {
   /** `DITHER_PROFILE=1` — attach protocol/decode epoch marks (no dither change). */
   profile?: boolean;
   profileRunId?: number;
+  /** `DITHER_TRACE=1` — always read X-Tile-Generation for FE events. */
+  trace?: boolean;
 }
 
 export interface FetchTileMessage {
@@ -55,6 +57,8 @@ export interface FetchTileMessage {
   /** `DITHER_PROFILE=1` — attach protocol/decode epoch marks (no dither change). */
   profile?: boolean;
   profileRunId?: number;
+  /** `DITHER_TRACE=1` — always read X-Tile-Generation for FE events. */
+  trace?: boolean;
 }
 
 export type WorkerInMessage = RequestTilesMessage | FetchTileMessage;
@@ -65,6 +69,9 @@ export interface TileDecodedMessage {
   bitmap: ImageBitmap;
   rev?: number;
   docId: number;
+  /** Present when `diag` or `trace` requested generation from `X-Tile-Generation`. */
+  gen?: number | null;
+  httpStatus?: number;
   /** Present only when the request set `diag: true` (diagnostic.md §5). */
   diag?: TileFetchDiag;
   /** Present only when the request set `profile: true` (time-testing.md). */
@@ -87,11 +94,28 @@ export interface TileFetchDiag {
   bytes: number;
 }
 
+export type TilePendingReason =
+  | 'ed_prefix'
+  | 'waiting_children'
+  | 'computing'
+  | 'queued'
+  | string;
+
 export interface TilePendingMessage {
   type: 'tile-pending';
   key: string;
   docId: number;
+  /** From `X-Tile-Pending-Reason` when present. */
+  pendingReason?: TilePendingReason;
+  rev?: number;
 }
+
+/** No 5-retry ceiling — main thread re-fetches on tile-ready / ed-progress / safety. */
+const EVENT_DRIVEN_PENDING = new Set([
+  'ed_prefix',
+  'waiting_children',
+  'computing',
+]);
 
 export interface TileErrorMessage {
   type: 'tile-error';
@@ -105,12 +129,12 @@ export type WorkerOutMessage = TileDecodedMessage | TilePendingMessage | TileErr
 const TILE_SIZE = 256;
 const TILE_BYTE_LENGTH = TILE_SIZE * TILE_SIZE * 4; // 262,144 bytes RGBA8
 
-function responseMeta(response: Response, diag: boolean): {
+function responseMeta(response: Response, readHeaders: boolean): {
   gen: number | null;
   stale: boolean;
   pyramid: boolean;
 } {
-  if (!diag || response.headers == null || typeof response.headers.get !== 'function') {
+  if (!readHeaders || response.headers == null || typeof response.headers.get !== 'function') {
     return { gen: null, stale: false, pyramid: false };
   }
   const raw = response.headers.get('X-Tile-Generation');
@@ -120,6 +144,14 @@ function responseMeta(response: Response, diag: boolean): {
     stale: response.headers.get('X-Dither-Tile-Stale') != null,
     pyramid: response.headers.get('X-Dither-Tile-Fallback') != null,
   };
+}
+
+function pendingReasonOf(response: Response): string | undefined {
+  if (response.headers == null || typeof response.headers.get !== 'function') {
+    return undefined;
+  }
+  const raw = response.headers.get('X-Tile-Pending-Reason');
+  return raw == null || raw === '' ? undefined : raw;
 }
 
 /**
@@ -138,10 +170,12 @@ async function fetchAndDecodeTile(
   diag = false,
   profile = false,
   profileRunId?: number,
+  trace = false,
 ): Promise<void> {
   const key = `${tile.level}/${tile.x}/${tile.y}`;
   const url = buildTileUrl(docId, tile, rev, { base: protocolBase });
   const epoch = () => performance.timeOrigin + performance.now();
+  const readHeaders = diag || trace;
 
   const postDecoded = (
     bitmap: ImageBitmap,
@@ -155,6 +189,10 @@ async function fetchAndDecodeTile(
     protocolEpochMs?: number,
   ) => {
     const msg: TileDecodedMessage = { type: 'tile-decoded', key, bitmap, rev, docId };
+    if (trace) {
+      msg.gen = meta.gen;
+      msg.httpStatus = status;
+    }
     if (diag) {
       msg.diag = {
         retries,
@@ -217,17 +255,28 @@ async function fetchAndDecodeTile(
         0,
         0,
         200,
-        responseMeta(response, diag),
+        responseMeta(response, readHeaders),
         buffer.byteLength,
         protocolEpochMs,
       );
     } else if (response.status === 202) {
-      // Tile is pending computation — retry with exponential backoff.
-      // This is more reliable than depending solely on tile-ready events
-      // which can be missed during React re-renders or viewport changes.
-      postMessage({ type: 'tile-pending', key, docId } satisfies TilePendingMessage);
+      // Always read pending reason (protocol header); not gated on diag/trace.
+      const reason = pendingReasonOf(response) ?? 'queued';
+      postMessage({
+        type: 'tile-pending',
+        key,
+        docId,
+        pendingReason: reason,
+        rev,
+      } satisfies TilePendingMessage);
 
-      // Retry up to 5 times with increasing delays: 50, 100, 200, 400, 800ms
+      // ed_prefix / waiting_children / computing: no 5-retry ceiling.
+      // Main thread re-queries on tile-ready, ed-progress, and a 1–2s safety timer.
+      if (EVENT_DRIVEN_PENDING.has(reason)) {
+        return;
+      }
+
+      // queued (and unknown): keep bounded exponential backoff.
       let retryWait = 0;
       let retries = 0;
       for (let attempt = 0; attempt < 5; attempt++) {
@@ -253,16 +302,15 @@ async function fetchAndDecodeTile(
                 retries,
                 retryWait,
                 200,
-                responseMeta(retryResponse, diag),
+                responseMeta(retryResponse, readHeaders),
                 retryBuffer.byteLength,
                 retryProtocolEpoch,
               );
             }
-            break; // Success, stop retrying
+            break;
           }
-          // Still 202 — continue loop
         } catch {
-          break; // Network error, stop retrying
+          break;
         }
       }
     } else {
@@ -306,6 +354,7 @@ self.onmessage = async (e: MessageEvent<WorkerInMessage>) => {
           msg.diag === true,
           msg.profile === true,
           msg.profileRunId,
+          msg.trace === true,
         ),
       ),
     );
@@ -322,6 +371,7 @@ self.onmessage = async (e: MessageEvent<WorkerInMessage>) => {
       msg.diag === true,
       msg.profile === true,
       msg.profileRunId,
+      msg.trace === true,
     );
   }
 };

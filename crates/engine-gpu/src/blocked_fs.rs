@@ -694,9 +694,7 @@ pub fn request_blocked_fs_device_with_info(
     ))
     .ok()?;
 
-    let granted_ts = device
-        .features()
-        .contains(wgpu::Features::TIMESTAMP_QUERY);
+    let granted_ts = device.features().contains(wgpu::Features::TIMESTAMP_QUERY);
     set_device_timestamp_available(granted_ts, adapter_had_ts);
 
     // Log validation / GPU errors instead of panicking the overnight harness.

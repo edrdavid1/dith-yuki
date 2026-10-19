@@ -36,6 +36,7 @@ pub mod voronoi_stipple;
 pub mod zhou_fang_table;
 
 pub mod apply;
+pub mod fs_ed_prof;
 
 // Re-export main API
 pub use apply::apply_filter_to_tile;
@@ -74,6 +75,7 @@ pub use ed_wrap_padding::{
     edge_margin, wrap_pad_rgba_f32, wrap_padding_fits_limits, EdWrapError, MAX_MARGIN_PX,
     MAX_PADDED_PIXELS, WRAP_PADDING_HINT,
 };
+pub use fs_ed_prof::{self as fs_ed_prof_counters, Snapshot as FsEdProfSnapshot};
 
 // Re-export FilterContext
 pub use context::FilterContext;

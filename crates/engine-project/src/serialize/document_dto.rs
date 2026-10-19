@@ -479,6 +479,8 @@ pub fn layer_node_from_file(node: &LayerNodeFile) -> LayerNode {
                 .map(|f| filter_from_file(f, None))
                 .collect(),
             bounds_l0: layer.bounds_l0,
+            // Open path bumps after PNG → Raw materialization.
+            raw_rev: 0,
             extra: layer.extra.clone(),
         }),
         LayerNodeFile::Group(group) => LayerNode::Group(LayerGroup {
@@ -520,6 +522,7 @@ pub fn layer_node_from_file(node: &LayerNodeFile) -> LayerNode {
                     max_x: 0,
                     max_y: 0,
                 },
+                raw_rev: 0,
                 extra,
             })
         }
@@ -547,6 +550,7 @@ pub fn layer_node_from_file(node: &LayerNodeFile) -> LayerNode {
                     max_x: 0,
                     max_y: 0,
                 },
+                raw_rev: 0,
                 extra,
             })
         }

@@ -79,3 +79,10 @@ path = "fuzz_targets/fuzz_ed_wrap_padding.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_journal_state"
+path = "fuzz_targets/fuzz_journal_state.rs"
+test = false
+doc = false
+bench = false

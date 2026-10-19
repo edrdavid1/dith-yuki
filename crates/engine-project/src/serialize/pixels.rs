@@ -531,6 +531,51 @@ pub fn encode_rgba8_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>,
     Ok(buf.into_inner())
 }
 
+/// Fast PNG for journal layer blobs (`Compression::Fast` + `FilterType::Sub`).
+pub fn encode_rgba8_png_fast(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, ProjectError> {
+    let expected = (width as usize) * (height as usize) * 4;
+    if rgba.len() != expected {
+        return Err(ProjectError::Codec(format!(
+            "RGBA buffer size {} != {}×{}×4",
+            rgba.len(),
+            width,
+            height
+        )));
+    }
+    let mut buf = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut buf, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_compression(png::Compression::Fast);
+        encoder.set_filter(png::FilterType::Sub);
+        encoder.set_adaptive_filter(png::AdaptiveFilterType::NonAdaptive);
+        let mut writer = encoder
+            .write_header()
+            .map_err(|e| ProjectError::Codec(format!("journal PNG header: {e}")))?;
+        writer
+            .write_image_data(rgba)
+            .map_err(|e| ProjectError::Codec(format!("journal PNG data: {e}")))?;
+    }
+    Ok(buf)
+}
+
+/// Assemble layer Raw → fast PNG (journal blob path).
+pub fn assemble_layer_png_fast(
+    cache: &TileCache,
+    layer: &Layer,
+    doc_width: u32,
+    doc_height: u32,
+    doc_id: u32,
+) -> Result<Vec<u8>, ProjectError> {
+    let rgba = assemble_layer_rgba8(cache, layer, doc_width, doc_height, doc_id)?;
+    encode_rgba8_png_fast(&rgba, doc_width, doc_height)
+}
+
 /// Decode PNG → re-encode as clean RGBA8 PNG (drops EXIF/XMP/iCCP/text chunks).
 ///
 /// **Note:** always outputs RGBA8. Prefer [`strip_png_ancillary_chunks`] for

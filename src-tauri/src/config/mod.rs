@@ -94,10 +94,7 @@ fn default_gpu_dither_families() -> bool {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExperimentalConfig {
     /// When true, UI may offer `blocked_fs` / `blue_noise` GPU dither families.
-    #[serde(
-        default = "default_gpu_dither_families",
-        alias = "gpuDitherFamilies"
-    )]
+    #[serde(default = "default_gpu_dither_families", alias = "gpuDitherFamilies")]
     pub gpu_dither_families: bool,
     /// Gesture / tile timing. Hot path reads an atomic copied from this struct.
     #[serde(default)]
@@ -472,7 +469,7 @@ impl ConfigStore {
 }
 
 fn parse_and_migrate(bytes: &[u8]) -> Result<(AppConfig, bool), String> {
-    let mut value: Value = serde_json::from_slice(bytes).map_err(|e| format!("json: {e}"))?;
+    let value: Value = serde_json::from_slice(bytes).map_err(|e| format!("json: {e}"))?;
     let had_workspace = value
         .as_object()
         .map(|o| o.contains_key("workspace"))

@@ -11,7 +11,10 @@ pub const JOURNAL_MAX_BYTES: u64 = 512 * 1024 * 1024;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum JournalContentKind {
+    /// Legacy full `.dyproj` zip journal (pre–H9 v2).
     FullDyproj,
+    /// H9 v2: `{uuid}.state` + `{uuid}.blobs/` (no composite/thumbnail).
+    StateV1,
     SkippedTooLarge,
 }
 
@@ -37,6 +40,14 @@ pub fn recovery_subdir(app_data_dir: &Path) -> PathBuf {
 
 pub fn journal_blob_path(recovery_dir: &Path, recovery_id: Uuid) -> PathBuf {
     recovery_dir.join(format!("{recovery_id}.dyproj.journal"))
+}
+
+pub fn journal_state_path(recovery_dir: &Path, recovery_id: Uuid) -> PathBuf {
+    recovery_dir.join(format!("{recovery_id}.state"))
+}
+
+pub fn journal_blobs_dir(recovery_dir: &Path, recovery_id: Uuid) -> PathBuf {
+    recovery_dir.join(format!("{recovery_id}.blobs"))
 }
 
 pub fn journal_meta_path(recovery_dir: &Path, recovery_id: Uuid) -> PathBuf {

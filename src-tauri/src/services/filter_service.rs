@@ -449,6 +449,7 @@ impl FilterService {
                     .error_residuals
                     .evict_layer(doc_id, engine_project::types::LayerId::new(layer_id));
                 self.state.tiles.block_representatives.clear_dithered();
+                self.state.tiles.clear_strip_gates();
                 self.state
                     .tiles
                     .full_document
@@ -1160,14 +1161,98 @@ impl FilterService {
                         req.layer_id,
                         req.filter_id
                     );
+                    if crate::tile_gen_trace::enabled() {
+                        let before =
+                            serde_json::to_value(&cur.params).unwrap_or(serde_json::Value::Null);
+                        let hash = crate::tile_gen_trace::params_hash(&before);
+                        let doc_gen = snapshot
+                            .generations
+                            .document_gen
+                            .load(std::sync::atomic::Ordering::Acquire);
+                        crate::tile_gen_trace::emit(
+                            "update_filter_in",
+                            Some(req.layer_id),
+                            Some(doc_gen),
+                            Some(snapshot.generations.get_layer_gen(req.layer_id)),
+                            None,
+                            Some(doc_gen),
+                            serde_json::json!({
+                                "params_hash_before": format!("{hash:x}"),
+                                "params_hash_after": format!("{hash:x}"),
+                                "noop": true,
+                            }),
+                        );
+                    }
                     return Ok(());
                 }
             }
         }
 
+        if crate::tile_gen_trace::enabled() {
+            let snap = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
+            let doc_gen = snap
+                .generations
+                .document_gen
+                .load(std::sync::atomic::Ordering::Acquire);
+            let before_hash = {
+                fn find_filter(
+                    nodes: &[engine_project::LayerNode],
+                    layer_id: u32,
+                    filter_id: FilterInstanceId,
+                ) -> Option<&engine_project::FilterInstance> {
+                    for node in nodes.iter() {
+                        match node {
+                            engine_project::LayerNode::Leaf(layer) if layer.id.0 == layer_id => {
+                                return layer.find_filter(filter_id);
+                            }
+                            engine_project::LayerNode::Group(group) => {
+                                if let Some(f) = find_filter(&group.children, layer_id, filter_id) {
+                                    return Some(f);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    None
+                }
+                find_filter(&snap.root, req.layer_id, filter_id)
+                    .and_then(|f| serde_json::to_value(&f.params).ok())
+                    .map(|v| crate::tile_gen_trace::params_hash(&v))
+                    .unwrap_or(0)
+            };
+            let after_hash = crate::tile_gen_trace::params_hash(
+                &serde_json::to_value(&new_params).unwrap_or(serde_json::Value::Null),
+            );
+            crate::tile_gen_trace::emit(
+                "update_filter_in",
+                Some(req.layer_id),
+                Some(doc_gen),
+                Some(snap.generations.get_layer_gen(req.layer_id)),
+                None,
+                Some(doc_gen),
+                serde_json::json!({
+                    "params_hash_before": format!("{before_hash:x}"),
+                    "params_hash_after": format!("{after_hash:x}"),
+                    "noop": false,
+                }),
+            );
+        }
+
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
             let layer_id = req.layer_id;
             let mut found = false;
+            let gen_before = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot()
+                .generations
+                .document_gen
+                .load(std::sync::atomic::Ordering::Acquire);
             self.state
                 .require_session(doc_id)?
                 .document_handle
@@ -1264,6 +1349,30 @@ impl FilterService {
                     .document_handle
                     .snapshot();
                 snapshot.generations.increment_layer_gen(layer_id);
+            }
+
+            if crate::tile_gen_trace::enabled() {
+                let snapshot = self
+                    .state
+                    .require_session(doc_id)?
+                    .document_handle
+                    .snapshot();
+                let gen_after = snapshot
+                    .generations
+                    .document_gen
+                    .load(std::sync::atomic::Ordering::Acquire);
+                crate::tile_gen_trace::emit(
+                    "gen_bumped",
+                    Some(layer_id),
+                    Some(gen_after),
+                    Some(snapshot.generations.get_layer_gen(layer_id)),
+                    None,
+                    Some(gen_after),
+                    serde_json::json!({
+                        "doc_gen_before": gen_before,
+                        "doc_gen_after": gen_after,
+                    }),
+                );
             }
 
             request_preview_refresh(

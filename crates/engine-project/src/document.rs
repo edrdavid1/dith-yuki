@@ -3,7 +3,7 @@
 use crate::error::EngineError;
 use crate::filter::FilterParams;
 use crate::layer::LayerNode;
-use crate::types::{ColorProfileRef, DocumentId, FilterInstanceId, PaletteId};
+use crate::types::{ColorProfileRef, DocumentId, FilterInstanceId, LayerId, PaletteId};
 use arc_swap::ArcSwap;
 use engine_color::palette::{LinearColor, Palette};
 use engine_color::SoftProofConfig;
@@ -145,6 +145,61 @@ impl Document {
     pub fn increment_generation(&mut self) {
         self.revision += 1;
         self.generations.increment_document_gen();
+    }
+
+    /// Bump [`Layer::raw_rev`] for a leaf layer after Raw pixels change.
+    ///
+    /// Returns the new revision, or `None` if the layer is missing / not a leaf.
+    pub fn bump_layer_raw_rev(&mut self, layer_id: LayerId) -> Option<u64> {
+        Self::find_leaf_mut(&mut self.root, layer_id).map(|l| l.bump_raw_rev())
+    }
+
+    /// Set [`Layer::raw_rev`] (used when materializing Raw from an opened `.dyproj`).
+    pub fn set_layer_raw_rev(&mut self, layer_id: LayerId, rev: u64) -> bool {
+        if let Some(layer) = Self::find_leaf_mut(&mut self.root, layer_id) {
+            layer.raw_rev = rev;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Read [`Layer::raw_rev`] for a leaf layer.
+    pub fn layer_raw_rev(&self, layer_id: LayerId) -> Option<u64> {
+        Self::find_leaf(&self.root, layer_id).map(|l| l.raw_rev)
+    }
+
+    fn find_leaf(nodes: &[LayerNode], layer_id: LayerId) -> Option<&crate::layer::Layer> {
+        for node in nodes {
+            match node {
+                LayerNode::Leaf(layer) if layer.id == layer_id => return Some(layer),
+                LayerNode::Group(g) => {
+                    if let Some(l) = Self::find_leaf(&g.children, layer_id) {
+                        return Some(l);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn find_leaf_mut(
+        nodes: &mut [LayerNode],
+        layer_id: LayerId,
+    ) -> Option<&mut crate::layer::Layer> {
+        for node in nodes {
+            match node {
+                LayerNode::Leaf(layer) if layer.id == layer_id => return Some(layer),
+                LayerNode::Group(g) => {
+                    if let Some(l) = Self::find_leaf_mut(&mut g.children, layer_id) {
+                        return Some(l);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
     }
 
     /// Compute the next unique PaletteId by finding the max existing id + 1.
@@ -365,6 +420,35 @@ mod tests {
 
         let new_revision = handle.snapshot().revision;
         assert_eq!(new_revision, old_revision + 10);
+    }
+
+    /// Undo/redo of layer delete restores the same `raw_rev` (no blob rewrite).
+    #[test]
+    fn undo_redo_layer_delete_preserves_raw_rev() {
+        use crate::types::LayerId;
+
+        let mut doc = Document::new(DocumentId::new(1), 64, 64);
+        let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, 64, 64);
+        layer.bump_raw_rev();
+        layer.bump_raw_rev(); // raw_rev == 2
+        doc.root.push(LayerNode::Leaf(layer));
+        let handle = DocumentHandle::new(doc);
+
+        let with_layer = handle.snapshot();
+        assert_eq!(with_layer.layer_raw_rev(LayerId::new(1)), Some(2));
+
+        // "Delete" layer (undo stack would keep `with_layer`).
+        handle.mutate(|d| d.root.clear());
+        assert!(handle.snapshot().layer_raw_rev(LayerId::new(1)).is_none());
+
+        // Undo → restore pointer (same raw_rev, no bump).
+        handle.store(with_layer.clone());
+        assert_eq!(handle.snapshot().layer_raw_rev(LayerId::new(1)), Some(2));
+
+        // Redo delete then undo again — still 2.
+        handle.mutate(|d| d.root.clear());
+        handle.store(with_layer);
+        assert_eq!(handle.snapshot().layer_raw_rev(LayerId::new(1)), Some(2));
     }
 
     #[test]

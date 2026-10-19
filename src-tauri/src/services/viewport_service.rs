@@ -20,6 +20,7 @@ impl ViewportService {
         Self { state }
     }
 
+    #[allow(dead_code)] // IPC uses set_viewport_traced; thin wrapper kept for callers
     pub fn set_viewport(
         &self,
         zoom: f64,
@@ -27,6 +28,18 @@ impl ViewportService {
         y: f64,
         width: f64,
         height: f64,
+    ) -> Result<SetViewportResponse, AppError> {
+        self.set_viewport_traced(zoom, x, y, width, height, None)
+    }
+
+    pub fn set_viewport_traced(
+        &self,
+        zoom: f64,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        trace_seq: Option<u64>,
     ) -> Result<SetViewportResponse, AppError> {
         let zoom = zoom.clamp(0.01, 64.0);
 
@@ -51,6 +64,26 @@ impl ViewportService {
 
         let prefetch = compute_prefetch_ring(&visible, level, doc_width, doc_height);
         let tile_count = visible.len();
+        let (recv_hash, x0, y0, x1, y1) =
+            crate::tile_gen_trace::vp_hash_from_coords(level, &visible);
+
+        if crate::tile_gen_trace::enabled() {
+            crate::tile_gen_trace::emit_simple(
+                "vp_received",
+                serde_json::json!({
+                    "zoom": zoom,
+                    "x": x,
+                    "y": y,
+                    "width": width,
+                    "height": height,
+                    "level": level,
+                    "x0": x0, "y0": y0, "x1": x1, "y1": y1,
+                    "tile_count": tile_count,
+                    "vp_hash": recv_hash,
+                    "trace_seq": trace_seq,
+                }),
+            );
+        }
 
         let snapshot = self
             .state
@@ -81,6 +114,27 @@ impl ViewportService {
                 };
                 self.state.tiles.scheduler.enqueue(task);
                 self.state.worker_wake.notify_one();
+                if crate::tile_gen_trace::enabled() {
+                    crate::tile_gen_trace::emit(
+                        "tile_enqueued",
+                        None,
+                        Some(doc_gen),
+                        None,
+                        Some(crate::tile_gen_trace::tile(coord.level, coord.x, coord.y)),
+                        Some(doc_gen),
+                        serde_json::json!({
+                            "reason": "viewport_change",
+                            "set": "visible",
+                            "priority": match priority {
+                                Priority::Immediate => "Immediate",
+                                Priority::ViewportCenter => "ViewportCenter",
+                                Priority::ViewportEdge => "ViewportEdge",
+                                Priority::Prefetch => "Prefetch",
+                            },
+                            "vp_hash": recv_hash,
+                        }),
+                    );
+                }
             }
         }
 
@@ -100,6 +154,22 @@ impl ViewportService {
                 };
                 self.state.tiles.scheduler.enqueue(task);
                 self.state.worker_wake.notify_one();
+                if crate::tile_gen_trace::enabled() {
+                    crate::tile_gen_trace::emit(
+                        "tile_enqueued",
+                        None,
+                        Some(doc_gen),
+                        None,
+                        Some(crate::tile_gen_trace::tile(coord.level, coord.x, coord.y)),
+                        Some(doc_gen),
+                        serde_json::json!({
+                            "reason": "viewport_change",
+                            "set": "prefetch",
+                            "priority": "Prefetch",
+                            "vp_hash": recv_hash,
+                        }),
+                    );
+                }
             }
         }
         if let Some(t0) = t_sched {
@@ -116,6 +186,27 @@ impl ViewportService {
             visible_tiles: visible,
             prefetch_tiles: prefetch,
         };
+        let (applied_hash, _, _, _, _) =
+            crate::tile_gen_trace::vp_hash_from_coords(level, &new_viewport.visible_tiles);
+        let matches_recv = applied_hash == recv_hash;
+        if crate::tile_gen_trace::enabled() {
+            crate::tile_gen_trace::emit_simple(
+                "vp_state_applied",
+                serde_json::json!({
+                    "zoom": zoom,
+                    "x": x,
+                    "y": y,
+                    "width": width,
+                    "height": height,
+                    "level": level,
+                    "x0": x0, "y0": y0, "x1": x1, "y1": y1,
+                    "tile_count": tile_count,
+                    "vp_hash": applied_hash,
+                    "matches_received": matches_recv,
+                    "trace_seq": trace_seq,
+                }),
+            );
+        }
         let vp_protect: std::collections::HashSet<_> =
             new_viewport.visible_tiles.iter().copied().collect();
 

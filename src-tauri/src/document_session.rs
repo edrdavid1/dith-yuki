@@ -105,6 +105,7 @@ impl AppState {
             active_id: Mutex::new(None),
             tiles: crate::state::TileState::new(cache_bytes),
             worker_wake: crate::worker::WorkerWake::new(),
+            delayed_requeue: std::sync::Arc::new(crate::delayed_requeue::DelayedRequeue::new()),
             gpu,
             gpu_resident,
             gpu_executor,
@@ -115,6 +116,7 @@ impl AppState {
             )),
             preview_pass_inflight: AtomicUsize::new(0),
             pending_preview_refresh: Mutex::new(None),
+            preview_refresh_timer: Mutex::new(None),
             ascii_preview: std::sync::atomic::AtomicBool::new(true),
             full_document_busy: AtomicUsize::new(0),
             proof: Mutex::new(
@@ -175,11 +177,21 @@ impl AppState {
     }
 
     pub fn spawn_session(&self, doc: Document) -> Arc<DocumentSession> {
+        self.spawn_session_with_recovery(doc, uuid::Uuid::new_v4())
+    }
+
+    /// Same as [`Self::spawn_session`], but with a fixed crash-journal UUID
+    /// (kill-loop harness / tests that share an on-disk recovery id across processes).
+    pub fn spawn_session_with_recovery(
+        &self,
+        doc: Document,
+        recovery_id: uuid::Uuid,
+    ) -> Arc<DocumentSession> {
         let id = doc.id;
         self.bump_next_past(id.0);
         let session = Arc::new(DocumentSession {
             id,
-            recovery_id: uuid::Uuid::new_v4(),
+            recovery_id,
             document_handle: DocumentHandle::new(doc),
             history: crate::state::HistoryState::new(),
             project_path: Mutex::new(None),
@@ -336,6 +348,16 @@ impl AppState {
                     crate::preview_diag::record_evict(snap.id.0, gen, stats.passes, stats.removed);
                 }
             }
+            if crate::tile_gen_trace::enabled() {
+                let live = self.active_session().ok().map(|s| {
+                    s.document_handle
+                        .snapshot()
+                        .generations
+                        .document_gen
+                        .load(Ordering::Acquire)
+                });
+                crate::tile_gen_trace::note_cache_evict(stats.removed, "memory_pressure", live);
+            }
         }
         if let Some(gpu) = self.gpu_resident.as_ref() {
             gpu.set_evict_policy(&ctx);
@@ -365,9 +387,13 @@ impl AppState {
         self.tiles.error_residuals.evict_document(doc);
         self.tiles.block_representatives.evict_document(doc);
         self.tiles.ed_frontier.evict_document(doc);
+        self.tiles.evict_strip_gates_document(doc);
         self.tiles.palette_cache.evict_document(doc);
         self.tiles.palette_lut_cache.evict_document(doc);
         self.tiles.full_document.clear(); // per-doc eviction not needed yet (few entries)
+        self.delayed_requeue.cancel_doc(doc);
+        crate::tile_gen_trace::clear_spin_for_doc(doc);
+        crate::pending_tiles::clear_doc(doc);
 
         let mut active = self.active_id.lock().map_err(|e| e.to_string())?;
         if *active == Some(doc) {

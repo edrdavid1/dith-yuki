@@ -6,6 +6,8 @@ export interface SetViewportArgs {
   y: number;
   width: number;
   height: number;
+  /** Optional correlation id when `DITHER_TRACE=1`. */
+  traceSeq?: number;
 }
 
 export async function setViewport(args: SetViewportArgs): Promise<void> {
@@ -15,5 +17,6 @@ export async function setViewport(args: SetViewportArgs): Promise<void> {
     y: args.y,
     width: args.width,
     height: args.height,
+    traceSeq: args.traceSeq ?? null,
   });
 }

@@ -55,5 +55,9 @@ name = "filter_bench"
 harness = false
 
 [[bench]]
+name = "fs_ed_stripe_bench"
+harness = false
+
+[[bench]]
 name = "wrap_padding_false_bench"
 harness = false

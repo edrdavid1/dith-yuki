@@ -1,0 +1,27 @@
+.ed-progress {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 7.5rem;
+  height: 1.25rem;
+  padding: 0 0.4rem;
+  overflow: hidden;
+  border: 1px solid var(--border-muted, #6a6a6a);
+  background: var(--surface-2, #2a2a2a);
+  color: var(--text-primary, #e8e8e8);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.ed-progress-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: color-mix(in srgb, var(--accent, #7eb8da) 55%, transparent);
+  pointer-events: none;
+}
+
+.ed-progress-label {
+  position: relative;
+  z-index: 1;
+}

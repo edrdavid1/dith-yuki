@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+## 2.0.5-beta
+
+### Fixed
+
+- Missing / late tiles after dithering and zoom-out: Composite waits on the ED
+  L0 prefix, pyramid parents wake via child insert (no self-requeue spin), and
+  the preview keeps retrying ED / waiting_children / computing 202s (safety
+  timer + **Dither N%** footer progress).
+- Crash journal no longer re-encodes full composites on every debounce: writes
+  `.state` + immutable `.blobs` on a background thread with single-flight;
+  legacy `{uuid}.dyproj.journal` remains recoverable.
+
+### Performance
+
+- CPU error-diffusion strip owner: one strip recompute per `(layer, ty)` via
+  `ed_strip_gates` (large speedup vs repeated strip work on the same row).
+
+### Compatibility
+
+- `.dyproj` / `.dyuki` formats unchanged.
+- Old journals still open; new writes use `.state`/`.blobs` only.
+- Journal durability / permissions verified on **macOS** in this release;
+  Windows ACL parity is tracked separately.
+- `DITHER_TRACE` / `DITHER_PROFILE` remain off by default; `DITHER_JOURNAL`
+  defaults on (`DITHER_JOURNAL=0` kill switch).
+
+### Known limitations
+
+- Full ED on ~25 MPix ≈ 0.7 s in release (~2× in dev); progress indicator shows.
+- Hypotheses H4–H6 (stale-as-final, tileRev, high-memory eviction) not fully
+  verified; use `DITHER_TRACE` if holes/flicker return.
+- Thumbnail-on-save for the journal (Step 6) is a follow-up.
+
 ## 2.0.4-beta
 
 ### Added

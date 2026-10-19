@@ -6,6 +6,7 @@ import WindowTitlebar from '../shared/ui/WindowTitlebar';
 import Icon from '../icons/iconRegistry';
 import Tooltip from '../shared/ui/Tooltip';
 import SoftProofControls from '../features/soft-proof/SoftProofControls';
+import EdProgressIndicator from '../features/preview/EdProgressIndicator';
 import { useShell } from '../app/shell/ShellContext';
 import { useWorkspaceOptional } from '../features/workspace/WorkspaceContext';
 import { useAppSelector } from '../app/hooks';
@@ -348,11 +349,17 @@ export default function PreviewWindow({
               title={
                 gpuSelftest?.adapter
                   ? `adapter=${gpuSelftest.adapter}${gpuSelftest.reason ? ` · ${gpuSelftest.reason}` : ''}`
-                  : gpuDitherStatus?.width && gpuDitherStatus?.height
-                    ? `${gpuDitherStatus.width}×${gpuDitherStatus.height} · ps=${gpuDitherStatus.pixel_size ?? 1} · ${gpuDitherStatus.strips} strip(s)`
-                    : undefined
+                  : gpuDitherStatus?.path === 'CPU'
+                    ? `CPU preview refresh (slider → tiles fresh)${
+                        gpuDitherStatus.width && gpuDitherStatus.height
+                          ? ` · ${gpuDitherStatus.width}×${gpuDitherStatus.height} · ps=${gpuDitherStatus.pixel_size ?? 1}`
+                          : ''
+                      }`
+                    : gpuDitherStatus?.width && gpuDitherStatus?.height
+                      ? `${gpuDitherStatus.width}×${gpuDitherStatus.height} · ps=${gpuDitherStatus.pixel_size ?? 1} · ${gpuDitherStatus.strips} strip(s)`
+                      : undefined
               }
-              aria-label="GPU dither path"
+              aria-label="Dither path timing"
             >
               {(() => {
                 const st = gpuSelftest?.state;
@@ -362,9 +369,7 @@ export default function PreviewWindow({
                 }
                 if (gpuDitherStatus) {
                   if (gpuDitherStatus.path === 'CPU') {
-                    return st === 'pass'
-                      ? `CPU · ${gpuDitherStatus.elapsed_ms} ms`
-                      : `CPU · ${gpuDitherStatus.elapsed_ms} ms`;
+                    return `CPU · ${gpuDitherStatus.elapsed_ms} ms`;
                   }
                   return `GPU (${gpuDitherStatus.backend}) · ${gpuDitherStatus.elapsed_ms} ms`;
                 }
@@ -463,6 +468,7 @@ export default function PreviewWindow({
           </Tooltip>
         </div>
         <div className={cn('pv-footer-actions')}>
+          <EdProgressIndicator docId={docId} />
           <SoftProofControls docId={docId} layout="footer" />
           <Tooltip label="Actual size — 1 document pixel = 1 screen pixel (100%)">
             <button

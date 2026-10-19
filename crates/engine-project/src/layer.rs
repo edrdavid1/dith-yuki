@@ -61,6 +61,15 @@ pub struct Layer {
     /// Bounds of layer content in tiles at MipLevel 0
     pub bounds_l0: TileBounds,
 
+    /// Monotonic revision of Raw pixels (journal blob identity).
+    ///
+    /// Runtime-only — not part of `.dyproj` `document.json`. Bumped on import,
+    /// open-from-disk materialization, and source replacement. Undo/redo of
+    /// layer add/delete restores this value from the document snapshot; blobs
+    /// are not rewritten when `(layer_id, raw_rev)` is unchanged.
+    #[serde(skip)]
+    pub raw_rev: u64,
+
     /// Forward-compat bag (SPEC §9.1). Not interpreted by the engine.
     #[serde(default = "empty_extra_map", skip_serializing_if = "is_empty_extra")]
     pub extra: Map<String, Value>,
@@ -80,8 +89,15 @@ impl Layer {
             mask: None,
             filters: Vec::new(),
             bounds_l0: TileBounds::full_document(width, height),
+            raw_rev: 0,
             extra: Map::new(),
         }
+    }
+
+    /// Advance Raw pixel identity. Returns the new revision.
+    pub fn bump_raw_rev(&mut self) -> u64 {
+        self.raw_rev = self.raw_rev.saturating_add(1);
+        self.raw_rev
     }
 
     /// Find a filter by ID in this layer

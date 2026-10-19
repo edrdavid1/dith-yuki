@@ -91,7 +91,12 @@ pub struct DispatchTimestampDiag {
 }
 
 impl DispatchTimestampDiag {
-    pub fn begin(device: &wgpu::Device, mode: &'static str, width: u32, height: u32) -> Option<Self> {
+    pub fn begin(
+        device: &wgpu::Device,
+        mode: &'static str,
+        width: u32,
+        height: u32,
+    ) -> Option<Self> {
         if !profile_on() {
             return None;
         }
@@ -152,7 +157,9 @@ impl DispatchTimestampDiag {
         if self.dispatches >= MAX_DISPATCHES_PER_APPLY {
             // Cap: still submit without more query slots (behavior unchanged aside from missing TS).
             let t0 = Instant::now();
-            submit_plain(device, queue, pipeline, bind_group, groups_x, groups_y, label);
+            submit_plain(
+                device, queue, pipeline, bind_group, groups_x, groups_y, label,
+            );
             let ms = t0.elapsed().as_secs_f64() * 1000.0;
             self.submit_ms.push(ms);
             self.last_submit_end = Some(Instant::now());
@@ -161,9 +168,8 @@ impl DispatchTimestampDiag {
         }
 
         let t_begin = Instant::now();
-        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some(label),
-        });
+        let mut enc =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
 
         let ts_writes = if let Some(ref qs) = self.query_set {
             let begin = self.next_query;
@@ -189,7 +195,8 @@ impl DispatchTimestampDiag {
         }
         queue.submit(Some(enc.finish()));
         let t_end = Instant::now();
-        self.submit_ms.push(t_begin.elapsed().as_secs_f64() * 1000.0);
+        self.submit_ms
+            .push(t_begin.elapsed().as_secs_f64() * 1000.0);
         self.last_submit_end = Some(t_end);
         self.dispatches += 1;
     }
@@ -249,11 +256,7 @@ impl DispatchTimestampDiag {
 
         let submit_sum_ms: f64 = self.submit_ms.iter().sum();
         let kernel_sum_ms: f64 = self.gpu_kernel_ms.iter().sum();
-        let kernel_max_ms = self
-            .gpu_kernel_ms
-            .iter()
-            .copied()
-            .fold(0.0_f64, f64::max);
+        let kernel_max_ms = self.gpu_kernel_ms.iter().copied().fold(0.0_f64, f64::max);
 
         let ts_label = match self.kernel_status {
             "available" => "available",
@@ -302,9 +305,8 @@ fn submit_plain(
     groups_y: u32,
     label: &str,
 ) {
-    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some(label),
-    });
+    let mut enc =
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
     {
         let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some(label),

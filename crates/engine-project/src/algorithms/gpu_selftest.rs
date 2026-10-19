@@ -326,7 +326,7 @@ pub fn run_or_use_cache(
             set_state(SelftestState::Unavailable);
             g.checked_at.store(now_unix(), Ordering::Relaxed);
             g.cache_hit.store(false, Ordering::Relaxed);
-            return (SelftestState::Unavailable, false, None);
+            (SelftestState::Unavailable, false, None)
         }
         engine_gpu::BlockedFsAdapterProbe::Limits { fingerprint, .. } => {
             set_meta(
@@ -348,7 +348,7 @@ pub fn run_or_use_cache(
             set_state(state.clone());
             g.checked_at.store(now_unix(), Ordering::Relaxed);
             g.cache_hit.store(false, Ordering::Relaxed);
-            return (state, false, None);
+            (state, false, None)
         }
         engine_gpu::BlockedFsAdapterProbe::Ok { fingerprint, .. } => {
             set_meta(
