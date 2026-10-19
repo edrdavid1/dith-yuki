@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 
-export type JournalContentKind = 'full_dyproj' | 'skipped_too_large';
+export type JournalContentKind = 'full_dyproj' | 'state_v1' | 'skipped_too_large';
 
 export interface JournalMeta {
   recovery_id: string;

@@ -6,6 +6,7 @@
 //! the state+blobs format only.
 
 mod assemble;
+pub(crate) mod cleanup;
 pub mod clean_exit;
 pub mod commands;
 mod fsutil;

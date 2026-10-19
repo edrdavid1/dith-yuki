@@ -4,6 +4,7 @@
 //! Order: missing layer/threshold blobs first, then state (refs only on-disk
 //! blobs), then meta. Single-flight is enforced by [`super::runtime`].
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::Instant;
 
@@ -31,6 +32,20 @@ pub fn delete_journal(recovery_dir: &Path, recovery_id: Uuid) {
     let _ = std::fs::remove_file(journal_meta_path(recovery_dir, recovery_id));
     let blobs = journal_blobs_dir(recovery_dir, recovery_id);
     let _ = std::fs::remove_dir_all(&blobs);
+    // Orphaned mid-recover claims (crash between claim and finalize).
+    let _ = std::fs::remove_file(super::cleanup::state_claiming_path(recovery_dir, recovery_id));
+    let _ = std::fs::remove_dir_all(super::cleanup::blobs_claiming_path(recovery_dir, recovery_id));
+    let mut legacy_claim = journal_blob_path(recovery_dir, recovery_id);
+    let name = legacy_claim
+        .file_name()
+        .map(|n| {
+            let mut s = n.to_os_string();
+            s.push(".claiming");
+            s
+        })
+        .unwrap_or_else(|| "journal.claiming".into());
+    legacy_claim.set_file_name(name);
+    let _ = std::fs::remove_file(&legacy_claim);
 }
 
 pub fn delete_journal_for_session(state: &AppState, session: &DocumentSession) {
@@ -110,6 +125,32 @@ fn write_journal_state_v1(
     let mut pending_raw = false;
     let mut blob_bytes_total: u64 = dir_size_approx(&blobs_dir);
 
+    // Filenames referenced by the live document (for GC under the 512 MiB cap).
+    let mut keep_blobs: HashSet<String> = HashSet::new();
+    collect_raster_layers(&snapshot.root, &mut |layer| {
+        if layer.kind == LayerKind::Raster && layer.raw_rev > 0 {
+            keep_blobs.insert(layer_blob_filename(layer.id.0, layer.raw_rev));
+        }
+        Ok(())
+    })?;
+    let mut read_png_keep = |path: &str| read_png_file(path);
+    if let Ok((embeds, _)) = collect_custom_png_embeds(snapshot.as_ref(), &mut read_png_keep) {
+        for (basename, _) in &embeds {
+            let content_hash = basename.trim_end_matches(".png");
+            keep_blobs.insert(threshold_blob_filename(content_hash));
+        }
+    }
+    if blob_bytes_total > JOURNAL_MAX_BYTES {
+        let freed = super::cleanup::gc_unreferenced_blobs(&blobs_dir, &keep_blobs);
+        blob_bytes_total = dir_size_approx(&blobs_dir);
+        if journal_trace_enabled() {
+            log::info!(
+                target: "journal",
+                "journal_blob_gc freed={freed} total={blob_bytes_total}"
+            );
+        }
+    }
+
     collect_raster_layers(&snapshot.root, &mut |layer| {
         if layer.kind != LayerKind::Raster || layer.raw_rev == 0 {
             return Ok(());
@@ -162,12 +203,18 @@ fn write_journal_state_v1(
             Err(e) => return Err(e.to_string()),
         };
         let sha = blob_sha256_hex(&png);
-        blob_bytes_total = blob_bytes_total.saturating_add(png.len() as u64);
-        if blob_bytes_total > JOURNAL_MAX_BYTES {
-            return Err(format!(
-                "journal blobs exceed cap {JOURNAL_MAX_BYTES} (would be {blob_bytes_total})"
-            ));
+        let next_total = blob_bytes_total.saturating_add(png.len() as u64);
+        if next_total > JOURNAL_MAX_BYTES {
+            let freed = super::cleanup::gc_unreferenced_blobs(&blobs_dir, &keep_blobs);
+            blob_bytes_total = dir_size_approx(&blobs_dir);
+            let next_total = blob_bytes_total.saturating_add(png.len() as u64);
+            if next_total > JOURNAL_MAX_BYTES {
+                return Err(format!(
+                    "journal blobs exceed cap {JOURNAL_MAX_BYTES} after gc freed={freed} (would be {next_total})"
+                ));
+            }
         }
+        blob_bytes_total = blob_bytes_total.saturating_add(png.len() as u64);
         let t_blob = Instant::now();
         write_blob_atomic(&blobs_dir, &filename, &png).map_err(|e| e.to_string())?;
         if journal_trace_enabled() {
@@ -197,12 +244,19 @@ fn write_journal_state_v1(
                 let dest = blobs_dir.join(&filename);
                 let sha = blob_sha256_hex(&bytes);
                 if !dest.is_file() {
-                    blob_bytes_total = blob_bytes_total.saturating_add(bytes.len() as u64);
-                    if blob_bytes_total > JOURNAL_MAX_BYTES {
-                        return Err(format!(
-                            "journal blobs exceed cap {JOURNAL_MAX_BYTES} (would be {blob_bytes_total})"
-                        ));
+                    let next_total = blob_bytes_total.saturating_add(bytes.len() as u64);
+                    if next_total > JOURNAL_MAX_BYTES {
+                        let freed =
+                            super::cleanup::gc_unreferenced_blobs(&blobs_dir, &keep_blobs);
+                        blob_bytes_total = dir_size_approx(&blobs_dir);
+                        let next_total = blob_bytes_total.saturating_add(bytes.len() as u64);
+                        if next_total > JOURNAL_MAX_BYTES {
+                            return Err(format!(
+                                "journal blobs exceed cap {JOURNAL_MAX_BYTES} after gc freed={freed} (would be {next_total})"
+                            ));
+                        }
                     }
+                    blob_bytes_total = blob_bytes_total.saturating_add(bytes.len() as u64);
                     write_blob_atomic(&blobs_dir, &filename, &bytes).map_err(|e| e.to_string())?;
                 }
                 threshold_digests.push((content_hash, sha));

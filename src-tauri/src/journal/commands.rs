@@ -126,78 +126,73 @@ pub async fn recover_journal(
             .map(|m| m.content_kind == JournalContentKind::StateV1)
             .unwrap_or(true);
     if !blob.exists() && !is_state_v1 {
-        return Err(format!("Journal missing for {recovery_id}"));
+        return Err(format!(
+            "Recovery journal is missing for «{}».",
+            meta.as_ref()
+                .map(|m| m.display_name.as_str())
+                .unwrap_or(recovery_id.as_str())
+        ));
     }
 
-    // Claim the journal before opening so a concurrent Recover cannot open a
-    // second identical tab from the same blob / state.
-    let zip_bytes = tauri::async_runtime::spawn_blocking({
+    let display = meta
+        .as_ref()
+        .map(|m| m.display_name.clone())
+        .unwrap_or_else(|| recovery_id.clone());
+
+    // Claim → assemble/read → open. Delete claimed files only after a successful open
+    // so a corrupt journal stays on disk until the user discards it (H9 §4.6).
+    let claimed = tauri::async_runtime::spawn_blocking({
         let blob = blob.clone();
         let state_path = state_path.clone();
         let recovery = recovery.clone();
-        let meta_path = meta_path.clone();
         let is_state_v1 = is_state_v1;
-        move || {
-            if is_state_v1 {
-                let claimed = recovery.join(format!("{id}.state.claiming"));
-                fs::rename(&state_path, &claimed).map_err(|e| {
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        format!("Journal state missing for {recovery_id}")
-                    } else {
-                        format!("Journal already claimed for {recovery_id}: {e}")
-                    }
-                })?;
-                let state_bytes = fs::read(&claimed).map_err(|e| e.to_string())?;
-                let blobs = crate::journal::meta::journal_blobs_dir(&recovery, id);
-                let zip = crate::journal::assemble::assemble_dyproj_from_state_bytes(
-                    &state_bytes,
-                    &blobs,
-                    env!("CARGO_PKG_VERSION"),
-                )?;
-                let _ = fs::remove_file(&claimed);
-                let _ = fs::remove_dir_all(&blobs);
-                let _ = fs::remove_file(&meta_path);
-                Ok::<Vec<u8>, String>(zip)
-            } else {
-                let claimed = {
-                    let mut c = blob.clone();
-                    let name = blob
-                        .file_name()
-                        .map(|n| {
-                            let mut s = n.to_os_string();
-                            s.push(".claiming");
-                            s
-                        })
-                        .unwrap_or_else(|| "journal.claiming".into());
-                    c.set_file_name(name);
-                    c
-                };
-                fs::rename(&blob, &claimed).map_err(|e| {
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        format!("Journal blob missing for {recovery_id}")
-                    } else {
-                        format!("Journal already claimed for {recovery_id}: {e}")
-                    }
-                })?;
-                let bytes = fs::read(&claimed).map_err(|e| e.to_string())?;
-                let _ = fs::remove_file(&claimed);
-                let _ = fs::remove_file(&meta_path);
-                Ok::<Vec<u8>, String>(bytes)
-            }
-        }
+        let display = display.clone();
+        move || claim_journal_zip(id, &recovery, &state_path, &blob, is_state_v1, &display)
     })
     .await
     .map_err(|e| format!("Recover read error: {e}"))??;
 
     let runtime_id = state.alloc_doc_id();
     let staging = TileCache::new(state.tiles.tile_cache.budget_bytes_count());
+    let mut claimed = claimed;
+    let zip_bytes = std::mem::take(&mut claimed.zip);
     let opened = tauri::async_runtime::spawn_blocking(move || {
         open_project_from_bytes(&zip_bytes, &staging, DocumentId::new(runtime_id))
             .map(|r| (r, staging))
-            .map_err(|e| e.to_string())
+            .map_err(|e| format!("Could not open recovered project «{display}»: {e}"))
     })
     .await
-    .map_err(|e| format!("Recover open error: {e}"))??;
+    .map_err(|e| format!("Recover open error: {e}"))?;
+
+    let opened = match opened {
+        Ok(v) => v,
+        Err(e) => {
+            // Restore claim so Discard / retry still works.
+            let _ = tauri::async_runtime::spawn_blocking(move || claimed.restore())
+                .await;
+            return Err(e);
+        }
+    };
+
+    // Open succeeded — drop claimed journal files now.
+    let _ = tauri::async_runtime::spawn_blocking({
+        let meta_path = meta_path.clone();
+        move || {
+            claimed.finalize();
+            let _ = fs::remove_file(&meta_path);
+        }
+    })
+    .await;
+
+    if crate::tile_gen_trace::enabled()
+        || std::env::var("DITHER_TRACE").ok().as_deref() == Some("1")
+    {
+        log::info!(
+            target: "journal",
+            "journal_recover id={recovery_id} kind={}",
+            if is_state_v1 { "state_v1" } else { "legacy" }
+        );
+    }
 
     let (opened, staging) = opened;
     let live_gen = 1u64;
@@ -252,6 +247,181 @@ pub async fn recover_journal(
         height,
         path,
     })
+}
+
+struct ClaimedJournal {
+    zip: Vec<u8>,
+    state_claiming: Option<PathBuf>,
+    blobs_claiming: Option<PathBuf>,
+    legacy_claiming: Option<PathBuf>,
+    state_restored: PathBuf,
+    blobs_restored: PathBuf,
+    legacy_restored: PathBuf,
+}
+
+impl std::fmt::Debug for ClaimedJournal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClaimedJournal")
+            .field("zip_len", &self.zip.len())
+            .field("state_claiming", &self.state_claiming)
+            .field("blobs_claiming", &self.blobs_claiming)
+            .field("legacy_claiming", &self.legacy_claiming)
+            .finish()
+    }
+}
+
+impl ClaimedJournal {
+    fn restore(self) {
+        use std::fs;
+        if let Some(ref c) = self.state_claiming {
+            if c.exists() {
+                let _ = fs::rename(c, &self.state_restored);
+            }
+        }
+        if let Some(ref c) = self.blobs_claiming {
+            if c.exists() {
+                let _ = fs::rename(c, &self.blobs_restored);
+            }
+        }
+        if let Some(ref c) = self.legacy_claiming {
+            if c.exists() {
+                let _ = fs::rename(c, &self.legacy_restored);
+            }
+        }
+    }
+
+    fn finalize(self) {
+        use std::fs;
+        if let Some(c) = self.state_claiming {
+            let _ = fs::remove_file(c);
+        }
+        if let Some(c) = self.blobs_claiming {
+            let _ = fs::remove_dir_all(c);
+        }
+        if let Some(c) = self.legacy_claiming {
+            let _ = fs::remove_file(c);
+        }
+    }
+}
+
+fn claim_journal_zip(
+    id: Uuid,
+    recovery: &std::path::Path,
+    state_path: &std::path::Path,
+    blob: &std::path::Path,
+    is_state_v1: bool,
+    display: &str,
+) -> Result<ClaimedJournal, String> {
+    use std::fs;
+
+    if is_state_v1 {
+        let state_claiming = crate::journal::cleanup::state_claiming_path(recovery, id);
+        let blobs_dir = crate::journal::meta::journal_blobs_dir(recovery, id);
+        let blobs_claiming = crate::journal::cleanup::blobs_claiming_path(recovery, id);
+
+        fs::rename(state_path, &state_claiming).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                format!("Recovery journal for «{display}» is missing (state file).")
+            } else {
+                format!("Recovery journal for «{display}» is already being recovered.")
+            }
+        })?;
+
+        let blobs_claimed = if blobs_dir.is_dir() {
+            fs::rename(&blobs_dir, &blobs_claiming).map_err(|e| {
+                // Undo state claim so the journal stays recoverable.
+                let _ = fs::rename(&state_claiming, state_path);
+                format!("Could not claim blob directory for «{display}»: {e}")
+            })?;
+            Some(blobs_claiming.clone())
+        } else {
+            None
+        };
+
+        let assemble_dir = blobs_claimed
+            .as_ref()
+            .map(|p| p.as_path())
+            .unwrap_or(blobs_dir.as_path());
+
+        let state_bytes = fs::read(&state_claiming).map_err(|e| {
+            restore_state_v1_claim(&state_claiming, state_path, blobs_claimed.as_ref(), &blobs_dir);
+            format!("Could not read recovery journal for «{display}»: {e}")
+        })?;
+
+        let zip = match crate::journal::assemble::assemble_dyproj_from_state_bytes(
+            &state_bytes,
+            assemble_dir,
+            env!("CARGO_PKG_VERSION"),
+        ) {
+            Ok(z) => z,
+            Err(e) => {
+                restore_state_v1_claim(
+                    &state_claiming,
+                    state_path,
+                    blobs_claimed.as_ref(),
+                    &blobs_dir,
+                );
+                return Err(format!("Recovery journal for «{display}» is incomplete or corrupt: {e}"));
+            }
+        };
+
+        Ok(ClaimedJournal {
+            zip,
+            state_claiming: Some(state_claiming),
+            blobs_claiming: blobs_claimed,
+            legacy_claiming: None,
+            state_restored: state_path.to_path_buf(),
+            blobs_restored: blobs_dir,
+            legacy_restored: blob.to_path_buf(),
+        })
+    } else {
+        let claimed = {
+            let mut c = blob.to_path_buf();
+            let name = blob
+                .file_name()
+                .map(|n| {
+                    let mut s = n.to_os_string();
+                    s.push(".claiming");
+                    s
+                })
+                .unwrap_or_else(|| "journal.claiming".into());
+            c.set_file_name(name);
+            c
+        };
+        fs::rename(blob, &claimed).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                format!("Recovery journal for «{display}» is missing.")
+            } else {
+                format!("Recovery journal for «{display}» is already being recovered.")
+            }
+        })?;
+        let bytes = fs::read(&claimed).map_err(|e| {
+            let _ = fs::rename(&claimed, blob);
+            format!("Could not read recovery journal for «{display}»: {e}")
+        })?;
+        Ok(ClaimedJournal {
+            zip: bytes,
+            state_claiming: None,
+            blobs_claiming: None,
+            legacy_claiming: Some(claimed),
+            state_restored: state_path.to_path_buf(),
+            blobs_restored: crate::journal::meta::journal_blobs_dir(recovery, id),
+            legacy_restored: blob.to_path_buf(),
+        })
+    }
+}
+
+fn restore_state_v1_claim(
+    state_claiming: &std::path::Path,
+    state_path: &std::path::Path,
+    blobs_claimed: Option<&PathBuf>,
+    blobs_dir: &std::path::Path,
+) {
+    use std::fs;
+    let _ = fs::rename(state_claiming, state_path);
+    if let Some(c) = blobs_claimed {
+        let _ = fs::rename(c, blobs_dir);
+    }
 }
 
 fn purge_sibling_journals_for_source(recovery_dir: &std::path::Path, kept: &JournalMeta) {
@@ -432,7 +602,69 @@ pub fn flush_all_dirty_journals(state: &AppState) {
 mod tests {
     use super::*;
     use crate::journal::meta::JournalContentKind;
+    use crate::journal::{set_recovery_dir, write_journal_for_doc};
+    use engine_project::document::Document;
+    use engine_project::layer::{Layer, LayerNode};
+    use engine_project::types::{DocumentId, LayerId, LayerKind};
+    use engine_tiles::{CacheStage, PixelTile, TileCoord, TileKey, HALO, TILE_SIZE};
+    use std::sync::Arc;
     use uuid::Uuid;
+
+    #[test]
+    fn claim_corrupt_state_v1_restores_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let recovery = dir.path().join("recovery");
+        let state = Arc::new(AppState::empty_process(None, 64 * 1024 * 1024, false));
+        set_recovery_dir(&state, recovery.clone());
+
+        let mut doc = Document::new(DocumentId::new(1), 64, 64);
+        let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, 64, 64);
+        layer.bump_raw_rev();
+        doc.root.push(LayerNode::Leaf(layer));
+        let session = state.spawn_session(doc);
+        let full = TILE_SIZE + 2 * HALO;
+        let mut tile = PixelTile::new();
+        for y in 0..full {
+            for x in 0..full {
+                tile.set(x, y, 0, 0.5);
+                tile.set(x, y, 1, 0.5);
+                tile.set(x, y, 2, 0.5);
+                tile.set(x, y, 3, 1.0);
+            }
+        }
+        state.tiles.tile_cache.insert_fresh(
+            TileKey {
+                doc: 1,
+                layer: 1,
+                coord: TileCoord {
+                    level: 0,
+                    x: 0,
+                    y: 0,
+                },
+                stage: CacheStage::Raw,
+            },
+            Arc::new(tile),
+        );
+        write_journal_for_doc(&state, 1).unwrap();
+
+        let blobs = crate::journal::meta::journal_blobs_dir(&recovery, session.recovery_id);
+        std::fs::remove_file(blobs.join("layer-1-1.png")).unwrap();
+        let state_path = journal_state_path(&recovery, session.recovery_id);
+        let blob = journal_blob_path(&recovery, session.recovery_id);
+        let err = claim_journal_zip(
+            session.recovery_id,
+            &recovery,
+            &state_path,
+            &blob,
+            true,
+            "test.png",
+        )
+        .unwrap_err();
+        assert!(err.contains("incomplete or corrupt"), "{err}");
+        assert!(state_path.is_file(), "state must be restored after failed claim");
+        assert!(blobs.is_dir(), "blobs dir must be restored after failed claim");
+        assert!(!crate::journal::cleanup::state_claiming_path(&recovery, session.recovery_id).exists());
+    }
 
     fn meta(
         recovery_id: Uuid,

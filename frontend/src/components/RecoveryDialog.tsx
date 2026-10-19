@@ -12,6 +12,8 @@ export interface RecoveryDialogProps {
   /** Last-session open set (may be shown when journals are empty). */
   rosterDocs?: RosterEntry[];
   busy?: boolean;
+  /** Clear error from a failed recover (corrupt / incomplete journal). */
+  error?: string | null;
   onRecoverAll: () => void;
   onDiscardAll: () => void;
   onReopenRoster?: () => void;
@@ -24,6 +26,7 @@ export default function RecoveryDialog({
   journals,
   rosterDocs = [],
   busy = false,
+  error = null,
   onRecoverAll,
   onDiscardAll,
   onReopenRoster,
@@ -107,6 +110,17 @@ export default function RecoveryDialog({
               {onOpenOriginalsOnly
                 ? ' — use Open originals only to skip journals.'
                 : '.'}
+            </p>
+          ) : null}
+
+          {error ? (
+            <p
+              className={cn('new-project-field')}
+              role="alert"
+              data-testid="recovery-error"
+              style={{ color: 'var(--color-danger, #c0392b)', whiteSpace: 'pre-wrap' }}
+            >
+              {error}
             </p>
           ) : null}
 

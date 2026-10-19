@@ -144,6 +144,7 @@ pub fn set_recovery_dir(state: &AppState, dir: PathBuf) {
     }
     if let Ok(mut guard) = state.journal.lock() {
         let _ = super::fsutil::ensure_dir_private(&dir);
+        super::cleanup::startup_cleanup(&dir);
         guard.recovery_dir = Some(dir);
     }
 }

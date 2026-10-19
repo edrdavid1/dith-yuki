@@ -29,6 +29,7 @@ function App() {
   const documentHydrated = useAppSelector((s) => s.document.hydrated);
   const [gate, setGate] = useState<RecoveryGate>({ kind: 'scanning' });
   const [busy, setBusy] = useState(false);
+  const [recoverError, setRecoverError] = useState<string | null>(null);
   const busyRef = useRef(false);
 
   useEffect(() => {
@@ -83,6 +84,8 @@ function App() {
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
+    setRecoverError(null);
+    const failures: string[] = [];
     try {
       // One tab per recovery_id (guards double-click / overlapping invokes).
       const seen = new Set<string>();
@@ -92,13 +95,31 @@ function App() {
         try {
           await recoverJournal(j.recovery_id);
         } catch (err) {
-          // Already claimed by a concurrent recover — skip.
+          const msg = err instanceof Error ? err.message : String(err);
           console.error(`Recover failed for ${j.recovery_id}:`, err);
+          failures.push(msg);
         }
       }
-      await finish();
+      if (failures.length === 0) {
+        await finish();
+        return;
+      }
+      // Keep dialog open; corrupt journals stay on disk until Discard.
+      setRecoverError(failures.join('\n'));
+      try {
+        const scan = await scanRecoveryJournals();
+        const rosterDocs = scan.roster?.open_docs ?? [];
+        if (scan.journals.length > 0) {
+          setGate({ kind: 'journals', journals: scan.journals, rosterDocs });
+        } else {
+          await finish();
+        }
+      } catch {
+        /* keep current gate + error */
+      }
     } catch (err) {
       console.error('Recover failed:', err);
+      setRecoverError(err instanceof Error ? err.message : String(err));
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -109,11 +130,13 @@ function App() {
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
+    setRecoverError(null);
     try {
       await discardRecoveryJournals();
       await finish();
     } catch (err) {
       console.error('Discard journals failed:', err);
+      setRecoverError(err instanceof Error ? err.message : String(err));
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -198,6 +221,7 @@ function App() {
               gate.kind === 'journals' || gate.kind === 'roster' ? gate.rosterDocs : []
             }
             busy={busy}
+            error={recoverError}
             onRecoverAll={() => void onRecoverAll()}
             onDiscardAll={() => void onDiscardAll()}
             onReopenRoster={gate.kind === 'roster' ? () => void onReopenRoster() : undefined}

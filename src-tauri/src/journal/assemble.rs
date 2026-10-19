@@ -29,14 +29,17 @@ pub fn assemble_dyproj_from_state_bytes(
 
     for blob in &state.blobs {
         let path = blobs_dir.join(blob.filename());
-        let data = std::fs::read(&path)
-            .map_err(|e| format!("missing journal blob {}: {e}", blob.filename()))?;
+        let data = std::fs::read(&path).map_err(|_| {
+            format!(
+                "missing pixel blob «{}» (file may have been deleted or never finished writing)",
+                blob.filename()
+            )
+        })?;
         let actual = blob_sha256_hex(&data);
         if actual != blob.sha256() {
             return Err(format!(
-                "journal blob hash mismatch for {}: expected {}, got {actual}",
-                blob.filename(),
-                blob.sha256()
+                "pixel blob «{}» failed integrity check (hash mismatch)",
+                blob.filename()
             ));
         }
         match blob {
@@ -164,5 +167,49 @@ mod tests {
         let opened = open_project_from_bytes(&zip, &staging, DocumentId::new(9)).unwrap();
         assert_eq!(opened.document.width, 64);
         assert_eq!(opened.document.layer_raw_rev(LayerId::new(1)), Some(1));
+    }
+
+    #[test]
+    fn missing_blob_errors_clearly_without_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let recovery = dir.path().join("recovery");
+        let state = Arc::new(AppState::empty_process(None, 64 * 1024 * 1024, false));
+        set_recovery_dir(&state, recovery.clone());
+
+        let mut doc = Document::new(DocumentId::new(1), 64, 64);
+        let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, 64, 64);
+        layer.bump_raw_rev();
+        doc.root.push(LayerNode::Leaf(layer));
+        let session = state.spawn_session(doc);
+        let full = TILE_SIZE + 2 * HALO;
+        let mut tile = PixelTile::new();
+        for y in 0..full {
+            for x in 0..full {
+                tile.set(x, y, 0, 0.4);
+                tile.set(x, y, 1, 0.5);
+                tile.set(x, y, 2, 0.6);
+                tile.set(x, y, 3, 1.0);
+            }
+        }
+        state.tiles.tile_cache.insert_fresh(
+            TileKey {
+                doc: 1,
+                layer: 1,
+                coord: TileCoord {
+                    level: 0,
+                    x: 0,
+                    y: 0,
+                },
+                stage: CacheStage::Raw,
+            },
+            Arc::new(tile),
+        );
+        write_journal_for_doc(&state, 1).unwrap();
+        let blobs = journal_blobs_dir(&recovery, session.recovery_id);
+        std::fs::remove_file(blobs.join("layer-1-1.png")).unwrap();
+        let state_bytes =
+            std::fs::read(journal_state_path(&recovery, session.recovery_id)).unwrap();
+        let err = assemble_dyproj_from_state_bytes(&state_bytes, &blobs, "0.0.0-test").unwrap_err();
+        assert!(err.contains("missing pixel blob"), "{err}");
     }
 }
