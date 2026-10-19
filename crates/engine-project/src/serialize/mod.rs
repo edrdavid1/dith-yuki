@@ -64,14 +64,15 @@ pub use pattern::{
     PatternExportMeta, PatternFilterFile, PatternManifest, UnpackedPattern,
 };
 pub use pixels::{
-    assemble_layer_png, build_composite_png, build_composite_rgba8,
+    assemble_layer_png, assemble_layer_png_fast, build_composite_png, build_composite_rgba8,
     build_processed_composite_rgba8, decode_png_to_f32, decode_png_to_f32_with_limits,
-    find_forbidden_png_chunk, inject_png_text_chunk, reencode_png_clean, soft_size_warning,
-    strip_png_ancillary_chunks, threshold_map_png_limits, PngDecodeLimits, FORBIDDEN_PNG_ANCILLARY,
+    encode_rgba8_png_fast, find_forbidden_png_chunk, inject_png_text_chunk, reencode_png_clean,
+    soft_size_warning, strip_png_ancillary_chunks, threshold_map_png_limits, PngDecodeLimits,
+    FORBIDDEN_PNG_ANCILLARY,
 };
 pub use project::{
-    open_project_from_bytes, open_project_from_path, read_png_file, save_project_to_bytes,
-    save_project_to_path, OpenProjectResult, SaveProjectResult,
+    collect_custom_png_embeds, open_project_from_bytes, open_project_from_path, read_png_file,
+    save_project_to_bytes, save_project_to_path, OpenProjectResult, SaveProjectResult,
 };
 pub use sanitize::{sanitize_display_string, sanitize_display_string_or, sanitize_filename};
 pub use secure_json::{parse_value as parse_json_value, SecureJsonError, MAX_JSON_DEPTH};

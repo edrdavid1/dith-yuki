@@ -14,7 +14,7 @@ use crate::journal::meta::{
 };
 use crate::journal::roster::{self, SessionRoster};
 use crate::journal::stats::JournalWriteSource;
-use crate::journal::{delete_journal, recovery_subdir, write_journal_for_doc_from};
+use crate::journal::{delete_journal, flush_doc_sync, journal_state_path, recovery_subdir};
 use crate::services::document_service::OpenProjectResponse;
 
 #[derive(Debug, Clone, Serialize)]
@@ -46,7 +46,12 @@ pub fn scan_recovery_journals(app: AppHandle) -> Result<RecoveryScanDto, String>
     let journals = dedupe_journals_by_source(
         list_metas(&recovery)
             .into_iter()
-            .filter(|m| m.content_kind == JournalContentKind::FullDyproj)
+            .filter(|m| {
+                matches!(
+                    m.content_kind,
+                    JournalContentKind::FullDyproj | JournalContentKind::StateV1
+                )
+            })
             .collect(),
     );
     let roster = if previous_unclean {
@@ -112,43 +117,73 @@ pub async fn recover_journal(
     let data = app_data(&app)?;
     let recovery = recovery_subdir(&data);
     let blob = journal_blob_path(&recovery, id);
+    let state_path = journal_state_path(&recovery, id);
     let meta_path = crate::journal::meta::journal_meta_path(&recovery, id);
-    if !blob.exists() {
-        return Err(format!("Journal blob missing for {recovery_id}"));
-    }
     let meta = read_meta(&meta_path).ok();
+    let is_state_v1 = state_path.is_file()
+        && meta
+            .as_ref()
+            .map(|m| m.content_kind == JournalContentKind::StateV1)
+            .unwrap_or(true);
+    if !blob.exists() && !is_state_v1 {
+        return Err(format!("Journal missing for {recovery_id}"));
+    }
 
     // Claim the journal before opening so a concurrent Recover cannot open a
-    // second identical tab from the same blob.
+    // second identical tab from the same blob / state.
     let zip_bytes = tauri::async_runtime::spawn_blocking({
         let blob = blob.clone();
+        let state_path = state_path.clone();
+        let recovery = recovery.clone();
         let meta_path = meta_path.clone();
+        let is_state_v1 = is_state_v1;
         move || {
-            let claimed = {
-                let mut c = blob.clone();
-                let name = blob
-                    .file_name()
-                    .map(|n| {
-                        let mut s = n.to_os_string();
-                        s.push(".claiming");
-                        s
-                    })
-                    .unwrap_or_else(|| "journal.claiming".into());
-                c.set_file_name(name);
-                c
-            };
-            fs::rename(&blob, &claimed).map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    format!("Journal blob missing for {recovery_id}")
-                } else {
-                    // Another recover already claimed this journal.
-                    format!("Journal already claimed for {recovery_id}: {e}")
-                }
-            })?;
-            let bytes = fs::read(&claimed).map_err(|e| e.to_string())?;
-            let _ = fs::remove_file(&claimed);
-            let _ = fs::remove_file(&meta_path);
-            Ok::<Vec<u8>, String>(bytes)
+            if is_state_v1 {
+                let claimed = recovery.join(format!("{id}.state.claiming"));
+                fs::rename(&state_path, &claimed).map_err(|e| {
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        format!("Journal state missing for {recovery_id}")
+                    } else {
+                        format!("Journal already claimed for {recovery_id}: {e}")
+                    }
+                })?;
+                let state_bytes = fs::read(&claimed).map_err(|e| e.to_string())?;
+                let blobs = crate::journal::meta::journal_blobs_dir(&recovery, id);
+                let zip = crate::journal::assemble::assemble_dyproj_from_state_bytes(
+                    &state_bytes,
+                    &blobs,
+                    env!("CARGO_PKG_VERSION"),
+                )?;
+                let _ = fs::remove_file(&claimed);
+                let _ = fs::remove_dir_all(&blobs);
+                let _ = fs::remove_file(&meta_path);
+                Ok::<Vec<u8>, String>(zip)
+            } else {
+                let claimed = {
+                    let mut c = blob.clone();
+                    let name = blob
+                        .file_name()
+                        .map(|n| {
+                            let mut s = n.to_os_string();
+                            s.push(".claiming");
+                            s
+                        })
+                        .unwrap_or_else(|| "journal.claiming".into());
+                    c.set_file_name(name);
+                    c
+                };
+                fs::rename(&blob, &claimed).map_err(|e| {
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        format!("Journal blob missing for {recovery_id}")
+                    } else {
+                        format!("Journal already claimed for {recovery_id}: {e}")
+                    }
+                })?;
+                let bytes = fs::read(&claimed).map_err(|e| e.to_string())?;
+                let _ = fs::remove_file(&claimed);
+                let _ = fs::remove_file(&meta_path);
+                Ok::<Vec<u8>, String>(bytes)
+            }
         }
     })
     .await
@@ -304,14 +339,14 @@ pub(crate) fn prepare_soft_discard_sync(
 
     let reuse_existing = can_reuse_journal_for_soft_discard(state, doc_id, recovery_id, revision);
     if !reuse_existing {
-        write_journal_for_doc_from(state, doc_id, JournalWriteSource::SoftDiscard)?;
+        flush_doc_sync(state, doc_id, JournalWriteSource::SoftDiscard)?;
     }
 
     mark_journal_discarded(state, recovery_id)?;
     // If reuse claimed a journal but meta was missing, mark_journal_discarded is a no-op —
     // rewrite once so Restore still has something to open.
     if reuse_existing && !journal_meta_is_discarded(state, recovery_id) {
-        write_journal_for_doc_from(state, doc_id, JournalWriteSource::SoftDiscard)?;
+        flush_doc_sync(state, doc_id, JournalWriteSource::SoftDiscard)?;
         mark_journal_discarded(state, recovery_id)?;
     }
 
@@ -362,13 +397,17 @@ fn can_reuse_journal_for_soft_discard(
     let Some(dir) = guard.recovery_dir.as_ref() else {
         return false;
     };
-    let blob = journal_blob_path(dir, recovery_id);
+    let state_path = journal_state_path(dir, recovery_id);
+    let legacy = journal_blob_path(dir, recovery_id);
     let meta_path = crate::journal::meta::journal_meta_path(dir, recovery_id);
-    if !blob.is_file() {
+    if !state_path.is_file() && !legacy.is_file() {
         return false;
     }
     match read_meta(&meta_path) {
-        Ok(meta) => meta.content_kind == JournalContentKind::FullDyproj,
+        Ok(meta) => matches!(
+            meta.content_kind,
+            JournalContentKind::StateV1 | JournalContentKind::FullDyproj
+        ),
         Err(_) => false,
     }
 }
@@ -383,7 +422,7 @@ pub fn flush_all_dirty_journals(state: &AppState) {
         if !crate::undo::is_dirty_doc(state, doc_id) {
             continue;
         }
-        if let Err(e) = write_journal_for_doc_from(state, doc_id, JournalWriteSource::Signals) {
+        if let Err(e) = flush_doc_sync(state, doc_id, JournalWriteSource::Signals) {
             log::warn!("flush_all_dirty_journals doc {doc_id}: {e}");
         }
     }

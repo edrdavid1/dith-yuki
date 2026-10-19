@@ -43,9 +43,10 @@ pub struct OpenProjectResult {
 
 /// Collect CustomPng user/synthetic paths from a live document and return
 /// basename → PNG bytes to embed (deduped by content hash).
-type CustomPngEmbedMaps = (HashMap<String, Vec<u8>>, HashMap<String, String>);
+pub type CustomPngEmbedMaps = (HashMap<String, Vec<u8>>, HashMap<String, String>);
 
-pub(crate) fn collect_custom_png_embeds(
+/// Collect CustomPng embeds for Save / journal (basename → PNG bytes).
+pub fn collect_custom_png_embeds(
     doc: &Document,
     read_png: &mut dyn FnMut(&str) -> Result<Vec<u8>, ProjectError>,
 ) -> Result<CustomPngEmbedMaps, ProjectError> {

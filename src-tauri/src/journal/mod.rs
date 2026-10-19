@@ -1,16 +1,14 @@
-//! Crash-recovery journal: dirty docs → `{app_data}/recovery/{uuid}.dyproj.journal`.
+//! Crash-recovery journal (H9 v2): `{uuid}.state` + `{uuid}.blobs/` + meta.
 //!
-//! Phase 2 of JOURNAL_CRASH_RECOVERY_spec — debounce writes + delete on clean Save.
-//! Startup recovery UI is Phase 3.
-//!
-//! Kill switch for A/B latency tests: `DITHER_JOURNAL=0` (or `false`) skips
-//! recovery-dir setup, debounce writes, and the heartbeat. Journal writes call
-//! [`save_project_to_bytes`](engine_project::serialize::save_project_to_bytes),
-//! which rebuilds a **processed** composite (re-applies dither) — that can
-//! contend with the tile worker during live dithering.
+//! Kill switch: `DITHER_JOURNAL=0` / `false` / `off`. Writes run on a dedicated
+//! low-priority thread (not tokio / not tile workers). Legacy
+//! `{uuid}.dyproj.journal` files are still readable (Step 4); new writes use
+//! the state+blobs format only.
 
+mod assemble;
 pub mod clean_exit;
 pub mod commands;
+mod fsutil;
 mod meta;
 pub mod roster;
 mod runtime;
@@ -18,8 +16,13 @@ pub mod signals;
 pub mod stats;
 mod write;
 
-pub use meta::{journal_blob_path, recovery_subdir, JOURNAL_MAX_BYTES};
-pub use runtime::{schedule_dirty, set_recovery_dir, start_heartbeat, JournalRuntime};
+pub use meta::{
+    journal_blob_path, journal_state_path, recovery_subdir, JOURNAL_MAX_BYTES,
+};
+pub use runtime::{
+    flush_doc_sync, schedule_dirty, set_recovery_dir, start_heartbeat, JournalRuntime, HEARTBEAT,
+    MAX_INTERVAL, QUIET,
+};
 pub use stats::JournalWriteSource;
 pub use write::{delete_journal, write_journal_for_doc, write_journal_for_doc_from};
 

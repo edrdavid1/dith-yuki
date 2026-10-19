@@ -32,6 +32,7 @@ pub struct JournalStatsSnapshot {
     pub in_flight: u64,
     pub total_write_ms: u64,
     pub write_samples: u64,
+    pub skipped: u64,
 }
 
 static DEBOUNCE: AtomicU64 = AtomicU64::new(0);
@@ -45,6 +46,7 @@ static CONCURRENT_PEAK: AtomicU64 = AtomicU64::new(0);
 static IN_FLIGHT: AtomicU64 = AtomicU64::new(0);
 static TOTAL_WRITE_MS: AtomicU64 = AtomicU64::new(0);
 static WRITE_SAMPLES: AtomicU64 = AtomicU64::new(0);
+static SKIPPED: AtomicU64 = AtomicU64::new(0);
 
 pub fn reset() {
     for a in [
@@ -59,9 +61,14 @@ pub fn reset() {
         &IN_FLIGHT,
         &TOTAL_WRITE_MS,
         &WRITE_SAMPLES,
+        &SKIPPED,
     ] {
         a.store(0, Ordering::Relaxed);
     }
+}
+
+pub fn note_skipped() {
+    SKIPPED.fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn note_source(source: JournalWriteSource) {
@@ -119,5 +126,6 @@ pub fn snapshot() -> JournalStatsSnapshot {
         in_flight: IN_FLIGHT.load(Ordering::Relaxed),
         total_write_ms: TOTAL_WRITE_MS.load(Ordering::Relaxed),
         write_samples: WRITE_SAMPLES.load(Ordering::Relaxed),
+        skipped: SKIPPED.load(Ordering::Relaxed),
     }
 }
