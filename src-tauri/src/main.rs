@@ -41,6 +41,8 @@ mod fs_ed_prof_harness;
 mod fs_ed_b1_merge_tests;
 #[cfg(test)]
 mod journal_baseline_harness;
+#[cfg(test)]
+mod journal_session_harness;
 mod preview_diag;
 #[cfg(test)]
 mod preview_latency_diag;

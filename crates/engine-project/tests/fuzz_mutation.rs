@@ -4,11 +4,12 @@
 //! only typed errors or success.
 
 use engine_project::serialize::{
-    decode_png_to_f32_with_limits, migrate_dyproj, migrate_dyuki, normalize_manifest_value,
-    open_project_from_bytes, parse_json_value, threshold_map_png_limits, unpack_pattern_from_bytes,
-    MAX_JSON_DEPTH,
+    build_journal_state, decode_journal_state, decode_png_to_f32_with_limits, encode_journal_state,
+    migrate_dyproj, migrate_dyuki, normalize_manifest_value, open_project_from_bytes,
+    parse_json_value, threshold_map_png_limits, unpack_pattern_from_bytes, MAX_JSON_DEPTH,
 };
 use engine_project::types::DocumentId;
+use engine_project::Document;
 use engine_tiles::TileCache;
 use std::path::PathBuf;
 
@@ -144,6 +145,27 @@ fn mutated_migrate_never_panics() {
             }
         }));
         assert!(result.is_ok(), "migrate mutation {i} panicked");
+    }
+}
+
+#[test]
+fn mutated_journal_state_never_panics() {
+    let seed = encode_journal_state(&build_journal_state(
+        &Document::new(DocumentId::new(1), 8, 8),
+        "0.0.0",
+        &[],
+        &[],
+    ))
+    .unwrap();
+    for (i, bytes) in mutations(&seed).into_iter().enumerate() {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = decode_journal_state(&bytes);
+        }));
+        assert!(
+            result.is_ok(),
+            "journal state mutation {i} panicked (len={})",
+            bytes.len()
+        );
     }
 }
 

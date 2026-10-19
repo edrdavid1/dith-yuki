@@ -226,6 +226,11 @@ pub fn install_raster_document(
     new_doc.increment_generation();
     new_doc.generations.set_document_gen(live_gen);
 
+    // Raw pixels are in TileCache; bump journal blob identity for layer 1.
+    new_doc
+        .bump_layer_raw_rev(engine_project::types::LayerId::new(layer_id))
+        .expect("fresh raster layer");
+
     let session = state.spawn_session(new_doc);
 
     // Set source_path if provided (for loaded images)
@@ -305,6 +310,13 @@ pub fn import_raster_layer(
             live_gen,
         )
         .map_err(|e| format!("Tile decomposition error: {e}"))?;
+
+        state
+            .require_session(doc_id)?
+            .document_handle
+            .mutate(|doc| {
+                doc.bump_layer_raw_rev(layer_id);
+            });
 
         state.evict_inactive_for_pressure_if_needed();
 

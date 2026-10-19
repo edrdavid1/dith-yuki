@@ -302,6 +302,9 @@ pub fn open_project_from_bytes(
         decompose_image_to_tiles(&rgba, w, h, runtime_doc_id.0, new_id.0, staging_cache).map_err(
             |e| ProjectError::Codec(format!("decompose failed for layer {}: {e}", new_id.0)),
         )?;
+        // Journal blob identity: opened Raw starts at raw_rev=1 (no re-encode needed
+        // when copying the zip layer PNG into `{uuid}.blobs/`).
+        remapped.document.set_layer_raw_rev(new_id, 1);
     }
 
     // Ensure adjustment layers never required PNG (already skipped via raw_assets).
@@ -461,6 +464,7 @@ mod tests {
                 assert!(!l.filters[0].requires_full_row);
                 // New layer id (still starts at 1 for single-layer, but filter id is fresh)
                 assert_eq!(l.id.0, 1);
+                assert_eq!(l.raw_rev, 1, "open materializes Raw at raw_rev=1");
             }
             _ => panic!("expected leaf"),
         }
@@ -478,6 +482,52 @@ mod tests {
             stage: engine_tiles::CacheStage::Raw,
         };
         assert!(staging.get_entry(key).is_some());
+    }
+
+    /// Journal recovery (§4.6 / §9): SecureZip allowlists composite/thumbnail but
+    /// does not require them; open only needs document + layers (+ assets).
+    #[test]
+    fn open_accepts_project_without_composite_or_thumbnail() {
+        let w = 16u32;
+        let h = 16u32;
+        let rgba = vec![0.5f32; (w * h * 4) as usize];
+        let cache = TileCache::new(20_000_000);
+        decompose_image_to_tiles(&rgba, w, h, 1, 1, &cache).unwrap();
+        let mut doc = Document::new(DocumentId::new(1), w, h);
+        doc.root.push(LayerNode::Leaf(Layer::new(
+            LayerId::new(1),
+            LayerKind::Raster,
+            w,
+            h,
+        )));
+        let saved = save_project_to_bytes(&doc, &cache, "0.3.0", |_| unreachable!()).unwrap();
+
+        let mut reader = ZipArchiveReader::open(&saved.zip_bytes).unwrap();
+        let mimetype = reader.read_entry("mimetype").unwrap();
+        let mut manifest_val: serde_json::Value =
+            serde_json::from_slice(&reader.read_entry("manifest.json").unwrap()).unwrap();
+        // Drop integrity map so missing composite/thumbnail entries are not listed.
+        if let Some(obj) = manifest_val.as_object_mut() {
+            obj.remove("files");
+        }
+        let manifest = serde_json::to_vec_pretty(&manifest_val).unwrap();
+        let document = reader.read_entry("document.json").unwrap();
+        let layer = reader.read_entry("layers/1.png").unwrap();
+        assert!(reader.contains("composite.png"));
+        assert!(reader.contains("thumbnail.png"));
+
+        let slim = create_zip(&[
+            ("mimetype", mimetype.as_slice()),
+            ("manifest.json", manifest.as_slice()),
+            ("document.json", document.as_slice()),
+            ("layers/1.png", layer.as_slice()),
+        ])
+        .unwrap();
+
+        let staging = TileCache::new(20_000_000);
+        let opened = open_project_from_bytes(&slim, &staging, DocumentId::new(7)).unwrap();
+        assert_eq!(opened.document.width, w);
+        assert_eq!(opened.document.layer_raw_rev(LayerId::new(1)), Some(1));
     }
 
     #[test]

@@ -12,6 +12,7 @@ pub mod assets;
 pub mod document_dto;
 pub mod features;
 pub mod id_remap;
+pub mod journal_state;
 pub mod limits;
 pub mod manifest;
 pub mod migrate;
@@ -41,6 +42,11 @@ pub use features::{
     SUPPORTED_FORMAT_MAJOR,
 };
 pub use id_remap::{remap_document_file, IdRemapTables, RemappedDocument};
+pub use journal_state::{
+    blob_sha256_hex, build_journal_state, decode_journal_state, encode_journal_state,
+    layer_blob_filename, threshold_blob_filename, validate_journal_state, JournalBlobRef,
+    JournalStateFile, JOURNAL_STATE_MAGIC, JOURNAL_STATE_VERSION,
+};
 pub use limits::ArchiveLimits;
 pub use manifest::{
     build_dyproj_manifest_json, build_dyuki_manifest_json, build_manifest_files, check_open_gate,
