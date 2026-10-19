@@ -22,7 +22,8 @@ use engine_tiles::{CacheStage, PixelTile, TileCoord, TileKey, HALO, TILE_SIZE};
 use crate::commands::AppState;
 use crate::journal::stats::{self, JournalWriteSource};
 use crate::journal::{
-    journal_blob_path, set_recovery_dir, write_journal_for_doc_from, JOURNAL_MAX_BYTES,
+    journal_blobs_dir, journal_state_path, set_recovery_dir, write_journal_for_doc_from,
+    JOURNAL_MAX_BYTES,
 };
 
 struct Case {
@@ -48,6 +49,7 @@ fn make_doc(doc_id: u32, w: u32, h: u32, n_layers: u32) -> Document {
     for i in 0..n_layers {
         let lid = i + 1;
         let mut layer = Layer::new(LayerId::new(lid), LayerKind::Raster, w, h);
+        layer.bump_raw_rev();
         layer.filters.push(FilterInstance::new(
             FilterKind::Dither,
             FilterParams::DitherV2(DitherParamsV2 {
@@ -61,6 +63,18 @@ fn make_doc(doc_id: u32, w: u32, h: u32, n_layers: u32) -> Document {
         doc.root.push(LayerNode::Leaf(layer));
     }
     doc
+}
+
+fn dir_size(path: &std::path::Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter_map(|e| e.metadata().ok())
+        .filter(|m| m.is_file())
+        .map(|m| m.len())
+        .sum()
 }
 
 fn fill_raw(state: &AppState, doc_id: u32, layer: u32, w: u32, h: u32) {
@@ -120,8 +134,17 @@ fn run_case(case: &Case) {
     write_journal_for_doc_from(&state, 1, JournalWriteSource::Direct).expect("journal write");
     let wall_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
-    let blob = journal_blob_path(&recovery, session.recovery_id);
-    let size = std::fs::metadata(&blob).map(|m| m.len()).unwrap_or(0);
+    // Second write: state-only (same raw_rev) — should be cheap vs first (blob encode).
+    let t1 = Instant::now();
+    session.document_handle.mutate(|d| d.increment_generation());
+    write_journal_for_doc_from(&state, 1, JournalWriteSource::Direct).expect("journal rewrite");
+    let rewrite_ms = t1.elapsed().as_secs_f64() * 1000.0;
+
+    let state_path = journal_state_path(&recovery, session.recovery_id);
+    let blobs = journal_blobs_dir(&recovery, session.recovery_id);
+    let state_bytes = std::fs::metadata(&state_path).map(|m| m.len()).unwrap_or(0);
+    let blobs_bytes = dir_size(&blobs);
+    let total = state_bytes + blobs_bytes;
     let snap = stats::snapshot();
     let avg_ms = if snap.write_samples > 0 {
         snap.total_write_ms as f64 / snap.write_samples as f64
@@ -130,16 +153,18 @@ fn run_case(case: &Case) {
     };
 
     println!(
-        "JOURNAL_BASELINE label={} size={}x{} mpix={:.2} layers={} wall_ms={:.1} stats_ms={:.1} zip_bytes={} zip_mib={:.2} concurrent_peak={} incomplete_raw={} cap={}",
+        "JOURNAL_H9 label={} size={}x{} mpix={:.2} layers={} first_ms={:.1} rewrite_ms={:.1} stats_ms={:.1} state_bytes={} blobs_bytes={} total_mib={:.2} concurrent_peak={} incomplete_raw={} cap={}",
         case.label,
         case.w,
         case.h,
         mpix(case.w, case.h),
         case.layers,
         wall_ms,
+        rewrite_ms,
         avg_ms,
-        size,
-        size as f64 / (1024.0 * 1024.0),
+        state_bytes,
+        blobs_bytes,
+        total as f64 / (1024.0 * 1024.0),
         snap.concurrent_peak,
         snap.incomplete_raw_skips,
         JOURNAL_MAX_BYTES,

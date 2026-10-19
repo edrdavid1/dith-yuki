@@ -76,12 +76,25 @@ pub fn write_blob_atomic(blobs_dir: &Path, filename: &str, bytes: &[u8]) -> std:
         f.sync_all()?;
     }
     set_file_private(&tmp)?;
+    #[cfg(test)]
+    {
+        if let Err(e) = super::failpoint::check(super::failpoint::FailPoint::BeforeBlobRename) {
+            // Leave tmp on disk (simulates kill before rename).
+            return Err(std::io::Error::new(std::io::ErrorKind::Other, e));
+        }
+    }
     fs::rename(&tmp, &dest)?;
     set_file_private(&dest)?;
     #[cfg(unix)]
     {
         if let Ok(dir) = File::open(blobs_dir) {
             let _ = dir.sync_all();
+        }
+    }
+    #[cfg(test)]
+    {
+        if let Err(e) = super::failpoint::check(super::failpoint::FailPoint::AfterBlobWrite) {
+            return Err(std::io::Error::new(std::io::ErrorKind::Other, e));
         }
     }
     Ok(())

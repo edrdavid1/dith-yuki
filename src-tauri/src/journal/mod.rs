@@ -9,6 +9,10 @@ mod assemble;
 pub(crate) mod cleanup;
 pub mod clean_exit;
 pub mod commands;
+#[cfg(test)]
+mod fail_tests;
+#[cfg(test)]
+pub(crate) mod failpoint;
 mod fsutil;
 mod meta;
 pub mod roster;
@@ -18,7 +22,7 @@ pub mod stats;
 mod write;
 
 pub use meta::{
-    journal_blob_path, journal_state_path, recovery_subdir, JOURNAL_MAX_BYTES,
+    journal_blob_path, journal_blobs_dir, journal_state_path, recovery_subdir, JOURNAL_MAX_BYTES,
 };
 pub use runtime::{
     flush_doc_sync, schedule_dirty, set_recovery_dir, start_heartbeat, JournalRuntime, HEARTBEAT,

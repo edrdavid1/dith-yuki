@@ -122,24 +122,25 @@ fn journal_session_typical_mix() {
     );
 }
 
-/// Bytes/minute under continuous editing at 25 MPix (full dyproj journal).
+/// Bytes/minute under continuous editing at 25 MPix (H9 state+blobs).
+///
+/// First write encodes the layer blob once; subsequent debounce writes only
+/// refresh `.state`/meta (≈KB), so sustained MiB/min collapses vs full dyproj.
 #[test]
 #[ignore]
 fn journal_session_bytes_per_minute_25mp() {
     stats::reset();
     let dir = tempfile::tempdir().unwrap();
+    let recovery = dir.path().join("recovery");
     let state = Arc::new(AppState::empty_process(None, 4096 * 1024 * 1024, true));
-    set_recovery_dir(&state, dir.path().join("recovery"));
+    set_recovery_dir(&state, recovery.clone());
 
     let w = 5984u32;
     let h = 4172u32;
     let mut doc = Document::new(DocumentId::new(1), w, h);
-    doc.root.push(LayerNode::Leaf(Layer::new(
-        LayerId::new(1),
-        LayerKind::Raster,
-        w,
-        h,
-    )));
+    let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, w, h);
+    layer.bump_raw_rev();
+    doc.root.push(LayerNode::Leaf(layer));
     let session = state.spawn_session(doc);
     if let Ok(mut g) = session.history.saved_snapshot.lock() {
         *g = None;
@@ -148,24 +149,39 @@ fn journal_session_bytes_per_minute_25mp() {
 
     let t0 = Instant::now();
     write_journal_for_doc_from(&state, 1, JournalWriteSource::Debounce).unwrap();
-    let one_write = t0.elapsed();
+    let first_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
-    let blob = crate::journal::journal_blob_path(&dir.path().join("recovery"), session.recovery_id);
-    let bytes = std::fs::metadata(&blob).map(|m| m.len()).unwrap_or(0);
-    // Continuous editing → debounce every 3 s ⇒ 20 writes/min (upper bound when
-    // every quiet window completes; heartbeat adds ~2 if debounce is skipped).
+    let blobs = crate::journal::journal_blobs_dir(&recovery, session.recovery_id);
+    let state_path = crate::journal::journal_state_path(&recovery, session.recovery_id);
+    let blob_bytes: u64 = std::fs::read_dir(&blobs)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.metadata().ok())
+        .filter(|m| m.is_file())
+        .map(|m| m.len())
+        .sum();
+    let state_bytes = std::fs::metadata(&state_path).map(|m| m.len()).unwrap_or(0);
+
+    // Second write: state-only (same raw_rev).
+    session.document_handle.mutate(|d| d.increment_generation());
+    let t1 = Instant::now();
+    write_journal_for_doc_from(&state, 1, JournalWriteSource::Debounce).unwrap();
+    let rewrite_ms = t1.elapsed().as_secs_f64() * 1000.0;
+
+    // Continuous editing → ~20 state writes/min after the one-time blob.
     let writes_per_min = 20.0_f64;
-    let bytes_per_min = bytes as f64 * writes_per_min;
+    let sustained = state_bytes as f64 * writes_per_min;
     println!(
-        "JOURNAL_BYTES_PER_MIN size={}x{} one_write_ms={:.1} zip_bytes={} zip_mib={:.2} writes_per_min={:.0} bytes_per_min={} mib_per_min={:.1}",
+        "JOURNAL_BYTES_PER_MIN size={}x{} first_ms={:.1} rewrite_ms={:.1} blob_mib={:.2} state_bytes={} writes_per_min={:.0} sustained_mib_per_min={:.3}",
         w,
         h,
-        one_write.as_secs_f64() * 1000.0,
-        bytes,
-        bytes as f64 / (1024.0 * 1024.0),
+        first_ms,
+        rewrite_ms,
+        blob_bytes as f64 / (1024.0 * 1024.0),
+        state_bytes,
         writes_per_min,
-        bytes_per_min as u64,
-        bytes_per_min / (1024.0 * 1024.0),
+        sustained / (1024.0 * 1024.0),
     );
     let _ = Duration::from_secs(0);
 }

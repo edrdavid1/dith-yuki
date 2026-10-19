@@ -301,6 +301,8 @@ fn write_journal_state_v1(
         }
         // Still refresh meta written_at / flush bookkeeping for soft-discard reuse.
     } else {
+        #[cfg(test)]
+        super::failpoint::check(super::failpoint::FailPoint::BeforeStateWrite)?;
         let t_state = Instant::now();
         let state_path = journal_state_path(&recovery_dir, recovery_id);
         atomic_write_private(&state_path, &state_bytes).map_err(|e| e.to_string())?;
@@ -312,6 +314,8 @@ fn write_journal_state_v1(
                 t_state.elapsed().as_millis()
             );
         }
+        #[cfg(test)]
+        super::failpoint::check(super::failpoint::FailPoint::AfterStateWrite)?;
     }
 
     let project_path = session.project_path.lock().ok().and_then(|g| g.clone());
@@ -337,7 +341,11 @@ fn write_journal_state_v1(
     };
     let meta_path = journal_meta_path(&recovery_dir, recovery_id);
     let json = serde_json::to_vec_pretty(&meta).map_err(|e| e.to_string())?;
+    #[cfg(test)]
+    super::failpoint::check(super::failpoint::FailPoint::BeforeMetaWrite)?;
     atomic_write_private(&meta_path, &json).map_err(|e| e.to_string())?;
+    #[cfg(test)]
+    super::failpoint::check(super::failpoint::FailPoint::AfterMetaWrite)?;
 
     if let Ok(mut guard) = state.journal.lock() {
         guard.note_flushed(doc_id, revision);
