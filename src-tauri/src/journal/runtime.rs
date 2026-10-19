@@ -10,7 +10,8 @@ use tauri::{AppHandle, Manager};
 use crate::commands::AppState;
 use crate::undo::is_dirty_doc;
 
-use super::write::{delete_journal_for_session, write_journal_for_doc};
+use super::stats::JournalWriteSource;
+use super::write::{delete_journal_for_session, write_journal_for_doc_from};
 
 pub const DEBOUNCE: Duration = Duration::from_secs(3);
 pub const HEARTBEAT: Duration = Duration::from_secs(30);
@@ -107,7 +108,9 @@ pub fn schedule_dirty(app: Option<&AppHandle>, state: &AppState, doc_id: u32) {
         if !is_dirty_doc(state.inner(), doc_id) {
             return;
         }
-        if let Err(e) = write_journal_for_doc(state.inner(), doc_id) {
+        if let Err(e) =
+            write_journal_for_doc_from(state.inner(), doc_id, JournalWriteSource::Debounce)
+        {
             log::warn!("journal debounce write failed for doc {doc_id}: {e}");
         }
     });
@@ -163,7 +166,9 @@ fn flush_stale(app: &AppHandle) {
         if !needs {
             continue;
         }
-        if let Err(e) = write_journal_for_doc(state.inner(), doc_id) {
+        if let Err(e) =
+            write_journal_for_doc_from(state.inner(), doc_id, JournalWriteSource::Heartbeat)
+        {
             log::warn!("journal heartbeat write failed for doc {doc_id}: {e}");
         }
     }

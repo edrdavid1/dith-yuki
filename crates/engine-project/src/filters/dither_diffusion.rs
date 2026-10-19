@@ -943,47 +943,56 @@ pub fn apply_error_diffusion_tile_row_strip(
     let mut err = vec![0.0f32; wide * SIZE * 3];
     let mut bottom = vec![0.0f32; margin.max(1) * wide * 3];
 
-    for (ti, &(_, tile)) in tiles.iter().enumerate() {
-        let x0 = ti * SIZE;
-        for y in 0..SIZE {
-            for x in 0..SIZE {
-                let di = (y * wide + x0 + x) * 4;
-                let sx = HALO + x as u32;
-                let sy = HALO + y as u32;
-                src[di] = tile.at(sx, sy, 0);
-                src[di + 1] = tile.at(sx, sy, 1);
-                src[di + 2] = tile.at(sx, sy, 2);
-                src[di + 3] = tile.at(sx, sy, 3);
+    crate::filters::fs_ed_prof::note_strip_run(ty, (wide * SIZE) as u64);
+
+    {
+        let _raw = crate::filters::fs_ed_prof::Scope::new(crate::filters::fs_ed_prof::add_ns_raw);
+        for (ti, &(_, tile)) in tiles.iter().enumerate() {
+            let x0 = ti * SIZE;
+            for y in 0..SIZE {
+                for x in 0..SIZE {
+                    let di = (y * wide + x0 + x) * 4;
+                    let sx = HALO + x as u32;
+                    let sy = HALO + y as u32;
+                    src[di] = tile.at(sx, sy, 0);
+                    src[di + 1] = tile.at(sx, sy, 1);
+                    src[di + 2] = tile.at(sx, sy, 2);
+                    src[di + 3] = tile.at(sx, sy, 3);
+                }
             }
+            outputs[ti].copy_halo_from(tile);
         }
-        outputs[ti].copy_halo_from(tile);
     }
 
     let doc = document.id.0;
-    for (ti, &(coord, _)) in tiles.iter().enumerate() {
-        let x0 = ti * SIZE;
-        if let Some(top) = residuals_store.get_top(doc, layer_id, filter_key, coord) {
-            let m = top.margin.min(SIZE);
-            for row in 0..m {
-                for col in 0..SIZE {
-                    let s = (row * SIZE + col) * 3;
-                    let d = (row * wide + x0 + col) * 3;
-                    err[d] += top.bottom[s];
-                    err[d + 1] += top.bottom[s + 1];
-                    err[d + 2] += top.bottom[s + 2];
+    {
+        let _rl =
+            crate::filters::fs_ed_prof::Scope::new(crate::filters::fs_ed_prof::add_ns_residual_load);
+        for (ti, &(coord, _)) in tiles.iter().enumerate() {
+            let x0 = ti * SIZE;
+            if let Some(top) = residuals_store.get_top(doc, layer_id, filter_key, coord) {
+                let m = top.margin.min(SIZE);
+                for row in 0..m {
+                    for col in 0..SIZE {
+                        let s = (row * SIZE + col) * 3;
+                        let d = (row * wide + x0 + col) * 3;
+                        err[d] += top.bottom[s];
+                        err[d + 1] += top.bottom[s + 1];
+                        err[d + 2] += top.bottom[s + 2];
+                    }
                 }
             }
-        }
-        if ti == 0 {
-            if let Some(diag) = residuals_store.get_diag(doc, layer_id, filter_key, coord) {
-                let m = diag.margin.min(SIZE);
-                for row in 0..m {
-                    for col in 0..m {
-                        let s = (row * diag.margin + col) * 3;
-                        let d = (row * wide + col) * 3;
-                        err[d] += diag.corner[s];
-                        err[d + 1] += diag.corner[s + 1];
-                        err[d + 2] += diag.corner[s + 2];
+            if ti == 0 {
+                if let Some(diag) = residuals_store.get_diag(doc, layer_id, filter_key, coord) {
+                    let m = diag.margin.min(SIZE);
+                    for row in 0..m {
+                        for col in 0..m {
+                            let s = (row * diag.margin + col) * 3;
+                            let d = (row * wide + col) * 3;
+                            err[d] += diag.corner[s];
+                            err[d + 1] += diag.corner[s + 1];
+                            err[d + 2] += diag.corner[s + 2];
+                        }
                     }
                 }
             }
@@ -994,7 +1003,10 @@ pub fn apply_error_diffusion_tile_row_strip(
     let origin_gx = first_tx as i32 * TILE_SIZE as i32;
     let origin_gy = ty as i32 * TILE_SIZE as i32;
 
-    for y in 0..SIZE {
+    {
+        let _ed =
+            crate::filters::fs_ed_prof::Scope::new(crate::filters::fs_ed_prof::add_ns_ed_cycle);
+        for y in 0..SIZE {
         let gy = origin_gy + y as i32;
         let scan_parity = if ps > 1 { gy.div_euclid(step) } else { gy };
         let row_dir = row_direction(serpentine, scan_parity);
@@ -1233,57 +1245,63 @@ pub fn apply_error_diffusion_tile_row_strip(
             }
         }
     }
+    } // ed_cycle scope
 
-    for (ti, &(coord, _)) in tiles.iter().enumerate() {
-        let x0 = ti * SIZE;
-        for y in 0..SIZE {
-            for x in 0..SIZE {
-                let si = (y * wide + x0 + x) * 4;
-                let dx = HALO + x as u32;
-                let dy = HALO + y as u32;
-                outputs[ti].set(dx, dy, 0, out[si]);
-                outputs[ti].set(dx, dy, 1, out[si + 1]);
-                outputs[ti].set(dx, dy, 2, out[si + 2]);
-                outputs[ti].set(dx, dy, 3, out[si + 3]);
-            }
-        }
-
-        let right = vec![0.0f32; SIZE * margin.max(1) * 3];
-        let mut bottom_t = vec![0.0f32; margin.max(1) * SIZE * 3];
-        let mut corner = vec![0.0f32; margin.max(1) * margin.max(1) * 3];
-        for row in 0..margin {
-            for col in 0..SIZE {
-                let s = (row * wide + x0 + col) * 3;
-                let d = (row * SIZE + col) * 3;
-                bottom_t[d] = bottom[s];
-                bottom_t[d + 1] = bottom[s + 1];
-                bottom_t[d + 2] = bottom[s + 2];
-            }
-        }
-        if ti + 1 < n {
-            for row in 0..margin {
-                for col in 0..margin {
-                    let s = (row * wide + x0 + SIZE + col) * 3;
-                    let d = (row * margin + col) * 3;
-                    corner[d] = bottom[s];
-                    corner[d + 1] = bottom[s + 1];
-                    corner[d + 2] = bottom[s + 2];
+    {
+        let _rs = crate::filters::fs_ed_prof::Scope::new(
+            crate::filters::fs_ed_prof::add_ns_residual_store,
+        );
+        for (ti, &(coord, _)) in tiles.iter().enumerate() {
+            let x0 = ti * SIZE;
+            for y in 0..SIZE {
+                for x in 0..SIZE {
+                    let si = (y * wide + x0 + x) * 4;
+                    let dx = HALO + x as u32;
+                    let dy = HALO + y as u32;
+                    outputs[ti].set(dx, dy, 0, out[si]);
+                    outputs[ti].set(dx, dy, 1, out[si + 1]);
+                    outputs[ti].set(dx, dy, 2, out[si + 2]);
+                    outputs[ti].set(dx, dy, 3, out[si + 3]);
                 }
             }
-        }
 
-        residuals_store.store(
-            doc,
-            layer_id,
-            filter_key,
-            coord,
-            ErrorResiduals {
-                margin,
-                right,
-                bottom: bottom_t,
-                corner,
-            },
-        );
+            let right = vec![0.0f32; SIZE * margin.max(1) * 3];
+            let mut bottom_t = vec![0.0f32; margin.max(1) * SIZE * 3];
+            let mut corner = vec![0.0f32; margin.max(1) * margin.max(1) * 3];
+            for row in 0..margin {
+                for col in 0..SIZE {
+                    let s = (row * wide + x0 + col) * 3;
+                    let d = (row * SIZE + col) * 3;
+                    bottom_t[d] = bottom[s];
+                    bottom_t[d + 1] = bottom[s + 1];
+                    bottom_t[d + 2] = bottom[s + 2];
+                }
+            }
+            if ti + 1 < n {
+                for row in 0..margin {
+                    for col in 0..margin {
+                        let s = (row * wide + x0 + SIZE + col) * 3;
+                        let d = (row * margin + col) * 3;
+                        corner[d] = bottom[s];
+                        corner[d + 1] = bottom[s + 1];
+                        corner[d + 2] = bottom[s + 2];
+                    }
+                }
+            }
+
+            residuals_store.store(
+                doc,
+                layer_id,
+                filter_key,
+                coord,
+                ErrorResiduals {
+                    margin,
+                    right,
+                    bottom: bottom_t,
+                    corner,
+                },
+            );
+        }
     }
 
     Ok(())

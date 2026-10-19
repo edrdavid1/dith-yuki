@@ -35,6 +35,12 @@ mod tile_gen_trace;
 mod tile_gen_trace_host;
 #[cfg(test)]
 mod tile_gen_trace_harness;
+#[cfg(test)]
+mod fs_ed_prof_harness;
+#[cfg(test)]
+mod fs_ed_b1_merge_tests;
+#[cfg(test)]
+mod journal_baseline_harness;
 mod preview_diag;
 #[cfg(test)]
 mod preview_latency_diag;

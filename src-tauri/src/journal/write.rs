@@ -1,6 +1,7 @@
 //! Assemble and atomically write a recovery journal for one session.
 
 use std::path::Path;
+use std::time::Instant;
 
 use engine_project::serialize::{read_png_file, save_project_to_bytes, ProjectError};
 use uuid::Uuid;
@@ -12,6 +13,7 @@ use super::meta::{
     file_mtime_ms, journal_blob_path, now_ms, write_meta, JournalContentKind, JournalMeta,
     JOURNAL_MAX_BYTES,
 };
+use super::stats::{self, JournalWriteSource};
 
 pub fn delete_journal(recovery_dir: &Path, recovery_id: Uuid) {
     let blob = journal_blob_path(recovery_dir, recovery_id);
@@ -37,9 +39,43 @@ pub fn delete_journal_for_session(state: &AppState, session: &DocumentSession) {
 /// (re-applies enabled filters, including ED dither). Does not enqueue
 /// Composite tile tasks, but **does** compete for CPU with the tile worker.
 pub fn write_journal_for_doc(state: &AppState, doc_id: u32) -> Result<(), String> {
+    write_journal_for_doc_from(state, doc_id, JournalWriteSource::Direct)
+}
+
+/// Same as [`write_journal_for_doc`], with a call-site source for baseline counters.
+pub fn write_journal_for_doc_from(
+    state: &AppState,
+    doc_id: u32,
+    source: JournalWriteSource,
+) -> Result<(), String> {
+    stats::note_source(source);
     if !super::enabled() {
+        stats::note_kill_switch_noop();
         return Ok(());
     }
+    let _inflight = stats::InFlightGuard::enter();
+    let t0 = Instant::now();
+
+    let result = write_journal_for_doc_inner(state, doc_id);
+    stats::note_write_duration(t0.elapsed());
+    if crate::tile_gen_trace::enabled() || journal_trace_enabled() {
+        let snap = stats::snapshot();
+        log::info!(
+            target: "journal",
+            "journal_write source={source:?} doc={doc_id} ms={} ok={} stats={}",
+            t0.elapsed().as_millis(),
+            result.is_ok(),
+            serde_json::to_string(&snap).unwrap_or_default()
+        );
+    }
+    result
+}
+
+fn journal_trace_enabled() -> bool {
+    std::env::var("DITHER_TRACE").ok().as_deref() == Some("1")
+}
+
+fn write_journal_for_doc_inner(state: &AppState, doc_id: u32) -> Result<(), String> {
     let session = state.require_session(doc_id)?;
     let recovery_dir = {
         let guard = state.journal.lock().map_err(|e| e.to_string())?;
@@ -85,6 +121,7 @@ pub fn write_journal_for_doc(state: &AppState, doc_id: u32) -> Result<(), String
             }
         }
         Err(ProjectError::IncompleteRaw { doc_id, layer_id }) => {
+            stats::note_incomplete_raw_skip();
             log::warn!(
                 "journal skip: IncompleteRaw doc={doc_id} layer={layer_id} (tiles not in cache yet)"
             );

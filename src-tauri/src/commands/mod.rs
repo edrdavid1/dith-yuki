@@ -32,6 +32,7 @@ pub use workspace::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -39,6 +40,16 @@ use tauri::{AppHandle, Emitter};
 use engine_tiles::{CacheStage, Priority, RecomputeTask, TileKey};
 
 use crate::worker::WorkerWake;
+
+/// Wall-clock for CPU tiled preview: slider/filter invalidate → worker wave idle.
+/// GPU apply still reports via [`emit_gpu_dither_status`] (unchanged).
+pub(crate) struct PreviewRefreshTimer {
+    pub t0: Instant,
+    pub doc_id: u32,
+    pub layer_id: u32,
+    /// Set when a GPU-family apply already emitted `gpu-dither-status` this wave.
+    pub gpu_emitted: bool,
+}
 
 /// Re-exports for `commands::tests` / diagnostics. Not all are used by the bin itself.
 #[allow(unused_imports)]
@@ -75,6 +86,8 @@ pub struct AppState {
     pub dock_affinity: Mutex<crate::dock_affinity::DockAffinityController>,
     pub preview_pass_inflight: AtomicUsize,
     pub pending_preview_refresh: Mutex<Option<PendingPreviewRefresh>>,
+    /// CPU preview refresh wall timer (see [`PreviewRefreshTimer`]).
+    pub preview_refresh_timer: Mutex<Option<PreviewRefreshTimer>>,
     /// Preview Image|ASCII switch: when true (default), Ascii full-doc filters run.
     pub ascii_preview: AtomicBool,
     /// Refcount of callers inside a full-document ensure (monolithic “Rendering…”).
@@ -148,6 +161,14 @@ pub(crate) fn emit_gpu_dither_status(state: &AppState, doc_id: u32) {
     let Some(status) = engine_project::algorithms::gpu_dither::take_last_gpu_dither_status() else {
         return;
     };
+    // GPU path owns the footer number for this wave — skip CPU wall-timer emit.
+    if let Ok(mut t) = state.preview_refresh_timer.lock() {
+        if let Some(timer) = t.as_mut() {
+            if timer.doc_id == doc_id {
+                timer.gpu_emitted = true;
+            }
+        }
+    }
     let Ok(guard) = state.app_handle.lock() else {
         return;
     };
@@ -164,6 +185,87 @@ pub(crate) fn emit_gpu_dither_status(state: &AppState, doc_id: u32) {
         width: status.width,
         height: status.height,
         pixel_size: status.pixel_size,
+    };
+    let _ = app.emit_to(tauri::EventTarget::Any, "gpu-dither-status", payload);
+}
+
+fn dither_footer_meta(
+    state: &AppState,
+    doc_id: u32,
+    layer_id: u32,
+) -> (String, u32, u32, u32) {
+    let Ok(session) = state.session(doc_id) else {
+        return ("cpu".into(), 0, 0, 1);
+    };
+    let snap = session.document_handle.snapshot();
+    let (w, h) = (snap.width, snap.height);
+    let mut algo = "cpu".to_string();
+    let mut ps = 1u32;
+    if let Some(layer) = find_layer_dither_meta(&snap.root, layer_id) {
+        algo = layer.0;
+        ps = layer.1;
+    }
+    (algo, w, h, ps)
+}
+
+fn find_layer_dither_meta(
+    nodes: &[engine_project::LayerNode],
+    layer_id: u32,
+) -> Option<(String, u32)> {
+    use engine_project::filter::FilterParams;
+    for node in nodes {
+        match node {
+            engine_project::LayerNode::Leaf(layer) if layer.id.0 == layer_id => {
+                for f in layer.filters.iter().rev() {
+                    if !f.enabled {
+                        continue;
+                    }
+                    if let FilterParams::DitherV2(p) = &f.params {
+                        let name = p
+                            .mode
+                            .algorithm_id()
+                            .unwrap_or("dither")
+                            .to_string();
+                        return Some((name, p.pixel_size.max(1) as u32));
+                    }
+                }
+                return None;
+            }
+            engine_project::LayerNode::Group(g) => {
+                if let Some(m) = find_layer_dither_meta(&g.children, layer_id) {
+                    return Some(m);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Emit CPU wall time (invalidate → preview wave idle) on the same footer channel.
+fn emit_cpu_preview_refresh_status(
+    state: &AppState,
+    doc_id: u32,
+    layer_id: u32,
+    elapsed_ms: u32,
+) {
+    let Ok(guard) = state.app_handle.lock() else {
+        return;
+    };
+    let Some(ref app) = *guard else {
+        return;
+    };
+    let (algorithm, width, height, pixel_size) = dither_footer_meta(state, doc_id, layer_id);
+    let payload = GpuDitherStatusPayload {
+        doc_id,
+        algorithm,
+        path: "CPU".into(),
+        backend: "cpu".into(),
+        elapsed_ms,
+        strips: 0,
+        width,
+        height,
+        pixel_size,
     };
     let _ = app.emit_to(tauri::EventTarget::Any, "gpu-dither-status", payload);
 }
@@ -233,11 +335,15 @@ pub(crate) fn reset_tiles_for_new_document(state: &AppState) {
     state.tiles.tile_cache.clear();
     state.tiles.scheduler.clear_all();
     state.tiles.ed_frontier.clear();
+    state.tiles.clear_strip_gates();
     state.tiles.block_representatives.invalidate_all();
     state.tiles.error_residuals.clear();
     state.tiles.full_document.clear();
     if let Ok(mut pending) = state.pending_preview_refresh.lock() {
         *pending = None;
+    }
+    if let Ok(mut timer) = state.preview_refresh_timer.lock() {
+        *timer = None;
     }
 }
 
@@ -492,6 +598,16 @@ fn run_preview_refresh(
     // Hold the corner spinner for the whole filter refresh wave (CPU tiled ED
     // included). Nested full-document begin/end inside workers nest on top.
     begin_full_document_busy(state, doc_id);
+    // CPU footer timer: slider/filter invalidate → entire preview wave idle.
+    // GPU apply still emits its own elapsed via `emit_gpu_dither_status`.
+    if let Ok(mut slot) = state.preview_refresh_timer.lock() {
+        *slot = Some(PreviewRefreshTimer {
+            t0: Instant::now(),
+            doc_id,
+            layer_id,
+            gpu_emitted: false,
+        });
+    }
     let queued_before = state.tiles.scheduler.queued_len();
     schedule_dirty_viewport_tiles_with_reason(state, reason);
     crate::ed_progress::note_ed_pass_start(state, doc_id);
@@ -521,8 +637,26 @@ fn run_preview_refresh(
     }
     if !preview_pass_busy(state) {
         // Nothing queued (empty viewport / already fresh) — don't leave the chip on.
+        finish_preview_refresh_timer(state);
         end_full_document_busy(state, doc_id);
     }
+}
+
+fn finish_preview_refresh_timer(state: &AppState) {
+    let Some(timer) = state
+        .preview_refresh_timer
+        .lock()
+        .ok()
+        .and_then(|mut g| g.take())
+    else {
+        return;
+    };
+    if timer.gpu_emitted {
+        return;
+    }
+    let elapsed_ms = timer.t0.elapsed().as_secs_f64() * 1e3;
+    let elapsed_ms = elapsed_ms.round().clamp(0.0, u32::MAX as f64) as u32;
+    emit_cpu_preview_refresh_status(state, timer.doc_id, timer.layer_id, elapsed_ms);
 }
 
 pub(crate) fn on_preview_task_finished(state: &AppState) {
@@ -532,7 +666,10 @@ pub(crate) fn on_preview_task_finished(state: &AppState) {
     // Wave idle: clear the refresh-held busy before a coalesced refresh restarts it.
     if let Ok(session) = state.active_session() {
         let doc_id = session.document_handle.snapshot().id.0;
+        finish_preview_refresh_timer(state);
         clear_full_document_busy(state, doc_id);
+    } else {
+        finish_preview_refresh_timer(state);
     }
     let pending = state.pending_preview_refresh.lock().unwrap().take();
     if crate::tile_gen_trace::enabled() {

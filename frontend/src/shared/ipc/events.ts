@@ -106,7 +106,12 @@ export async function onFullDocumentBusy(
   return listen<FullDocumentBusyPayload>('full-document-busy', handler);
 }
 
-/** GPU dither path indicator for the preview footer (experimental.gpu_dither_families). */
+/**
+ * Preview footer dither timing (`experimental.gpu_dither_families`).
+ * - `path === 'GPU'`: kernel/apply elapsed (unchanged).
+ * - `path === 'CPU'`: wall time from filter invalidate (slider release) until
+ *   the preview worker wave is idle (tiles refreshed).
+ */
 export interface GpuDitherStatusPayload {
   doc_id: number;
   algorithm: string;

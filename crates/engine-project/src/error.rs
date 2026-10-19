@@ -45,6 +45,10 @@ pub enum EngineError {
     #[error("ED dependencies not ready")]
     EdDependenciesPending,
 
+    /// Another worker owns this ED strip row; re-park until the row is published.
+    #[error("ED strip owned by another worker")]
+    EdStripBusy,
+
     /// Display pyramid parent waiting on full-res Composite children.
     #[error("Pyramid children not yet computed")]
     PyramidChildrenPending,

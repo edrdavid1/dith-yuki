@@ -36,6 +36,7 @@ pub mod voronoi_stipple;
 pub mod zhou_fang_table;
 
 pub mod apply;
+pub mod fs_ed_prof;
 
 // Re-export main API
 pub use apply::apply_filter_to_tile;
@@ -69,6 +70,7 @@ pub use dither_residuals::{ErrorResiduals, ErrorResidualsStore, CORNER_PATCH};
 pub use dither_diffusion::{
     apply_error_diffusion, apply_error_diffusion_tile_row_strip, apply_error_diffusion_with_cache,
 };
+pub use fs_ed_prof::{self as fs_ed_prof_counters, Snapshot as FsEdProfSnapshot};
 pub use ed_wrap_padding::{
     apply_ed_buffer_no_wrap, apply_ed_with_wrap_padding, apply_ed_with_wrap_padding_simple,
     edge_margin, wrap_pad_rgba_f32, wrap_padding_fits_limits, EdWrapError, MAX_MARGIN_PX,

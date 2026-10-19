@@ -233,7 +233,32 @@ pub fn tile_worker_loop<R: tauri::Runtime>(state: Arc<AppState>, app_handle: tau
                             continue;
                         }
                         l0_started = l0_compute_started(diag, &task);
-                        compute_processed_tile(task.key, &state)
+                        match compute_processed_tile(task.key, &state) {
+                            Err(engine_project::error::EngineError::EdStripBusy) => {
+                                // Another worker owns this ED strip row. Re-park on
+                                // sibling tiles (never self) so the gate wait cannot
+                                // pin a worker thread permanently.
+                                let deps = crate::tile_pipeline::ed_strip_busy_park_deps(
+                                    &state, task.key,
+                                );
+                                if deps.is_empty() {
+                                    // Single-tile row race: bounce to scheduler.
+                                    state.tiles.scheduler.enqueue_or_bump(task);
+                                    state.worker_wake.notify_one();
+                                } else {
+                                    let _ = state.tiles.ed_frontier.block_on(
+                                        task,
+                                        deps,
+                                        &state.tiles.tile_cache,
+                                    );
+                                }
+                                state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
+                                crate::commands::on_preview_task_finished(&state);
+                                diag_task_finished(diag, &state, &task);
+                                continue;
+                            }
+                            other => other,
+                        }
                     }
                     CacheStage::Composite => {
                         l0_started = l0_compute_started(diag, &task);
@@ -569,6 +594,7 @@ pub fn tile_worker_loop<R: tauri::Runtime>(state: Arc<AppState>, app_handle: tau
                     engine_project::error::EngineError::PyramidChildrenPending
                         | engine_project::error::EngineError::EdPrefixPending
                         | engine_project::error::EngineError::EdDependenciesPending
+                        | engine_project::error::EngineError::EdStripBusy
                 ) {
                     eprintln!(
                         "tile compute failed layer={} stage={:?} l={}/{}/{}: {err}",

@@ -292,14 +292,89 @@ pub fn compute_processed_tile(
 
         // Any ED in the stack: process the full horizontal tile-row as one strip
         // so FS below-left taps work even when Glow/Glitch/ordered wrap the ED.
+        //
+        // B1 strip owner: ≤1 strip compute per `(doc, layer, level, ty)`.
+        // Owner = first successful `try_claim` (typically `min_x` via causal
+        // schedule). Waiters poll briefly then return `EdStripBusy` so the
+        // worker re-parks — never block a worker thread permanently on the gate.
         if engine_project::filters::layer_needs_ed_strip(layer) {
+            use crate::state::ed_strip_gate::{STRIP_WAIT_SLICE, STRIP_WAIT_SLICES};
+            use crate::state::EdStripKey;
             use engine_project::filters::apply_filter_stack_tile_row_strip;
+
+            engine_project::filters::fs_ed_prof::note_tile_task();
 
             let bounds = layer.bounds_l0;
             let ty = key.coord.y;
             let level = key.coord.level;
+            let processed_key = TileKey {
+                doc: key.doc,
+                layer: key.layer,
+                coord: key.coord,
+                stage: CacheStage::Processed,
+            };
+
+            // Fast path: another owner already published this tile.
+            if engine_tiles::tile_fresh(&state.tiles.tile_cache, processed_key) {
+                if let Some(arc) = state.tiles.tile_cache.get_entry(processed_key) {
+                    return Ok(arc);
+                }
+            }
+
+            let strip_key = EdStripKey {
+                doc: key.doc,
+                layer: key.layer,
+                level,
+                ty,
+            };
+            let gate = state.tiles.strip_gate(strip_key);
+            let start_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
+
+            let _strip_owner = {
+                let mut claimed = gate.try_claim();
+                if claimed.is_none() {
+                    for _ in 0..STRIP_WAIT_SLICES {
+                        // Owner finished → our tile may already be fresh.
+                        if engine_tiles::tile_fresh(&state.tiles.tile_cache, processed_key) {
+                            if let Some(arc) = state.tiles.tile_cache.get_entry(processed_key) {
+                                return Ok(arc);
+                            }
+                        }
+                        let now_gen = snapshot_for_key(state, key)?
+                            .generations
+                            .document_gen
+                            .load(Ordering::Acquire);
+                        if now_gen != start_gen {
+                            return Err(EngineError::invalid_state(
+                                "ED strip stale while waiting for strip owner",
+                            ));
+                        }
+                        let _ = gate.wait_free_timeout(STRIP_WAIT_SLICE);
+                        claimed = gate.try_claim();
+                        if claimed.is_some() {
+                            break;
+                        }
+                    }
+                }
+                match claimed {
+                    Some(g) => g,
+                    None => {
+                        // Still busy: re-park (worker parks on strip anchor).
+                        return Err(EngineError::EdStripBusy);
+                    }
+                }
+            };
+
+            // Re-check after claiming: previous owner finished while we waited.
+            if engine_tiles::tile_fresh(&state.tiles.tile_cache, processed_key) {
+                if let Some(arc) = state.tiles.tile_cache.get_entry(processed_key) {
+                    return Ok(arc);
+                }
+            }
 
             // Previous strip must be finalized so top residuals exist.
+            // Time only freshness probes here — recursive compute is counted in
+            // its own scopes (avoid double-counting in fs_ed_prof %).
             if ty > 0 {
                 for tx in bounds.min_x..=bounds.max_x {
                     let prev = TileKey {
@@ -312,34 +387,57 @@ pub fn compute_processed_tile(
                         },
                         stage: CacheStage::Processed,
                     };
-                    if !engine_tiles::tile_fresh(&state.tiles.tile_cache, prev) {
+                    let fresh = {
+                        let _prev = engine_project::filters::fs_ed_prof::Scope::new(
+                            engine_project::filters::fs_ed_prof::add_ns_prev_row,
+                        );
+                        engine_tiles::tile_fresh(&state.tiles.tile_cache, prev)
+                    };
+                    if !fresh {
                         let _ = compute_processed_tile(prev, state)?;
                     }
                 }
             }
 
+            // doc_gen check between stripes (after prev-row ensure, before ED).
+            let compute_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
+            let mid_gen = snapshot_for_key(state, key)?
+                .generations
+                .document_gen
+                .load(Ordering::Acquire);
+            if mid_gen != compute_gen {
+                return Err(EngineError::invalid_state(
+                    "ED strip stale: document_gen advanced between stripes",
+                ));
+            }
+
             let mut coords = Vec::new();
             let mut raw_arcs = Vec::new();
-            for tx in bounds.min_x..=bounds.max_x {
-                let coord = engine_tiles::TileCoord {
-                    level,
-                    x: tx,
-                    y: ty,
-                };
-                let raw_key = TileKey {
-                    doc: key.doc,
-                    layer: key.layer,
-                    coord,
-                    stage: CacheStage::Raw,
-                };
-                let raw = state.tiles.tile_cache.get_entry(raw_key).ok_or_else(|| {
-                    EngineError::invalid_state(format!(
-                        "Raw tile missing for ED strip layer={} ({tx},{ty})",
-                        key.layer
-                    ))
-                })?;
-                coords.push(coord);
-                raw_arcs.push(raw);
+            {
+                let _raw = engine_project::filters::fs_ed_prof::Scope::new(
+                    engine_project::filters::fs_ed_prof::add_ns_raw,
+                );
+                for tx in bounds.min_x..=bounds.max_x {
+                    let coord = engine_tiles::TileCoord {
+                        level,
+                        x: tx,
+                        y: ty,
+                    };
+                    let raw_key = TileKey {
+                        doc: key.doc,
+                        layer: key.layer,
+                        coord,
+                        stage: CacheStage::Raw,
+                    };
+                    let raw = state.tiles.tile_cache.get_entry(raw_key).ok_or_else(|| {
+                        EngineError::invalid_state(format!(
+                            "Raw tile missing for ED strip layer={} ({tx},{ty})",
+                            key.layer
+                        ))
+                    })?;
+                    coords.push(coord);
+                    raw_arcs.push(raw);
+                }
             }
             let strip: Vec<(engine_tiles::TileCoord, &PixelTile)> = coords
                 .iter()
@@ -360,13 +458,13 @@ pub fn compute_processed_tile(
                 &mut outputs,
             )?;
 
-            let compute_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
             let now_gen = snapshot_for_key(state, key)?
                 .generations
                 .document_gen
                 .load(Ordering::Acquire);
             let mut requested = None;
             if now_gen == compute_gen {
+                let mut inserted_keys = Vec::with_capacity(coords.len());
                 for (i, coord) in coords.iter().enumerate() {
                     let pkey = TileKey {
                         doc: key.doc,
@@ -375,19 +473,30 @@ pub fn compute_processed_tile(
                         stage: CacheStage::Processed,
                     };
                     let arc = Arc::new(std::mem::replace(&mut outputs[i], PixelTile::new()));
-                    let inserted = state.tiles.tile_cache.insert_fresh_gen(
-                        pkey,
-                        Arc::clone(&arc),
-                        compute_gen,
-                    );
+                    let inserted = {
+                        let _cw = engine_project::filters::fs_ed_prof::Scope::new(
+                            engine_project::filters::fs_ed_prof::add_ns_cache_write,
+                        );
+                        state.tiles.tile_cache.insert_fresh_gen(
+                            pkey,
+                            Arc::clone(&arc),
+                            compute_gen,
+                        )
+                    };
                     if inserted {
-                        state.evict_for_pressure_if_needed();
-                        wake_ed_frontier_after_insert(state, pkey);
+                        inserted_keys.push(pkey);
                     }
                     reschedule_if_insert_rejected(state, pkey, inserted);
                     if coord.x == key.coord.x && coord.y == key.coord.y {
                         requested = Some(arc);
                     }
+                }
+                if !inserted_keys.is_empty() {
+                    state.evict_for_pressure_if_needed();
+                    let _wk = engine_project::filters::fs_ed_prof::Scope::new(
+                        engine_project::filters::fs_ed_prof::add_ns_wake,
+                    );
+                    wake_ed_frontier_after_strip_batch(state, &inserted_keys);
                 }
             } else {
                 for (i, coord) in coords.iter().enumerate() {
@@ -976,6 +1085,70 @@ pub fn wake_ed_frontier_after_insert(state: &AppState, completed: TileKey) {
     }
 }
 
+/// Deps to park on when [`EngineError::EdStripBusy`]: other Processed tiles in
+/// the same strip row (never `self` — that would self-deadlock). Owner inserts
+/// the whole row before batch-wake, so any sibling becoming fresh unblocks us.
+pub fn ed_strip_busy_deps(key: TileKey, min_x: u32, max_x: u32) -> Vec<TileKey> {
+    let mut deps = Vec::new();
+    for tx in min_x..=max_x {
+        if tx == key.coord.x {
+            continue;
+        }
+        deps.push(TileKey {
+            doc: key.doc,
+            layer: key.layer,
+            coord: engine_tiles::TileCoord {
+                level: key.coord.level,
+                x: tx,
+                y: key.coord.y,
+            },
+            stage: CacheStage::Processed,
+        });
+    }
+    deps
+}
+
+/// Resolve layer bounds and return strip-busy park deps for `key`.
+pub fn ed_strip_busy_park_deps(state: &AppState, key: TileKey) -> Vec<TileKey> {
+    let Ok(snapshot) = snapshot_for_key(state, key) else {
+        return Vec::new();
+    };
+    let Some(layer) = find_layer_by_id(&snapshot.root, key.layer) else {
+        return Vec::new();
+    };
+    let b = layer.bounds_l0;
+    ed_strip_busy_deps(key, b.min_x, b.max_x)
+}
+
+/// B1: after a full ED strip row is inserted, wake once per completed key and
+/// dedupe ready tasks so the next ty is scheduled without mid-row churn.
+pub fn wake_ed_frontier_after_strip_batch(state: &AppState, completed: &[TileKey]) {
+    let mut ready_keys = HashSet::new();
+    let mut ready = Vec::new();
+    for &key in completed {
+        let tasks = if key.stage == CacheStage::Processed {
+            state
+                .tiles
+                .ed_frontier
+                .wake_after_processed(key, &state.tiles.tile_cache)
+        } else {
+            state
+                .tiles
+                .ed_frontier
+                .wake(key, &state.tiles.tile_cache)
+        };
+        for task in tasks {
+            if ready_keys.insert(task.key) {
+                ready.push(task);
+            }
+        }
+    }
+    for task in ready {
+        state.tiles.scheduler.enqueue_or_bump(task);
+        state.worker_wake.notify_one();
+    }
+}
+
 /// Ensure all visible layers have fresh (non-dirty) Processed tiles at the given coord.
 /// Non-ED layers compute inline. ED layers are scheduled via prefix closure; if not
 /// yet ready, returns [`EngineError::EdPrefixPending`] (Composite parks in frontier).
@@ -1176,6 +1349,7 @@ mod tests {
     use super::*;
     use crate::viewport::ViewportState;
     use crate::worker::WorkerWake;
+    use std::time::Duration;
     use engine_project::document::DocumentHandle;
     use engine_project::filters::curves::CurveChannel;
     use engine_project::layer::{Layer, LayerNode};
@@ -1277,6 +1451,7 @@ mod tests {
 
     fn reset_ed_processed(state: &AppState) {
         state.tiles.error_residuals.clear();
+        state.tiles.clear_strip_gates();
         engine_tiles::invalidation::invalidate(
             &state.tiles.tile_cache,
             engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
@@ -1323,9 +1498,87 @@ mod tests {
                 }
                 continue;
             }
-            let _ = compute_processed_tile(task.key, state);
-            wake_ed_frontier_after_insert(state, task.key);
+            match compute_processed_tile(task.key, state) {
+                Ok(_) => wake_ed_frontier_after_insert(state, task.key),
+                Err(EngineError::EdStripBusy) => {
+                    let deps = ed_strip_busy_park_deps(state, task.key);
+                    if deps.is_empty() {
+                        state.tiles.scheduler.enqueue_or_bump(task);
+                    } else {
+                        let _ = state.tiles.ed_frontier.block_on(
+                            task,
+                            deps,
+                            &state.tiles.tile_cache,
+                        );
+                    }
+                }
+                Err(_) => {}
+            }
         }
+    }
+
+    fn drain_ed_scheduler_n_workers(
+        state: &Arc<AppState>,
+        n_workers: usize,
+        max_x: u32,
+        max_y: u32,
+        timeout: Duration,
+    ) {
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let t0 = Instant::now();
+        std::thread::scope(|scope| {
+            for _ in 0..n_workers {
+                let state = Arc::clone(state);
+                let stop = Arc::clone(&stop);
+                scope.spawn(move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        let all_fresh = (0..=max_y).all(|y| {
+                            (0..=max_x).all(|x| {
+                                engine_tiles::tile_fresh(&state.tiles.tile_cache, ed_key(x, y))
+                            })
+                        });
+                        if all_fresh {
+                            stop.store(true, Ordering::Relaxed);
+                            break;
+                        }
+                        if t0.elapsed() > timeout {
+                            stop.store(true, Ordering::Relaxed);
+                            break;
+                        }
+                        let Some(task) = state.tiles.scheduler.dequeue() else {
+                            std::thread::yield_now();
+                            continue;
+                        };
+                        if task.key.stage != CacheStage::Processed {
+                            continue;
+                        }
+                        if !engine_tiles::ed_ready(&state.tiles.tile_cache, task.key, true) {
+                            state
+                                .tiles
+                                .ed_frontier
+                                .block(task, &state.tiles.tile_cache);
+                            continue;
+                        }
+                        match compute_processed_tile(task.key, &state) {
+                            Ok(_) => wake_ed_frontier_after_insert(&state, task.key),
+                            Err(EngineError::EdStripBusy) => {
+                                let deps = ed_strip_busy_park_deps(&state, task.key);
+                                if deps.is_empty() {
+                                    state.tiles.scheduler.enqueue_or_bump(task);
+                                } else {
+                                    let _ = state.tiles.ed_frontier.block_on(
+                                        task,
+                                        deps,
+                                        &state.tiles.tile_cache,
+                                    );
+                                }
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                });
+            }
+        });
     }
 
     #[test]
@@ -1356,6 +1609,146 @@ mod tests {
             via_wave.data, reference.data,
             "wavefront schedule must be byte-identical to sequential row-major"
         );
+    }
+
+    /// B1: concurrent workers must compute each ty strip at most once.
+    #[test]
+    fn ed_strip_owner_one_calc_per_ty() {
+        engine_project::filters::fs_ed_prof::force_enable(true);
+        engine_project::filters::fs_ed_prof::reset();
+
+        let state = Arc::new(make_ed_state());
+        reset_ed_processed(&state);
+        schedule_ed_prefix_closure(&state, 1, ED_LAYER, 0, 3, 3, Priority::Immediate, 0, 0);
+        drain_ed_scheduler_n_workers(&state, 4, 3, 3, Duration::from_secs(30));
+
+        for y in 0..4u32 {
+            for x in 0..4u32 {
+                assert!(
+                    engine_tiles::tile_fresh(&state.tiles.tile_cache, ed_key(x, y)),
+                    "missing fresh Processed ({x},{y})"
+                );
+            }
+        }
+        assert!(
+            !state.tiles.ed_strip_gates.any_owned(),
+            "strip gates must be released after drain"
+        );
+
+        let snap = engine_project::filters::fs_ed_prof::Snapshot::capture();
+        assert_eq!(
+            snap.unique_ty_strips, 4,
+            "expected 4 unique ty strips, got {}",
+            snap.unique_ty_strips
+        );
+        assert_eq!(
+            snap.strip_runs, snap.unique_ty_strips,
+            "B1 target: strip_runs == unique_ty (recalcs/line=1.0); runs={} unique={}",
+            snap.strip_runs, snap.unique_ty_strips
+        );
+        assert_eq!(snap.strip_recalc_extra, 0);
+        engine_project::filters::fs_ed_prof::force_enable(false);
+    }
+
+    #[test]
+    fn ed_strip_gate_workers_1_2_8_single_and_multi_row() {
+        for n_workers in [1usize, 2, 8] {
+            // Multi-row 4×4
+            let state = Arc::new(make_ed_state());
+            reset_ed_processed(&state);
+            schedule_ed_prefix_closure(&state, 1, ED_LAYER, 0, 3, 3, Priority::Immediate, 0, 0);
+            drain_ed_scheduler_n_workers(&state, n_workers, 3, 3, Duration::from_secs(30));
+            for y in 0..4u32 {
+                for x in 0..4u32 {
+                    assert!(
+                        engine_tiles::tile_fresh(&state.tiles.tile_cache, ed_key(x, y)),
+                        "workers={n_workers} missing ({x},{y})"
+                    );
+                }
+            }
+            assert!(!state.tiles.ed_strip_gates.any_owned());
+
+            // Single-row: only y=0 (1×4)
+            let state = Arc::new(make_ed_state());
+            reset_ed_processed(&state);
+            schedule_ed_prefix_closure(&state, 1, ED_LAYER, 0, 3, 0, Priority::Immediate, 0, 0);
+            drain_ed_scheduler_n_workers(&state, n_workers, 3, 0, Duration::from_secs(15));
+            for x in 0..4u32 {
+                assert!(
+                    engine_tiles::tile_fresh(&state.tiles.tile_cache, ed_key(x, 0)),
+                    "single-row workers={n_workers} missing ({x},0)"
+                );
+            }
+            assert!(!state.tiles.ed_strip_gates.any_owned());
+        }
+    }
+
+    #[test]
+    fn ed_strip_gate_mid_cancel_releases_waiters() {
+        use crate::state::EdStripKey;
+        use std::sync::Barrier;
+
+        let state = Arc::new(make_ed_state());
+        reset_ed_processed(&state);
+        // Finish row 0 so ty=1's min_x is ed_ready.
+        compute_processed_tile(ed_key(0, 0), &state).expect("row0");
+
+        let strip_key = EdStripKey {
+            doc: 1,
+            layer: ED_LAYER,
+            level: 0,
+            ty: 1,
+        };
+        let gate = state.tiles.strip_gate(strip_key);
+        let barrier = Arc::new(Barrier::new(3));
+        let owner_hold = Arc::new(Barrier::new(2));
+
+        let owner_gate = Arc::clone(&gate);
+        let b1 = Arc::clone(&barrier);
+        let hold = Arc::clone(&owner_hold);
+        let owner = std::thread::spawn(move || {
+            let guard = owner_gate.try_claim().expect("owner claim");
+            b1.wait();
+            hold.wait();
+            drop(guard);
+        });
+
+        let mut waiter_handles = Vec::new();
+        for _ in 0..2 {
+            let state = Arc::clone(&state);
+            let b = Arc::clone(&barrier);
+            waiter_handles.push(std::thread::spawn(move || {
+                b.wait();
+                let t0 = Instant::now();
+                // Both call min_x of ty=1 — ed_ready, contend for strip gate.
+                let res = compute_processed_tile(ed_key(0, 1), &state);
+                let elapsed = t0.elapsed();
+                assert!(
+                    elapsed < Duration::from_secs(2),
+                    "waiter hung for {elapsed:?}"
+                );
+                matches!(
+                    res,
+                    Ok(_)
+                        | Err(EngineError::EdStripBusy)
+                        | Err(EngineError::InvalidState { .. })
+                )
+            }));
+        }
+
+        std::thread::sleep(Duration::from_millis(30));
+        state.must_active().document_handle.mutate(|d| {
+            d.generations.increment_document_gen();
+        });
+        reset_ed_processed(&state);
+        owner_hold.wait();
+        owner.join().unwrap();
+
+        for h in waiter_handles {
+            assert!(h.join().unwrap(), "waiter must exit cleanly");
+        }
+        assert!(!gate.is_owned(), "gate must be released after owner drop");
+        assert!(!state.tiles.ed_strip_gates.any_owned());
     }
 
     #[test]

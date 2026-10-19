@@ -116,6 +116,7 @@ impl AppState {
             )),
             preview_pass_inflight: AtomicUsize::new(0),
             pending_preview_refresh: Mutex::new(None),
+            preview_refresh_timer: Mutex::new(None),
             ascii_preview: std::sync::atomic::AtomicBool::new(true),
             full_document_busy: AtomicUsize::new(0),
             proof: Mutex::new(
@@ -376,6 +377,7 @@ impl AppState {
         self.tiles.error_residuals.evict_document(doc);
         self.tiles.block_representatives.evict_document(doc);
         self.tiles.ed_frontier.evict_document(doc);
+        self.tiles.evict_strip_gates_document(doc);
         self.tiles.palette_cache.evict_document(doc);
         self.tiles.palette_lut_cache.evict_document(doc);
         self.tiles.full_document.clear(); // per-doc eviction not needed yet (few entries)

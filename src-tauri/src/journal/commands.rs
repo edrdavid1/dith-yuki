@@ -13,7 +13,8 @@ use crate::journal::meta::{
     journal_blob_path, list_metas, read_meta, JournalContentKind, JournalMeta,
 };
 use crate::journal::roster::{self, SessionRoster};
-use crate::journal::{delete_journal, recovery_subdir, write_journal_for_doc};
+use crate::journal::stats::JournalWriteSource;
+use crate::journal::{delete_journal, recovery_subdir, write_journal_for_doc_from};
 use crate::services::document_service::OpenProjectResponse;
 
 #[derive(Debug, Clone, Serialize)]
@@ -303,14 +304,14 @@ pub(crate) fn prepare_soft_discard_sync(
 
     let reuse_existing = can_reuse_journal_for_soft_discard(state, doc_id, recovery_id, revision);
     if !reuse_existing {
-        write_journal_for_doc(state, doc_id)?;
+        write_journal_for_doc_from(state, doc_id, JournalWriteSource::SoftDiscard)?;
     }
 
     mark_journal_discarded(state, recovery_id)?;
     // If reuse claimed a journal but meta was missing, mark_journal_discarded is a no-op —
     // rewrite once so Restore still has something to open.
     if reuse_existing && !journal_meta_is_discarded(state, recovery_id) {
-        write_journal_for_doc(state, doc_id)?;
+        write_journal_for_doc_from(state, doc_id, JournalWriteSource::SoftDiscard)?;
         mark_journal_discarded(state, recovery_id)?;
     }
 
@@ -382,7 +383,7 @@ pub fn flush_all_dirty_journals(state: &AppState) {
         if !crate::undo::is_dirty_doc(state, doc_id) {
             continue;
         }
-        if let Err(e) = write_journal_for_doc(state, doc_id) {
+        if let Err(e) = write_journal_for_doc_from(state, doc_id, JournalWriteSource::Signals) {
             log::warn!("flush_all_dirty_journals doc {doc_id}: {e}");
         }
     }

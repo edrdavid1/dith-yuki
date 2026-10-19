@@ -449,6 +449,7 @@ impl FilterService {
                     .error_residuals
                     .evict_layer(doc_id, engine_project::types::LayerId::new(layer_id));
                 self.state.tiles.block_representatives.clear_dithered();
+                self.state.tiles.clear_strip_gates();
                 self.state
                     .tiles
                     .full_document

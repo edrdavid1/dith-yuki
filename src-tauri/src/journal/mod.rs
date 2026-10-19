@@ -15,11 +15,13 @@ mod meta;
 pub mod roster;
 mod runtime;
 pub mod signals;
+pub mod stats;
 mod write;
 
-pub use meta::recovery_subdir;
+pub use meta::{journal_blob_path, recovery_subdir, JOURNAL_MAX_BYTES};
 pub use runtime::{schedule_dirty, set_recovery_dir, start_heartbeat, JournalRuntime};
-pub use write::{delete_journal, write_journal_for_doc};
+pub use stats::JournalWriteSource;
+pub use write::{delete_journal, write_journal_for_doc, write_journal_for_doc_from};
 
 /// `DITHER_JOURNAL=0` / `false` disables crash-recovery journal I/O (A/B).
 pub fn enabled() -> bool {
