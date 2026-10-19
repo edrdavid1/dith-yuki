@@ -125,12 +125,11 @@ fn append_event(ev: &TraceEvent) {
 /// Optional override path for harnesses. Installs the file sink if missing
 /// (harness tests call `force_enable` without `init()`, so without this
 /// events only sit in `TEST_EVENTS` and never reach disk).
+#[allow(dead_code)] // harnesses under cfg(test)
 pub fn set_out_path_for_tests(path: PathBuf) {
     let _ = OUT_PATH.set(path);
     if tile_gen_trace::enabled() {
-        let _ = tile_gen_trace::set_sink(Box::new(move |ev| {
-            append_event(&ev);
-        }));
+        tile_gen_trace::set_sink(Box::new(|ev| append_event(&ev)));
     }
 }
 
@@ -273,14 +272,14 @@ pub fn tile_gen_trace_busy_snapshot(state: State<'_, Arc<AppState>>) -> Value {
     let inflight = state
         .preview_pass_inflight
         .load(std::sync::atomic::Ordering::Acquire);
-    let pending = state
-        .pending_preview_refresh
-        .lock()
-        .ok()
-        .and_then(|g| g.as_ref().map(|p| json!({
-            "layer_id": p.layer_id,
-            "clear_residuals": p.clear_residuals,
-        })));
+    let pending = state.pending_preview_refresh.lock().ok().and_then(|g| {
+        g.as_ref().map(|p| {
+            json!({
+                "layer_id": p.layer_id,
+                "clear_residuals": p.clear_residuals,
+            })
+        })
+    });
     let busy = state
         .full_document_busy
         .load(std::sync::atomic::Ordering::Acquire);
@@ -295,7 +294,11 @@ pub fn tile_gen_trace_busy_snapshot(state: State<'_, Arc<AppState>>) -> Value {
                 .load(std::sync::atomic::Ordering::Acquire);
             // Map of layer_id → layer_gen for leaves in the tree.
             let mut map = serde_json::Map::new();
-            fn walk(nodes: &[engine_project::LayerNode], snap: &engine_project::Document, out: &mut serde_json::Map<String, Value>) {
+            fn walk(
+                nodes: &[engine_project::LayerNode],
+                snap: &engine_project::Document,
+                out: &mut serde_json::Map<String, Value>,
+            ) {
                 for node in nodes {
                     match node {
                         engine_project::LayerNode::Leaf(layer) => {
@@ -427,9 +430,7 @@ pub fn tile_gen_trace_cache_probe(
     };
     match state.tiles.tile_cache.entries.get(&key) {
         Some(entry) => {
-            let dirty = entry
-                .dirty
-                .load(std::sync::atomic::Ordering::Acquire);
+            let dirty = entry.dirty.load(std::sync::atomic::Ordering::Acquire);
             let gen = entry.generation;
             json!({
                 "ok": true,

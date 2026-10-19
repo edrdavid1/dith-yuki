@@ -21,9 +21,7 @@ use engine_tiles::{CacheStage, PixelTile, TileCoord, TileKey, HALO, TILE_SIZE};
 
 use crate::commands::AppState;
 use crate::journal::stats::{self, JournalWriteSource};
-use crate::journal::{
-    set_recovery_dir, write_journal_for_doc_from, JOURNAL_MAX_BYTES,
-};
+use crate::journal::{set_recovery_dir, write_journal_for_doc_from, JOURNAL_MAX_BYTES};
 use crate::undo::is_dirty_doc;
 
 fn fill_raw(state: &AppState, doc_id: u32, layer: u32, w: u32, h: u32) {

@@ -16,6 +16,7 @@ pub enum JournalWriteSource {
     SoftDiscard,
     Signals,
     /// Direct / unit-test / harness call.
+    #[allow(dead_code)]
     Direct,
 }
 
@@ -48,6 +49,7 @@ static TOTAL_WRITE_MS: AtomicU64 = AtomicU64::new(0);
 static WRITE_SAMPLES: AtomicU64 = AtomicU64::new(0);
 static SKIPPED: AtomicU64 = AtomicU64::new(0);
 
+#[allow(dead_code)] // harnesses call this under cfg(test)
 pub fn reset() {
     for a in [
         &DEBOUNCE,

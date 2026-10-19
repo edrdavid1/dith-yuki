@@ -3,11 +3,16 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 /**
- * SPEC §9.8: invoke must go through `shared/ipc` (whitelist surface).
+ * SPEC §9.8: product invoke must go through `shared/ipc` (whitelist surface).
+ *
+ * Architecture (H8 / journal / profile era):
+ * - Product UI → `shared/ipc/*` only.
+ * - Opt-in diagnostics (`diagnostics/*`, `DITHER_TRACE` / `DITHER_PROFILE`) may
+ *   call engine harness commands directly; they are not the product IPC layer.
  *
  * Baseline allowlist: audited legacy call sites that do **not** pass
- * archive-derived strings/paths into IPC. New offenders must migrate to
- * `shared/ipc` instead of growing this list.
+ * archive-derived strings/paths into IPC. New *product* offenders must migrate
+ * to `shared/ipc` instead of growing this list.
  */
 
 const SRC_ROOT = join(__dirname, '../../..'); // frontend/src
@@ -37,6 +42,10 @@ function walk(dir: string): string[] {
 
 function isAllowed(rel: string): boolean {
   if (rel.startsWith('shared/ipc/') || rel === 'shared/ipc/index.ts') {
+    return true;
+  }
+  // Dev/profiling harnesses — not product IPC (trace, stress, dither profile).
+  if (rel.startsWith('diagnostics/')) {
     return true;
   }
   if (rel.includes('__tests__') || rel.includes('.test.') || rel.includes('.spec.')) {

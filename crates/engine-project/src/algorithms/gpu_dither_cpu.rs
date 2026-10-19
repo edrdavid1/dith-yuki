@@ -223,7 +223,7 @@ pub fn gray_interval_a(g: u8, levels: &[u8], half_nn_closest: u8) -> u8 {
     if lo < hi {
         hi - lo
     } else {
-        half_nn_closest.saturating_mul(2).min(255)
+        half_nn_closest.saturating_mul(2)
     }
 }
 

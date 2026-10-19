@@ -7,14 +7,29 @@
 
 mod commands;
 mod config;
+mod delayed_requeue;
+#[cfg(test)]
+mod dither_profile_harness;
+mod dither_profile_host;
 mod dock_affinity;
 mod document_session;
+mod ed_progress;
 mod file_log;
 mod flexlayout_persistence;
+#[cfg(test)]
+mod fs_ed_b1_merge_tests;
+#[cfg(test)]
+mod fs_ed_prof_harness;
 mod gpu_resident_shadow;
 mod gpu_selftest_host;
 mod ipc_guard;
 mod journal;
+#[cfg(test)]
+mod journal_baseline_harness;
+#[cfg(test)]
+mod journal_premerge_harness;
+#[cfg(test)]
+mod journal_session_harness;
 mod macos_app_icon;
 #[cfg(target_os = "macos")]
 mod macos_dock_bounce;
@@ -25,26 +40,7 @@ mod macos_title;
 mod memory_budget;
 mod native_menu;
 mod pattern_library;
-mod dither_profile_host;
-#[cfg(test)]
-mod dither_profile_harness;
-mod delayed_requeue;
-mod ed_progress;
 mod pending_tiles;
-mod tile_gen_trace;
-mod tile_gen_trace_host;
-#[cfg(test)]
-mod tile_gen_trace_harness;
-#[cfg(test)]
-mod fs_ed_prof_harness;
-#[cfg(test)]
-mod fs_ed_b1_merge_tests;
-#[cfg(test)]
-mod journal_baseline_harness;
-#[cfg(test)]
-mod journal_premerge_harness;
-#[cfg(test)]
-mod journal_session_harness;
 mod preview_diag;
 #[cfg(test)]
 mod preview_latency_diag;
@@ -53,6 +49,10 @@ mod services;
 mod state;
 #[cfg(test)]
 mod step0_harness;
+mod tile_gen_trace;
+#[cfg(test)]
+mod tile_gen_trace_harness;
+mod tile_gen_trace_host;
 mod tile_pipeline;
 mod tile_protocol;
 mod tile_serve;
@@ -735,8 +735,7 @@ fn handle_tile_request(
     let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
     let (serve_vp_hash, serve_level) = {
         let vp = state.ui.viewport.lock().unwrap();
-        let (h, _, _, _, _) =
-            tile_gen_trace::vp_hash_from_coords(vp.level, &vp.visible_tiles);
+        let (h, _, _, _, _) = tile_gen_trace::vp_hash_from_coords(vp.level, &vp.visible_tiles);
         (h, vp.level)
     };
     if tile_gen_trace::enabled() {
@@ -788,8 +787,8 @@ fn handle_tile_request(
         state.worker_wake.notify_one();
     }
 
-    let pending_info = matches!(&served, tile_serve::PreviewServe::Pending)
-        .then(|| pending_tiles::classify_pending(&state, key));
+    let pending_info = matches!(served, tile_serve::PreviewServe::Pending)
+        .then(|| pending_tiles::classify_pending(state, key));
 
     let (status, served_gen, kind) = match &served {
         tile_serve::PreviewServe::Fresh { generation, .. } => (200u16, Some(*generation), "fresh"),
@@ -871,9 +870,10 @@ fn handle_tile_request(
                 missing_dep: None,
             });
             let reason = info.pending_reason;
-            let dep_hdr = info.missing_dep.as_ref().map(|dep| {
-                format!("{}/{}/{}/{}", dep.stage, dep.level, dep.x, dep.y)
-            });
+            let dep_hdr = info
+                .missing_dep
+                .as_ref()
+                .map(|dep| format!("{}/{}/{}/{}", dep.stage, dep.level, dep.x, dep.y));
             let mut pairs: Vec<(&str, &str)> = vec![
                 ("X-Tile-Pending-Reason", reason),
                 ("X-Tile-Source", ed_progress::source_id_cpu_ed()),

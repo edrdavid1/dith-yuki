@@ -189,11 +189,7 @@ pub(crate) fn emit_gpu_dither_status(state: &AppState, doc_id: u32) {
     let _ = app.emit_to(tauri::EventTarget::Any, "gpu-dither-status", payload);
 }
 
-fn dither_footer_meta(
-    state: &AppState,
-    doc_id: u32,
-    layer_id: u32,
-) -> (String, u32, u32, u32) {
+fn dither_footer_meta(state: &AppState, doc_id: u32, layer_id: u32) -> (String, u32, u32, u32) {
     let Ok(session) = state.session(doc_id) else {
         return ("cpu".into(), 0, 0, 1);
     };
@@ -221,11 +217,7 @@ fn find_layer_dither_meta(
                         continue;
                     }
                     if let FilterParams::DitherV2(p) = &f.params {
-                        let name = p
-                            .mode
-                            .algorithm_id()
-                            .unwrap_or("dither")
-                            .to_string();
+                        let name = p.mode.algorithm_id().unwrap_or("dither").to_string();
                         return Some((name, p.pixel_size.max(1) as u32));
                     }
                 }
@@ -243,12 +235,7 @@ fn find_layer_dither_meta(
 }
 
 /// Emit CPU wall time (invalidate → preview wave idle) on the same footer channel.
-fn emit_cpu_preview_refresh_status(
-    state: &AppState,
-    doc_id: u32,
-    layer_id: u32,
-    elapsed_ms: u32,
-) {
+fn emit_cpu_preview_refresh_status(state: &AppState, doc_id: u32, layer_id: u32, elapsed_ms: u32) {
     let Ok(guard) = state.app_handle.lock() else {
         return;
     };
@@ -614,10 +601,7 @@ fn run_preview_refresh(
     let queued_after = state.tiles.scheduler.queued_len();
     if crate::tile_gen_trace::enabled() {
         let snap = session.document_handle.snapshot();
-        let doc_gen = snap
-            .generations
-            .document_gen
-            .load(Ordering::Acquire);
+        let doc_gen = snap.generations.document_gen.load(Ordering::Acquire);
         crate::tile_gen_trace::emit(
             "refresh_started",
             Some(layer_id),

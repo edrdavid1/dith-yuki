@@ -20,6 +20,7 @@ impl ViewportService {
         Self { state }
     }
 
+    #[allow(dead_code)] // IPC uses set_viewport_traced; thin wrapper kept for callers
     pub fn set_viewport(
         &self,
         zoom: f64,

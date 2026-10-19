@@ -169,7 +169,7 @@ impl Document {
         Self::find_leaf(&self.root, layer_id).map(|l| l.raw_rev)
     }
 
-    fn find_leaf<'a>(nodes: &'a [LayerNode], layer_id: LayerId) -> Option<&'a crate::layer::Layer> {
+    fn find_leaf(nodes: &[LayerNode], layer_id: LayerId) -> Option<&crate::layer::Layer> {
         for node in nodes {
             match node {
                 LayerNode::Leaf(layer) if layer.id == layer_id => return Some(layer),
@@ -184,10 +184,10 @@ impl Document {
         None
     }
 
-    fn find_leaf_mut<'a>(
-        nodes: &'a mut [LayerNode],
+    fn find_leaf_mut(
+        nodes: &mut [LayerNode],
         layer_id: LayerId,
-    ) -> Option<&'a mut crate::layer::Layer> {
+    ) -> Option<&mut crate::layer::Layer> {
         for node in nodes {
             match node {
                 LayerNode::Leaf(layer) if layer.id == layer_id => return Some(layer),

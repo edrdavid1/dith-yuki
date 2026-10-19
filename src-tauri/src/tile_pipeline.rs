@@ -477,11 +477,10 @@ pub fn compute_processed_tile(
                         let _cw = engine_project::filters::fs_ed_prof::Scope::new(
                             engine_project::filters::fs_ed_prof::add_ns_cache_write,
                         );
-                        state.tiles.tile_cache.insert_fresh_gen(
-                            pkey,
-                            Arc::clone(&arc),
-                            compute_gen,
-                        )
+                        state
+                            .tiles
+                            .tile_cache
+                            .insert_fresh_gen(pkey, Arc::clone(&arc), compute_gen)
                     };
                     if inserted {
                         inserted_keys.push(pkey);
@@ -1132,10 +1131,7 @@ pub fn wake_ed_frontier_after_strip_batch(state: &AppState, completed: &[TileKey
                 .ed_frontier
                 .wake_after_processed(key, &state.tiles.tile_cache)
         } else {
-            state
-                .tiles
-                .ed_frontier
-                .wake(key, &state.tiles.tile_cache)
+            state.tiles.ed_frontier.wake(key, &state.tiles.tile_cache)
         };
         for task in tasks {
             if ready_keys.insert(task.key) {
@@ -1349,7 +1345,6 @@ mod tests {
     use super::*;
     use crate::viewport::ViewportState;
     use crate::worker::WorkerWake;
-    use std::time::Duration;
     use engine_project::document::DocumentHandle;
     use engine_project::filters::curves::CurveChannel;
     use engine_project::layer::{Layer, LayerNode};
@@ -1357,6 +1352,7 @@ mod tests {
     use engine_project::{Document, FilterInstance, FilterKind, FilterParams};
     use engine_tiles::{CacheStage, Scheduler, TileCache, TileCoord, TileKey};
     use std::sync::Mutex;
+    use std::time::Duration;
 
     fn make_app_state_with_layer(layer_id: u32, add_filters: bool) -> AppState {
         let mut doc = Document::new(DocumentId::new(1), 512, 512);
@@ -1492,8 +1488,7 @@ mod tests {
                 continue;
             }
             if !engine_tiles::ed_ready(&state.tiles.tile_cache, task.key, true) {
-                if let Some(ready) = state.tiles.ed_frontier.block(task, &state.tiles.tile_cache)
-                {
+                if let Some(ready) = state.tiles.ed_frontier.block(task, &state.tiles.tile_cache) {
                     state.tiles.scheduler.enqueue_or_bump(ready);
                 }
                 continue;
@@ -1505,11 +1500,11 @@ mod tests {
                     if deps.is_empty() {
                         state.tiles.scheduler.enqueue_or_bump(task);
                     } else {
-                        let _ = state.tiles.ed_frontier.block_on(
-                            task,
-                            deps,
-                            &state.tiles.tile_cache,
-                        );
+                        let _ =
+                            state
+                                .tiles
+                                .ed_frontier
+                                .block_on(task, deps, &state.tiles.tile_cache);
                     }
                 }
                 Err(_) => {}
@@ -1553,10 +1548,7 @@ mod tests {
                             continue;
                         }
                         if !engine_tiles::ed_ready(&state.tiles.tile_cache, task.key, true) {
-                            state
-                                .tiles
-                                .ed_frontier
-                                .block(task, &state.tiles.tile_cache);
+                            state.tiles.ed_frontier.block(task, &state.tiles.tile_cache);
                             continue;
                         }
                         match compute_processed_tile(task.key, &state) {
@@ -1729,9 +1721,7 @@ mod tests {
                 );
                 matches!(
                     res,
-                    Ok(_)
-                        | Err(EngineError::EdStripBusy)
-                        | Err(EngineError::InvalidState { .. })
+                    Ok(_) | Err(EngineError::EdStripBusy) | Err(EngineError::InvalidState { .. })
                 )
             }));
         }
@@ -2031,9 +2021,8 @@ mod tests {
             "park deps must be non-empty when ED prefix is incomplete"
         );
         assert!(
-            deps.iter().any(|k| {
-                k.stage == CacheStage::Processed && k.coord.x == 0 && k.coord.y == 0
-            }),
+            deps.iter()
+                .any(|k| { k.stage == CacheStage::Processed && k.coord.x == 0 && k.coord.y == 0 }),
             "must wait on left neighbor Processed (0,0), got {deps:?}"
         );
     }

@@ -78,11 +78,7 @@ pub fn count_l0_ed_progress(state: &AppState, doc: u32) -> Option<(u32, u32, u64
                 let key = TileKey {
                     doc,
                     layer: layer_id,
-                    coord: TileCoord {
-                        level: 0,
-                        x,
-                        y,
-                    },
+                    coord: TileCoord { level: 0, x, y },
                     stage: CacheStage::Processed,
                 };
                 if engine_tiles::tile_fresh(&state.tiles.tile_cache, key) {

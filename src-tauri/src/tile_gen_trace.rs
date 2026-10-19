@@ -2,6 +2,9 @@
 //!
 //! Off unless `DITHER_TRACE=1`. When off, every entry returns before clocks or locks.
 
+#![allow(dead_code)] // harness entry points; clippy --bins excludes cfg(test) call sites
+#![allow(clippy::type_complexity)]
+
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -146,14 +149,7 @@ pub fn emit(
     details: Value,
 ) {
     emit_at(
-        event,
-        None,
-        layer_id,
-        doc_gen,
-        layer_gen,
-        tile,
-        gen,
-        details,
+        event, None, layer_id, doc_gen, layer_gen, tile, gen, details,
     );
 }
 
@@ -350,7 +346,7 @@ pub fn spin_offenders() -> Vec<SpinOffender> {
             });
         }
     }
-    out.sort_by(|a, b| b.dequeues_without_compute.cmp(&a.dequeues_without_compute));
+    out.sort_by_key(|o| std::cmp::Reverse(o.dequeues_without_compute));
     out
 }
 
@@ -373,15 +369,9 @@ pub fn params_hash(value: &Value) -> u64 {
 /// FNV-1a 64-bit of `(level, x0, y0, x1, y1)` — must match FE `vpHash.ts`.
 pub fn vp_hash(level: u8, x0: u32, y0: u32, x1: u32, y1: u32) -> String {
     let mut h: u64 = 0xcbf29ce484222325;
-    for b in [
-        level as u64,
-        x0 as u64,
-        y0 as u64,
-        x1 as u64,
-        y1 as u64,
-    ]
-    .into_iter()
-    .flat_map(|v| v.to_le_bytes())
+    for b in [level as u64, x0 as u64, y0 as u64, x1 as u64, y1 as u64]
+        .into_iter()
+        .flat_map(|v| v.to_le_bytes())
     {
         h ^= u64::from(b);
         h = h.wrapping_mul(0x100000001b3);
@@ -407,11 +397,11 @@ pub fn vp_hash_from_tiles(level: u8, tiles: &[(u8, u32, u32)]) -> (String, u32, 
     (vp_hash(level, x0, y0, x1, y1), x0, y0, x1, y1)
 }
 
-pub fn vp_hash_from_coords(level: u8, tiles: &[engine_tiles::TileCoord]) -> (String, u32, u32, u32, u32) {
-    let flat: Vec<(u8, u32, u32)> = tiles
-        .iter()
-        .map(|c| (c.level, c.x, c.y))
-        .collect();
+pub fn vp_hash_from_coords(
+    level: u8,
+    tiles: &[engine_tiles::TileCoord],
+) -> (String, u32, u32, u32, u32) {
+    let flat: Vec<(u8, u32, u32)> = tiles.iter().map(|c| (c.level, c.x, c.y)).collect();
     vp_hash_from_tiles(level, &flat)
 }
 
@@ -420,10 +410,7 @@ static TEST_EVENTS: std::sync::Mutex<Vec<TraceEvent>> = std::sync::Mutex::new(Ve
 
 #[cfg(test)]
 pub fn test_events() -> Vec<TraceEvent> {
-    TEST_EVENTS
-        .lock()
-        .map(|g| g.clone())
-        .unwrap_or_default()
+    TEST_EVENTS.lock().map(|g| g.clone()).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -485,7 +472,10 @@ mod tests {
         }
         let offenders = spin_offenders();
         assert_eq!(offenders.len(), 1);
-        assert_eq!(offenders[0].dequeues_without_compute, WORKER_SPIN_THRESHOLD + 1);
+        assert_eq!(
+            offenders[0].dequeues_without_compute,
+            WORKER_SPIN_THRESHOLD + 1
+        );
         note_compute_done(1, 2, 3, 4, 9);
         assert!(spin_offenders().is_empty());
         clear_test_state();

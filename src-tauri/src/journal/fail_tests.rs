@@ -10,11 +10,11 @@ use engine_project::serialize::open_project_from_bytes;
 use engine_project::types::{DocumentId, LayerId, LayerKind};
 use engine_tiles::{CacheStage, PixelTile, TileCache, TileCoord, TileKey, HALO, TILE_SIZE};
 
+use super::meta::{journal_blobs_dir, journal_meta_path, journal_state_path, read_meta};
 use crate::commands::AppState;
 use crate::journal::assemble::assemble_dyproj_from_state_bytes;
 use crate::journal::cleanup::startup_cleanup;
 use crate::journal::failpoint::{self, FailPoint};
-use super::meta::{journal_blobs_dir, journal_meta_path, journal_state_path, read_meta};
 use crate::journal::{set_recovery_dir, write_journal_for_doc};
 
 fn fill_raw(state: &AppState, doc_id: u32, layer: u32) {
@@ -43,7 +43,12 @@ fn fill_raw(state: &AppState, doc_id: u32, layer: u32) {
     );
 }
 
-fn setup_dirty_doc() -> (tempfile::TempDir, Arc<AppState>, uuid::Uuid, std::path::PathBuf) {
+fn setup_dirty_doc() -> (
+    tempfile::TempDir,
+    Arc<AppState>,
+    uuid::Uuid,
+    std::path::PathBuf,
+) {
     let dir = tempfile::tempdir().unwrap();
     let recovery = dir.path().join("recovery");
     let state = Arc::new(AppState::empty_process(None, 64 * 1024 * 1024, false));
@@ -86,12 +91,16 @@ fn crash_before_blob_rename_leaves_previous_or_empty_recoverable() {
 
     // Bump generation so a second write is attempted; crash before blob rename
     // should not be needed (blob already exists) — force a new raw_rev instead.
-    state.require_session(1).unwrap().document_handle.mutate(|d| {
-        if let Some(LayerNode::Leaf(layer)) = d.root.first_mut() {
-            layer.bump_raw_rev();
-        }
-        d.increment_generation();
-    });
+    state
+        .require_session(1)
+        .unwrap()
+        .document_handle
+        .mutate(|d| {
+            if let Some(LayerNode::Leaf(layer)) = d.root.first_mut() {
+                layer.bump_raw_rev();
+            }
+            d.increment_generation();
+        });
     fill_raw(&state, 1, 1);
 
     failpoint::arm(FailPoint::BeforeBlobRename);
@@ -121,20 +130,29 @@ fn crash_after_blob_before_state_keeps_old_state() {
     write_journal_for_doc(&state, 1).unwrap();
     let state_before = std::fs::read(journal_state_path(&recovery, id)).unwrap();
 
-    state.require_session(1).unwrap().document_handle.mutate(|d| {
-        if let Some(LayerNode::Leaf(layer)) = d.root.first_mut() {
-            layer.bump_raw_rev();
-        }
-        d.increment_generation();
-    });
+    state
+        .require_session(1)
+        .unwrap()
+        .document_handle
+        .mutate(|d| {
+            if let Some(LayerNode::Leaf(layer)) = d.root.first_mut() {
+                layer.bump_raw_rev();
+            }
+            d.increment_generation();
+        });
     fill_raw(&state, 1, 1);
 
     failpoint::arm(FailPoint::BeforeStateWrite);
-    assert!(write_journal_for_doc(&state, 1).unwrap_err().contains("failpoint"));
+    assert!(write_journal_for_doc(&state, 1)
+        .unwrap_err()
+        .contains("failpoint"));
     failpoint::clear();
 
     let state_after = std::fs::read(journal_state_path(&recovery, id)).unwrap();
-    assert_eq!(state_before, state_after, "state must stay previous revision");
+    assert_eq!(
+        state_before, state_after,
+        "state must stay previous revision"
+    );
     // New blob may exist on disk but must not be required by old state.
     assert_recoverable(&recovery, id);
 }
@@ -144,12 +162,18 @@ fn crash_after_state_before_meta_still_recoverable() {
     let (_dir, state, id, recovery) = setup_dirty_doc();
     write_journal_for_doc(&state, 1).unwrap();
 
-    state.require_session(1).unwrap().document_handle.mutate(|d| {
-        d.increment_generation();
-    });
+    state
+        .require_session(1)
+        .unwrap()
+        .document_handle
+        .mutate(|d| {
+            d.increment_generation();
+        });
 
     failpoint::arm(FailPoint::BeforeMetaWrite);
-    assert!(write_journal_for_doc(&state, 1).unwrap_err().contains("failpoint"));
+    assert!(write_journal_for_doc(&state, 1)
+        .unwrap_err()
+        .contains("failpoint"));
     failpoint::clear();
 
     // New state is durable; meta may be stale — assemble uses .state + blobs.
@@ -184,9 +208,13 @@ fn second_write_same_raw_rev_does_not_rewrite_blob() {
     let blob = journal_blobs_dir(&recovery, id).join("layer-1-1.png");
     let m1 = std::fs::metadata(&blob).unwrap().modified().unwrap();
     std::thread::sleep(std::time::Duration::from_millis(40));
-    state.require_session(1).unwrap().document_handle.mutate(|d| {
-        d.increment_generation();
-    });
+    state
+        .require_session(1)
+        .unwrap()
+        .document_handle
+        .mutate(|d| {
+            d.increment_generation();
+        });
     write_journal_for_doc(&state, 1).unwrap();
     let m2 = std::fs::metadata(&blob).unwrap().modified().unwrap();
     assert_eq!(m1, m2);

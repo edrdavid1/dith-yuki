@@ -100,10 +100,7 @@ pub fn gc(ttl: Duration) {
 /// True if this composite key was requested via 202.
 pub fn is_pending(doc: u32, level: u8, x: u32, y: u32) -> bool {
     let key = PendingKey { doc, level, x, y };
-    registry()
-        .lock()
-        .map(|g| g.contains(&key))
-        .unwrap_or(false)
+    registry().lock().map(|g| g.contains(&key)).unwrap_or(false)
 }
 
 /// Take (remove) a pending registration if present.
@@ -208,12 +205,7 @@ pub fn classify_pending(state: &AppState, key: TileKey) -> PendingReasonInfo {
         };
     };
     let snap = session.document_handle.snapshot();
-    let deps = crate::tile_pipeline::composite_ed_park_deps(
-        state,
-        &snap.root,
-        key.doc,
-        key.coord,
-    );
+    let deps = crate::tile_pipeline::composite_ed_park_deps(state, &snap.root, key.doc, key.coord);
     if let Some(dep) = deps.first() {
         return PendingReasonInfo {
             pending_reason: "ed_prefix",

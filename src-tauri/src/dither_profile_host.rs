@@ -168,7 +168,9 @@ pub fn dither_profile_begin(req: ProfileBeginRequest) -> Result<(), String> {
     dither_profile::begin_run(req.run_id, gen);
     if let Ok(mut meta) = RUN_META.lock() {
         *meta = Some(RunMeta {
-            scenario_id: req.scenario_id.unwrap_or_else(|| format!("run-{}", req.run_id)),
+            scenario_id: req
+                .scenario_id
+                .unwrap_or_else(|| format!("run-{}", req.run_id)),
             mode: req.mode.unwrap_or_else(|| "unknown".into()),
             width: req.width.unwrap_or(0),
             height: req.height.unwrap_or(0),

@@ -66,11 +66,9 @@ impl EdStripGate {
         }
     }
 
+    #[allow(dead_code)] // assert helpers in strip-owner tests
     pub fn is_owned(&self) -> bool {
-        self.state
-            .lock()
-            .map(|g| g.owned)
-            .unwrap_or(false)
+        self.state.lock().map(|g| g.owned).unwrap_or(false)
     }
 }
 
@@ -126,6 +124,7 @@ impl EdStripGateMap {
     }
 
     /// Test helper: whether any gate is currently owned.
+    #[allow(dead_code)]
     pub fn any_owned(&self) -> bool {
         let Ok(map) = self.map.lock() else {
             return false;

@@ -161,8 +161,7 @@ mod tests {
         let state_bytes =
             std::fs::read(journal_state_path(&recovery, session.recovery_id)).unwrap();
         let blobs = journal_blobs_dir(&recovery, session.recovery_id);
-        let zip =
-            assemble_dyproj_from_state_bytes(&state_bytes, &blobs, "0.0.0-test").unwrap();
+        let zip = assemble_dyproj_from_state_bytes(&state_bytes, &blobs, "0.0.0-test").unwrap();
         let staging = TileCache::new(64 * 1024 * 1024);
         let opened = open_project_from_bytes(&zip, &staging, DocumentId::new(9)).unwrap();
         assert_eq!(opened.document.width, 64);

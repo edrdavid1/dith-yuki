@@ -70,12 +70,7 @@ impl DelayedRequeue {
     }
 
     /// Schedule `task` after `delay`. Starts the sleeper thread on first use.
-    pub fn schedule(
-        self: &Arc<Self>,
-        state: Arc<AppState>,
-        task: RecomputeTask,
-        delay: Duration,
-    ) {
+    pub fn schedule(self: &Arc<Self>, state: Arc<AppState>, task: RecomputeTask, delay: Duration) {
         self.ensure_started(state);
         let seq = self.seq.fetch_add(1, Ordering::Relaxed);
         let due = Instant::now() + delay;
@@ -146,10 +141,7 @@ impl DelayedRequeue {
             // Stale gen or closed doc → skip (no wake).
             let live_ok = state.session(entry.task.key.doc).ok().map(|s| {
                 let snap = s.document_handle.snapshot();
-                snap.generations
-                    .document_gen
-                    .load(Ordering::Acquire)
-                    == entry.task.generation
+                snap.generations.document_gen.load(Ordering::Acquire) == entry.task.generation
             });
             if live_ok != Some(true) {
                 continue;

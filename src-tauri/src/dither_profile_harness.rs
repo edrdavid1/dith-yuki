@@ -250,7 +250,9 @@ fn dither_profile_harness_main_grid() {
             }
             let mut walls = Vec::new();
             for _ in 0..15 {
-                walls.push(run_apply(DitherModeV2::BlockedFs, 1920, 1080, levels, 1, run_id).wall_ms);
+                walls.push(
+                    run_apply(DitherModeV2::BlockedFs, 1920, 1080, levels, 1, run_id).wall_ms,
+                );
                 run_id += 1;
             }
             walls.sort_by(|a, b| a.partial_cmp(b).unwrap());

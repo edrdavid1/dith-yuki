@@ -8,10 +8,10 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use engine_project::document::Document;
-use engine_project::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
 use engine_color::palette_cache::PaletteKdCache;
 use engine_color::palette_lut::PaletteLutCache;
+use engine_project::document::Document;
+use engine_project::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
 use engine_project::filters::dither_diffusion::apply_error_diffusion_tile_row_strip;
 use engine_project::filters::dither_residuals::ErrorResidualsStore;
 use engine_project::types::{DocumentId, LayerId};
@@ -65,21 +65,14 @@ fn run_one_stripe() {
             )
         })
         .collect();
-    let strip: Vec<(TileCoord, &PixelTile)> = tiles_owned
-        .iter()
-        .map(|(c, t)| (*c, t))
-        .collect();
+    let strip: Vec<(TileCoord, &PixelTile)> = tiles_owned.iter().map(|(c, t)| (*c, t)).collect();
     let mut outputs: Vec<PixelTile> = (0..STRIPE_TILES).map(|_| PixelTile::new()).collect();
     // Fresh stores each iteration — no residual / block cache hits.
     let residuals = ErrorResidualsStore::new();
     let blocks = BlockRepresentativeCache::new();
     let palette_cache = PaletteKdCache::new();
     let lut_cache = PaletteLutCache::new();
-    let doc = Document::new(
-        DocumentId::new(1),
-        STRIPE_WIDTH_PX,
-        TILE_SIZE,
-    );
+    let doc = Document::new(DocumentId::new(1), STRIPE_WIDTH_PX, TILE_SIZE);
     let params = fs_params();
     apply_error_diffusion_tile_row_strip(
         &strip,

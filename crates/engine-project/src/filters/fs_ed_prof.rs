@@ -25,6 +25,7 @@ static NS_PREV_ROW: AtomicU64 = AtomicU64::new(0);
 /// Per-ty strip compute counts (index = ty, capped).
 const TY_SLOTS: usize = 512;
 static TY_STRIP_COUNT: [AtomicU64; TY_SLOTS] = {
+    #[allow(clippy::declare_interior_mutable_const)]
     const ZERO: AtomicU64 = AtomicU64::new(0);
     [ZERO; TY_SLOTS]
 };

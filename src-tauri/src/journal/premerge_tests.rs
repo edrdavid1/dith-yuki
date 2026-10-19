@@ -262,14 +262,9 @@ fn equivalence_import_raw_bytes_and_processed_hashes() {
     let LayerNode::Leaf(layer) = &snap.root[0] else {
         panic!("leaf");
     };
-    let before_png = assemble_layer_png_fast(
-        &state.tiles.tile_cache,
-        layer,
-        snap.width,
-        snap.height,
-        1,
-    )
-    .unwrap();
+    let before_png =
+        assemble_layer_png_fast(&state.tiles.tile_cache, layer, snap.width, snap.height, 1)
+            .unwrap();
 
     write_journal_for_doc(&state, 1).unwrap();
     let blob = journal_blobs_dir(&recovery, session.recovery_id).join("layer-1-1.png");
@@ -291,7 +286,10 @@ fn equivalence_import_raw_bytes_and_processed_hashes() {
     for entry in staging_a.entries.iter() {
         let key = *entry.key();
         let tile = entry.value().tile.clone();
-        let _ = state_a.tiles.tile_cache.insert_fresh_gen(key, tile, live_gen);
+        let _ = state_a
+            .tiles
+            .tile_cache
+            .insert_fresh_gen(key, tile, live_gen);
     }
     let mut doc_a = opened_a.document;
     doc_a.increment_generation();
@@ -306,7 +304,10 @@ fn equivalence_import_raw_bytes_and_processed_hashes() {
     for entry in staging_b.entries.iter() {
         let key = *entry.key();
         let tile = entry.value().tile.clone();
-        let _ = state_b.tiles.tile_cache.insert_fresh_gen(key, tile, live_gen);
+        let _ = state_b
+            .tiles
+            .tile_cache
+            .insert_fresh_gen(key, tile, live_gen);
     }
     let mut doc_b = opened_b.document;
     doc_b.increment_generation();
@@ -386,8 +387,7 @@ fn equivalence_from_dyproj_raw_bytes_and_processed_hashes() {
     let before_proc = processed_hashes(&state_b, 2, 1, w, h);
 
     write_journal_for_doc(&state_b, 2).unwrap();
-    let state_bytes =
-        std::fs::read(journal_state_path(&recovery, session_b.recovery_id)).unwrap();
+    let state_bytes = std::fs::read(journal_state_path(&recovery, session_b.recovery_id)).unwrap();
     let blobs = journal_blobs_dir(&recovery, session_b.recovery_id);
     let zip = assemble_dyproj_from_state_bytes(&state_bytes, &blobs, "0.0.0-test").unwrap();
 
@@ -397,14 +397,21 @@ fn equivalence_from_dyproj_raw_bytes_and_processed_hashes() {
     for entry in staging2.entries.iter() {
         let key = *entry.key();
         let tile = entry.value().tile.clone();
-        let _ = state_c.tiles.tile_cache.insert_fresh_gen(key, tile, live_gen);
+        let _ = state_c
+            .tiles
+            .tile_cache
+            .insert_fresh_gen(key, tile, live_gen);
     }
     let mut doc3 = opened2.document;
     doc3.increment_generation();
     doc3.generations.set_document_gen(live_gen);
     state_c.spawn_session(doc3);
 
-    assert_eq!(before_rgba, raw_rgba(&state_c, 3), "Raw pixels from .dyproj path");
+    assert_eq!(
+        before_rgba,
+        raw_rgba(&state_c, 3),
+        "Raw pixels from .dyproj path"
+    );
     assert_eq!(before_proc, processed_hashes(&state_c, 3, 1, w, h));
 }
 
@@ -433,10 +440,16 @@ fn blob_atomic_replace_is_durable_rename() {
     let blobs = dir.path().join("blobs");
     super::fsutil::ensure_dir_private(&blobs).unwrap();
     super::fsutil::write_blob_atomic(&blobs, "layer-1-1.png", b"first").unwrap();
-    assert_eq!(std::fs::read(blobs.join("layer-1-1.png")).unwrap(), b"first");
+    assert_eq!(
+        std::fs::read(blobs.join("layer-1-1.png")).unwrap(),
+        b"first"
+    );
     // Idempotent: second write with same name does not truncate existing.
     super::fsutil::write_blob_atomic(&blobs, "layer-1-1.png", b"second-longer").unwrap();
-    assert_eq!(std::fs::read(blobs.join("layer-1-1.png")).unwrap(), b"first");
+    assert_eq!(
+        std::fs::read(blobs.join("layer-1-1.png")).unwrap(),
+        b"first"
+    );
 }
 
 #[test]
@@ -488,7 +501,7 @@ fn legacy_dyproj_journal_claim_reads_bytes() {
 #[test]
 fn unknown_newer_state_version_rejected_without_overwrite() {
     use engine_project::serialize::{
-        build_journal_state, encode_journal_state, decode_journal_state, JOURNAL_STATE_VERSION,
+        build_journal_state, decode_journal_state, encode_journal_state, JOURNAL_STATE_VERSION,
     };
 
     let dir = tempfile::tempdir().unwrap();
@@ -519,8 +532,12 @@ fn unknown_newer_state_version_rejected_without_overwrite() {
     let newer_bytes = encode_journal_state(&newer).unwrap();
     std::fs::write(&state_path, &newer_bytes).unwrap();
     assert!(decode_journal_state(&newer_bytes).is_err());
-    let err = assemble_dyproj_from_state_bytes(&newer_bytes, &journal_blobs_dir(&recovery, session.recovery_id), "x")
-        .unwrap_err();
+    let err = assemble_dyproj_from_state_bytes(
+        &newer_bytes,
+        &journal_blobs_dir(&recovery, session.recovery_id),
+        "x",
+    )
+    .unwrap_err();
     assert!(
         err.to_lowercase().contains("version") || err.to_lowercase().contains("journal"),
         "{err}"

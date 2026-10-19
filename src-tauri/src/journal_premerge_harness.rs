@@ -141,8 +141,7 @@ fn journal_premerge_restore_time_25mp() {
     fill_raw(&state, 1, 1, w, h);
     write_journal_for_doc(&state, 1).expect("seed journal");
 
-    let state_bytes =
-        std::fs::read(journal_state_path(&recovery, session.recovery_id)).unwrap();
+    let state_bytes = std::fs::read(journal_state_path(&recovery, session.recovery_id)).unwrap();
     let blobs = journal_blobs_dir(&recovery, session.recovery_id);
 
     // "Click Recover → start recalculation" ≈ assemble zip + open_project_from_bytes
@@ -177,10 +176,9 @@ fn journal_premerge_kill9_crash_loop() {
     // Child entry: same test binary, env-gated.
     if std::env::var_os("JOURNAL_KILL_CHILD").is_some() {
         let dir = PathBuf::from(std::env::var("JOURNAL_KILL_DIR").expect("JOURNAL_KILL_DIR"));
-        let rid = uuid::Uuid::parse_str(
-            &std::env::var("JOURNAL_KILL_RID").expect("JOURNAL_KILL_RID"),
-        )
-        .expect("rid");
+        let rid =
+            uuid::Uuid::parse_str(&std::env::var("JOURNAL_KILL_RID").expect("JOURNAL_KILL_RID"))
+                .expect("rid");
         kill_child_main(dir, rid);
         return;
     }
@@ -233,17 +231,13 @@ fn journal_premerge_kill9_crash_loop() {
             .spawn()
             .expect("spawn kill child");
 
-        seed = seed
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1);
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
         let delay_ms = 1 + (seed % 80);
         thread::sleep(Duration::from_millis(delay_ms));
         #[cfg(unix)]
         {
             let pid = child.id();
-            let _ = Command::new("kill")
-                .args(["-9", &pid.to_string()])
-                .status();
+            let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
         }
         #[cfg(not(unix))]
         {
@@ -253,7 +247,10 @@ fn journal_premerge_kill9_crash_loop() {
 
         assert_journal_valid(&recovery, recovery_id);
         if i % 25 == 0 || i + 1 == iterations {
-            println!("JOURNAL_KILL9 iter={}/{iterations} ok delay_ms={delay_ms}", i + 1);
+            println!(
+                "JOURNAL_KILL9 iter={}/{iterations} ok delay_ms={delay_ms}",
+                i + 1
+            );
         }
     }
     println!("JOURNAL_KILL9 all {iterations} iterations recovered old-or-new valid state");

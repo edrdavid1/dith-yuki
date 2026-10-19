@@ -25,7 +25,10 @@ pub fn ensure_dir_private(path: &Path) -> std::io::Result<()> {
             set_dir_private(path)?;
             return Ok(());
         }
-        fs::DirBuilder::new().recursive(true).mode(0o700).create(path)?;
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(path)?;
         set_dir_private(path)?;
         Ok(())
     }

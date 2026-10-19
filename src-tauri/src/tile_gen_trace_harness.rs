@@ -131,7 +131,10 @@ fn fill_raw(state: &AppState, w: u32, h: u32) {
 }
 
 fn silence_settle_ms() -> u64 {
-    if std::env::var("DITHER_TRACE_QUICK").map(|v| v == "1").unwrap_or(false) {
+    if std::env::var("DITHER_TRACE_QUICK")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
         200
     } else {
         SILENCE_SETTLE_MS
@@ -234,10 +237,7 @@ fn apply_threshold(state: &AppState, mode: Mode, threshold_scale: f32) {
                 let same = serde_json::to_value(&cur.params).ok()
                     == serde_json::to_value(&new_params).ok();
                 if same {
-                    let doc_gen = snap
-                        .generations
-                        .document_gen
-                        .load(Ordering::Acquire);
+                    let doc_gen = snap.generations.document_gen.load(Ordering::Acquire);
                     let hash = tile_gen_trace::params_hash(
                         &serde_json::to_value(&cur.params).unwrap_or(json!(null)),
                     );
@@ -339,10 +339,7 @@ fn apply_threshold(state: &AppState, mode: Mode, threshold_scale: f32) {
 
     let needs_reset = matches!(
         mode,
-        Mode::BlockedFs
-            | Mode::BlueNoise
-            | Mode::Bayer4x4
-            | Mode::FloydSteinberg
+        Mode::BlockedFs | Mode::BlueNoise | Mode::Bayer4x4 | Mode::FloydSteinberg
     );
     request_preview_refresh(state, 1, needs_reset);
 }
@@ -435,56 +432,57 @@ fn harness_worker_loop(state: Arc<AppState>, stop: Arc<AtomicBool>) {
                     engine_project::error::EngineError::invalid_state("raw missing")
                 }),
                 CacheStage::Processed => tile_pipeline::compute_processed_tile(task.key, &state),
-                CacheStage::Composite => match tile_pipeline::compute_composite_tile(task.key, &state)
-                {
-                    Err(engine_project::error::EngineError::EdPrefixPending) => {
-                        let deps = tile_pipeline::composite_ed_park_deps(
-                            &state,
-                            &snapshot.root,
-                            task.key.doc,
-                            task.key.coord,
-                        );
-                        if deps.is_empty() {
-                            // Match production empty-deps path (delayed requeue).
-                            thread::sleep(Duration::from_millis(16));
-                            state.tiles.scheduler.enqueue_or_bump(task);
-                            state.worker_wake.notify_one();
-                        } else {
-                            tile_gen_trace::emit_simple(
-                                "harness_park_ed_prefix",
-                                json!({
-                                    "level": task.key.coord.level,
-                                    "x": task.key.coord.x,
-                                    "y": task.key.coord.y,
-                                    "deps": deps.len(),
-                                }),
+                CacheStage::Composite => {
+                    match tile_pipeline::compute_composite_tile(task.key, &state) {
+                        Err(engine_project::error::EngineError::EdPrefixPending) => {
+                            let deps = tile_pipeline::composite_ed_park_deps(
+                                &state,
+                                &snapshot.root,
+                                task.key.doc,
+                                task.key.coord,
                             );
-                            if let Some(ready) = state.tiles.ed_frontier.block_on(
-                                task,
-                                deps,
-                                &state.tiles.tile_cache,
-                            ) {
+                            if deps.is_empty() {
+                                // Match production empty-deps path (delayed requeue).
+                                thread::sleep(Duration::from_millis(16));
+                                state.tiles.scheduler.enqueue_or_bump(task);
+                                state.worker_wake.notify_one();
+                            } else {
                                 tile_gen_trace::emit_simple(
-                                    "harness_park_lost_wake_requeue",
+                                    "harness_park_ed_prefix",
                                     json!({
-                                        "level": ready.key.coord.level,
-                                        "x": ready.key.coord.x,
-                                        "y": ready.key.coord.y,
-                                        "stage": format!("{:?}", ready.key.stage),
+                                        "level": task.key.coord.level,
+                                        "x": task.key.coord.x,
+                                        "y": task.key.coord.y,
+                                        "deps": deps.len(),
                                     }),
                                 );
-                                state.tiles.scheduler.enqueue_or_bump(ready);
-                                state.worker_wake.notify_one();
+                                if let Some(ready) = state.tiles.ed_frontier.block_on(
+                                    task,
+                                    deps,
+                                    &state.tiles.tile_cache,
+                                ) {
+                                    tile_gen_trace::emit_simple(
+                                        "harness_park_lost_wake_requeue",
+                                        json!({
+                                            "level": ready.key.coord.level,
+                                            "x": ready.key.coord.x,
+                                            "y": ready.key.coord.y,
+                                            "stage": format!("{:?}", ready.key.stage),
+                                        }),
+                                    );
+                                    state.tiles.scheduler.enqueue_or_bump(ready);
+                                    state.worker_wake.notify_one();
+                                }
                             }
+                            state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
+                            crate::commands::on_preview_task_finished(&state);
+                            continue;
                         }
-                        state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
-                        crate::commands::on_preview_task_finished(&state);
-                        continue;
+                        // PyramidChildrenPending: compute_* already enqueued children + parent
+                        // retry (production drops the error here — do not park on ED deps).
+                        other => other,
                     }
-                    // PyramidChildrenPending: compute_* already enqueued children + parent
-                    // retry (production drops the error here — do not park on ED deps).
-                    other => other,
-                },
+                }
             };
 
             match result {
@@ -559,7 +557,11 @@ fn harness_worker_loop(state: Arc<AppState>, stop: Arc<AtomicBool>) {
     }
 }
 
-fn setup(mode: Mode, size: SizeSpec, budget: usize) -> (Arc<AppState>, Arc<AtomicBool>, Vec<thread::JoinHandle<()>>) {
+fn setup(
+    mode: Mode,
+    size: SizeSpec,
+    budget: usize,
+) -> (Arc<AppState>, Arc<AtomicBool>, Vec<thread::JoinHandle<()>>) {
     let state = Arc::new(AppState::empty_process(None, budget, true));
     state.spawn_session(dither_doc(mode, size.w, size.h));
     fill_raw(&state, size.w, size.h);
@@ -621,7 +623,10 @@ fn run_s1(
 }
 
 fn stuck_busy_ms() -> u64 {
-    if std::env::var("DITHER_TRACE_QUICK").map(|v| v == "1").unwrap_or(false) {
+    if std::env::var("DITHER_TRACE_QUICK")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
         10_000
     } else {
         STUCK_BUSY_MS
@@ -718,11 +723,7 @@ fn tile_gen_trace_stress_s1_s3_matrix() {
     } else {
         &[Mode::BlockedFs, Mode::BlueNoise]
     };
-    let intervals: &[u64] = if quick {
-        &[50]
-    } else {
-        &[0, 10, 50, 150, 300]
-    };
+    let intervals: &[u64] = if quick { &[50] } else { &[0, 10, 50, 150, 300] };
     let s1_changes = if quick { 5usize } else { 20 };
 
     let mut summary = String::from("# tile_gen_trace stress summary (backend harness)\n\n");
@@ -747,9 +748,7 @@ fn tile_gen_trace_stress_s1_s3_matrix() {
                     let run_id = run_counter;
                     run_counter += 1;
                     let ok = run_s1(&state, mode, interval, seed, run_id, s1_changes);
-                    eprintln!(
-                        "[trace] finished S1 series={s} ok={ok} run_id={run_id}"
-                    );
+                    eprintln!("[trace] finished S1 series={s} ok={ok} run_id={run_id}");
                     counts.series += 1;
                     if ok {
                         counts.silent_ok += 1;
@@ -898,7 +897,8 @@ fn tile_gen_trace_stress_s1_s3_matrix() {
                     if ev.event == "cache_evict" {
                         evict_events += 1;
                         if let Some(g) = ev.gen {
-                            if ev.doc_gen == Some(g) || ev.details.get("tile_gen") == Some(&json!(g))
+                            if ev.doc_gen == Some(g)
+                                || ev.details.get("tile_gen") == Some(&json!(g))
                             {
                                 // Approximate: tile_gen present; compare to live later in FE.
                                 current_gen_evicts += 1;
@@ -935,7 +935,9 @@ fn tile_gen_trace_stress_s1_s3_matrix() {
     summary.push_str("\n## Not run / not measured\n\n");
     summary.push_str("- S4/S5/S7: not automated in this harness (need UI / GPU fail inject)\n");
     summary.push_str("- Frontend MISSING/STALE/MIXED/STUCK_202/LOST_EVENT (IPC): use live app Stress button + DITHER_TRACE=1\n");
-    summary.push_str("- `tile_ready` Tauri emit skipped (no AppHandle); synthetic `tile_ready_emitted` logged\n");
+    summary.push_str(
+        "- `tile_ready` Tauri emit skipped (no AppHandle); synthetic `tile_ready_emitted` logged\n",
+    );
 
     let path = out_dir.join("harness_summary.md");
     let _ = std::fs::write(&path, &summary);
@@ -1017,10 +1019,7 @@ fn ed_l0_pass_baseline_three_sizes() {
         // Full-document L0 prefix (not only viewport closure) for the baseline metric.
         {
             let snap = state.must_active().document_handle.snapshot();
-            let doc_gen = snap
-                .generations
-                .document_gen
-                .load(Ordering::Acquire);
+            let doc_gen = snap.generations.document_gen.load(Ordering::Acquire);
             let max_tx = size.w.saturating_sub(1) / engine_tiles::TILE_SIZE;
             let max_ty = size.h.saturating_sub(1) / engine_tiles::TILE_SIZE;
             tile_pipeline::schedule_ed_prefix_closure(
@@ -1217,10 +1216,7 @@ fn z3_cold_12mp_time_to_fresh() {
     // Full-doc L0 prefix so the mid-pass zoom still finishes the ED pass (Z3 stress).
     {
         let snap = state.must_active().document_handle.snapshot();
-        let doc_gen = snap
-            .generations
-            .document_gen
-            .load(Ordering::Acquire);
+        let doc_gen = snap.generations.document_gen.load(Ordering::Acquire);
         let max_tx = size.w.saturating_sub(1) / engine_tiles::TILE_SIZE;
         let max_ty = size.h.saturating_sub(1) / engine_tiles::TILE_SIZE;
         tile_pipeline::schedule_ed_prefix_closure(
@@ -1422,10 +1418,7 @@ fn z3_cold_small_composite_holes_zero() {
     crate::commands::schedule_dirty_viewport_tiles(&state);
     {
         let snap = state.must_active().document_handle.snapshot();
-        let doc_gen = snap
-            .generations
-            .document_gen
-            .load(Ordering::Acquire);
+        let doc_gen = snap.generations.document_gen.load(Ordering::Acquire);
         let max_tx = size.w.saturating_sub(1) / engine_tiles::TILE_SIZE;
         let max_ty = size.h.saturating_sub(1) / engine_tiles::TILE_SIZE;
         tile_pipeline::schedule_ed_prefix_closure(

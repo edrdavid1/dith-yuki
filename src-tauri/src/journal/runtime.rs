@@ -28,6 +28,7 @@ pub const MAX_INTERVAL: Duration = Duration::from_secs(5);
 pub const HEARTBEAT: Duration = Duration::from_secs(30);
 
 /// Back-compat alias used by older call sites / docs.
+#[allow(dead_code)]
 pub const DEBOUNCE: Duration = QUIET;
 
 #[derive(Debug, Default)]
@@ -100,6 +101,7 @@ impl JournalRuntime {
         *g
     }
 
+    #[allow(dead_code)] // reserved for gen-guarded quiet waiters
     fn current_generation(&self, doc_id: u32) -> u64 {
         self.generations.get(&doc_id).copied().unwrap_or(0)
     }

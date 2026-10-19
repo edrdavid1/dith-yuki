@@ -239,10 +239,7 @@ fn drain_workers(state: &Arc<AppState>, tx_n: u32, ty_n: u32, n_workers: usize) 
                                 continue;
                             }
                             if !engine_tiles::ed_ready(&state.tiles.tile_cache, task.key, true) {
-                                state
-                                    .tiles
-                                    .ed_frontier
-                                    .block(task, &state.tiles.tile_cache);
+                                state.tiles.ed_frontier.block(task, &state.tiles.tile_cache);
                                 continue;
                             }
                             match compute_processed_tile(task.key, &state) {

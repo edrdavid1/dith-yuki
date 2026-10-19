@@ -163,10 +163,7 @@ fn drain_l0_processed_grid(
                                 continue;
                             }
                             if !engine_tiles::ed_ready(&state.tiles.tile_cache, task.key, true) {
-                                state
-                                    .tiles
-                                    .ed_frontier
-                                    .block(task, &state.tiles.tile_cache);
+                                state.tiles.ed_frontier.block(task, &state.tiles.tile_cache);
                                 continue;
                             }
                             processed_calls.fetch_add(1, Ordering::Relaxed);
@@ -310,7 +307,10 @@ fn ed_l0_pass_baseline_three_sizes() {
     engine_project::filters::fs_ed_prof::force_enable(true);
 
     let sizes: &[(u32, u32)] = &[(748, 1024), (1920, 1080), (4000, 3000)];
-    println!("=== ed_l0_pass_baseline_three_sizes (B1) workers={} ===\n", n_workers());
+    println!(
+        "=== ed_l0_pass_baseline_three_sizes (B1) workers={} ===\n",
+        n_workers()
+    );
 
     for &(w, h) in sizes {
         let tx_n = (w + TILE_SIZE - 1) / TILE_SIZE;

@@ -290,7 +290,7 @@ impl EdFrontier {
         self.blocked.insert(
             key,
             BlockedEntry {
-                task: task.clone(),
+                task,
                 deps: dep_set.clone(),
             },
         );
@@ -500,11 +500,7 @@ mod tests {
             layer_generation: 0,
             priority: Priority::Immediate,
         };
-        assert!(
-            frontier
-                .block_on(task, vec![processed], &cache)
-                .is_none()
-        );
+        assert!(frontier.block_on(task, vec![processed], &cache).is_none());
         assert_eq!(frontier.blocked_count(), 1);
         assert!(frontier.wake(processed, &cache).is_empty());
         insert_processed_fresh(&cache, 0, 0);

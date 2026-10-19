@@ -11,7 +11,8 @@ use std::time::Instant;
 use engine_project::layer::LayerNode;
 use engine_project::serialize::{
     assemble_layer_png_fast, blob_sha256_hex, build_journal_state, collect_custom_png_embeds,
-    encode_journal_state, layer_blob_filename, read_png_file, threshold_blob_filename, ProjectError,
+    encode_journal_state, layer_blob_filename, read_png_file, threshold_blob_filename,
+    ProjectError,
 };
 use engine_project::types::{LayerId, LayerKind};
 use uuid::Uuid;
@@ -33,8 +34,14 @@ pub fn delete_journal(recovery_dir: &Path, recovery_id: Uuid) {
     let blobs = journal_blobs_dir(recovery_dir, recovery_id);
     let _ = std::fs::remove_dir_all(&blobs);
     // Orphaned mid-recover claims (crash between claim and finalize).
-    let _ = std::fs::remove_file(super::cleanup::state_claiming_path(recovery_dir, recovery_id));
-    let _ = std::fs::remove_dir_all(super::cleanup::blobs_claiming_path(recovery_dir, recovery_id));
+    let _ = std::fs::remove_file(super::cleanup::state_claiming_path(
+        recovery_dir,
+        recovery_id,
+    ));
+    let _ = std::fs::remove_dir_all(super::cleanup::blobs_claiming_path(
+        recovery_dir,
+        recovery_id,
+    ));
     let mut legacy_claim = journal_blob_path(recovery_dir, recovery_id);
     let name = legacy_claim
         .file_name()
@@ -61,6 +68,7 @@ pub fn delete_journal_for_session(state: &AppState, session: &DocumentSession) {
 }
 
 /// Serialize the live document into the recovery journal (or skip if too large).
+#[allow(dead_code)] // harness / cfg(test) entry; production uses write_journal_for_doc_from
 pub fn write_journal_for_doc(state: &AppState, doc_id: u32) -> Result<(), String> {
     write_journal_for_doc_from(state, doc_id, JournalWriteSource::Direct)
 }
@@ -139,7 +147,7 @@ fn write_journal_state_v1(
     })?;
     let mut read_png_keep = |path: &str| read_png_file(path);
     if let Ok((embeds, _)) = collect_custom_png_embeds(snapshot.as_ref(), &mut read_png_keep) {
-        for (basename, _) in &embeds {
+        for basename in embeds.keys() {
             let content_hash = basename.trim_end_matches(".png");
             keep_blobs.insert(threshold_blob_filename(content_hash));
         }
@@ -250,8 +258,7 @@ fn write_journal_state_v1(
                 if !dest.is_file() {
                     let next_total = blob_bytes_total.saturating_add(bytes.len() as u64);
                     if next_total > JOURNAL_MAX_BYTES {
-                        let freed =
-                            super::cleanup::gc_unreferenced_blobs(&blobs_dir, &keep_blobs);
+                        let freed = super::cleanup::gc_unreferenced_blobs(&blobs_dir, &keep_blobs);
                         blob_bytes_total = dir_size_approx(&blobs_dir);
                         let next_total = blob_bytes_total.saturating_add(bytes.len() as u64);
                         if next_total > JOURNAL_MAX_BYTES {
@@ -438,8 +445,7 @@ mod tests {
         let mut layer =
             engine_project::layer::Layer::new(LayerId::new(1), LayerKind::Raster, 64, 64);
         layer.bump_raw_rev();
-        doc.root
-            .push(engine_project::layer::LayerNode::Leaf(layer));
+        doc.root.push(engine_project::layer::LayerNode::Leaf(layer));
         let session = state.spawn_session(doc);
         fill_tiny_raw(&state, 1, 1, 64, 64);
         if let Ok(mut g) = session.history.saved_snapshot.lock() {
@@ -493,8 +499,7 @@ mod tests {
         let mut layer =
             engine_project::layer::Layer::new(LayerId::new(1), LayerKind::Raster, 64, 64);
         layer.bump_raw_rev();
-        doc.root
-            .push(engine_project::layer::LayerNode::Leaf(layer));
+        doc.root.push(engine_project::layer::LayerNode::Leaf(layer));
         let session = state.spawn_session(doc);
         fill_tiny_raw(&state, 1, 1, 64, 64);
         session.document_handle.mutate(|d| d.increment_generation());

@@ -532,7 +532,11 @@ pub fn encode_rgba8_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>,
 }
 
 /// Fast PNG for journal layer blobs (`Compression::Fast` + `FilterType::Sub`).
-pub fn encode_rgba8_png_fast(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, ProjectError> {
+pub fn encode_rgba8_png_fast(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, ProjectError> {
     let expected = (width as usize) * (height as usize) * 4;
     if rgba.len() != expected {
         return Err(ProjectError::Codec(format!(

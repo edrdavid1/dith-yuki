@@ -145,7 +145,6 @@ pub async fn recover_journal(
         let blob = blob.clone();
         let state_path = state_path.clone();
         let recovery = recovery.clone();
-        let is_state_v1 = is_state_v1;
         let display = display.clone();
         move || claim_journal_zip(id, &recovery, &state_path, &blob, is_state_v1, &display)
     })
@@ -168,8 +167,7 @@ pub async fn recover_journal(
         Ok(v) => v,
         Err(e) => {
             // Restore claim so Discard / retry still works.
-            let _ = tauri::async_runtime::spawn_blocking(move || claimed.restore())
-                .await;
+            let _ = tauri::async_runtime::spawn_blocking(move || claimed.restore()).await;
             return Err(e);
         }
     };
@@ -338,13 +336,15 @@ fn claim_journal_zip(
             None
         };
 
-        let assemble_dir = blobs_claimed
-            .as_ref()
-            .map(|p| p.as_path())
-            .unwrap_or(blobs_dir.as_path());
+        let assemble_dir = blobs_claimed.as_deref().unwrap_or(blobs_dir.as_path());
 
         let state_bytes = fs::read(&state_claiming).map_err(|e| {
-            restore_state_v1_claim(&state_claiming, state_path, blobs_claimed.as_ref(), &blobs_dir);
+            restore_state_v1_claim(
+                &state_claiming,
+                state_path,
+                blobs_claimed.as_ref(),
+                &blobs_dir,
+            );
             format!("Could not read recovery journal for «{display}»: {e}")
         })?;
 
@@ -361,7 +361,9 @@ fn claim_journal_zip(
                     blobs_claimed.as_ref(),
                     &blobs_dir,
                 );
-                return Err(format!("Recovery journal for «{display}» is incomplete or corrupt: {e}"));
+                return Err(format!(
+                    "Recovery journal for «{display}» is incomplete or corrupt: {e}"
+                ));
             }
         };
 
@@ -661,9 +663,17 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("incomplete or corrupt"), "{err}");
-        assert!(state_path.is_file(), "state must be restored after failed claim");
-        assert!(blobs.is_dir(), "blobs dir must be restored after failed claim");
-        assert!(!crate::journal::cleanup::state_claiming_path(&recovery, session.recovery_id).exists());
+        assert!(
+            state_path.is_file(),
+            "state must be restored after failed claim"
+        );
+        assert!(
+            blobs.is_dir(),
+            "blobs dir must be restored after failed claim"
+        );
+        assert!(
+            !crate::journal::cleanup::state_claiming_path(&recovery, session.recovery_id).exists()
+        );
     }
 
     fn meta(

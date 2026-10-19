@@ -46,6 +46,7 @@ impl WorkerWake {
     }
 
     /// Wake every parked worker (harness teardown / shutdown).
+    #[allow(dead_code)]
     pub fn notify_all(&self) {
         let mut has_tasks = self.mutex.lock().unwrap();
         *has_tasks = true;
@@ -198,199 +199,200 @@ pub fn tile_worker_loop<R: tauri::Runtime>(state: Arc<AppState>, app_handle: tau
                 crate::preview_diag::reset_task_phases();
             }
             let mut l0_started: Option<Instant> = None;
-            let result: Result<Arc<PixelTile>, engine_project::error::EngineError> =
-                match task.key.stage {
-                    CacheStage::Raw => load_raw_tile(task.key, &state),
-                    CacheStage::Processed => {
-                        // CPU ED is L0-only; drop stray L>0 ED Processed (e.g. old
-                        // schedule_ed_for_viewport bug) instead of parking on missing Raw.
-                        if task.key.coord.level > 0
-                            && crate::tile_pipeline::layer_has_error_diffusion(
-                                &snapshot.root,
-                                task.key.layer,
-                            )
-                        {
-                            state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
-                            crate::commands::on_preview_task_finished(&state);
-                            diag_task_finished(diag, &state, &task);
-                            continue;
-                        }
-                        if crate::tile_pipeline::layer_has_error_diffusion(
+            let result: Result<Arc<PixelTile>, engine_project::error::EngineError> = match task
+                .key
+                .stage
+            {
+                CacheStage::Raw => load_raw_tile(task.key, &state),
+                CacheStage::Processed => {
+                    // CPU ED is L0-only; drop stray L>0 ED Processed (e.g. old
+                    // schedule_ed_for_viewport bug) instead of parking on missing Raw.
+                    if task.key.coord.level > 0
+                        && crate::tile_pipeline::layer_has_error_diffusion(
                             &snapshot.root,
                             task.key.layer,
-                        ) && !engine_tiles::ed_ready(&state.tiles.tile_cache, task.key, true)
+                        )
+                    {
+                        state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
+                        crate::commands::on_preview_task_finished(&state);
+                        diag_task_finished(diag, &state, &task);
+                        continue;
+                    }
+                    if crate::tile_pipeline::layer_has_error_diffusion(
+                        &snapshot.root,
+                        task.key.layer,
+                    ) && !engine_tiles::ed_ready(&state.tiles.tile_cache, task.key, true)
+                    {
+                        if let Some(ready) =
+                            state.tiles.ed_frontier.block(task, &state.tiles.tile_cache)
                         {
-                            if let Some(ready) =
-                                state.tiles.ed_frontier.block(task, &state.tiles.tile_cache)
-                            {
-                                // Deps met during park publish — run now.
-                                state.tiles.scheduler.enqueue_or_bump(ready);
+                            // Deps met during park publish — run now.
+                            state.tiles.scheduler.enqueue_or_bump(ready);
+                            state.worker_wake.notify_one();
+                        }
+                        state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
+                        crate::commands::on_preview_task_finished(&state);
+                        diag_task_finished(diag, &state, &task);
+                        continue;
+                    }
+                    l0_started = l0_compute_started(diag, &task);
+                    match compute_processed_tile(task.key, &state) {
+                        Err(engine_project::error::EngineError::EdStripBusy) => {
+                            // Another worker owns this ED strip row. Re-park on
+                            // sibling tiles (never self) so the gate wait cannot
+                            // pin a worker thread permanently.
+                            let deps =
+                                crate::tile_pipeline::ed_strip_busy_park_deps(&state, task.key);
+                            if deps.is_empty() {
+                                // Single-tile row race: bounce to scheduler.
+                                state.tiles.scheduler.enqueue_or_bump(task);
                                 state.worker_wake.notify_one();
+                            } else {
+                                let _ = state.tiles.ed_frontier.block_on(
+                                    task,
+                                    deps,
+                                    &state.tiles.tile_cache,
+                                );
                             }
                             state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
                             crate::commands::on_preview_task_finished(&state);
                             diag_task_finished(diag, &state, &task);
                             continue;
                         }
-                        l0_started = l0_compute_started(diag, &task);
-                        match compute_processed_tile(task.key, &state) {
-                            Err(engine_project::error::EngineError::EdStripBusy) => {
-                                // Another worker owns this ED strip row. Re-park on
-                                // sibling tiles (never self) so the gate wait cannot
-                                // pin a worker thread permanently.
-                                let deps = crate::tile_pipeline::ed_strip_busy_park_deps(
-                                    &state, task.key,
-                                );
-                                if deps.is_empty() {
-                                    // Single-tile row race: bounce to scheduler.
-                                    state.tiles.scheduler.enqueue_or_bump(task);
-                                    state.worker_wake.notify_one();
-                                } else {
-                                    let _ = state.tiles.ed_frontier.block_on(
-                                        task,
-                                        deps,
-                                        &state.tiles.tile_cache,
-                                    );
-                                }
-                                state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
-                                crate::commands::on_preview_task_finished(&state);
-                                diag_task_finished(diag, &state, &task);
-                                continue;
-                            }
-                            other => other,
-                        }
+                        other => other,
                     }
-                    CacheStage::Composite => {
-                        l0_started = l0_compute_started(diag, &task);
-                        match compute_composite_tile(task.key, &state) {
-                            Err(engine_project::error::EngineError::EdPrefixPending) => {
-                                // Expand beyond dirty-at-this-coord (H8 / step 2.5):
-                                // empty deps + enqueue_or_bump was a tight spin.
-                                let attempt = crate::tile_gen_trace::bump_requeue_attempt(
+                }
+                CacheStage::Composite => {
+                    l0_started = l0_compute_started(diag, &task);
+                    match compute_composite_tile(task.key, &state) {
+                        Err(engine_project::error::EngineError::EdPrefixPending) => {
+                            // Expand beyond dirty-at-this-coord (H8 / step 2.5):
+                            // empty deps + enqueue_or_bump was a tight spin.
+                            let attempt = crate::tile_gen_trace::bump_requeue_attempt(
+                                task.key.doc,
+                                task.key.coord.level,
+                                task.key.coord.x,
+                                task.key.coord.y,
+                                task.generation,
+                            );
+                            // Red-path self-check: force the pre-fix immediate requeue.
+                            if crate::tile_gen_trace::inject_spin_enabled() {
+                                crate::tile_gen_trace::note_spin_requeue(
                                     task.key.doc,
                                     task.key.coord.level,
                                     task.key.coord.x,
                                     task.key.coord.y,
                                     task.generation,
                                 );
-                                // Red-path self-check: force the pre-fix immediate requeue.
-                                if crate::tile_gen_trace::inject_spin_enabled() {
-                                    crate::tile_gen_trace::note_spin_requeue(
-                                        task.key.doc,
-                                        task.key.coord.level,
-                                        task.key.coord.x,
-                                        task.key.coord.y,
-                                        task.generation,
+                                if crate::tile_gen_trace::enabled() {
+                                    crate::tile_gen_trace::emit(
+                                        "worker_requeue",
+                                        Some(task.key.layer),
+                                        Some(live_doc_gen),
+                                        Some(snapshot.generations.get_layer_gen(task.key.layer)),
+                                        Some(crate::tile_gen_trace::tile(
+                                            task.key.coord.level,
+                                            task.key.coord.x,
+                                            task.key.coord.y,
+                                        )),
+                                        Some(task.generation),
+                                        serde_json::json!({
+                                            "reason": "inject_spin_immediate",
+                                            "attempt": attempt,
+                                            "stage": "Composite",
+                                        }),
                                     );
-                                    if crate::tile_gen_trace::enabled() {
-                                        crate::tile_gen_trace::emit(
-                                            "worker_requeue",
-                                            Some(task.key.layer),
-                                            Some(live_doc_gen),
-                                            Some(snapshot.generations.get_layer_gen(task.key.layer)),
-                                            Some(crate::tile_gen_trace::tile(
-                                                task.key.coord.level,
-                                                task.key.coord.x,
-                                                task.key.coord.y,
-                                            )),
-                                            Some(task.generation),
-                                            serde_json::json!({
-                                                "reason": "inject_spin_immediate",
-                                                "attempt": attempt,
-                                                "stage": "Composite",
-                                            }),
-                                        );
-                                    }
-                                    state.tiles.scheduler.enqueue_or_bump(task);
-                                    state.worker_wake.notify_one();
-                                    state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
-                                    crate::commands::on_preview_task_finished(&state);
-                                    diag_task_finished(diag, &state, &task);
-                                    continue;
                                 }
-                                let deps = crate::tile_pipeline::composite_ed_park_deps(
-                                    &state,
-                                    &snapshot.root,
-                                    task.key.doc,
-                                    task.key.coord,
-                                );
-                                if deps.is_empty() {
-                                    // Last resort: single-thread delayed requeue (never notify immediately).
-                                    crate::tile_gen_trace::note_spin_requeue(
-                                        task.key.doc,
-                                        task.key.coord.level,
-                                        task.key.coord.x,
-                                        task.key.coord.y,
-                                        task.generation,
-                                    );
-                                    let backoff_ms = composite_empty_deps_backoff_ms(attempt);
-                                    if crate::tile_gen_trace::enabled() {
-                                        crate::tile_gen_trace::emit(
-                                            "worker_requeue",
-                                            Some(task.key.layer),
-                                            Some(live_doc_gen),
-                                            Some(snapshot.generations.get_layer_gen(task.key.layer)),
-                                            Some(crate::tile_gen_trace::tile(
-                                                task.key.coord.level,
-                                                task.key.coord.x,
-                                                task.key.coord.y,
-                                            )),
-                                            Some(task.generation),
-                                            serde_json::json!({
-                                                "reason": "ed_prefix_pending_empty_deps",
-                                                "attempt": attempt,
-                                                "stage": "Composite",
-                                                "backoff_ms": backoff_ms,
-                                            }),
-                                        );
-                                    }
-                                    state.delayed_requeue.schedule(
-                                        Arc::clone(&state),
-                                        task,
-                                        Duration::from_millis(backoff_ms),
-                                    );
-                                } else {
-                                    if crate::tile_gen_trace::enabled() {
-                                        crate::tile_gen_trace::emit(
-                                            "worker_requeue",
-                                            Some(task.key.layer),
-                                            Some(live_doc_gen),
-                                            Some(snapshot.generations.get_layer_gen(task.key.layer)),
-                                            Some(crate::tile_gen_trace::tile(
-                                                task.key.coord.level,
-                                                task.key.coord.x,
-                                                task.key.coord.y,
-                                            )),
-                                            Some(task.generation),
-                                            serde_json::json!({
-                                                "reason": "input_not_ready",
-                                                "attempt": attempt,
-                                                "stage": "Composite",
-                                                "deps": deps.len(),
-                                                "park": "ed_frontier",
-                                            }),
-                                        );
-                                    }
-                                    // Woken by wake_ed_frontier_after_insert when a dep inserts.
-                                    // block_on returns Some on retain→insert→park lost-wake.
-                                    if let Some(ready) = state.tiles.ed_frontier.block_on(
-                                        task,
-                                        deps,
-                                        &state.tiles.tile_cache,
-                                    ) {
-                                        state.tiles.scheduler.enqueue_or_bump(ready);
-                                        state.worker_wake.notify_one();
-                                    }
-                                }
+                                state.tiles.scheduler.enqueue_or_bump(task);
+                                state.worker_wake.notify_one();
                                 state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
                                 crate::commands::on_preview_task_finished(&state);
                                 diag_task_finished(diag, &state, &task);
                                 continue;
                             }
-                            other => other,
+                            let deps = crate::tile_pipeline::composite_ed_park_deps(
+                                &state,
+                                &snapshot.root,
+                                task.key.doc,
+                                task.key.coord,
+                            );
+                            if deps.is_empty() {
+                                // Last resort: single-thread delayed requeue (never notify immediately).
+                                crate::tile_gen_trace::note_spin_requeue(
+                                    task.key.doc,
+                                    task.key.coord.level,
+                                    task.key.coord.x,
+                                    task.key.coord.y,
+                                    task.generation,
+                                );
+                                let backoff_ms = composite_empty_deps_backoff_ms(attempt);
+                                if crate::tile_gen_trace::enabled() {
+                                    crate::tile_gen_trace::emit(
+                                        "worker_requeue",
+                                        Some(task.key.layer),
+                                        Some(live_doc_gen),
+                                        Some(snapshot.generations.get_layer_gen(task.key.layer)),
+                                        Some(crate::tile_gen_trace::tile(
+                                            task.key.coord.level,
+                                            task.key.coord.x,
+                                            task.key.coord.y,
+                                        )),
+                                        Some(task.generation),
+                                        serde_json::json!({
+                                            "reason": "ed_prefix_pending_empty_deps",
+                                            "attempt": attempt,
+                                            "stage": "Composite",
+                                            "backoff_ms": backoff_ms,
+                                        }),
+                                    );
+                                }
+                                state.delayed_requeue.schedule(
+                                    Arc::clone(&state),
+                                    task,
+                                    Duration::from_millis(backoff_ms),
+                                );
+                            } else {
+                                if crate::tile_gen_trace::enabled() {
+                                    crate::tile_gen_trace::emit(
+                                        "worker_requeue",
+                                        Some(task.key.layer),
+                                        Some(live_doc_gen),
+                                        Some(snapshot.generations.get_layer_gen(task.key.layer)),
+                                        Some(crate::tile_gen_trace::tile(
+                                            task.key.coord.level,
+                                            task.key.coord.x,
+                                            task.key.coord.y,
+                                        )),
+                                        Some(task.generation),
+                                        serde_json::json!({
+                                            "reason": "input_not_ready",
+                                            "attempt": attempt,
+                                            "stage": "Composite",
+                                            "deps": deps.len(),
+                                            "park": "ed_frontier",
+                                        }),
+                                    );
+                                }
+                                // Woken by wake_ed_frontier_after_insert when a dep inserts.
+                                // block_on returns Some on retain→insert→park lost-wake.
+                                if let Some(ready) = state.tiles.ed_frontier.block_on(
+                                    task,
+                                    deps,
+                                    &state.tiles.tile_cache,
+                                ) {
+                                    state.tiles.scheduler.enqueue_or_bump(ready);
+                                    state.worker_wake.notify_one();
+                                }
+                            }
+                            state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
+                            crate::commands::on_preview_task_finished(&state);
+                            diag_task_finished(diag, &state, &task);
+                            continue;
                         }
+                        other => other,
                     }
-                };
+                }
+            };
 
             if let Ok(tile) = result {
                 // Re-check after compute: gen may have advanced while we worked.
@@ -496,8 +498,7 @@ pub fn tile_worker_loop<R: tauri::Runtime>(state: Arc<AppState>, app_handle: tau
                                 task.key.coord.y,
                                 task.generation,
                             );
-                            if task.key.stage == CacheStage::Processed
-                                && task.key.coord.level == 0
+                            if task.key.stage == CacheStage::Processed && task.key.coord.level == 0
                             {
                                 crate::ed_progress::maybe_emit(
                                     &state,
@@ -511,8 +512,7 @@ pub fn tile_worker_loop<R: tauri::Runtime>(state: Arc<AppState>, app_handle: tau
                                 );
                             }
                             let viewport_level = state.ui.viewport.lock().unwrap().level;
-                            let in_cache =
-                                state.tiles.tile_cache.get_entry(task.key).is_some();
+                            let in_cache = state.tiles.tile_cache.get_entry(task.key).is_some();
                             if task.key.stage == CacheStage::Composite && in_cache {
                                 // Always notify if FE registered a 202 (any level).
                                 // Also keep the legacy viewport-level emit for tiles

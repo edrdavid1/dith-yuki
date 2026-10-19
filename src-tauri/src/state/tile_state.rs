@@ -39,10 +39,7 @@ impl TileState {
         }
     }
 
-    pub fn strip_gate(
-        &self,
-        key: EdStripKey,
-    ) -> std::sync::Arc<super::ed_strip_gate::EdStripGate> {
+    pub fn strip_gate(&self, key: EdStripKey) -> std::sync::Arc<super::ed_strip_gate::EdStripGate> {
         self.ed_strip_gates.gate(key)
     }
 

@@ -107,9 +107,7 @@ pub fn build_journal_state(
     threshold_digests: &[(String, String)],
 ) -> JournalStateFile {
     let document = DocumentFile::from_document(doc, |id| {
-        let Some((rev, kind)) = find_layer_raw_rev(doc, id) else {
-            return None;
-        };
+        let (rev, kind) = find_layer_raw_rev(doc, id)?;
         if kind != LayerKind::Raster || rev == 0 {
             return None;
         }
@@ -320,9 +318,7 @@ mod tests {
     #[test]
     fn unknown_root_fields_tolerated() {
         let mut state = build_journal_state(&sample_doc(), "x", &[], &[]);
-        state
-            .extra
-            .insert("future_flag".into(), Value::Bool(true));
+        state.extra.insert("future_flag".into(), Value::Bool(true));
         let bytes = encode_journal_state(&state).unwrap();
         let loaded = decode_journal_state(&bytes).unwrap();
         assert_eq!(loaded.extra.get("future_flag"), Some(&Value::Bool(true)));

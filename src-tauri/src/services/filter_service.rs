@@ -1162,7 +1162,8 @@ impl FilterService {
                         req.filter_id
                     );
                     if crate::tile_gen_trace::enabled() {
-                        let before = serde_json::to_value(&cur.params).unwrap_or(serde_json::Value::Null);
+                        let before =
+                            serde_json::to_value(&cur.params).unwrap_or(serde_json::Value::Null);
                         let hash = crate::tile_gen_trace::params_hash(&before);
                         let doc_gen = snapshot
                             .generations
@@ -1198,11 +1199,11 @@ impl FilterService {
                 .document_gen
                 .load(std::sync::atomic::Ordering::Acquire);
             let before_hash = {
-                fn find_filter<'a>(
-                    nodes: &'a [engine_project::LayerNode],
+                fn find_filter(
+                    nodes: &[engine_project::LayerNode],
                     layer_id: u32,
                     filter_id: FilterInstanceId,
-                ) -> Option<&'a engine_project::FilterInstance> {
+                ) -> Option<&engine_project::FilterInstance> {
                     for node in nodes.iter() {
                         match node {
                             engine_project::LayerNode::Leaf(layer) if layer.id.0 == layer_id => {

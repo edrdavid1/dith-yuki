@@ -197,6 +197,8 @@ describe('useEffectLayer', () => {
       1,
       'filter-abc-123',
       expect.objectContaining({ contrast: 1.5 }),
+      // New architecture: optional profile extras (null when DITHER_PROFILE is off).
+      expect.objectContaining({ profileRunId: null }),
     );
   });
 
@@ -272,6 +274,7 @@ describe('useEffectLayer', () => {
       expect.objectContaining({
         threshold_scale: 1 + 29 * 0.02,
       }),
+      expect.objectContaining({ profileRunId: null }),
     );
   });
 
@@ -360,6 +363,7 @@ describe('useEffectLayer', () => {
       expect.objectContaining({
         threshold_scale: 1.4,
       }),
+      expect.objectContaining({ profileRunId: null }),
     );
   });
 
