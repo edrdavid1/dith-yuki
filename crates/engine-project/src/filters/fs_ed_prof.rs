@@ -3,12 +3,22 @@
 //! Active when `DITHER_TRACE=1` **or** `DITHER_FS_PROF=1`. Zero-cost when off
 //! (single atomic load before any timing).
 
+use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static INIT: OnceLock<()> = OnceLock::new();
+/// Non-zero while a unit test holds [`MeasureGuard`]: only threads that called
+/// [`bind_measure_session`] contribute to counters (isolates parallel `cargo test`).
+static MEASURE_SESSION: AtomicU64 = AtomicU64::new(0);
+static MEASURE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static MEASURE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+thread_local! {
+    static THREAD_SESSION: Cell<u64> = const { Cell::new(0) };
+}
 
 static STRIP_RUNS: AtomicU64 = AtomicU64::new(0);
 static STRIP_PIXELS: AtomicU64 = AtomicU64::new(0);
@@ -53,6 +63,64 @@ pub fn enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
 
+fn measuring() -> bool {
+    MEASURE_SESSION.load(Ordering::Acquire) != 0
+}
+
+fn thread_in_measure_session() -> bool {
+    let session = MEASURE_SESSION.load(Ordering::Acquire);
+    session != 0 && THREAD_SESSION.with(|c| c.get() == session)
+}
+
+/// Whether this thread should bump counters (env/harness profiling, or bound measure).
+fn should_count() -> bool {
+    if !enabled() {
+        return false;
+    }
+    if !measuring() {
+        return true;
+    }
+    thread_in_measure_session()
+}
+
+/// Copy a parent thread's measure session onto a worker (do **not** read the
+/// global session — that would let unrelated parallel tests join the measure).
+pub fn set_thread_session(session: u64) {
+    THREAD_SESSION.with(|c| c.set(session));
+}
+
+/// Session id bound to this thread (0 if none).
+pub fn thread_session() -> u64 {
+    THREAD_SESSION.with(|c| c.get())
+}
+
+/// Exclusive test measurement: enables profiling, resets counters, ignores other
+/// tests' threads until dropped.
+pub struct MeasureGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+impl MeasureGuard {
+    pub fn enter() -> Self {
+        let lock = MEASURE_LOCK.get_or_init(|| Mutex::new(()));
+        let guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+        let session = MEASURE_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
+        force_enable(true);
+        reset();
+        THREAD_SESSION.with(|c| c.set(session));
+        MEASURE_SESSION.store(session, Ordering::Release);
+        Self { _lock: guard }
+    }
+}
+
+impl Drop for MeasureGuard {
+    fn drop(&mut self) {
+        MEASURE_SESSION.store(0, Ordering::Release);
+        THREAD_SESSION.with(|c| c.set(0));
+        force_enable(false);
+    }
+}
+
 pub fn reset() {
     init_from_env();
     STRIP_RUNS.store(0, Ordering::Relaxed);
@@ -73,7 +141,7 @@ pub fn reset() {
 
 #[inline]
 pub fn note_tile_task() {
-    if !enabled() {
+    if !should_count() {
         return;
     }
     TILE_TASKS.fetch_add(1, Ordering::Relaxed);
@@ -81,7 +149,7 @@ pub fn note_tile_task() {
 
 #[inline]
 pub fn note_strip_run(ty: u32, pixels: u64) {
-    if !enabled() {
+    if !should_count() {
         return;
     }
     STRIP_RUNS.fetch_add(1, Ordering::Relaxed);
@@ -97,43 +165,43 @@ pub fn note_strip_run(ty: u32, pixels: u64) {
 
 #[inline]
 pub fn add_ns_raw(ns: u64) {
-    if enabled() {
+    if should_count() {
         NS_RAW.fetch_add(ns, Ordering::Relaxed);
     }
 }
 #[inline]
 pub fn add_ns_residual_load(ns: u64) {
-    if enabled() {
+    if should_count() {
         NS_RESIDUAL_LOAD.fetch_add(ns, Ordering::Relaxed);
     }
 }
 #[inline]
 pub fn add_ns_ed_cycle(ns: u64) {
-    if enabled() {
+    if should_count() {
         NS_ED_CYCLE.fetch_add(ns, Ordering::Relaxed);
     }
 }
 #[inline]
 pub fn add_ns_residual_store(ns: u64) {
-    if enabled() {
+    if should_count() {
         NS_RESIDUAL_STORE.fetch_add(ns, Ordering::Relaxed);
     }
 }
 #[inline]
 pub fn add_ns_cache_write(ns: u64) {
-    if enabled() {
+    if should_count() {
         NS_CACHE_WRITE.fetch_add(ns, Ordering::Relaxed);
     }
 }
 #[inline]
 pub fn add_ns_wake(ns: u64) {
-    if enabled() {
+    if should_count() {
         NS_WAKE.fetch_add(ns, Ordering::Relaxed);
     }
 }
 #[inline]
 pub fn add_ns_prev_row(ns: u64) {
-    if enabled() {
+    if should_count() {
         NS_PREV_ROW.fetch_add(ns, Ordering::Relaxed);
     }
 }
@@ -146,7 +214,7 @@ pub struct Scope {
 impl Scope {
     #[inline]
     pub fn new(add: fn(u64)) -> Option<Self> {
-        if enabled() {
+        if should_count() {
             Some(Self {
                 start: Instant::now(),
                 add,

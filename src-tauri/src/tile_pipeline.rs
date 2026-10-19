@@ -1521,11 +1521,13 @@ mod tests {
     ) {
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let t0 = Instant::now();
+        let parent_session = engine_project::filters::fs_ed_prof::thread_session();
         std::thread::scope(|scope| {
             for _ in 0..n_workers {
                 let state = Arc::clone(state);
                 let stop = Arc::clone(&stop);
                 scope.spawn(move || {
+                    engine_project::filters::fs_ed_prof::set_thread_session(parent_session);
                     while !stop.load(Ordering::Relaxed) {
                         let all_fresh = (0..=max_y).all(|y| {
                             (0..=max_x).all(|x| {
@@ -1606,8 +1608,7 @@ mod tests {
     /// B1: concurrent workers must compute each ty strip at most once.
     #[test]
     fn ed_strip_owner_one_calc_per_ty() {
-        engine_project::filters::fs_ed_prof::force_enable(true);
-        engine_project::filters::fs_ed_prof::reset();
+        let _measure = engine_project::filters::fs_ed_prof::MeasureGuard::enter();
 
         let state = Arc::new(make_ed_state());
         reset_ed_processed(&state);
@@ -1639,7 +1640,6 @@ mod tests {
             snap.strip_runs, snap.unique_ty_strips
         );
         assert_eq!(snap.strip_recalc_extra, 0);
-        engine_project::filters::fs_ed_prof::force_enable(false);
     }
 
     #[test]
