@@ -478,8 +478,8 @@ fn harness_worker_loop(state: Arc<AppState>, stop: Arc<AtomicBool>) {
                             crate::commands::on_preview_task_finished(&state);
                             continue;
                         }
-                        // PyramidChildrenPending: compute_* already enqueued children + parent
-                        // retry (production drops the error here — do not park on ED deps).
+                        // PyramidChildrenPending: compute_* enqueued children only; parent
+                        // wakes via enqueue_coarser_parent on child insert (no self-requeue).
                         other => other,
                     }
                 }

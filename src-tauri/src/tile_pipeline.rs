@@ -2506,12 +2506,31 @@ mod tests {
         let msg = err.to_string();
         assert!(
             msg.contains("not yet computed"),
-            "expected retry, got {msg}"
+            "expected pending children, got {msg}"
         );
         assert!(
             !msg.contains("missing after wait"),
-            "parent must stay scheduled instead of failing closed"
+            "must not fail closed when children are still missing"
         );
-        assert!(state.tiles.scheduler.contains_key(&parent));
+        // H8: parent must NOT self-requeue (that starved L0 under Z3). Children
+        // are enqueued; parent wakes later via enqueue_coarser_parent on insert.
+        assert!(
+            !state.tiles.scheduler.contains_key(&parent),
+            "parent must not self-requeue on PyramidChildrenPending"
+        );
+        let child = TileKey {
+            doc: 1,
+            layer: 0,
+            coord: TileCoord {
+                level: 1,
+                x: 0,
+                y: 0,
+            },
+            stage: CacheStage::Composite,
+        };
+        assert!(
+            state.tiles.scheduler.contains_key(&child),
+            "missing children must be enqueued so parent can wake on insert"
+        );
     }
 }
