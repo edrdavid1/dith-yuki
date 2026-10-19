@@ -438,3 +438,95 @@ fn blob_atomic_replace_is_durable_rename() {
     super::fsutil::write_blob_atomic(&blobs, "layer-1-1.png", b"second-longer").unwrap();
     assert_eq!(std::fs::read(blobs.join("layer-1-1.png")).unwrap(), b"first");
 }
+
+#[test]
+fn legacy_dyproj_journal_claim_reads_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let recovery = dir.path().join("recovery");
+    std::fs::create_dir_all(&recovery).unwrap();
+    let id = uuid::Uuid::new_v4();
+    let legacy = crate::journal::journal_blob_path(&recovery, id);
+    let payload = b"PK\x03\x04-legacy-dyproj-bytes";
+    std::fs::write(&legacy, payload).unwrap();
+    let meta = super::meta::JournalMeta {
+        recovery_id: id,
+        runtime_doc_id: 1,
+        display_name: "legacy.dyproj".into(),
+        project_path: Some("/tmp/legacy.dyproj".into()),
+        source_path: None,
+        original_mtime_ms: None,
+        written_at_ms: 1,
+        app_version: "0.0.0-test".into(),
+        content_kind: super::meta::JournalContentKind::FullDyproj,
+        discarded: false,
+    };
+    super::meta::write_meta(&recovery, &meta).unwrap();
+
+    // Claim path used by recover_journal for FullDyproj.
+    let claimed = {
+        let mut c = legacy.clone();
+        let name = legacy
+            .file_name()
+            .map(|n| {
+                let mut s = n.to_os_string();
+                s.push(".claiming");
+                s
+            })
+            .unwrap();
+        c.set_file_name(name);
+        c
+    };
+    std::fs::rename(&legacy, &claimed).unwrap();
+    let bytes = std::fs::read(&claimed).unwrap();
+    assert_eq!(bytes, payload);
+    // Restore (simulate failed open) — old journal remains recoverable.
+    std::fs::rename(&claimed, &legacy).unwrap();
+    assert!(legacy.is_file());
+    assert_eq!(std::fs::read(&legacy).unwrap(), payload);
+}
+
+#[test]
+fn unknown_newer_state_version_rejected_without_overwrite() {
+    use engine_project::serialize::{
+        build_journal_state, encode_journal_state, decode_journal_state, JOURNAL_STATE_VERSION,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let recovery = dir.path().join("recovery");
+    let state = Arc::new(AppState::empty_process(None, 64 * 1024 * 1024, false));
+    set_recovery_dir(&state, recovery.clone());
+    let mut doc = Document::new(DocumentId::new(1), 64, 64);
+    let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, 64, 64);
+    layer.bump_raw_rev();
+    doc.root.push(LayerNode::Leaf(layer));
+    let session = state.spawn_session(doc);
+    fill_raw(&state, 1, 1, 64, 64);
+    if let Ok(mut g) = session.history.saved_snapshot.lock() {
+        *g = None;
+    }
+    write_journal_for_doc(&state, 1).unwrap();
+    let state_path = journal_state_path(&recovery, session.recovery_id);
+    let good = std::fs::read(&state_path).unwrap();
+
+    // Simulate a future writer leaving a newer .state next to valid blobs.
+    let mut newer = build_journal_state(
+        session.document_handle.snapshot().as_ref(),
+        "99.0.0",
+        &[(LayerId::new(1), 1, "0".repeat(64))],
+        &[],
+    );
+    newer.version = JOURNAL_STATE_VERSION + 1;
+    let newer_bytes = encode_journal_state(&newer).unwrap();
+    std::fs::write(&state_path, &newer_bytes).unwrap();
+    assert!(decode_journal_state(&newer_bytes).is_err());
+    let err = assemble_dyproj_from_state_bytes(&newer_bytes, &journal_blobs_dir(&recovery, session.recovery_id), "x")
+        .unwrap_err();
+    assert!(
+        err.to_lowercase().contains("version") || err.to_lowercase().contains("journal"),
+        "{err}"
+    );
+    // Do not auto-migrate: leave bytes as-is (caller must not overwrite with v1).
+    assert_eq!(std::fs::read(&state_path).unwrap(), newer_bytes);
+    // Previous good bytes are distinct; recovery must fail closed, not rewrite.
+    assert_ne!(good, newer_bytes);
+}
