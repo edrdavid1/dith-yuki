@@ -1484,3 +1484,188 @@ fn z3_cold_small_composite_holes_zero() {
         "pyramid pending spin {pending_spin} >= 1000 (WORKER_SPIN-style scene budget)"
     );
 }
+
+/// Z9 (H4): rapid threshold pulses over ~400 ms, then quiet. Reports whether
+/// Composite (0,0) lags `doc_gen` and how many `tile_ready_emitted` fired for it.
+/// No production behavior change — observation only.
+#[test]
+#[ignore]
+fn z9_rapid_param_composite_gen() {
+    use std::io::Write;
+
+    #[cfg(test)]
+    tile_gen_trace::clear_test_state();
+    tile_gen_trace::force_enable(true);
+    crate::tile_gen_trace_host::install_evict_hook_if_needed();
+
+    let out_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("profiling")
+        .join("results")
+        .join("2026-10-21")
+        .join("h4_z9");
+    let _ = std::fs::create_dir_all(&out_dir);
+    let profile = if cfg!(debug_assertions) {
+        "dev"
+    } else {
+        "release"
+    };
+    let events_path = out_dir.join(format!("events_z9_{profile}.jsonl"));
+    crate::tile_gen_trace_host::set_out_path_for_tests(events_path.clone());
+
+    let size = SizeSpec {
+        w: 1920,
+        h: 1080,
+        label: "1920x1080",
+    };
+    let budget = 1024 * 1024 * 1024;
+    let mode = Mode::FloydSteinberg;
+    let (state, stop, joins) = setup(mode, size, budget);
+    let _ = wait_silence(&state, Duration::from_secs(60));
+
+    // Zoomed-in: tile (0,0) is typically in the visible set.
+    let _ = ViewportService::new(Arc::clone(&state)).set_viewport(1.0, 0.0, 0.0, 1200.0, 800.0);
+    apply_threshold(&state, mode, 1.0);
+    let _ = wait_silence(&state, Duration::from_secs(60));
+
+    let bursts = 8usize;
+    let gap = Duration::from_millis(50);
+    tile_gen_trace::emit_simple(
+        "z9_burst_begin",
+        json!({ "bursts": bursts, "gap_ms": gap.as_millis(), "profile": profile }),
+    );
+    // Simulate FE wake gate: first tile_ready for 0/0/0 "takes" inflight; later
+    // ones are wake_skipped_inflight (mirrors TileCanvas H4 race, harness-only).
+    let mut fe_inflight_00 = false;
+    let mut wake_skipped = 0u32;
+    let mut wake_fetched = 0u32;
+    let mut last_seq = 0u64;
+
+    for i in 0..bursts {
+        let scale = if i % 2 == 0 { 1.05 } else { 1.2 };
+        apply_threshold(&state, mode, scale);
+        tile_gen_trace::emit_simple(
+            "z9_param_pulse",
+            json!({ "i": i, "threshold_scale": scale }),
+        );
+        // Drain briefly so some Composite work completes mid-burst.
+        let slice = Instant::now();
+        while slice.elapsed() < gap {
+            for ev in tile_gen_trace::test_events() {
+                if ev.seq <= last_seq {
+                    continue;
+                }
+                last_seq = last_seq.max(ev.seq);
+                if ev.event != "tile_ready_emitted" {
+                    continue;
+                }
+                let Some(t) = &ev.tile else { continue };
+                if t.level != 0 || t.x != 0 || t.y != 0 {
+                    continue;
+                }
+                if fe_inflight_00 {
+                    wake_skipped += 1;
+                    tile_gen_trace::emit(
+                        "wake_skipped_inflight",
+                        None,
+                        ev.doc_gen,
+                        None,
+                        Some(tile_gen_trace::tile(0, 0, 0)),
+                        ev.gen,
+                        json!({ "cause": "tile_ready", "sim": "harness_fe_gate" }),
+                    );
+                } else {
+                    fe_inflight_00 = true;
+                    wake_fetched += 1;
+                    tile_gen_trace::emit(
+                        "fetch_tile_posted",
+                        None,
+                        ev.doc_gen,
+                        None,
+                        Some(tile_gen_trace::tile(0, 0, 0)),
+                        ev.gen,
+                        json!({ "wake": "tile_ready", "sim": "harness_fe_gate" }),
+                    );
+                }
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+    tile_gen_trace::emit_simple(
+        "z9_burst_end",
+        json!({ "wake_skipped": wake_skipped, "wake_fetched": wake_fetched }),
+    );
+
+    // Clear the simulated inflight and wait for BE quiet.
+    fe_inflight_00 = false;
+    let quiet = wait_silence(&state, Duration::from_secs(120));
+    let live_gen = state
+        .must_active()
+        .document_handle
+        .snapshot()
+        .generations
+        .document_gen
+        .load(Ordering::Acquire);
+    let key00 = TileKey {
+        doc: 1,
+        layer: 0,
+        coord: TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        },
+        stage: CacheStage::Composite,
+    };
+    let (entry_gen, dirty, fresh) = match state.tiles.tile_cache.entries.get(&key00) {
+        Some(e) => (
+            e.generation,
+            e.dirty.load(Ordering::Acquire),
+            engine_tiles::tile_fresh(&state.tiles.tile_cache, key00),
+        ),
+        None => (0, true, false),
+    };
+    let lag = live_gen.saturating_sub(entry_gen);
+    tile_gen_trace::emit_simple(
+        "z9_result",
+        json!({
+            "profile": profile,
+            "quiet_ok": quiet,
+            "live_doc_gen": live_gen,
+            "composite_0_0_gen": entry_gen,
+            "composite_0_0_dirty": dirty,
+            "composite_0_0_fresh": fresh,
+            "gen_lag": lag,
+            "wake_skipped_inflight": wake_skipped,
+            "wake_fetched": wake_fetched,
+            "hypothesis_h4_fe_gate_can_skip": wake_skipped > 0,
+            "be_cache_matches_live": fresh && !dirty && lag == 0,
+        }),
+    );
+
+    let md = out_dir.join(format!("z9_{profile}.md"));
+    let mut f = std::fs::File::create(&md).expect("z9 md");
+    writeln!(
+        f,
+        "# Z9 rapid-param (H4) — {profile}\n\n\
+         - quiet_ok={quiet}\n\
+         - live_doc_gen={live_gen}\n\
+         - composite(0,0) gen={entry_gen} dirty={dirty} fresh={fresh} lag={lag}\n\
+         - wake_fetched={wake_fetched} wake_skipped_inflight={wake_skipped}\n\
+         - events: `{}`\n",
+        events_path.display()
+    )
+    .ok();
+    eprintln!(
+        "[z9] profile={profile} quiet={quiet} live={live_gen} c00={entry_gen} lag={lag} \
+         wake_skip={wake_skipped} wake_fetch={wake_fetched}"
+    );
+
+    teardown(&state, &stop, joins);
+
+    // Observation harness: do not fail the build on lag; report only.
+    // (Step B will add STALE_GEN_AT_QUIET as a hard gate.)
+    assert!(
+        wake_fetched >= 1 || wake_skipped >= 1 || live_gen > 0,
+        "expected some filter activity"
+    );
+}

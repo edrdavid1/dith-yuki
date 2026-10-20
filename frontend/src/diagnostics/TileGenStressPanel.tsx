@@ -102,12 +102,20 @@ export default function TileGenStressPanel({
               : undefined,
           changeParams:
             layerId != null && baseParams
-              ? () =>
-                  updateParams({
+              ? () => {
+                  const prev =
+                    typeof baseParams.threshold_scale === 'number'
+                      ? baseParams.threshold_scale
+                      : 1;
+                  // Alternate so each pulse is a real filter update (not a no-op).
+                  const next = Math.abs(prev - 1.05) < 1e-6 ? 1.2 : 1.05;
+                  baseParams.threshold_scale = next;
+                  return updateParams({
                     ...baseParams,
                     mode,
-                    threshold_scale: 1.2,
-                  })
+                    threshold_scale: next,
+                  });
+                }
               : undefined,
         });
         setLastReports([]);
@@ -268,6 +276,7 @@ export default function TileGenStressPanel({
             <option value="Z5">Z5 no filter</option>
             <option value="Z6">Z6 mode bisect</option>
             <option value="Z7">Z7 what heals</option>
+            <option value="Z9">Z9 rapid params (H4)</option>
             <option value="Z_INJECT">Z inject VP_NOT_SENT</option>
           </select>
         </label>

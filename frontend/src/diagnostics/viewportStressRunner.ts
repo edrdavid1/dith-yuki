@@ -33,7 +33,16 @@ function attachSeriesTrace(): { trace: SeriesTileTrace; detach: () => void } {
   return { trace, detach };
 }
 
-export type ZoomScenario = 'Z1' | 'Z2' | 'Z3' | 'Z4' | 'Z5' | 'Z6' | 'Z7' | 'Z_INJECT';
+export type ZoomScenario =
+  | 'Z1'
+  | 'Z2'
+  | 'Z3'
+  | 'Z4'
+  | 'Z5'
+  | 'Z6'
+  | 'Z7'
+  | 'Z9'
+  | 'Z_INJECT';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -180,7 +189,27 @@ export async function runZoomScenario(args: {
       }
 
       let freshnessT0: number | undefined;
-      if (args.scenario === 'Z3') {
+      if (args.scenario === 'Z9') {
+        // H4 race: 5–10 quick param changes over ~300–500 ms, then quiet check.
+        if (!args.changeParams) {
+          throw new Error('Z9 requires changeParams (threshold / dither slider)');
+        }
+        if (args.applyFilter) await args.applyFilter();
+        await waitForSilence(60_000);
+        const bursts = 8;
+        const gapMs = 50; // 8 × 50 = 400 ms window
+        noteTraceEvent('z9_burst_begin', {
+          details: { bursts, gap_ms: gapMs, window_ms: bursts * gapMs },
+        });
+        for (let i = 0; i < bursts; i++) {
+          await args.changeParams();
+          noteTraceEvent('z9_param_pulse', { details: { i, gap_ms: gapMs } });
+          await sleep(gapMs);
+        }
+        noteTraceEvent('z9_burst_end', { details: { bursts } });
+        freshnessT0 = performance.now();
+        // Stay at current zoom — isolate param-change race (pan/zoom already heals).
+      } else if (args.scenario === 'Z3') {
         // Cold Processed/Composite (keep Raw); prove via `cache_cold_start` in trace.
         try {
           await invoke('tile_gen_trace_cold_cache');

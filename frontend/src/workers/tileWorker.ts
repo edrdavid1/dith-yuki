@@ -72,6 +72,9 @@ export interface TileDecodedMessage {
   /** Present when `diag` or `trace` requested generation from `X-Tile-Generation`. */
   gen?: number | null;
   httpStatus?: number;
+  /** Present when `trace` (and/or `diag`) read response quality headers. */
+  stale?: boolean;
+  pyramid?: boolean;
   /** Present only when the request set `diag: true` (diagnostic.md §5). */
   diag?: TileFetchDiag;
   /** Present only when the request set `profile: true` (time-testing.md). */
@@ -192,6 +195,8 @@ async function fetchAndDecodeTile(
     if (trace) {
       msg.gen = meta.gen;
       msg.httpStatus = status;
+      msg.stale = meta.stale;
+      msg.pyramid = meta.pyramid;
     }
     if (diag) {
       msg.diag = {

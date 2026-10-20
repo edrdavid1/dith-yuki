@@ -140,17 +140,24 @@ pub fn notify_if_pending<R: tauri::Runtime>(
         y: key.coord.y,
     };
     if crate::tile_gen_trace::enabled() {
+        let doc_gen = state.session(key.doc).ok().map(|s| {
+            s.document_handle
+                .snapshot()
+                .generations
+                .document_gen
+                .load(std::sync::atomic::Ordering::Acquire)
+        });
         crate::tile_gen_trace::emit(
             "tile_ready_emitted",
             Some(key.layer),
-            None,
+            doc_gen,
             None,
             Some(crate::tile_gen_trace::tile(
                 key.coord.level,
                 key.coord.x,
                 key.coord.y,
             )),
-            Some(key.doc as u64),
+            doc_gen,
             serde_json::json!({
                 "reason": "pending_registry",
                 "viewport_agnostic": true,

@@ -44,6 +44,7 @@ import {
   takeInjectDrop,
 } from '../../diagnostics/tileGenCanvasRegistry';
 import { tileRangeFromCoords } from '../../diagnostics/vpHash';
+import { decideEventDrivenWake } from './eventDrivenWake';
 import {
   EVENT_DRIVEN_PENDING_REASONS,
   PENDING_SAFETY_RETRY_MS,
@@ -465,6 +466,8 @@ export default function TileCanvas({
   const tileMapRef = useRef<Map<string, ImageBitmap>>(new Map());
   /** Trace-only: generation of the bitmap currently displayed / pending. */
   const tileGenMapRef = useRef<Map<string, number>>(new Map());
+  /** Trace-only: how the displayed bitmap was obtained (fresh/stale/pyramid). */
+  const tileSourceMapRef = useRef<Map<string, string>>(new Map());
   const refreshPendingRef = useRef<Map<string, ImageBitmap>>(new Map());
   const rafRef = useRef<number | null>(null);
   const viewportRef = useRef(viewport);
@@ -525,7 +528,22 @@ export default function TileCanvas({
           continue;
         }
         // At most one in-flight wake fetch per tile.
-        if (entry.inflight) continue;
+        if (entry.inflight) {
+          if (tileGenTraceEnabled()) {
+            const [level, x, y] = key.split('/').map(Number);
+            noteTraceEvent('wake_skipped_inflight', {
+              level,
+              x,
+              y,
+              details: {
+                cause: reason,
+                pending_reason: entry.reason,
+                tileRev: rev,
+              },
+            });
+          }
+          continue;
+        }
         // Safety timer: at most one fire per tile per PENDING_SAFETY_RETRY_MS window.
         if (reason === 'safety_timer') {
           if (now - entry.lastSafetyAt < PENDING_SAFETY_RETRY_MS) continue;
@@ -652,12 +670,14 @@ export default function TileCanvas({
         if (tileGenTraceEnabled() && ox === 0 && oy === 0) {
           const k = `${level}/${x}/${y}`;
           const gen = tileGenMapRef.current.get(k) ?? null;
+          const source = tileSourceMapRef.current.get(k) ?? 'unknown';
           recordDrawn(k, gen);
           noteTraceEvent('tile_drawn', {
             level,
             x,
             y,
             gen: gen ?? undefined,
+            details: { source, tileRev: tileRevRef.current },
           });
         }
       }
@@ -708,6 +728,20 @@ export default function TileCanvas({
         );
       }
       ctx.imageSmoothingEnabled = false;
+      if (tileGenTraceEnabled()) {
+        const gen = tileGenMapRef.current.get(fb.key) ?? null;
+        noteTraceEvent('tile_drawn', {
+          level: vis.level,
+          x: vis.x,
+          y: vis.y,
+          gen: gen ?? undefined,
+          details: {
+            source: 'lod_fallback',
+            from: fb.key,
+            tileRev: tileRevRef.current,
+          },
+        });
+      }
     }
     // Only blit the visible set at the current level. The map may still hold
     // offscreen same-level bitmaps for pan cache (`shouldKeepLodTile` keeps
@@ -941,6 +975,17 @@ export default function TileCanvas({
             ? msg.httpStatus
             : 200;
         recordHttpStatus(key, status);
+        const source = fetchDiag?.pyramid_fallback
+          ? 'pyramid'
+          : fetchDiag?.stale || msg.stale === true
+            ? 'stale'
+            : msg.pyramid === true
+              ? 'pyramid'
+              : 'fresh';
+        if (tileGen != null) {
+          tileGenMapRef.current.set(key, tileGen);
+        }
+        tileSourceMapRef.current.set(key, source);
         noteTraceEvent('tile_decoded', {
           level: lvl,
           x: xx,
@@ -950,6 +995,7 @@ export default function TileCanvas({
             requestRev: decodedRev,
             currentRev: tileRevRef.current,
             status,
+            source,
           },
         });
         noteTraceEvent('tile_response', {
@@ -957,11 +1003,8 @@ export default function TileCanvas({
           x: xx,
           y: yy,
           gen: tileGen,
-          details: { status, level: lvl },
+          details: { status, level: lvl, source },
         });
-        if (tileGen != null) {
-          tileGenMapRef.current.set(key, tileGen);
-        }
       }
 
       if (ditherProfileEnabled()) {
@@ -1327,6 +1370,32 @@ export default function TileCanvas({
           y,
           details: { accepted: true, viewportLevel: currentLevel },
         });
+      }
+      if (ditherProfileEnabled()) {
+        noteFeMark('tile_ready_received', activeProfileRunId());
+      }
+      const pend = eventDrivenPendingRef.current.get(key);
+      const wake = decideEventDrivenWake(pend, 'tile_ready');
+      if (wake.action === 'skip') {
+        if (tileGenTraceEnabled()) {
+          noteTraceEvent('wake_skipped_inflight', {
+            level,
+            x,
+            y,
+            details: {
+              cause: wake.cause,
+              pending_reason: pend?.reason ?? null,
+              tileRev: tileRevRef.current,
+            },
+          });
+        }
+        return;
+      }
+      if (pend) {
+        pend.inflight = true;
+        eventDrivenPendingRef.current.set(key, pend);
+      }
+      if (tileGenTraceEnabled()) {
         recordFetchPosted(key);
         const reqDetails = {
           tileRev: tileRevRef.current,
@@ -1338,17 +1407,7 @@ export default function TileCanvas({
         noteTraceEvent('tile_requested', { level, x, y, details: reqDetails });
       }
       if (ditherProfileEnabled()) {
-        noteFeMark('tile_ready_received', activeProfileRunId());
         noteFeMark('fetch_tile_posted', activeProfileRunId());
-      }
-      const pend = eventDrivenPendingRef.current.get(key);
-      if (pend) {
-        if (pend.inflight) {
-          // Already have a wake fetch in flight for this tile — skip duplicate.
-          return;
-        }
-        pend.inflight = true;
-        eventDrivenPendingRef.current.set(key, pend);
       }
       workerRef.current?.postMessage(stampWorkerMessage({
         type: 'fetch-tile',
@@ -1402,6 +1461,7 @@ export default function TileCanvas({
         }
         tileMapRef.current.clear();
         tileGenMapRef.current.clear();
+        tileSourceMapRef.current.clear();
       }
       if (!workerRef.current) return;
       const visible = visibleTilesForPreview(
@@ -1452,6 +1512,8 @@ export default function TileCanvas({
       bitmap.close();
     }
     tileMapRef.current.clear();
+    tileGenMapRef.current.clear();
+    tileSourceMapRef.current.clear();
     for (const bitmap of refreshPendingRef.current.values()) {
       bitmap.close();
     }
