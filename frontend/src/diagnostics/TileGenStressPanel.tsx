@@ -21,6 +21,7 @@ import {
   summarizeZoomReports,
   type ZoomScenario,
 } from './viewportStressRunner';
+import { probeVisibleTiles } from './probeVisibleTiles';
 
 export type TileGenStressPanelProps = {
   baseParams: Record<string, unknown> | null;
@@ -29,6 +30,12 @@ export type TileGenStressPanelProps = {
   getVisibleKeys: () => string[];
   getViewportLevel: () => number;
   onPanZoom?: (step: number) => void;
+  /** Active document for Z11 palette pulses (`update_palette_color`). */
+  docId?: number | null;
+  /** Bound palette id (Color Lab / filter `palette_id`). */
+  paletteId?: number | null;
+  /** Pulse one palette color (harness-equivalent continuous drag). */
+  pulsePaletteColor?: () => Promise<void> | void;
 };
 
 export default function TileGenStressPanel({
@@ -38,6 +45,9 @@ export default function TileGenStressPanel({
   getVisibleKeys,
   getViewportLevel,
   onPanZoom,
+  docId,
+  paletteId,
+  pulsePaletteColor,
 }: TileGenStressPanelProps) {
   const [visible, setVisible] = useState(false);
   const [mode, setMode] = useState<StressMode>('floyd_steinberg');
@@ -50,6 +60,7 @@ export default function TileGenStressPanel({
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState('');
   const [lastReports, setLastReports] = useState<SeriesReport[]>([]);
+  const [probeLog, setProbeLog] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -70,6 +81,50 @@ export default function TileGenStressPanel({
       cancelled = true;
     };
   }, []);
+
+  const runVisibleProbe = useCallback(async () => {
+    if (!tileGenTraceEnabled()) {
+      setProbeLog('Need DITHER_TRACE=1.');
+      return;
+    }
+    const canvas = window.__ditherTileGenTrace?.canvas;
+    const { rows, summary } = await probeVisibleTiles({
+      getVisibleKeys,
+      getTileGens: canvas?.getTileGens,
+      getMaxKnownGen: canvas?.getMaxKnownGen,
+      layerId,
+    });
+    const stuck = rows.filter((r) => r.blame !== 'ok');
+    const detail = stuck
+      .slice(0, 12)
+      .map((r) => {
+        const be = r.be as {
+          tile_gen?: number | null;
+          doc_gen?: number;
+          dirty?: boolean;
+          fresh?: boolean;
+          layer_gen?: number;
+          composite?: { fingerprint?: string };
+          processed?: { fingerprint?: string; dirty?: boolean; tile_gen?: number };
+        } | null;
+        return `${r.tileKey} blame=${r.blame} fe=${r.fe_gen} be_gen=${be?.tile_gen} doc=${be?.doc_gen} lg=${be?.layer_gen} dirty=${be?.dirty} fresh=${be?.fresh} cfp=${be?.composite?.fingerprint?.slice(0, 8)} pfp=${be?.processed?.fingerprint?.slice(0, 8)}`;
+      })
+      .join('\n');
+    setProbeLog(`${summary}\n${detail || '(all ok by gen heuristic)'}`);
+  }, [getVisibleKeys, layerId]);
+
+  // Hotkey: Ctrl/Cmd+Shift+P → Probe visible tiles (DITHER_TRACE only).
+  useEffect(() => {
+    if (!visible) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || !e.shiftKey) return;
+      if (e.key !== 'p' && e.key !== 'P') return;
+      e.preventDefault();
+      void runVisibleProbe();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [visible, runVisibleProbe]);
 
   const isZoom = (s: string): s is ZoomScenario => s.startsWith('Z');
 
@@ -102,13 +157,24 @@ export default function TileGenStressPanel({
               : undefined,
           changeParams:
             layerId != null && baseParams
-              ? () =>
-                  updateParams({
+              ? () => {
+                  const prev =
+                    typeof baseParams.threshold_scale === 'number'
+                      ? baseParams.threshold_scale
+                      : 1;
+                  // Alternate so each pulse is a real filter update (not a no-op).
+                  const next = Math.abs(prev - 1.05) < 1e-6 ? 1.2 : 1.05;
+                  baseParams.threshold_scale = next;
+                  return updateParams({
                     ...baseParams,
                     mode,
-                    threshold_scale: 1.2,
-                  })
+                    threshold_scale: next,
+                  });
+                }
               : undefined,
+          changePalette: pulsePaletteColor,
+          docId: docId ?? null,
+          paletteId: paletteId ?? null,
         });
         setLastReports([]);
         setLog(`${summarizeZoomReports(reports)} (path=${computePath}, mode=${mode})`);
@@ -154,6 +220,9 @@ export default function TileGenStressPanel({
     seed,
     series,
     updateParams,
+    docId,
+    paletteId,
+    pulsePaletteColor,
   ]);
 
   if (!visible) return null;
@@ -268,6 +337,11 @@ export default function TileGenStressPanel({
             <option value="Z5">Z5 no filter</option>
             <option value="Z6">Z6 mode bisect</option>
             <option value="Z7">Z7 what heals</option>
+            <option value="Z9">Z9 rapid params (H4)</option>
+            <option value="Z10">Z10 continuous slider (H4 x=0)</option>
+            <option value="Z11a">Z11a single palette</option>
+            <option value="Z11b">Z11b palette drag ~60Hz</option>
+            <option value="Z11c">Z11c palette series</option>
             <option value="Z_INJECT">Z inject VP_NOT_SENT</option>
           </select>
         </label>
@@ -313,8 +387,18 @@ export default function TileGenStressPanel({
         <button type="button" disabled={running} onClick={() => void run()}>
           {running ? '…' : 'Стресс'}
         </button>
+        <button
+          type="button"
+          title="Ctrl/Cmd+Shift+P — FE gen vs BE Composite/Processed"
+          onClick={() => void runVisibleProbe()}
+        >
+          Probe visible tiles
+        </button>
       </div>
       <pre style={{ marginTop: 8, whiteSpace: 'pre-wrap' }}>{log}</pre>
+      {probeLog ? (
+        <pre style={{ marginTop: 6, whiteSpace: 'pre-wrap', opacity: 0.9 }}>{probeLog}</pre>
+      ) : null}
       {lastReports.length > 0 && (
         <div style={{ opacity: 0.7 }}>
           last series violations:{' '}

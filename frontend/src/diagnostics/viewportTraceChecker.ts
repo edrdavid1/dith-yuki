@@ -25,6 +25,8 @@ export type VpViolationClass =
   | 'WORKER_SPIN'
   | 'TIME_TO_FRESH'
   | 'VISIBLE_HOLES'
+  | 'STALE_GEN_AT_QUIET'
+  | 'STALE_CONTENT_AT_QUIET'
   | 'INJECT_SELFCHECK_FAILED';
 
 export type VpViolation = {
@@ -42,6 +44,10 @@ export type FeVpSnapshot = {
   tiles: Array<{ level: number; x: number; y: number }>;
   range: TileRange;
   tileRev: number;
+  /** Displayed doc gen per tile key (optional; enables STALE_GEN_AT_QUIET). */
+  tileGens?: Record<string, number>;
+  /** Session max known doc_gen from wakes / progress / headers. */
+  maxKnownGen?: number;
 };
 
 export type SeriesTileTrace = {
@@ -373,6 +379,15 @@ export async function runQuietThenCheck(args: {
       detail: `holes=${holes}/${visibleKeys.length} after silence`,
     });
   }
+  if (silence === 'ok') {
+    violations.push(...checkStaleGenAtQuiet(fe));
+    const contentViolations = await checkStaleContentAtQuiet({
+      tiles: fe.tiles,
+      tileGens: fe.tileGens,
+      maxKnownGen: fe.maxKnownGen,
+    });
+    violations.push(...contentViolations);
+  }
   if (
     args.timeToFreshBudgetMs != null &&
     (timeToFreshMs == null || timeToFreshMs > args.timeToFreshBudgetMs)
@@ -409,6 +424,7 @@ export function feSnapshotFromTiles(
   level: number,
   tiles: Array<{ level: number; x: number; y: number }>,
   tileRev: number,
+  opts?: { tileGens?: Record<string, number>; maxKnownGen?: number },
 ): FeVpSnapshot {
   const range = tileRangeFromCoords(level, tiles);
   return {
@@ -417,7 +433,117 @@ export function feSnapshotFromTiles(
     tiles,
     range,
     tileRev,
+    tileGens: opts?.tileGens,
+    maxKnownGen: opts?.maxKnownGen,
   };
+}
+
+/** After silence, visible tiles must not display a gen below the session max. */
+export function checkStaleGenAtQuiet(fe: FeVpSnapshot): VpViolation[] {
+  const maxKnown = fe.maxKnownGen;
+  const gens = fe.tileGens;
+  if (maxKnown == null || maxKnown <= 0 || !gens) return [];
+  const out: VpViolation[] = [];
+  for (const t of fe.tiles) {
+    const key = `${t.level}/${t.x}/${t.y}`;
+    const g = gens[key];
+    if (g == null) continue;
+    if (g < maxKnown) {
+      out.push({
+        class: 'STALE_GEN_AT_QUIET',
+        tileKey: key,
+        detail: `displayed_gen=${g} < maxKnownGen=${maxKnown}`,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * After silence: BE Composite fingerprint / content stamp must match FE displayed gen.
+ * Uses `tile_gen_trace_cache_probe` (DITHER_TRACE).
+ */
+export async function checkStaleContentAtQuiet(args: {
+  tiles: Array<{ level: number; x: number; y: number }>;
+  tileGens?: Record<string, number>;
+  maxKnownGen?: number;
+  layerId?: number;
+}): Promise<VpViolation[]> {
+  const gens = args.tileGens ?? {};
+  const out: VpViolation[] = [];
+  for (const t of args.tiles) {
+    const key = `${t.level}/${t.x}/${t.y}`;
+    const probe = await probeCacheTile(t.level, t.x, t.y, args.layerId);
+    if (!probe || probe.ok === false) continue;
+    const beGen =
+      typeof probe.tile_gen === 'number'
+        ? probe.tile_gen
+        : typeof (probe.composite as { tile_gen?: number } | undefined)?.tile_gen === 'number'
+          ? (probe.composite as { tile_gen: number }).tile_gen
+          : null;
+    const contentLive =
+      typeof probe.doc_gen === 'number' && typeof (probe as { layer_gen?: number }).layer_gen === 'number'
+        ? // Prefer content epoch when probe exposes it via tile_gen freshness vs live.
+          beGen
+        : beGen;
+    const feGen = gens[key];
+    const fresh = probe.fresh === true;
+    const dirty = probe.dirty === true;
+    if (dirty || !fresh) {
+      out.push({
+        class: 'STALE_CONTENT_AT_QUIET',
+        tileKey: key,
+        detail: `BE Composite dirty=${dirty} fresh=${fresh} tile_gen=${beGen}`,
+      });
+      continue;
+    }
+    if (
+      feGen != null &&
+      contentLive != null &&
+      args.maxKnownGen != null &&
+      args.maxKnownGen > 0 &&
+      (feGen < args.maxKnownGen || feGen < contentLive)
+    ) {
+      out.push({
+        class: 'STALE_CONTENT_AT_QUIET',
+        tileKey: key,
+        detail: `fe_gen=${feGen} be_tile_gen=${beGen} maxKnown=${args.maxKnownGen}`,
+      });
+    }
+  }
+  return out;
+}
+
+/** Column×row stale counts for Z10 (highlight x=0 vs other columns). */
+export function summarizeStaleByColumnRow(args: {
+  tiles: Array<{ level: number; x: number; y: number }>;
+  tileGens?: Record<string, number>;
+  expectedGen: number;
+}): {
+  byCol: Record<string, { stale: number; visible: number }>;
+  byRow: Record<string, { stale: number; visible: number }>;
+  staleKeys: string[];
+} {
+  const byCol: Record<string, { stale: number; visible: number }> = {};
+  const byRow: Record<string, { stale: number; visible: number }> = {};
+  const staleKeys: string[] = [];
+  const gens = args.tileGens ?? {};
+  for (const t of args.tiles) {
+    const key = `${t.level}/${t.x}/${t.y}`;
+    const col = String(t.x);
+    const row = String(t.y);
+    byCol[col] = byCol[col] ?? { stale: 0, visible: 0 };
+    byRow[row] = byRow[row] ?? { stale: 0, visible: 0 };
+    byCol[col].visible += 1;
+    byRow[row].visible += 1;
+    const g = gens[key];
+    if (g == null || g < args.expectedGen) {
+      byCol[col].stale += 1;
+      byRow[row].stale += 1;
+      staleKeys.push(key);
+    }
+  }
+  return { byCol, byRow, staleKeys };
 }
 
 /** Fold a live FE `noteTraceEvent` into a per-series ledger. */

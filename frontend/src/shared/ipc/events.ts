@@ -8,6 +8,8 @@ export interface DocumentChangedPayload {
   layer_id?: number | null;
   /** Runtime document id when the event was emitted; ignore if ≠ current docId. */
   doc_id?: number | null;
+  /** Live document_gen after filter apply / invalidate (additive). */
+  doc_gen?: number | null;
 }
 
 export type SelectionChangedPayload = SelectionDto;
@@ -64,6 +66,19 @@ export async function emitPaletteBindingChanged(
 
 export async function emitPaletteChanged(): Promise<void> {
   return emitTo('any', 'palette-changed', {});
+}
+
+/** Lightweight content epoch bump (palette / soft-proof) — no tileRev storm. */
+export interface ContentChangedPayload {
+  doc_id: number;
+  gen: number;
+  kind?: string;
+}
+
+export async function onContentChanged(
+  handler: (event: Event<ContentChangedPayload>) => void
+): Promise<UnlistenFn> {
+  return listen<ContentChangedPayload>('content-changed', handler);
 }
 
 export async function onNativeMenu(

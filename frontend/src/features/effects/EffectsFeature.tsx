@@ -325,6 +325,33 @@ export default function EffectsFeature({
           effectLayer.updateParams(params);
         }}
         layerId={currentLayerForEffect ?? selectedLayerId}
+        docId={docId}
+        paletteId={
+          (typeof (stressBaseParams as { palette_id?: unknown } | null)?.palette_id ===
+          'number'
+            ? (stressBaseParams as { palette_id: number }).palette_id
+            : null) ?? lastCreatedId
+        }
+        pulsePaletteColor={
+          docId != null &&
+          ((typeof (stressBaseParams as { palette_id?: unknown } | null)?.palette_id ===
+            'number'
+            ? (stressBaseParams as { palette_id: number }).palette_id
+            : null) ?? lastCreatedId) != null
+            ? async () => {
+                const { updatePaletteColor } = await import('../../shared/ipc/palettes');
+                const pid =
+                  (typeof (stressBaseParams as { palette_id?: unknown } | null)?.palette_id ===
+                  'number'
+                    ? (stressBaseParams as { palette_id: number }).palette_id
+                    : null) ?? lastCreatedId;
+                if (pid == null) return;
+                // Alternate first swatch so each pulse mutates revision (no doc_gen).
+                const hex = Math.random() > 0.5 ? 'FF0000' : '00FF00';
+                await updatePaletteColor(docId, pid, 0, hex);
+              }
+            : undefined
+        }
         getVisibleKeys={() =>
           window.__ditherTileGenTrace?.canvas?.getVisibleKeys() ?? []
         }

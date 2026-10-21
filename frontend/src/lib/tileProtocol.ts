@@ -36,15 +36,27 @@ export interface TileCoord {
  * Build a fetchable tile URL for the composite stage.
  * Pass `platform` (or `base`) from the main thread when known; the worker
  * can fall back to userAgent detection.
+ *
+ * Query params are cache-busters for WebView HTTP caches:
+ * - `g` = tileRev (bumped on document-changed / identity)
+ * - `c` = content_gen (palette / soft-proof without tileRev++)
  */
 export function buildTileUrl(
   docId: number,
   tile: TileCoord,
   rev?: number,
-  opts?: { platform?: TileProtocolPlatform; base?: string },
+  opts?: { platform?: TileProtocolPlatform; base?: string; contentGen?: number },
 ): string {
   const origin = opts?.base ?? tileProtocolBase(opts?.platform);
   const path = `doc/${docId}/layer/composite/stage/composite/l/${tile.level}/${tile.x}/${tile.y}`;
   const base = `${origin}/${path}`;
-  return typeof rev === 'number' ? `${base}?g=${rev}` : base;
+  const params = new URLSearchParams();
+  if (typeof rev === 'number' && Number.isFinite(rev)) {
+    params.set('g', String(rev));
+  }
+  if (typeof opts?.contentGen === 'number' && Number.isFinite(opts.contentGen)) {
+    params.set('c', String(opts.contentGen));
+  }
+  const q = params.toString();
+  return q ? `${base}?${q}` : base;
 }

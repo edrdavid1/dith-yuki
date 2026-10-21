@@ -33,6 +33,8 @@ export interface RequestTilesMessage {
   tiles: TileRequest[];
   docId: number;
   rev?: number;
+  /** Content epoch cache-buster (`?c=`) — palette / soft-proof without tileRev++. */
+  contentGen?: number;
   /** Override protocol origin; main thread should pass platform-aware base. */
   protocolBase?: string;
   /** Set only while preview diagnostics are enabled. */
@@ -51,6 +53,8 @@ export interface FetchTileMessage {
   y: number;
   docId: number;
   rev?: number;
+  /** Content epoch cache-buster (`?c=`) — palette / soft-proof without tileRev++. */
+  contentGen?: number;
   protocolBase?: string;
   /** Set only while preview diagnostics are enabled. */
   diag?: boolean;
@@ -72,6 +76,10 @@ export interface TileDecodedMessage {
   /** Present when `diag` or `trace` requested generation from `X-Tile-Generation`. */
   gen?: number | null;
   httpStatus?: number;
+  /** From `X-Tile-Quality` / legacy stale/fallback headers (always when present). */
+  stale?: boolean;
+  pyramid?: boolean;
+  quality?: string | null;
   /** Present only when the request set `diag: true` (diagnostic.md §5). */
   diag?: TileFetchDiag;
   /** Present only when the request set `profile: true` (time-testing.md). */
@@ -108,6 +116,8 @@ export interface TilePendingMessage {
   /** From `X-Tile-Pending-Reason` when present. */
   pendingReason?: TilePendingReason;
   rev?: number;
+  /** Expected live gen from `X-Tile-Gen` / `X-Tile-Generation` on 202. */
+  gen?: number | null;
 }
 
 /** No 5-retry ceiling — main thread re-fetches on tile-ready / ed-progress / safety. */
@@ -129,21 +139,39 @@ export type WorkerOutMessage = TileDecodedMessage | TilePendingMessage | TileErr
 const TILE_SIZE = 256;
 const TILE_BYTE_LENGTH = TILE_SIZE * TILE_SIZE * 4; // 262,144 bytes RGBA8
 
-function responseMeta(response: Response, readHeaders: boolean): {
+function responseMeta(response: Response, _readHeaders: boolean): {
   gen: number | null;
   stale: boolean;
   pyramid: boolean;
+  quality: string | null;
 } {
-  if (!readHeaders || response.headers == null || typeof response.headers.get !== 'function') {
-    return { gen: null, stale: false, pyramid: false };
+  // Gen/quality always read (H4 Step B) — not gated on diag/trace.
+  if (response.headers == null || typeof response.headers.get !== 'function') {
+    return { gen: null, stale: false, pyramid: false, quality: null };
   }
-  const raw = response.headers.get('X-Tile-Generation');
-  const parsed = raw == null || raw === '' ? null : Number(raw);
-  return {
-    gen: parsed != null && Number.isFinite(parsed) ? parsed : null,
-    stale: response.headers.get('X-Dither-Tile-Stale') != null,
-    pyramid: response.headers.get('X-Dither-Tile-Fallback') != null,
-  };
+  const tileGen = response.headers.get('X-Tile-Gen');
+  const legacy = response.headers.get('X-Tile-Generation');
+  // `doc.layer.content` → prefer content (last); legacy `doc.layer` → doc (first).
+  let fromComposite: number | null = null;
+  if (tileGen != null && tileGen !== '') {
+    const parts = tileGen.split('.');
+    const raw = parts.length >= 3 ? parts[parts.length - 1] : parts[0];
+    const n = Number(raw);
+    fromComposite = Number.isFinite(n) ? n : null;
+  }
+  const fromLegacy = legacy != null && legacy !== '' ? Number(legacy) : null;
+  const gen =
+    fromComposite != null && Number.isFinite(fromComposite)
+      ? fromComposite
+      : fromLegacy != null && Number.isFinite(fromLegacy)
+        ? fromLegacy
+        : null;
+  const quality = response.headers.get('X-Tile-Quality');
+  const stale =
+    quality === 'stale' || response.headers.get('X-Dither-Tile-Stale') != null;
+  const pyramid =
+    quality === 'upsample' || response.headers.get('X-Dither-Tile-Fallback') != null;
+  return { gen, stale, pyramid, quality };
 }
 
 function pendingReasonOf(response: Response): string | undefined {
@@ -171,9 +199,10 @@ async function fetchAndDecodeTile(
   profile = false,
   profileRunId?: number,
   trace = false,
+  contentGen?: number,
 ): Promise<void> {
   const key = `${tile.level}/${tile.x}/${tile.y}`;
-  const url = buildTileUrl(docId, tile, rev, { base: protocolBase });
+  const url = buildTileUrl(docId, tile, rev, { base: protocolBase, contentGen });
   const epoch = () => performance.timeOrigin + performance.now();
   const readHeaders = diag || trace;
 
@@ -184,14 +213,19 @@ async function fetchAndDecodeTile(
     retries: number,
     retryWait: number,
     status: number,
-    meta: { gen: number | null; stale: boolean; pyramid: boolean },
+    meta: { gen: number | null; stale: boolean; pyramid: boolean; quality: string | null },
     bytes: number,
     protocolEpochMs?: number,
   ) => {
     const msg: TileDecodedMessage = { type: 'tile-decoded', key, bitmap, rev, docId };
+    // Always attach gen/quality so main thread can gate H4 (not trace-only).
+    msg.gen = meta.gen;
+    msg.httpStatus = status;
+    msg.stale = meta.stale;
+    msg.pyramid = meta.pyramid;
+    msg.quality = meta.quality;
     if (trace) {
-      msg.gen = meta.gen;
-      msg.httpStatus = status;
+      /* headers already attached */
     }
     if (diag) {
       msg.diag = {
@@ -230,7 +264,9 @@ async function fetchAndDecodeTile(
 
   try {
     const tFetch = diag || profile ? performance.now() : 0;
-    const response = await fetch(url);
+    // WebView HTTP caches key on URL; palette content-changed keeps tileRev
+    // stable, so rely on `?c=` + no-store rather than tileRev storms.
+    const response = await fetch(url, { cache: 'no-store' });
     const protocolEpochMs = profile ? epoch() : undefined;
 
     if (response.status === 200) {
@@ -262,12 +298,14 @@ async function fetchAndDecodeTile(
     } else if (response.status === 202) {
       // Always read pending reason (protocol header); not gated on diag/trace.
       const reason = pendingReasonOf(response) ?? 'queued';
+      const meta202 = responseMeta(response, true);
       postMessage({
         type: 'tile-pending',
         key,
         docId,
         pendingReason: reason,
         rev,
+        gen: meta202.gen,
       } satisfies TilePendingMessage);
 
       // ed_prefix / waiting_children / computing: no 5-retry ceiling.
@@ -288,7 +326,7 @@ async function fetchAndDecodeTile(
         await new Promise(resolve => setTimeout(resolve, delay));
         try {
           const tRetry = diag || profile ? performance.now() : 0;
-          const retryResponse = await fetch(url);
+          const retryResponse = await fetch(url, { cache: 'no-store' });
           const retryProtocolEpoch = profile ? epoch() : undefined;
           if (retryResponse.status === 200) {
             const retryBuffer = await retryResponse.arrayBuffer();
@@ -355,6 +393,7 @@ self.onmessage = async (e: MessageEvent<WorkerInMessage>) => {
           msg.profile === true,
           msg.profileRunId,
           msg.trace === true,
+          msg.contentGen,
         ),
       ),
     );
@@ -372,6 +411,7 @@ self.onmessage = async (e: MessageEvent<WorkerInMessage>) => {
       msg.profile === true,
       msg.profileRunId,
       msg.trace === true,
+      msg.contentGen,
     );
   }
 };

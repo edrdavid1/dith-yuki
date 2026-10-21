@@ -1389,20 +1389,26 @@ impl FilterService {
                 ),
             );
 
+            let live_gen = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot()
+                .generations
+                .document_gen
+                .load(std::sync::atomic::Ordering::Acquire);
             if engine_project::dither_profile::enabled() {
-                let gen = self
-                    .state
-                    .require_session(doc_id)?
-                    .document_handle
-                    .snapshot()
-                    .generations
-                    .document_gen
-                    .load(std::sync::atomic::Ordering::Acquire);
-                engine_project::dither_profile::set_generation(gen);
+                engine_project::dither_profile::set_generation(live_gen);
                 engine_project::dither_profile::mark("invalidate_done");
             }
 
-            emit_document_changed(app_handle, "filter_updated", Some(layer_id), Some(doc_id));
+            crate::commands::emit_document_changed_with_gen(
+                app_handle,
+                "filter_updated",
+                Some(layer_id),
+                Some(doc_id),
+                Some(live_gen),
+            );
             Ok(())
         })
         .map_err(AppError::Generic)

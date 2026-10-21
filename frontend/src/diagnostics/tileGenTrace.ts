@@ -189,6 +189,10 @@ export type TraceCanvasHooks = {
   getVisibleKeys: () => string[];
   getViewportLevel: () => number;
   getTileRev?: () => number;
+  /** Displayed document gen per tile key (`level/x/y`). */
+  getTileGens?: () => Record<string, number>;
+  /** Session max known doc_gen from wakes / progress / headers. */
+  getMaxKnownGen?: () => number;
   sampleCenterPixelOpaque?: (key: string) => boolean | null;
 };
 
@@ -200,6 +204,8 @@ export type TraceCameraApi = {
   getVisibleTiles: () => Array<{ level: number; x: number; y: number }>;
   getLevel: () => number;
   getTileRev: () => number;
+  getTileGens?: () => Record<string, number>;
+  getMaxKnownGen?: () => number;
   /** Push current camera to BE with zero debounce (quiet-check sync). */
   flushViewport?: () => void;
   /** Place the visible set over the document bottom-right corner (Z3 cold). */

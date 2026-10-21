@@ -98,6 +98,9 @@ pub struct TileReadyPayload {
     pub level: u8,
     pub x: u32,
     pub y: u32,
+    /// Content generation of the Composite just inserted (FE maxKnownGen).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gen: Option<u64>,
 }
 
 /// Process recomputation tasks from the scheduler in a continuous loop.
@@ -532,6 +535,33 @@ pub fn tile_worker_loop<R: tauri::Runtime>(state: Arc<AppState>, app_handle: tau
                                     );
                                 }
                                 if !was_pending && task.key.coord.level == viewport_level {
+                                    let live_snap = state
+                                        .session(task.key.doc)
+                                        .ok()
+                                        .map(|s| s.document_handle.snapshot());
+                                    let live_doc = live_snap
+                                        .as_ref()
+                                        .map(|s| {
+                                            s.generations.document_gen.load(Ordering::Acquire)
+                                        })
+                                        .unwrap_or_else(|| {
+                                            snapshot.generations.document_gen.load(Ordering::Acquire)
+                                        });
+                                    let live_content = live_snap
+                                        .as_ref()
+                                        .map(|s| s.generations.current_content_gen())
+                                        .unwrap_or_else(|| {
+                                            snapshot.generations.current_content_gen()
+                                        });
+                                    // Prefer cache stamp / live content epoch for FE maxKnown.
+                                    let ready_gen = state
+                                        .tiles
+                                        .tile_cache
+                                        .entries
+                                        .get(&task.key)
+                                        .map(|e| e.generation)
+                                        .unwrap_or(live_content)
+                                        .max(live_content);
                                     let payload = TileReadyPayload {
                                         doc_id: snapshot.id.0,
                                         layer_id: task.key.layer,
@@ -539,25 +569,26 @@ pub fn tile_worker_loop<R: tauri::Runtime>(state: Arc<AppState>, app_handle: tau
                                         level: task.key.coord.level,
                                         x: task.key.coord.x,
                                         y: task.key.coord.y,
+                                        gen: Some(ready_gen),
                                     };
                                     if crate::tile_gen_trace::enabled() {
-                                        let live = snapshot
-                                            .generations
-                                            .document_gen
-                                            .load(Ordering::Acquire);
                                         crate::tile_gen_trace::emit(
                                             "tile_ready_emitted",
                                             Some(task.key.layer),
-                                            Some(live),
+                                            Some(live_doc),
                                             None,
                                             Some(crate::tile_gen_trace::tile(
                                                 task.key.coord.level,
                                                 task.key.coord.x,
                                                 task.key.coord.y,
                                             )),
-                                            Some(task.generation),
+                                            Some(ready_gen),
                                             serde_json::json!({
                                                 "viewport_level": viewport_level,
+                                                "was_pending": false,
+                                                "via": "viewport_level_no_pending",
+                                                "task_gen": task.generation,
+                                                "content_gen": live_content,
                                             }),
                                         );
                                     }

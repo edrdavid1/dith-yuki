@@ -23,7 +23,7 @@ use crate::{CacheStage, PixelTile, TileCoord, TileKey};
 use crossbeam::queue::SegQueue;
 use dashmap::DashMap;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
@@ -156,6 +156,10 @@ pub struct TileCache {
     budget_bytes: AtomicUsize,
     /// Current memory used by cached tiles in bytes.
     used_bytes: AtomicUsize,
+    /// Live document `content_gen` mirrored for [`crate::tile_fresh`].
+    /// Entries with `generation < content_epoch` are treated as not fresh even
+    /// when the dirty bit was cleared (palette / soft-proof without doc_gen).
+    content_epoch: AtomicU64,
 }
 
 impl TileCache {
@@ -181,7 +185,19 @@ impl TileCache {
             lru_queue: SegQueue::new(),
             budget_bytes: AtomicUsize::new(budget_bytes),
             used_bytes: AtomicUsize::new(0),
+            content_epoch: AtomicU64::new(0),
         }
+    }
+
+    /// Mirror live document `content_gen` so [`crate::tile_fresh`] rejects
+    /// clean entries stamped for an older palette / soft-proof epoch.
+    pub fn set_content_epoch(&self, content_gen: u64) {
+        self.content_epoch.store(content_gen, Ordering::Release);
+    }
+
+    /// Current mirrored content epoch (0 if never synced).
+    pub fn content_epoch(&self) -> u64 {
+        self.content_epoch.load(Ordering::Acquire)
     }
 
     /// Retrieve a cached tile or insert it if not present.

@@ -414,13 +414,18 @@ pub fn test_events() -> Vec<TraceEvent> {
 }
 
 #[cfg(test)]
+pub fn clear_test_events_only() {
+    if let Ok(mut e) = TEST_EVENTS.lock() {
+        e.clear();
+    }
+}
+
+#[cfg(test)]
 pub fn clear_test_state() {
     force_enable(false);
     RUN_ID.store(0, Ordering::Relaxed);
     SEQ.store(0, Ordering::Relaxed);
-    if let Ok(mut e) = TEST_EVENTS.lock() {
-        e.clear();
-    }
+    clear_test_events_only();
     if let Ok(mut g) = dequeue_map().lock() {
         g.clear();
     }

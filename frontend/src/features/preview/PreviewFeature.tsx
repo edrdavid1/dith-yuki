@@ -94,6 +94,10 @@ export default function PreviewFeature({
           computePyramidLevel(viewportRef.current.zoom, docWidth, docHeight),
         getTileRev: () =>
           window.__ditherTileGenTrace?.canvas?.getTileRev?.() ?? 0,
+        getTileGens: () =>
+          window.__ditherTileGenTrace?.canvas?.getTileGens?.() ?? {},
+        getMaxKnownGen: () =>
+          window.__ditherTileGenTrace?.canvas?.getMaxKnownGen?.() ?? 0,
         panToBottomRight: () => {
           const vp = viewportRef.current;
           if (vp.zoom <= 0 || vp.canvasWidth <= 0 || vp.canvasHeight <= 0) return;
