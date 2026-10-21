@@ -589,6 +589,8 @@ export default function TileCanvas({
           y,
           docId,
           rev,
+          // Bust WebView HTTP cache on palette content-changed (tileRev stays flat).
+          contentGen: entry?.maxKnownGen ?? maxKnownGenRef.current,
           protocolBase: workerTileProtocolBase(),
           profile: ditherProfileEnabled() || undefined,
           profileRunId: activeProfileRunId() ?? undefined,
@@ -1526,6 +1528,7 @@ export default function TileCanvas({
           tiles,
           docId,
           rev: tileRevRef.current,
+          contentGen: maxKnownGenRef.current || undefined,
           protocolBase: workerTileProtocolBase(),
           trace: tileGenTraceEnabled() || undefined,
         }));
@@ -1855,6 +1858,7 @@ export default function TileCanvas({
         tiles: visible,
         docId,
         rev: tileRevRef.current,
+        contentGen: maxKnownGenRef.current || undefined,
         protocolBase: workerTileProtocolBase(),
       }));
     });
@@ -1911,6 +1915,7 @@ export default function TileCanvas({
           tiles: visible,
           docId,
           rev: tileRevRef.current,
+          contentGen: maxKnownGenRef.current || undefined,
           protocolBase: workerTileProtocolBase(),
         }));
       }
@@ -1945,6 +1950,7 @@ export default function TileCanvas({
         tiles: visible,
         docId,
         rev: tileRevRef.current,
+        contentGen: maxKnownGenRef.current || undefined,
         protocolBase: workerTileProtocolBase(),
       }));
     }, 300);

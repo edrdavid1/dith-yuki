@@ -33,6 +33,8 @@ export interface RequestTilesMessage {
   tiles: TileRequest[];
   docId: number;
   rev?: number;
+  /** Content epoch cache-buster (`?c=`) — palette / soft-proof without tileRev++. */
+  contentGen?: number;
   /** Override protocol origin; main thread should pass platform-aware base. */
   protocolBase?: string;
   /** Set only while preview diagnostics are enabled. */
@@ -51,6 +53,8 @@ export interface FetchTileMessage {
   y: number;
   docId: number;
   rev?: number;
+  /** Content epoch cache-buster (`?c=`) — palette / soft-proof without tileRev++. */
+  contentGen?: number;
   protocolBase?: string;
   /** Set only while preview diagnostics are enabled. */
   diag?: boolean;
@@ -195,9 +199,10 @@ async function fetchAndDecodeTile(
   profile = false,
   profileRunId?: number,
   trace = false,
+  contentGen?: number,
 ): Promise<void> {
   const key = `${tile.level}/${tile.x}/${tile.y}`;
-  const url = buildTileUrl(docId, tile, rev, { base: protocolBase });
+  const url = buildTileUrl(docId, tile, rev, { base: protocolBase, contentGen });
   const epoch = () => performance.timeOrigin + performance.now();
   const readHeaders = diag || trace;
 
@@ -259,7 +264,9 @@ async function fetchAndDecodeTile(
 
   try {
     const tFetch = diag || profile ? performance.now() : 0;
-    const response = await fetch(url);
+    // WebView HTTP caches key on URL; palette content-changed keeps tileRev
+    // stable, so rely on `?c=` + no-store rather than tileRev storms.
+    const response = await fetch(url, { cache: 'no-store' });
     const protocolEpochMs = profile ? epoch() : undefined;
 
     if (response.status === 200) {
@@ -319,7 +326,7 @@ async function fetchAndDecodeTile(
         await new Promise(resolve => setTimeout(resolve, delay));
         try {
           const tRetry = diag || profile ? performance.now() : 0;
-          const retryResponse = await fetch(url);
+          const retryResponse = await fetch(url, { cache: 'no-store' });
           const retryProtocolEpoch = profile ? epoch() : undefined;
           if (retryResponse.status === 200) {
             const retryBuffer = await retryResponse.arrayBuffer();
@@ -386,6 +393,7 @@ self.onmessage = async (e: MessageEvent<WorkerInMessage>) => {
           msg.profile === true,
           msg.profileRunId,
           msg.trace === true,
+          msg.contentGen,
         ),
       ),
     );
@@ -403,6 +411,7 @@ self.onmessage = async (e: MessageEvent<WorkerInMessage>) => {
       msg.profile === true,
       msg.profileRunId,
       msg.trace === true,
+      msg.contentGen,
     );
   }
 };

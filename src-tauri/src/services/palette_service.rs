@@ -177,10 +177,15 @@ pub fn find_layers_referencing_palette(
     result
 }
 
-fn invalidate_palette_changed(palette_id: engine_project::types::PaletteId, state: &AppState) {
-    let Ok(snapshot) = state.active_session().map(|s| s.document_handle.snapshot()) else {
+fn invalidate_palette_changed(
+    palette_id: engine_project::types::PaletteId,
+    state: &AppState,
+    doc_id: u32,
+) {
+    let Ok(session) = state.require_session(doc_id) else {
         return;
     };
+    let snapshot = session.document_handle.snapshot();
     let affected_layers = find_layers_referencing_palette(&snapshot.root, palette_id);
     let doc = snapshot.id.0;
 
@@ -202,6 +207,9 @@ fn invalidate_palette_changed(palette_id: engine_project::types::PaletteId, stat
         // Drop KD/LUT entries so revision rebuild cannot race a stale Arc.
         state.tiles.palette_cache.evict(doc, palette_id.0);
         state.tiles.palette_lut_cache.evict(doc, palette_id.0);
+        // Encoded preview bytes are keyed by (tile, generation); clear so a
+        // same-gen replace cannot replay pre-palette RGBA.
+        crate::tile_serve::preview_rgba8_cache().clear_doc(doc);
         schedule_dirty_viewport_tiles(state);
     }
 }
@@ -498,7 +506,7 @@ impl PaletteService {
                     doc.increment_generation();
                 });
 
-            invalidate_palette_changed(PaletteId::new(req.palette_id), &self.state);
+            invalidate_palette_changed(PaletteId::new(req.palette_id), &self.state, doc_id);
 
             let snapshot = self
                 .state
@@ -722,7 +730,7 @@ impl PaletteService {
                     let _ = doc.bump_content_gen();
                 });
 
-            invalidate_palette_changed(PaletteId::new(req.palette_id), &self.state);
+            invalidate_palette_changed(PaletteId::new(req.palette_id), &self.state, doc_id);
             let content_gen = self
                 .state
                 .require_session(doc_id)?
@@ -793,7 +801,7 @@ impl PaletteService {
                     let _ = doc.bump_content_gen();
                 });
 
-            invalidate_palette_changed(PaletteId::new(req.palette_id), &self.state);
+            invalidate_palette_changed(PaletteId::new(req.palette_id), &self.state, doc_id);
             let snapshot = self
                 .state
                 .require_session(doc_id)?
@@ -865,7 +873,7 @@ impl PaletteService {
                     let _ = doc.bump_content_gen();
                 });
 
-            invalidate_palette_changed(PaletteId::new(req.palette_id), &self.state);
+            invalidate_palette_changed(PaletteId::new(req.palette_id), &self.state, doc_id);
             let content_gen = self
                 .state
                 .require_session(doc_id)?
@@ -948,7 +956,7 @@ impl PaletteService {
                     let _ = doc.bump_content_gen();
                 });
 
-            invalidate_palette_changed(PaletteId::new(req.palette_id), &self.state);
+            invalidate_palette_changed(PaletteId::new(req.palette_id), &self.state, doc_id);
 
             let snapshot = self
                 .state

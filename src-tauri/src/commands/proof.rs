@@ -135,6 +135,7 @@ pub fn proof_set_config(
             layer: 0,
         },
     );
+    crate::tile_serve::preview_rgba8_cache().clear_doc(doc_id);
     crate::commands::schedule_dirty_viewport_tiles(state.inner());
     emit_dirty_doc(Some(&app_handle), state.inner(), doc_id);
     emit_document_changed(&app_handle, "soft_proof_changed", None, Some(doc_id));
