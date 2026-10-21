@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { checkStaleGenAtQuiet, feSnapshotFromTiles } from '../viewportTraceChecker';
+import {
+  checkStaleGenAtQuiet,
+  feSnapshotFromTiles,
+  summarizeStaleByColumnRow,
+} from '../viewportTraceChecker';
 
 describe('STALE_GEN_AT_QUIET', () => {
   it('flags visible tile below session maxKnownGen', () => {
@@ -27,5 +31,20 @@ describe('STALE_GEN_AT_QUIET', () => {
       maxKnownGen: 42,
     });
     expect(checkStaleGenAtQuiet(fe)).toEqual([]);
+  });
+
+  it('summarizes stale by column (x=0 focus)', () => {
+    const s = summarizeStaleByColumnRow({
+      tiles: [
+        { level: 0, x: 0, y: 0 },
+        { level: 0, x: 0, y: 1 },
+        { level: 0, x: 1, y: 0 },
+      ],
+      tileGens: { '0/0/0': 40, '0/0/1': 40, '0/1/0': 42 },
+      expectedGen: 42,
+    });
+    expect(s.byCol['0']?.stale).toBe(2);
+    expect(s.byCol['1']?.stale).toBe(0);
+    expect(s.staleKeys).toEqual(['0/0/0', '0/0/1']);
   });
 });

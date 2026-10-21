@@ -1,11 +1,13 @@
 /**
- * Step A — H4 event-chain model (no production behavior change).
- *
- * Shows how wake_skipped_inflight + accepting a matching-tileRev decode of an
- * older X-Tile-Generation leaves (0,0) stuck until pan/zoom forces a new rev.
+ * Step B — H4 wake race: needs_refetch + collapsed retry (green after fix).
  */
 import { describe, expect, it } from 'vitest';
-import { decideEventDrivenWake } from '../eventDrivenWake';
+import {
+  bumpMaxKnownGen,
+  decideEventDrivenWake,
+  shouldDiscardStaleGen,
+  shouldRetryForMaxGen,
+} from '../eventDrivenWake';
 
 type TraceEvt = {
   event: string;
@@ -14,14 +16,16 @@ type TraceEvt = {
   details?: Record<string, unknown>;
 };
 
-function simulateStuck00Chain(): TraceEvt[] {
+function simulateFixed00Chain(): TraceEvt[] {
   const out: TraceEvt[] = [];
   let tileRev = 10;
   let inflight = false;
+  let needsRefetch = false;
+  let refetchDone = false;
+  let maxKnownGen = 0;
   let drawnGen: number | null = null;
   const tile = '0/0/0';
 
-  // Param change bumps rev and requests tiles.
   tileRev += 1;
   out.push({
     event: 'doc_changed_received',
@@ -38,81 +42,90 @@ function simulateStuck00Chain(): TraceEvt[] {
     details: { status: 202, pending_reason: 'ed_prefix' },
   });
 
-  // First tile-ready starts wake fetch (gen 41 still computing / about to land).
+  // First tile-ready → fetch
   let wake = decideEventDrivenWake({ inflight }, 'tile_ready');
   expect(wake.action).toBe('fetch');
   inflight = true;
-  out.push({
-    event: 'tile_ready_emitted',
-    tile,
-    gen: 41,
-    details: { cause: 'be' },
-  });
-  out.push({
-    event: 'tile_ready_received',
-    tile,
-    details: { accepted: true },
-  });
-  out.push({
-    event: 'fetch_tile_posted',
-    tile,
-    details: { wake: 'tile_ready', tileRev },
-  });
+  maxKnownGen = bumpMaxKnownGen(maxKnownGen, 41);
+  out.push({ event: 'tile_ready_emitted', tile, gen: 41 });
+  out.push({ event: 'fetch_tile_posted', tile, gen: 41, details: { wake: 'tile_ready' } });
 
-  // Newer Composite for same tile (gen 42) while fetch still inflight → skip.
-  out.push({
-    event: 'tile_ready_emitted',
-    tile,
-    gen: 42,
-    details: { cause: 'be' },
-  });
+  // Newer ready while inflight → needs_refetch (not skip)
+  maxKnownGen = bumpMaxKnownGen(maxKnownGen, 42);
+  out.push({ event: 'tile_ready_emitted', tile, gen: 42 });
   wake = decideEventDrivenWake({ inflight }, 'tile_ready');
-  expect(wake).toEqual({ action: 'skip', reason: 'inflight', cause: 'tile_ready' });
+  expect(wake).toEqual({
+    action: 'needs_refetch',
+    reason: 'inflight',
+    cause: 'tile_ready',
+  });
+  needsRefetch = true;
   out.push({
-    event: 'wake_skipped_inflight',
+    event: 'wake_needs_refetch',
     tile,
     gen: 42,
-    details: { cause: 'tile_ready', tileRev },
+    details: { cause: 'tile_ready', maxKnownGen },
   });
 
-  // Inflight response returns gen 41 (stale vs live 42) but tileRev still matches.
-  // FE accepts (no gen compare today) → drawn as final.
-  inflight = false;
+  // Inflight returns gen 41 — behind maxKnown → collapsed retry, interim may draw
+  expect(
+    shouldRetryForMaxGen({
+      responseGen: 41,
+      maxKnownGen,
+      needsRefetch,
+      refetchDone,
+    }),
+  ).toBe(true);
+  refetchDone = true;
+  needsRefetch = false;
+  inflight = true;
   drawnGen = 41;
   out.push({
-    event: 'tile_decoded',
+    event: 'wake_collapsed_retry',
     tile,
     gen: 41,
-    details: { requestRev: tileRev, currentRev: tileRev, source: 'fresh', status: 200 },
+    details: { responseGen: 41, maxKnownGen: 42 },
   });
-  out.push({
-    event: 'tile_drawn',
-    tile,
-    gen: 41,
-    details: { source: 'fresh', tileRev },
-  });
+  out.push({ event: 'tile_drawn', tile, gen: 41, details: { interim: true } });
 
-  expect(drawnGen).toBe(41);
-  expect(out.some((e) => e.event === 'wake_skipped_inflight' && e.gen === 42)).toBe(true);
-  expect(out.some((e) => e.event === 'tile_drawn' && e.gen === 42)).toBe(false);
+  // Collapsed retry returns 42 — accept as final, discard would apply to older
+  expect(shouldDiscardStaleGen(41, 42)).toBe(true);
+  expect(
+    shouldRetryForMaxGen({
+      responseGen: 42,
+      maxKnownGen,
+      needsRefetch: false,
+      refetchDone: true,
+    }),
+  ).toBe(false);
+  drawnGen = 42;
+  out.push({ event: 'tile_drawn', tile, gen: 42, details: { source: 'fresh' } });
+
+  expect(drawnGen).toBe(42);
+  expect(out.some((e) => e.event === 'wake_skipped_inflight')).toBe(false);
+  expect(out.some((e) => e.event === 'wake_needs_refetch')).toBe(true);
+  expect(out.filter((e) => e.event === 'wake_collapsed_retry')).toHaveLength(1);
   return out;
 }
 
-describe('H4 wake race chain (model)', () => {
-  it('skips newer tile-ready while inflight and draws older gen as final', () => {
-    const chain = simulateStuck00Chain();
+describe('H4 wake race chain (Step B fix)', () => {
+  it('coalesces inflight wakes into one retry and ends on newer gen', () => {
+    const chain = simulateFixed00Chain();
     const stick = chain.filter(
       (e) =>
         e.tile === '0/0/0' &&
-        (e.event === 'wake_skipped_inflight' ||
+        (e.event === 'wake_needs_refetch' ||
+          e.event === 'wake_collapsed_retry' ||
           e.event === 'tile_drawn' ||
           e.event === 'tile_ready_emitted'),
     );
     expect(stick.map((e) => `${e.event}@${e.gen ?? '-'}`)).toEqual([
       'tile_ready_emitted@41',
       'tile_ready_emitted@42',
-      'wake_skipped_inflight@42',
+      'wake_needs_refetch@42',
+      'wake_collapsed_retry@41',
       'tile_drawn@41',
+      'tile_drawn@42',
     ]);
   });
 });

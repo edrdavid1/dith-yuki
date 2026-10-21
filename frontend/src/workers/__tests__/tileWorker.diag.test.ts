@@ -60,14 +60,19 @@ describe('tileWorker diagnostics flag', () => {
       'fetch',
       vi.fn().mockResolvedValue({
         status: 200,
+        headers: { get: () => null },
         arrayBuffer: () => Promise.resolve(new ArrayBuffer(bytes)),
       }),
     );
     await load();
     await onmessage!({ data: { type: 'fetch-tile', level: 0, x: 1, y: 2, docId: 3 } } as MessageEvent);
     const msg = posted[0] as Record<string, unknown>;
-    expect(Object.keys(msg).sort()).toEqual(['bitmap', 'docId', 'key', 'rev', 'type'].sort());
+    // H4 always attaches gen/quality/stale/pyramid/httpStatus; diag remains opt-in.
     expect(msg.diag).toBeUndefined();
+    expect(msg.type).toBe('tile-decoded');
+    expect(Object.keys(msg).sort()).toEqual(
+      ['bitmap', 'docId', 'gen', 'httpStatus', 'key', 'pyramid', 'quality', 'rev', 'stale', 'type'].sort(),
+    );
   });
 
   it('puts 202 sleep in retry_wait_ms and keeps it out of fetch_ms', async () => {
