@@ -47,11 +47,18 @@ fn note_blocked() {
     ED_BLOCKED_TOTAL.fetch_add(1, Ordering::Relaxed);
 }
 
-/// True when `entry` exists and is not dirty.
+/// True when `entry` exists, is not dirty, and matches the cache content epoch.
+///
+/// `generation >= content_epoch` is required so palette / soft-proof bumps
+/// (which advance `content_gen` without `doc_gen`) cannot leave the ED strip
+/// fast-path treating a clean left-column Processed tile as current.
 pub fn tile_fresh(cache: &TileCache, key: TileKey) -> bool {
     match cache.entries.get(&key) {
         None => false,
-        Some(entry) => !entry.dirty.load(Ordering::Acquire),
+        Some(entry) => {
+            !entry.dirty.load(Ordering::Acquire)
+                && entry.generation >= cache.content_epoch()
+        }
     }
 }
 
@@ -429,6 +436,20 @@ mod tests {
 
     fn insert_processed_fresh(cache: &TileCache, x: u32, y: u32) {
         cache.insert_fresh(key(x, y), Arc::new(PixelTile::new()));
+    }
+
+    #[test]
+    fn tile_fresh_rejects_behind_content_epoch() {
+        let cache = TileCache::new(64 * 1024 * 1024);
+        cache.insert_fresh_gen(key(0, 0), Arc::new(PixelTile::new()), 1);
+        assert!(tile_fresh(&cache, key(0, 0)));
+        cache.set_content_epoch(2);
+        assert!(
+            !tile_fresh(&cache, key(0, 0)),
+            "clean tile stamped gen=1 must not be fresh at content_epoch=2"
+        );
+        cache.insert_fresh_gen(key(0, 0), Arc::new(PixelTile::new()), 2);
+        assert!(tile_fresh(&cache, key(0, 0)));
     }
 
     #[test]

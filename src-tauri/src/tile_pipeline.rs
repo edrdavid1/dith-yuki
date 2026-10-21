@@ -118,6 +118,10 @@ pub fn compute_processed_tile(
 
     // 2. Get document snapshot and find the layer
     let snapshot = snapshot_for_key(state, key)?;
+    state
+        .tiles
+        .tile_cache
+        .set_content_epoch(snapshot.generations.current_content_gen());
     let layer = find_layer_by_id(&snapshot.root, key.layer).ok_or_else(|| {
         EngineError::layer_not_found(engine_project::types::LayerId::new(key.layer))
     })?;
@@ -640,6 +644,10 @@ pub fn compute_composite_tile(
 ) -> Result<Arc<PixelTile>, EngineError> {
     // 1. Get document snapshot for the layer tree
     let snapshot = snapshot_for_key(state, key)?;
+    state
+        .tiles
+        .tile_cache
+        .set_content_epoch(snapshot.generations.current_content_gen());
 
     // Display pyramid only: zoom-out tiles are a 2×2 box-filter of *full-res*
     // Composite children. Filters always run at level 0 so Bayer/ED/pixel_size
@@ -1494,9 +1502,12 @@ fn collect_dirty_recursive(
 
 fn composite_needs_compute(state: &AppState, key: &TileKey) -> bool {
     use std::sync::atomic::Ordering;
+    let epoch = state.tiles.tile_cache.content_epoch();
     match state.tiles.tile_cache.entries.get(key) {
         None => true,
-        Some(entry) => entry.dirty.load(Ordering::Acquire),
+        Some(entry) => {
+            entry.dirty.load(Ordering::Acquire) || entry.generation < epoch
+        }
     }
 }
 

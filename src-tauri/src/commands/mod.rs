@@ -382,6 +382,9 @@ pub(crate) fn schedule_dirty_viewport_tiles_with_reason(state: &AppState, reason
         return;
     };
     let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
+    let content_gen = snapshot.generations.current_content_gen();
+    // ED strip / Composite fast-paths use tile_fresh → content_epoch.
+    state.tiles.tile_cache.set_content_epoch(content_gen);
     let (vp_hash, x0, y0, x1, y1) =
         crate::tile_gen_trace::vp_hash_from_coords(viewport.level, &viewport.visible_tiles);
     let visible_n = viewport.visible_tiles.len();
@@ -393,7 +396,7 @@ pub(crate) fn schedule_dirty_viewport_tiles_with_reason(state: &AppState, reason
             Some(doc_gen),
             None,
             None,
-            Some(doc_gen),
+            Some(content_gen),
             serde_json::json!({
                 "reason": reason,
                 "level": viewport.level,
@@ -401,6 +404,7 @@ pub(crate) fn schedule_dirty_viewport_tiles_with_reason(state: &AppState, reason
                 "x0": x0, "y0": y0, "x1": x1, "y1": y1,
                 "visible_count": visible_n,
                 "vp_hash": vp_hash,
+                "content_gen": content_gen,
             }),
         );
     }
@@ -427,12 +431,14 @@ pub(crate) fn schedule_dirty_viewport_tiles_with_reason(state: &AppState, reason
             stage: CacheStage::Composite,
         };
 
-        let is_dirty = match state.tiles.tile_cache.entries.get(&key) {
-            Some(entry) => entry.dirty.load(Ordering::Acquire),
+        let needs = match state.tiles.tile_cache.entries.get(&key) {
+            Some(entry) => {
+                entry.dirty.load(Ordering::Acquire) || entry.generation < content_gen
+            }
             None => true,
         };
 
-        if is_dirty {
+        if needs {
             dirty += 1;
             let task = RecomputeTask {
                 key,

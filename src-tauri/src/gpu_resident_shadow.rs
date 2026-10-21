@@ -230,6 +230,8 @@ pub fn try_publish_gpu_preview_viewport(state: &AppState) -> std::collections::H
 
     let snapshot = session.document_handle.snapshot();
     let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
+    let content_gen = snapshot.generations.current_content_gen();
+    state.tiles.tile_cache.set_content_epoch(content_gen);
     let doc = snapshot.id.0;
     let viewport = state.ui.viewport.lock().unwrap().clone();
 
@@ -257,7 +259,9 @@ pub fn try_publish_gpu_preview_viewport(state: &AppState) -> std::collections::H
                 stage: CacheStage::Composite,
             };
             match state.tiles.tile_cache.entries.get(&key) {
-                Some(entry) => entry.dirty.load(Ordering::Acquire),
+                Some(entry) => {
+                    entry.dirty.load(Ordering::Acquire) || entry.generation < content_gen
+                }
                 None => true,
             }
         })
@@ -412,7 +416,7 @@ pub fn try_publish_gpu_preview_viewport(state: &AppState) -> std::collections::H
         let inserted = state
             .tiles
             .tile_cache
-            .insert_fresh_gen(key, Arc::new(tile), doc_gen);
+            .insert_fresh_gen(key, Arc::new(tile), content_gen);
         if !inserted {
             continue;
         }
@@ -427,7 +431,7 @@ pub fn try_publish_gpu_preview_viewport(state: &AppState) -> std::collections::H
                     level: key.coord.level,
                     x: key.coord.x,
                     y: key.coord.y,
-                    gen: None,
+                    gen: Some(content_gen),
                 };
                 let _ = handle.emit_to(tauri::EventTarget::Any, "tile-ready", payload);
             }

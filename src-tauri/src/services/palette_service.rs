@@ -210,6 +210,10 @@ fn invalidate_palette_changed(
         // Encoded preview bytes are keyed by (tile, generation); clear so a
         // same-gen replace cannot replay pre-palette RGBA.
         crate::tile_serve::preview_rgba8_cache().clear_doc(doc);
+        state
+            .tiles
+            .tile_cache
+            .set_content_epoch(snapshot.generations.current_content_gen());
         schedule_dirty_viewport_tiles(state);
     }
 }
