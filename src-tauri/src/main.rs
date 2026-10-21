@@ -631,11 +631,13 @@ fn stop_dock_bounce(app: tauri::AppHandle) {
 /// Build an HTTP response with CORS headers allowing any origin.
 /// Required because in dev mode the webview origin is http://localhost:5173
 /// and the browser enforces CORS on custom protocol fetches.
+/// `tile_gen` is additive `doc_gen.layer_gen.content_gen` for FE max-gen.
 fn tile_response(
     status: u16,
     content_type: &str,
     body: Vec<u8>,
     generation: Option<u64>,
+    tile_gen: Option<&str>,
     extra: &[(&str, &str)],
 ) -> http::Response<Vec<u8>> {
     let mut builder = http::Response::builder()
@@ -649,6 +651,9 @@ fn tile_response(
         .header(http::header::PRAGMA, "no-cache");
     if let Some(gen) = generation {
         builder = builder.header("X-Tile-Generation", gen.to_string());
+    }
+    if let Some(tg) = tile_gen {
+        builder = builder.header("X-Tile-Gen", tg);
     }
     for (name, value) in extra {
         builder = builder.header(*name, *value);
@@ -674,7 +679,7 @@ fn handle_tile_request(
         Err(e) => {
             log::warn!("tile:// parse error for {uri}: {e}");
             let msg = format!("400 Bad Request: {}", e);
-            return tile_response(400, "text/plain", msg.into_bytes(), None, &[]);
+            return tile_response(400, "text/plain", msg.into_bytes(), None, None, &[]);
         }
     };
 
@@ -684,7 +689,7 @@ fn handle_tile_request(
         Err(_) => {
             log::warn!("tile:// document {} not found (uri={uri})", parsed.doc_id);
             let msg = format!("404 Not Found: document {} not found", parsed.doc_id);
-            return tile_response(404, "text/plain", msg.into_bytes(), None, &[]);
+            return tile_response(404, "text/plain", msg.into_bytes(), None, None, &[]);
         }
     };
     let snapshot = session.document_handle.snapshot();
@@ -694,7 +699,7 @@ fn handle_tile_request(
         LayerTarget::Id(id) => {
             if !layer_exists(&snapshot.root, id) {
                 let msg = format!("404 Not Found: layer {} not found", id);
-                return tile_response(404, "text/plain", msg.into_bytes(), None, &[]);
+                return tile_response(404, "text/plain", msg.into_bytes(), None, None, &[]);
             }
             id
         }
@@ -717,10 +722,10 @@ fn handle_tile_request(
             "404 Not Found: tile coordinate ({}, {}) out of bounds for grid {}x{} at level {}",
             parsed.x, parsed.y, grid_cols, grid_rows, parsed.level
         );
-        return tile_response(404, "text/plain", msg.into_bytes(), None, &[]);
+        return tile_response(404, "text/plain", msg.into_bytes(), None, None, &[]);
     }
 
-    // 5. Build TileKey and check cache. Ready = !dirty && generation >= doc_gen.
+    // 5. Build TileKey and check cache. Ready = !dirty && generation >= content_gen.
     let key = TileKey {
         doc: parsed.doc_id,
         layer: layer_id,
@@ -733,6 +738,7 @@ fn handle_tile_request(
     };
 
     let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
+    let content_gen = snapshot.generations.current_content_gen();
     let (serve_vp_hash, serve_level) = {
         let vp = state.ui.viewport.lock().unwrap();
         let (h, _, _, _, _) = tile_gen_trace::vp_hash_from_coords(vp.level, &vp.visible_tiles);
@@ -770,7 +776,7 @@ fn handle_tile_request(
     let served = tile_serve::resolve_preview_tile_proofed(
         &state.tiles.tile_cache,
         key,
-        doc_gen,
+        content_gen,
         proof_xform.as_ref(),
         proof_cfg_hash,
     );
@@ -830,41 +836,58 @@ fn handle_tile_request(
         );
     }
 
+    let layer_gen = snapshot.generations.get_layer_gen(layer_id);
+    // Additive: doc_gen.layer_gen.content_gen (third part is FE maxKnown / safety).
+    let gen_hdr_owned = |stamp: u64| format!("{doc_gen}.{layer_gen}.{stamp}");
     match served {
-        tile_serve::PreviewServe::Fresh { rgba8, generation } => tile_response(
-            200,
-            "application/octet-stream",
-            rgba8,
-            Some(generation),
-            &[
-                ("X-Tile-Quality", "fresh"),
-                ("X-Tile-Source", ed_progress::source_id_cpu_ed()),
-            ],
-        ),
-        tile_serve::PreviewServe::Stale { rgba8, generation } => tile_response(
-            200,
-            "application/octet-stream",
-            rgba8,
-            Some(generation),
-            &[
-                ("X-Dither-Tile-Stale", "1"),
-                ("X-Tile-Quality", "stale"),
-                ("X-Tile-Source", ed_progress::source_id_cpu_ed()),
-            ],
-        ),
-        tile_serve::PreviewServe::PyramidFallback { rgba8 } => tile_response(
-            200,
-            "application/octet-stream",
-            rgba8,
-            None,
-            &[
-                ("X-Dither-Tile-Fallback", "pyramid"),
-                ("X-Tile-Quality", "upsample"),
-                ("X-Tile-Source", ed_progress::source_id_cpu_ed()),
-            ],
-        ),
+        tile_serve::PreviewServe::Fresh { rgba8, generation } => {
+            let tg = gen_hdr_owned(generation);
+            tile_response(
+                200,
+                "application/octet-stream",
+                rgba8,
+                Some(generation),
+                Some(tg.as_str()),
+                &[
+                    ("X-Tile-Quality", "fresh"),
+                    ("X-Tile-Source", ed_progress::source_id_cpu_ed()),
+                ],
+            )
+        }
+        tile_serve::PreviewServe::Stale { rgba8, generation } => {
+            // Expected content epoch on stale bodies so FE can lag-detect.
+            let tg = gen_hdr_owned(content_gen);
+            let _ = generation;
+            tile_response(
+                200,
+                "application/octet-stream",
+                rgba8,
+                Some(content_gen),
+                Some(tg.as_str()),
+                &[
+                    ("X-Dither-Tile-Stale", "1"),
+                    ("X-Tile-Quality", "stale"),
+                    ("X-Tile-Source", ed_progress::source_id_cpu_ed()),
+                ],
+            )
+        }
+        tile_serve::PreviewServe::PyramidFallback { rgba8 } => {
+            let tg = gen_hdr_owned(doc_gen);
+            tile_response(
+                200,
+                "application/octet-stream",
+                rgba8,
+                Some(doc_gen),
+                Some(tg.as_str()),
+                &[
+                    ("X-Dither-Tile-Fallback", "pyramid"),
+                    ("X-Tile-Quality", "upsample"),
+                    ("X-Tile-Source", ed_progress::source_id_cpu_ed()),
+                ],
+            )
+        }
         tile_serve::PreviewServe::Pending => {
-            pending_tiles::register(parsed.doc_id, parsed.level, parsed.x, parsed.y, doc_gen);
+            pending_tiles::register(parsed.doc_id, parsed.level, parsed.x, parsed.y, content_gen);
             let info = pending_info.unwrap_or(pending_tiles::PendingReasonInfo {
                 pending_reason: "queued",
                 missing_dep: None,
@@ -874,14 +897,24 @@ fn handle_tile_request(
                 .missing_dep
                 .as_ref()
                 .map(|dep| format!("{}/{}/{}/{}", dep.stage, dep.level, dep.x, dep.y));
+            let tg = gen_hdr_owned(content_gen);
             let mut pairs: Vec<(&str, &str)> = vec![
                 ("X-Tile-Pending-Reason", reason),
                 ("X-Tile-Source", ed_progress::source_id_cpu_ed()),
+                // Expected target quality once ready is fresh; FE uses content_gen to wait.
+                ("X-Tile-Quality", "fresh"),
             ];
             if let Some(ref d) = dep_hdr {
                 pairs.push(("X-Tile-Missing-Dep", d.as_str()));
             }
-            tile_response(202, "application/octet-stream", Vec::new(), None, &pairs)
+            tile_response(
+                202,
+                "application/octet-stream",
+                Vec::new(),
+                Some(content_gen),
+                Some(tg.as_str()),
+                &pairs,
+            )
         }
     }
 }

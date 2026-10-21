@@ -198,7 +198,15 @@ pub fn resolve_preview_tile_proofed(
             rgba_cache.insert(ck, encoded.clone());
             encoded
         };
-        let served = if TileCache::tile_entry_is_ready(dirty, gen, doc_gen) {
+        // Step B: Fresh only when clean and stamped for current content epoch.
+        // `doc_gen` arg is the live content_gen (callers pass content_gen).
+        // Dirty Composite always serves as Stale (outdated bytes returned).
+        let served = if dirty {
+            PreviewServe::Stale {
+                rgba8,
+                generation: gen,
+            }
+        } else if TileCache::tile_entry_is_ready(false, gen, doc_gen) {
             PreviewServe::Fresh {
                 rgba8,
                 generation: gen,

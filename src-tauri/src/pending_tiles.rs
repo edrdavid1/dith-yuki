@@ -131,6 +131,19 @@ pub fn notify_if_pending<R: tauri::Runtime>(
     if !take(key.doc, key.coord.level, key.coord.x, key.coord.y) {
         return;
     }
+    let (doc_gen, content_gen) = state
+        .session(key.doc)
+        .ok()
+        .map(|s| {
+            let snap = s.document_handle.snapshot();
+            (
+                snap.generations
+                    .document_gen
+                    .load(std::sync::atomic::Ordering::Acquire),
+                snap.generations.current_content_gen(),
+            )
+        })
+        .map_or((None, None), |(d, c)| (Some(d), Some(c)));
     let payload = TileReadyPayload {
         doc_id,
         layer_id: key.layer,
@@ -138,15 +151,9 @@ pub fn notify_if_pending<R: tauri::Runtime>(
         level: key.coord.level,
         x: key.coord.x,
         y: key.coord.y,
+        gen: content_gen,
     };
     if crate::tile_gen_trace::enabled() {
-        let doc_gen = state.session(key.doc).ok().map(|s| {
-            s.document_handle
-                .snapshot()
-                .generations
-                .document_gen
-                .load(std::sync::atomic::Ordering::Acquire)
-        });
         crate::tile_gen_trace::emit(
             "tile_ready_emitted",
             Some(key.layer),
@@ -157,10 +164,11 @@ pub fn notify_if_pending<R: tauri::Runtime>(
                 key.coord.x,
                 key.coord.y,
             )),
-            doc_gen,
+            content_gen,
             serde_json::json!({
                 "reason": "pending_registry",
                 "viewport_agnostic": true,
+                "content_gen": content_gen,
             }),
         );
     }

@@ -10,6 +10,8 @@ use std::time::Instant;
 use engine_color::SoftProofConfig;
 use tauri::State;
 
+use tauri::Emitter;
+
 use crate::commands::{emit_document_changed, AppState};
 use crate::services::proof_service::ProfileInfoDto;
 use crate::undo::{emit_dirty_doc, is_dirty_doc, mark_clean_doc};
@@ -110,18 +112,37 @@ pub fn proof_set_config(
     }
 
     let was_dirty = is_dirty_doc(state.inner(), doc_id);
-    state
-        .require_session(doc_id)?
-        .document_handle
-        .mutate(|doc| {
-            doc.soft_proof = config.clone();
-        });
+    let content_gen = {
+        let mut gen = 0u64;
+        state
+            .require_session(doc_id)?
+            .document_handle
+            .mutate(|doc| {
+                doc.soft_proof = config.clone();
+                gen = doc.bump_content_gen();
+            });
+        gen
+    };
     // Soft proof must not push undo or mark the document dirty.
     if !was_dirty {
         mark_clean_doc(state.inner(), doc_id);
     }
+    // Composite-only refresh so serve stamps catch the new content_gen.
+    engine_tiles::invalidation::invalidate(
+        &state.inner().tiles.tile_cache,
+        engine_tiles::invalidation::InvalidationEvent::LayerPropsChanged {
+            doc: doc_id,
+            layer: 0,
+        },
+    );
+    crate::commands::schedule_dirty_viewport_tiles(state.inner());
     emit_dirty_doc(Some(&app_handle), state.inner(), doc_id);
     emit_document_changed(&app_handle, "soft_proof_changed", None, Some(doc_id));
+    let _ = app_handle.emit_to(
+        tauri::EventTarget::Any,
+        "content-changed",
+        serde_json::json!({ "doc_id": doc_id, "gen": content_gen, "kind": "soft_proof" }),
+    );
     log::info!(
         target: "soft_proof",
         "proof_set_config doc={} enabled={} elapsed_ms={:.2}",

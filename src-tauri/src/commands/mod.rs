@@ -121,6 +121,9 @@ pub struct DocumentChangedPayload {
     pub kind: String,
     pub layer_id: Option<u32>,
     pub doc_id: Option<u32>,
+    /// Live `document_gen` after the change (filter apply / invalidate). Additive.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc_gen: Option<u64>,
 }
 
 pub(crate) fn emit_document_changed(
@@ -129,10 +132,21 @@ pub(crate) fn emit_document_changed(
     layer_id: Option<u32>,
     doc_id: Option<u32>,
 ) {
+    emit_document_changed_with_gen(app_handle, kind, layer_id, doc_id, None);
+}
+
+pub(crate) fn emit_document_changed_with_gen(
+    app_handle: &AppHandle,
+    kind: &str,
+    layer_id: Option<u32>,
+    doc_id: Option<u32>,
+    doc_gen: Option<u64>,
+) {
     let payload = DocumentChangedPayload {
         kind: kind.to_string(),
         layer_id,
         doc_id,
+        doc_gen,
     };
     let _ = app_handle.emit_to(tauri::EventTarget::Any, "document-changed", payload);
 }

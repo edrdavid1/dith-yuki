@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::commands::{schedule_dirty_viewport_tiles, AppState};
 use crate::services::AppError;
+use tauri::Emitter;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PaletteDto {
@@ -181,20 +182,43 @@ fn invalidate_palette_changed(palette_id: engine_project::types::PaletteId, stat
         return;
     };
     let affected_layers = find_layers_referencing_palette(&snapshot.root, palette_id);
+    let doc = snapshot.id.0;
 
     for layer_id in &affected_layers {
         engine_tiles::invalidation::invalidate(
             &state.tiles.tile_cache,
             engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
-                doc: snapshot.id.0,
+                doc,
                 layer: layer_id.0,
             },
         );
     }
 
     if !affected_layers.is_empty() {
+        // Match filter refresh: drop ED residuals / frontier so the new palette
+        // is not painted over leftover error diffusion state.
+        state.tiles.error_residuals.evict_document(doc);
+        state.tiles.ed_frontier.clear();
+        // Drop KD/LUT entries so revision rebuild cannot race a stale Arc.
+        state.tiles.palette_cache.evict(doc, palette_id.0);
+        state.tiles.palette_lut_cache.evict(doc, palette_id.0);
         schedule_dirty_viewport_tiles(state);
     }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct ContentChangedPayload {
+    doc_id: u32,
+    gen: u64,
+    kind: &'static str,
+}
+
+fn emit_content_changed(app_handle: &AppHandle, doc_id: u32, gen: u64, kind: &'static str) {
+    let _ = app_handle.emit_to(
+        tauri::EventTarget::Any,
+        "content-changed",
+        ContentChangedPayload { doc_id, gen, kind },
+    );
 }
 
 pub fn palette_to_dto(palette: &engine_color::palette::Palette) -> PaletteDto {
@@ -695,9 +719,18 @@ impl PaletteService {
                         palette.colors.push(color);
                         palette.revision += 1;
                     }
+                    let _ = doc.bump_content_gen();
                 });
 
             invalidate_palette_changed(PaletteId::new(req.palette_id), &self.state);
+            let content_gen = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot()
+                .generations
+                .current_content_gen();
+            emit_content_changed(app_handle, doc_id, content_gen, "palette_add_color");
 
             let snapshot = self
                 .state
@@ -757,15 +790,17 @@ impl PaletteService {
                         palette.colors[req.index] = color;
                         palette.revision += 1;
                     }
+                    let _ = doc.bump_content_gen();
                 });
 
             invalidate_palette_changed(PaletteId::new(req.palette_id), &self.state);
-
             let snapshot = self
                 .state
                 .require_session(doc_id)?
                 .document_handle
                 .snapshot();
+            let content_gen = snapshot.generations.current_content_gen();
+            emit_content_changed(app_handle, doc_id, content_gen, "palette_color");
             let palette = snapshot
                 .palettes
                 .iter()
@@ -827,9 +862,18 @@ impl PaletteService {
                         palette.colors.remove(req.index);
                         palette.revision += 1;
                     }
+                    let _ = doc.bump_content_gen();
                 });
 
             invalidate_palette_changed(PaletteId::new(req.palette_id), &self.state);
+            let content_gen = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot()
+                .generations
+                .current_content_gen();
+            emit_content_changed(app_handle, doc_id, content_gen, "palette_remove_color");
 
             let snapshot = self
                 .state
@@ -901,6 +945,7 @@ impl PaletteService {
                         palette.colors.insert(req.to_index, color);
                         palette.revision += 1;
                     }
+                    let _ = doc.bump_content_gen();
                 });
 
             invalidate_palette_changed(PaletteId::new(req.palette_id), &self.state);
@@ -910,6 +955,12 @@ impl PaletteService {
                 .require_session(doc_id)?
                 .document_handle
                 .snapshot();
+            emit_content_changed(
+                app_handle,
+                doc_id,
+                snapshot.generations.current_content_gen(),
+                "palette_reorder",
+            );
             let palette = snapshot
                 .palettes
                 .iter()

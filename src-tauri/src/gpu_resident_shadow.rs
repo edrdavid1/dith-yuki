@@ -427,6 +427,7 @@ pub fn try_publish_gpu_preview_viewport(state: &AppState) -> std::collections::H
                     level: key.coord.level,
                     x: key.coord.x,
                     y: key.coord.y,
+                    gen: None,
                 };
                 let _ = handle.emit_to(tauri::EventTarget::Any, "tile-ready", payload);
             }

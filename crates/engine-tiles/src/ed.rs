@@ -320,6 +320,17 @@ impl EdFrontier {
         self.waiting_on.retain(|_, v| !v.is_empty());
     }
 
+    /// Force-remove a parked task (e.g. strip discarded by gen — waiters must
+    /// re-enter the scheduler; deps will not become fresh from an insert).
+    pub fn take_blocked(&self, key: TileKey) -> Option<RecomputeTask> {
+        let (_, entry) = self.blocked.remove(&key)?;
+        for mut w in self.waiting_on.iter_mut() {
+            w.value_mut().remove(&key);
+        }
+        self.waiting_on.retain(|_, v| !v.is_empty());
+        Some(entry.task)
+    }
+
     /// After `completed` was inserted fresh, return blocked tasks that are ready.
     pub fn wake(&self, completed: TileKey, cache: &TileCache) -> Vec<RecomputeTask> {
         let Some((_, waiters)) = self.waiting_on.remove(&completed) else {

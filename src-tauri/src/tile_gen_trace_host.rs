@@ -399,7 +399,8 @@ pub struct TraceCacheProbeRequest {
     pub layer_id: Option<u32>,
 }
 
-/// Read-only: is Composite tile present at required generation for visible-set holes.
+/// Read-only probe for Step A2: FE vs BE gen/dirty on Composite + Processed,
+/// plus doc/layer gen and palette revisions (palette is **not** in X-Tile-Gen).
 #[tauri::command]
 pub fn tile_gen_trace_cache_probe(
     state: State<'_, Arc<AppState>>,
@@ -417,39 +418,89 @@ pub fn tile_gen_trace_cache_probe(
         .generations
         .document_gen
         .load(std::sync::atomic::Ordering::Acquire);
-    let layer = req.layer_id.unwrap_or(0);
-    let key = engine_tiles::TileKey {
-        doc: doc_id,
-        layer,
-        coord: engine_tiles::TileCoord {
-            level: req.level,
-            x: req.x,
-            y: req.y,
-        },
-        stage: engine_tiles::CacheStage::Composite,
+    let composite_layer = 0u32;
+    let processed_layer = req.layer_id.unwrap_or(1);
+    let layer_gen = snap.generations.get_layer_gen(processed_layer);
+    let coord = engine_tiles::TileCoord {
+        level: req.level,
+        x: req.x,
+        y: req.y,
     };
-    match state.tiles.tile_cache.entries.get(&key) {
-        Some(entry) => {
-            let dirty = entry.dirty.load(std::sync::atomic::Ordering::Acquire);
-            let gen = entry.generation;
-            json!({
-                "ok": true,
-                "present": true,
-                "dirty": dirty,
-                "tile_gen": gen,
-                "doc_gen": doc_gen,
-                "fresh": !dirty && gen >= doc_gen,
-            })
+
+    let stage_probe = |layer: u32, stage: engine_tiles::CacheStage| -> Value {
+        let key = engine_tiles::TileKey {
+            doc: doc_id,
+            layer,
+            coord,
+            stage,
+        };
+        match state.tiles.tile_cache.entries.get(&key) {
+            Some(entry) => {
+                let dirty = entry.dirty.load(std::sync::atomic::Ordering::Acquire);
+                let gen = entry.generation;
+                let fp = {
+                    let data = &entry.tile.data;
+                    let mut h: u64 = 0xcbf29ce484222325;
+                    // Sparse fingerprint — enough to detect palette-driven pixel change
+                    // when doc_gen is unchanged.
+                    let step = (data.len() / 64).max(1);
+                    for i in (0..data.len()).step_by(step) {
+                        let bits = data[i].to_bits() as u64;
+                        h ^= bits.wrapping_mul(0x100000001b3);
+                        h = h.wrapping_mul(0x100000001b3);
+                    }
+                    h
+                };
+                json!({
+                    "present": true,
+                    "dirty": dirty,
+                    "tile_gen": gen,
+                    "fresh": !dirty && gen >= doc_gen,
+                    "fingerprint": format!("{fp:016x}"),
+                })
+            }
+            None => json!({
+                "present": false,
+                "dirty": true,
+                "tile_gen": null,
+                "fresh": false,
+                "fingerprint": null,
+            }),
         }
-        None => json!({
-            "ok": true,
-            "present": false,
-            "dirty": true,
-            "tile_gen": null,
-            "doc_gen": doc_gen,
-            "fresh": false,
-        }),
+    };
+
+    let mut palette_revs = Vec::new();
+    for p in &snap.palettes {
+        palette_revs.push(json!({ "id": p.id, "revision": p.revision }));
     }
+
+    let composite = stage_probe(composite_layer, engine_tiles::CacheStage::Composite);
+    let processed = stage_probe(processed_layer, engine_tiles::CacheStage::Processed);
+    // Backward-compatible top-level fields (Composite).
+    let (present, dirty, tile_gen, fresh) = (
+        composite.get("present").and_then(|v| v.as_bool()).unwrap_or(false),
+        composite.get("dirty").and_then(|v| v.as_bool()).unwrap_or(true),
+        composite.get("tile_gen").cloned().unwrap_or(json!(null)),
+        composite.get("fresh").and_then(|v| v.as_bool()).unwrap_or(false),
+    );
+    json!({
+        "ok": true,
+        "present": present,
+        "dirty": dirty,
+        "tile_gen": tile_gen,
+        "doc_gen": doc_gen,
+        "layer_gen": layer_gen,
+        "fresh": fresh,
+        "composite": composite,
+        "processed": processed,
+        "processed_layer": processed_layer,
+        "palette_revisions": palette_revs,
+        // Documented: X-Tile-Gen / FE maxKnownGen ignore palette + soft_proof.
+        "gen_includes_palette": true,
+        "gen_includes_soft_proof": true,
+        "content_gen": snap.generations.current_content_gen(),
+        "x_tile_gen_shape": "doc_gen.layer_gen.content_gen",
+    })
 }
 
 /// Trace-only: evict Processed + Composite for the active doc (keep Raw).
