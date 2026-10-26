@@ -2385,14 +2385,14 @@ fn run_z10_once(cold: bool) {
             .evict_stages(1, &[CacheStage::Processed, CacheStage::Composite]);
         state.tiles.error_residuals.evict_document(1);
         state.tiles.ed_frontier.clear();
-        tile_gen_trace::emit_simple("z10_cold_cache", json!({ "stages": ["Processed", "Composite"] }));
+        tile_gen_trace::emit_simple(
+            "z10_cold_cache",
+            json!({ "stages": ["Processed", "Composite"] }),
+        );
     }
 
     let visible = visible_level0(&state);
-    assert!(
-        !visible.is_empty(),
-        "Z10 expects non-empty L0 visible set"
-    );
+    assert!(!visible.is_empty(), "Z10 expects non-empty L0 visible set");
     tile_gen_trace::emit_simple(
         "z10_viewport",
         json!({
@@ -2608,14 +2608,23 @@ fn run_z10_once(cold: bool) {
                         .or_else(|| ev.details.get("reason"))
                         .cloned()
                         .unwrap_or(json!(null));
-                    let was_pending = ev.details.get("was_pending").cloned().unwrap_or(json!(null));
-                    chain.push(format!("ready@{:?} via={via} was_pending={was_pending}", ev.gen));
+                    let was_pending = ev
+                        .details
+                        .get("was_pending")
+                        .cloned()
+                        .unwrap_or(json!(null));
+                    chain.push(format!(
+                        "ready@{:?} via={via} was_pending={was_pending}",
+                        ev.gen
+                    ));
                 }
                 "pending_tile_registered" => {
                     pending_seen = true;
                     chain.push(format!("pending_reg@{:?}", ev.gen));
                 }
-                "wake_decision" | "wake_needs_refetch" | "wake_collapsed_retry"
+                "wake_decision"
+                | "wake_needs_refetch"
+                | "wake_collapsed_retry"
                 | "wake_retry_returned_stale" => {
                     last_wake = Some(ev.event.clone());
                     chain.push(format!("{}@{:?}", ev.event, ev.gen));
@@ -2624,12 +2633,7 @@ fn run_z10_once(cold: bool) {
                     chain.push(format!("{}@{:?}", ev.event, ev.gen));
                 }
                 "composite_start" | "composite_end" => {
-                    chain.push(format!(
-                        "{}@{:?} details={}",
-                        ev.event,
-                        ev.gen,
-                        ev.details
-                    ));
+                    chain.push(format!("{}@{:?} details={}", ev.event, ev.gen, ev.details));
                 }
                 "tile_serve_response" => {
                     chain.push(format!(
@@ -2795,7 +2799,10 @@ fn run_z10_once(cold: bool) {
     }
     teardown(&state, &stop, joins);
     // Observation-only: do not fail the build on stuck tiles (Step A).
-    assert!(quiet || stuck.len() < visible.len(), "expected some progress");
+    assert!(
+        quiet || stuck.len() < visible.len(),
+        "expected some progress"
+    );
 }
 
 #[test]
@@ -3146,7 +3153,10 @@ fn run_z11_once(variant: Z11Variant, cold: bool) {
         };
         fp_before.insert(
             *id,
-            (tile_fingerprint(&state, ckey), tile_fingerprint(&state, pkey)),
+            (
+                tile_fingerprint(&state, ckey),
+                tile_fingerprint(&state, pkey),
+            ),
         );
         if let Some(m) = tile_mean_rgb(&state, pkey) {
             mean_before.insert(*id, m);
@@ -3278,19 +3288,15 @@ fn run_z11_once(variant: Z11Variant, cold: bool) {
         );
     }
 
-    let pal0 = snap1
-        .palettes
-        .iter()
-        .find(|p| p.id == palette_id)
-        .map(|p| {
-            json!({
-                "revision": p.revision,
-                "c0": [p.colors[0].r, p.colors[0].g, p.colors[0].b],
-                "c1": [p.colors.get(1).map(|c| c.r).unwrap_or(0.0),
-                       p.colors.get(1).map(|c| c.g).unwrap_or(0.0),
-                       p.colors.get(1).map(|c| c.b).unwrap_or(0.0)],
-            })
-        });
+    let pal0 = snap1.palettes.iter().find(|p| p.id == palette_id).map(|p| {
+        json!({
+            "revision": p.revision,
+            "c0": [p.colors[0].r, p.colors[0].g, p.colors[0].b],
+            "c1": [p.colors.get(1).map(|c| c.r).unwrap_or(0.0),
+                   p.colors.get(1).map(|c| c.g).unwrap_or(0.0),
+                   p.colors.get(1).map(|c| c.b).unwrap_or(0.0)],
+        })
+    });
     let filter_pal = snap1.root.iter().find_map(|n| match n {
         LayerNode::Leaf(l) if l.id.0 == 1 => l.filters.first().and_then(|f| match &f.params {
             FilterParams::DitherV2(p) => Some(json!({
@@ -3414,10 +3420,7 @@ fn run_z11_once(variant: Z11Variant, cold: bool) {
         }),
     );
 
-    let md = out_dir.join(format!(
-        "z11_{}_{cache}_{profile}.md",
-        variant.label()
-    ));
+    let md = out_dir.join(format!("z11_{}_{cache}_{profile}.md", variant.label()));
     let mut f = std::fs::File::create(&md).expect("z11 md");
     writeln!(
         f,

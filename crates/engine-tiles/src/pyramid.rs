@@ -21,9 +21,7 @@
 //! - Applied per-channel (RGBA)
 //! - Deterministic and reproducible
 
-use crate::{
-    tile_fresh, CacheStage, PixelTile, TileCache, TileCoord, TileKey, HALO, TILE_SIZE,
-};
+use crate::{tile_fresh, CacheStage, PixelTile, TileCache, TileCoord, TileKey, HALO, TILE_SIZE};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 

@@ -531,11 +531,13 @@ fn harness_worker_loop(
                     task.key.doc,
                     task.key.coord,
                 );
-                let deps_pending = deps.iter().any(|d| {
-                    !engine_tiles::tile_fresh(&state.tiles.tile_cache, *d)
-                });
+                let deps_pending = deps
+                    .iter()
+                    .any(|d| !engine_tiles::tile_fresh(&state.tiles.tile_cache, *d));
                 if deps_pending && !deps.is_empty() {
-                    counters.park_composite_early.fetch_add(1, Ordering::Relaxed);
+                    counters
+                        .park_composite_early
+                        .fetch_add(1, Ordering::Relaxed);
                     if let Some(ready) =
                         state
                             .tiles
@@ -673,9 +675,7 @@ fn setup(
         let zoom = (cw / size.w as f64).min(ch / size.h as f64).min(1.0);
         (zoom, 0.0, 0.0, cw, ch)
     } else {
-        let zoom = (1200.0 / size.w as f64)
-            .min(800.0 / size.h as f64)
-            .min(1.0);
+        let zoom = (1200.0 / size.w as f64).min(800.0 / size.h as f64).min(1.0);
         (zoom, 0.0, 0.0, 1200.0, 800.0)
     };
     let _ = ViewportService::new(Arc::clone(&state)).set_viewport(zoom, ox, oy, cw, ch);
@@ -784,10 +784,7 @@ fn interaction_add(
         DitherModeV2::BlockedFs | DitherModeV2::BlueNoise | DitherModeV2::FloydSteinberg
     );
     if needs_ed_reset {
-        state
-            .tiles
-            .error_residuals
-            .evict_layer(1, LayerId::new(1));
+        state.tiles.error_residuals.evict_layer(1, LayerId::new(1));
         state.tiles.block_representatives.clear_dithered();
         state.tiles.clear_strip_gates();
         state.tiles.full_document.invalidate_layer(1, 1);
@@ -1022,11 +1019,7 @@ fn interaction_palette_update(
     })
 }
 
-fn run_sequence(
-    mode: DitherModeV2,
-    label: &str,
-    edits: &[(u8, u16)],
-) -> serde_json::Value {
+fn run_sequence(mode: DitherModeV2, label: &str, edits: &[(u8, u16)]) -> serde_json::Value {
     let size = size_from_env();
     let (state, stop, counters, joins) = setup(size);
     let timeout = Duration::from_secs(30);
@@ -1216,10 +1209,7 @@ fn second_interaction_matrix() {
 
     for (mode, label, edits) in scenarios {
         let row = run_sequence(mode, label, &edits);
-        report["scenarios"]
-            .as_array_mut()
-            .unwrap()
-            .push(row);
+        report["scenarios"].as_array_mut().unwrap().push(row);
     }
 
     let path = out_dir().join(format!("matrix_{}.json", profile_label()));
@@ -1265,7 +1255,11 @@ fn second_interaction_matrix() {
         }
     }
     let _ = std::fs::write(&md_path, md);
-    eprintln!("[second_ix] wrote {} and {}", path.display(), md_path.display());
+    eprintln!(
+        "[second_ix] wrote {} and {}",
+        path.display(),
+        md_path.display()
+    );
 }
 
 #[test]
@@ -1369,7 +1363,10 @@ fn second_interaction_fit_l3_step2() {
         "interactions": rows,
     });
     let path = out_dir().join(format!("fit_l3_step2_{}.json", profile_label()));
-    let _ = std::fs::write(&path, serde_json::to_vec_pretty(&report).unwrap_or_default());
+    let _ = std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&report).unwrap_or_default(),
+    );
     eprintln!("[fit_l3] wrote {}", path.display());
 }
 
@@ -1418,20 +1415,24 @@ fn second_interaction_churn_ab() {
     for i in 1..=3 {
         std::env::remove_var("DITHER_EXPERIMENT_PARK_COMPOSITE");
         let r = one_run(&format!("A_baseline_{i}"));
-        eprintln!("[churn_ab] A#{i} fresh2={:?} busy={:?} requeue={:?}",
+        eprintln!(
+            "[churn_ab] A#{i} fresh2={:?} busy={:?} requeue={:?}",
             r["update2"]["first_fresh_vis_ms"],
             r["update2"]["busy_hold_ms"],
-            r["update2"]["worker_counters"]["requeue_input_not_ready"]);
+            r["update2"]["worker_counters"]["requeue_input_not_ready"]
+        );
         runs.push(r);
     }
     for i in 1..=3 {
         std::env::set_var("DITHER_EXPERIMENT_PARK_COMPOSITE", "1");
         let r = one_run(&format!("B_park_{i}"));
-        eprintln!("[churn_ab] B#{i} fresh2={:?} busy={:?} requeue={:?} park_early={:?}",
+        eprintln!(
+            "[churn_ab] B#{i} fresh2={:?} busy={:?} requeue={:?} park_early={:?}",
             r["update2"]["first_fresh_vis_ms"],
             r["update2"]["busy_hold_ms"],
             r["update2"]["worker_counters"]["requeue_input_not_ready"],
-            r["update2"]["worker_counters"]["park_composite_early"]);
+            r["update2"]["worker_counters"]["park_composite_early"]
+        );
         runs.push(r);
     }
     std::env::remove_var("DITHER_EXPERIMENT_PARK_COMPOSITE");
@@ -1597,10 +1598,7 @@ fn apply_dither_and_quiet(
         &state.tiles.tile_cache,
         engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { doc: 1, layer: 1 },
     );
-    state
-        .tiles
-        .error_residuals
-        .evict_layer(1, LayerId::new(1));
+    state.tiles.error_residuals.evict_layer(1, LayerId::new(1));
     state.tiles.block_representatives.clear_dithered();
     state.tiles.clear_strip_gates();
     state.tiles.full_document.invalidate_layer(1, 1);
@@ -1683,7 +1681,11 @@ fn golden_hashes_baseline_step0() {
             std::env::remove_var("DITHER_SECOND_IX_FIT");
         }
         let (state, stop, counters, joins) = setup(*size);
-        assert!(wait_silence(&state, Duration::from_secs(120)), "pre-silence {}", size.label);
+        assert!(
+            wait_silence(&state, Duration::from_secs(120)),
+            "pre-silence {}",
+            size.label
+        );
 
         for (mode, mode_label) in modes {
             let mode_list = if quick {
@@ -1733,7 +1735,9 @@ fn golden_hashes_baseline_step0() {
                     w[0]["processed_l0"] == w[1]["processed_l0"]
                         && w[0]["composite_visible"] == w[1]["composite_visible"]
                         && w[0]["complete"] == w[1]["complete"]
-                }) && run_hashes.iter().all(|h| h["complete"].as_bool().unwrap_or(false));
+                }) && run_hashes
+                    .iter()
+                    .all(|h| h["complete"].as_bool().unwrap_or(false));
                 if !stable {
                     report["determinism_ok"] = json!(false);
                     report["mismatches"].as_array_mut().unwrap().push(json!({
@@ -1761,7 +1765,10 @@ fn golden_hashes_baseline_step0() {
     }
 
     let path = out_dir().join("golden_hashes_baseline.json");
-    let _ = std::fs::write(&path, serde_json::to_vec_pretty(&report).unwrap_or_default());
+    let _ = std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&report).unwrap_or_default(),
+    );
     eprintln!(
         "[golden] wrote {} determinism_ok={}",
         path.display(),
@@ -1809,14 +1816,19 @@ fn fit_l3_metrics_baseline_step0() {
                 "dequeue": r2["worker_counters"]["dequeue"],
             },
         });
-        eprintln!("[metrics_baseline] run={i} fresh2={:?} busy={:?} requeue={:?}",
+        eprintln!(
+            "[metrics_baseline] run={i} fresh2={:?} busy={:?} requeue={:?}",
             row["update2"]["first_fresh_ms"],
             row["update2"]["busy_hold_ms"],
-            row["update2"]["requeue_inr"]);
+            row["update2"]["requeue_inr"]
+        );
         runs.push(row);
     }
     let path = out_dir().join(format!("metrics_baseline_fit_l3_{}.json", profile_label()));
-    let _ = std::fs::write(&path, serde_json::to_vec_pretty(&json!({ "runs": runs })).unwrap_or_default());
+    let _ = std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&json!({ "runs": runs })).unwrap_or_default(),
+    );
     eprintln!("[metrics_baseline] wrote {}", path.display());
 }
 
@@ -1878,7 +1890,10 @@ fn golden_diagnose_composite_nondeterminism() {
         for run_i in 1..=3 {
             let ok = apply_dither_and_quiet(&state, &counters, mode.clone(), 1, 16);
             let h = golden_hashes_now(&state);
-            eprintln!("[diag] matrix_ps1 run={run_i} ok={ok} complete={} comp={}", h["complete"], h["composite_visible"]);
+            eprintln!(
+                "[diag] matrix_ps1 run={run_i} ok={ok} complete={} comp={}",
+                h["complete"], h["composite_visible"]
+            );
         }
         for run_i in 1..=3 {
             let ok = apply_dither_and_quiet(&state, &counters, mode.clone(), 8, 16);

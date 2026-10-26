@@ -71,10 +71,7 @@ fn out_json_name(versions_on: bool) -> String {
 
 fn parse_worker_sets() -> Vec<usize> {
     if let Ok(s) = std::env::var("DITHER_STEP4_WORKERS") {
-        let v: Vec<usize> = s
-            .split(',')
-            .filter_map(|p| p.trim().parse().ok())
-            .collect();
+        let v: Vec<usize> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
         if !v.is_empty() {
             return v;
         }
@@ -196,10 +193,7 @@ fn wave_quiet(state: &AppState, timeout: Duration) -> bool {
             last_log = Instant::now();
             // Missed wakes: park deps already fresh but frontier never notified.
             if blocked > 0 && queued == 0 && inflight == 0 {
-                let ready = state
-                    .tiles
-                    .ed_frontier
-                    .sweep_ready(&state.tiles.tile_cache);
+                let ready = state.tiles.ed_frontier.sweep_ready(&state.tiles.tile_cache);
                 for task in ready {
                     state.tiles.scheduler.enqueue_or_bump(task);
                 }
@@ -237,8 +231,12 @@ fn wave_quiet(state: &AppState, timeout: Duration) -> bool {
 
 fn raw_doc(w: u32, h: u32) -> Document {
     let mut doc = Document::new(DocumentId::new(1), w, h);
-    doc.root
-        .push(LayerNode::Leaf(Layer::new(LayerId::new(1), LayerKind::Raster, w, h)));
+    doc.root.push(LayerNode::Leaf(Layer::new(
+        LayerId::new(1),
+        LayerKind::Raster,
+        w,
+        h,
+    )));
     doc
 }
 
@@ -385,7 +383,10 @@ fn worker_loop(state: Arc<AppState>, stop: Arc<AtomicBool>) {
     }
 }
 
-fn setup(size: SizeSpec, workers: usize) -> (Arc<AppState>, Arc<AtomicBool>, Vec<thread::JoinHandle<()>>) {
+fn setup(
+    size: SizeSpec,
+    workers: usize,
+) -> (Arc<AppState>, Arc<AtomicBool>, Vec<thread::JoinHandle<()>>) {
     let state = Arc::new(AppState::empty_process(None, 1024 * 1024 * 1024, true));
     state.spawn_session(raw_doc(size.w, size.h));
     fill_raw(&state, size.w, size.h);
@@ -423,12 +424,7 @@ fn teardown(state: &AppState, stop: &AtomicBool, joins: Vec<thread::JoinHandle<(
     }
 }
 
-fn apply(
-    state: &AppState,
-    mode: DitherModeV2,
-    ps: u8,
-    lv: u16,
-) -> bool {
+fn apply(state: &AppState, mode: DitherModeV2, ps: u8, lv: u16) -> bool {
     state.must_active().document_handle.mutate(|doc| {
         if let LayerNode::Leaf(layer) = &mut doc.root[0] {
             layer.filters.clear();
@@ -456,10 +452,7 @@ fn apply(
         &state.tiles.tile_cache,
         engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { doc: 1, layer: 1 },
     );
-    state
-        .tiles
-        .error_residuals
-        .evict_layer(1, LayerId::new(1));
+    state.tiles.error_residuals.evict_layer(1, LayerId::new(1));
     state.tiles.block_representatives.clear_dithered();
     state.tiles.clear_strip_gates();
     state.tiles.full_document.invalidate_layer(1, 1);
@@ -774,8 +767,15 @@ fn step4_pyramid_stress_trap() {
 
     let path = out_dir().join(out_json_name(versions_on));
     let _ = std::fs::create_dir_all(out_dir());
-    let _ = std::fs::write(&path, serde_json::to_vec_pretty(&report).unwrap_or_default());
-    eprintln!("[step4] wrote {} any_discrepancy={}", path.display(), report["any_discrepancy"]);
+    let _ = std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&report).unwrap_or_default(),
+    );
+    eprintln!(
+        "[step4] wrote {} any_discrepancy={}",
+        path.display(),
+        report["any_discrepancy"]
+    );
 
     if !versions_on {
         if soft_trap() {
@@ -921,10 +921,7 @@ fn step4_stale_midwave_no_publish() {
         sync_epoch(&state);
         engine_tiles::invalidation::invalidate(
             &state.tiles.tile_cache,
-            engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
-                doc: 1,
-                layer: 1,
-            },
+            engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { doc: 1, layer: 1 },
         );
         state.tiles.error_residuals.evict_layer(1, LayerId::new(1));
         state.tiles.block_representatives.clear_dithered();
@@ -997,8 +994,7 @@ fn step4_golden_hashes_fixed() {
             let dig = pyramid_digests(&state);
             eprintln!(
                 "[step4_golden] ps={ps} lv={lv} run={run_i} L0={} L1={}",
-                dig["composite"]["L0"]["hash"],
-                dig["composite"]["L1"]["hash"]
+                dig["composite"]["L0"]["hash"], dig["composite"]["L1"]["hash"]
             );
             run_hashes.push(dig);
         }
@@ -1020,7 +1016,10 @@ fn step4_golden_hashes_fixed() {
     teardown(&state, &stop, joins);
     let path = out_dir().join("golden_hashes_fixed.json");
     let _ = std::fs::create_dir_all(out_dir());
-    let _ = std::fs::write(&path, serde_json::to_vec_pretty(&report).unwrap_or_default());
+    let _ = std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&report).unwrap_or_default(),
+    );
     eprintln!(
         "[step4_golden] wrote {} determinism_ok={}",
         path.display(),
@@ -1119,7 +1118,10 @@ fn step4_pyramid_stress_6k() {
         "step4_stress_6k_trap.json"
     });
     let _ = std::fs::create_dir_all(out_dir());
-    let _ = std::fs::write(&path, serde_json::to_vec_pretty(&report).unwrap_or_default());
+    let _ = std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&report).unwrap_or_default(),
+    );
     eprintln!(
         "[step4_6k] wrote {} rate={rate:.3} miss={mismatch}/{ok_n}",
         path.display()
@@ -1211,7 +1213,10 @@ fn step4_perf_fit_l3() {
     });
     let path = out_dir().join(format!("step4_perf_fit_l3_{tag}.json"));
     let _ = std::fs::create_dir_all(out_dir());
-    let _ = std::fs::write(&path, serde_json::to_vec_pretty(&report).unwrap_or_default());
+    let _ = std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&report).unwrap_or_default(),
+    );
     eprintln!("[step4_perf] wrote {}", path.display());
 }
 
@@ -1269,7 +1274,12 @@ fn step4_fs_fit_l3_levels() {
         assert!(apply(&st_ref, mode.clone(), target.0, target.1));
         let reference = pyramid_digests(&st_ref);
         let vp_level = reference["viewport_level"].as_u64().unwrap_or(0);
-        eprintln!("[step4_fitL3] scen={scen} viewport_level={vp_level} ref_keys={:?}", reference["composite"].as_object().map(|o| o.keys().collect::<Vec<_>>()));
+        eprintln!(
+            "[step4_fitL3] scen={scen} viewport_level={vp_level} ref_keys={:?}",
+            reference["composite"]
+                .as_object()
+                .map(|o| o.keys().collect::<Vec<_>>())
+        );
         teardown(&st_ref, &stop_ref, joins_ref);
 
         let (state, stop, joins) = make(8);
@@ -1340,7 +1350,10 @@ fn step4_fs_fit_l3_levels() {
         "step4_fs_fit_l3_trap.json"
     });
     let _ = std::fs::create_dir_all(out_dir());
-    let _ = std::fs::write(&path, serde_json::to_vec_pretty(&report).unwrap_or_default());
+    let _ = std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&report).unwrap_or_default(),
+    );
     eprintln!(
         "[step4_fitL3] wrote {} any_discrepancy={}",
         path.display(),

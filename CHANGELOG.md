@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## 2.0.6-beta
+
+### Fixed
+
+- Palette / soft-proof preview no longer sticks on pre-change pixels: `content_gen`
+  drives FE freshness, stale tile HTTP stamps the **body** generation (not forged
+  live content_gen), and GPU resident slots are evicted when only content changes.
+- Composite pyramid parents no longer reuse a clean gen stamp after equal-gen
+  L0 Composite/Processed replace (input-version manifests; kill-switch
+  `DITHER_COMPOSITE_INPUT_VERSIONS=0`).
+- **Rendering…** full overlay only before the first preview frame; later busy
+  waves use the recomputing chip.
+
+### Added
+
+- Shared portal Notification toast (busy / action / error) and welcome `opening`
+  state that ignores drop/open while a file is loading.
+
+### Compatibility
+
+- `.dyproj` / `.dyuki` unchanged.
+- Input-version tracking is on by default; set `DITHER_COMPOSITE_INPUT_VERSIONS=0`
+  only for measurement.
+
 ## 2.0.5-beta
 
 ### Fixed

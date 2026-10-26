@@ -432,9 +432,7 @@ pub(crate) fn schedule_dirty_viewport_tiles_with_reason(state: &AppState, reason
         };
 
         let needs = match state.tiles.tile_cache.entries.get(&key) {
-            Some(entry) => {
-                entry.dirty.load(Ordering::Acquire) || entry.generation < content_gen
-            }
+            Some(entry) => entry.dirty.load(Ordering::Acquire) || entry.generation < content_gen,
             None => true,
         };
 
