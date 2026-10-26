@@ -38,19 +38,23 @@ export function useWelcomeScreen() {
   );
 
   const onNewProject = useCallback(() => {
+    if (doc.loading) return;
     setNewProjectOpen(true);
-  }, []);
+  }, [doc.loading]);
 
   const onOpenImage = useCallback(() => {
+    if (doc.loading) return;
     void runAndRefresh(doc.openImage);
-  }, [doc.openImage, runAndRefresh]);
+  }, [doc.loading, doc.openImage, runAndRefresh]);
 
   const onOpenProject = useCallback(() => {
+    if (doc.loading) return;
     void runAndRefresh(doc.openProject);
-  }, [doc.openProject, runAndRefresh]);
+  }, [doc.loading, doc.openProject, runAndRefresh]);
 
   const onOpenRecent = useCallback(
     (entry: RecentFileEntry) => {
+      if (doc.loading) return;
       void runAndRefresh(async () => {
         await openRecentByKind(entry, {
           openImageAt: doc.openImageAt,
@@ -58,7 +62,7 @@ export function useWelcomeScreen() {
         });
       });
     },
-    [doc.openImageAt, doc.openProjectAt, runAndRefresh]
+    [doc.loading, doc.openImageAt, doc.openProjectAt, runAndRefresh]
   );
 
   const onClearRecent = useCallback(() => {
@@ -67,7 +71,7 @@ export function useWelcomeScreen() {
 
   const onOpenDroppedPaths = useCallback(
     (paths: string[]) => {
-      if (paths.length === 0) return;
+      if (paths.length === 0 || doc.loading) return;
       void runAndRefresh(async () => {
         await openDroppedPaths(paths, {
           openImageAt: doc.openImageAt,
@@ -75,7 +79,7 @@ export function useWelcomeScreen() {
         });
       });
     },
-    [doc.openImageAt, doc.openProjectAt, runAndRefresh]
+    [doc.loading, doc.openImageAt, doc.openProjectAt, runAndRefresh]
   );
 
   const onSaveImage = useCallback(() => {

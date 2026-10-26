@@ -1,4 +1,4 @@
-/* ─── Notification ─────────────────────────────────────────────────────────── */
+/* ─── Notification (shared shell: Restore / errors / busy) ───────────────── */
 
 .notification {
   position: fixed;
@@ -11,19 +11,15 @@
   gap: 10px;
   z-index: 1000;
   border: var(--border);
+  background: var(--color-white);
+  color: var(--color-black);
   font-family: var(--font-family);
   font-size: 12px;
   animation: fadeIn 0.2s ease;
 }
 
-.notification-error {
-  background: var(--color-white);
-  color: var(--color-black);
-}
-
-.notification-success {
-  background: var(--color-white);
-  color: var(--color-black);
+.notification-busy {
+  pointer-events: none;
 }
 
 .notification-text {
@@ -58,21 +54,15 @@
   font-family: var(--font-family);
 }
 
-.notification-saving {
-  background: var(--color-black);
-  color: var(--color-white);
-  pointer-events: none;
-}
-
-.notification-saving-dot {
+.notification-busy-dot {
   width: 8px;
   height: 8px;
   flex-shrink: 0;
   background: var(--color-primary);
-  animation: savingPulse 0.9s steps(2, end) infinite;
+  animation: busyPulse 0.9s steps(2, end) infinite;
 }
 
-@keyframes savingPulse {
+@keyframes busyPulse {
   0%,
   49% {
     opacity: 1;
@@ -84,6 +74,12 @@
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
-  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
 }

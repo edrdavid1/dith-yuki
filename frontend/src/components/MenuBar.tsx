@@ -8,6 +8,8 @@ const cn = bind(styles);
 
 interface MenuBarProps {
   hasDocument: boolean;
+  /** True while a file open/create is in flight — disable open actions. */
+  opening?: boolean;
   canUndo?: boolean;
   canRedo?: boolean;
   recentEntries?: RecentFileEntry[];
@@ -60,6 +62,7 @@ const DIRECT_OPEN_MENUS: ReadonlySet<MenuId> = new Set([
 
 function MenuBar({
   hasDocument,
+  opening = false,
   canUndo = false,
   canRedo = false,
   recentEntries = [],
@@ -163,6 +166,7 @@ function MenuBar({
             <button
               className={cn("menubar-dropdown-item")}
               role="menuitem"
+              disabled={opening}
               onClick={() => handleAction(onNewProject ?? (() => {}))}
             >
               <span>New Project…</span>
@@ -171,6 +175,7 @@ function MenuBar({
             <button
               className={cn("menubar-dropdown-item")}
               role="menuitem"
+              disabled={opening}
               onClick={() => handleAction(onOpenImage)}
             >
               <span>Open Image</span>
@@ -179,6 +184,7 @@ function MenuBar({
             <button
               className={cn("menubar-dropdown-item")}
               role="menuitem"
+              disabled={opening}
               onClick={() => handleAction(onOpenProject)}
             >
               <span>Open Project…</span>
@@ -191,6 +197,7 @@ function MenuBar({
                   role="menuitem"
                   aria-haspopup="true"
                   type="button"
+                  disabled={opening}
                 >
                   Open Recent
                 </button>
@@ -201,6 +208,7 @@ function MenuBar({
                       className={cn('menubar-dropdown-item')}
                       role="menuitem"
                       type="button"
+                      disabled={opening}
                       onClick={() => handleAction(() => onOpenRecent?.(entry))}
                     >
                       {entry.display_name}

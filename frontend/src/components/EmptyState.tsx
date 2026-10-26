@@ -16,6 +16,8 @@ const WELCOME_RECENT_LIMIT = 6;
 export interface EmptyStateProps {
   className?: string;
   fill?: boolean;
+  /** First file is loading: replace welcome controls with a status and ignore input. */
+  opening?: boolean;
   recentEntries?: RecentFileEntry[];
   onNewProject?: () => void;
   onOpenImage?: () => void;
@@ -39,6 +41,7 @@ function physicalPointOverElement(
 function EmptyState({
   className,
   fill = false,
+  opening = false,
   recentEntries = [],
   onOpenImage,
   onOpenProject,
@@ -57,7 +60,7 @@ function EmptyState({
   );
 
   useEffect(() => {
-    if (!onOpenDroppedPaths) return;
+    if (!onOpenDroppedPaths || opening) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
 
@@ -101,7 +104,7 @@ function EmptyState({
       cancelled = true;
       unlisten?.();
     };
-  }, [acceptPaths, onOpenDroppedPaths]);
+  }, [acceptPaths, onOpenDroppedPaths, opening]);
 
   return (
     <div
@@ -110,25 +113,35 @@ function EmptyState({
         'empty-state',
         fill && 'empty-state-fill',
         dropActive && 'empty-state-drop-active',
+        opening && 'empty-state-opening',
         className,
       )}
       style={welcomeBackgroundStyle(welcomeBackground)}
       data-testid="welcome-drop-zone"
-      aria-label="Drop an image or project to open"
+      aria-label={opening ? 'Opening' : 'Drop an image or project to open'}
+      aria-busy={opening || undefined}
     >
       <div className={cn('welcome-content')}>
         <div className={cn('welcome-actions')}>
-          <button type="button" className={cn('welcome-action')} onClick={onOpenImage}>
-            Open image
-          </button>
-          <button type="button" className={cn('welcome-action')} onClick={onOpenProject}>
-            Open project
-          </button>
+          {opening ? (
+            <p className={cn('welcome-opening')} role="status">
+              Opening…
+            </p>
+          ) : (
+            <>
+              <button type="button" className={cn('welcome-action')} onClick={onOpenImage}>
+                Open image
+              </button>
+              <button type="button" className={cn('welcome-action')} onClick={onOpenProject}>
+                Open project
+              </button>
+            </>
+          )}
         </div>
 
         {/* Fixed-height slot = full Recent (6 rows) so actions don't jump when list clears/hides. */}
         <div className={cn('welcome-recent-slot')}>
-          {visibleRecent.length > 0 && (
+          {!opening && visibleRecent.length > 0 && (
             <section className={cn('welcome-recent')} data-testid="welcome-recent" aria-label="Recent files">
               <h2
                 className={cn('welcome-recent-heading')}
