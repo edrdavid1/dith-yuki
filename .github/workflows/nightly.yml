@@ -33,6 +33,12 @@ jobs:
           --release
           -- --ignored --nocapture
 
+      - name: Z9 ×50 soak (sequential)
+        run: >
+          cargo test -p dither --release
+          z9_rapid_param_50_series
+          -- --ignored --nocapture --test-threads=1
+
       - name: srgb_to_linear LUT vs reference (all 256)
         run: >
           cargo test -p engine-color --lib

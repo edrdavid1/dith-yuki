@@ -1,0 +1,355 @@
+{
+  "configs": [
+    {
+      "hash": {
+        "composite": {
+          "L0": {
+            "hash": "a98c784a5c98cc1650b3989e0993c8b9490c07c38fd6f01788c98a0911f08fa8",
+            "stale": 0,
+            "tiles": 192
+          },
+          "L1": {
+            "hash": "c8e56d70e07ebc2ca18bfd4ada60afdd72fa37c7462a5ff79bfb5c1100e4cc32",
+            "stale": 0,
+            "tiles": 48
+          }
+        },
+        "content_gen": 3,
+        "processed_l0": {
+          "hash": "339107d35858d866c3956cbc1cd3099adabfa8b8c8471ac2130639f03dae592e",
+          "tiles": 192
+        },
+        "viewport_level": 1
+      },
+      "levels": 16,
+      "pixel_size": 1,
+      "runs": [
+        {
+          "composite": {
+            "L0": {
+              "hash": "a98c784a5c98cc1650b3989e0993c8b9490c07c38fd6f01788c98a0911f08fa8",
+              "stale": 0,
+              "tiles": 192
+            },
+            "L1": {
+              "hash": "c8e56d70e07ebc2ca18bfd4ada60afdd72fa37c7462a5ff79bfb5c1100e4cc32",
+              "stale": 0,
+              "tiles": 48
+            }
+          },
+          "content_gen": 1,
+          "processed_l0": {
+            "hash": "339107d35858d866c3956cbc1cd3099adabfa8b8c8471ac2130639f03dae592e",
+            "tiles": 192
+          },
+          "viewport_level": 1
+        },
+        {
+          "composite": {
+            "L0": {
+              "hash": "a98c784a5c98cc1650b3989e0993c8b9490c07c38fd6f01788c98a0911f08fa8",
+              "stale": 0,
+              "tiles": 192
+            },
+            "L1": {
+              "hash": "c8e56d70e07ebc2ca18bfd4ada60afdd72fa37c7462a5ff79bfb5c1100e4cc32",
+              "stale": 0,
+              "tiles": 48
+            }
+          },
+          "content_gen": 2,
+          "processed_l0": {
+            "hash": "339107d35858d866c3956cbc1cd3099adabfa8b8c8471ac2130639f03dae592e",
+            "tiles": 192
+          },
+          "viewport_level": 1
+        },
+        {
+          "composite": {
+            "L0": {
+              "hash": "a98c784a5c98cc1650b3989e0993c8b9490c07c38fd6f01788c98a0911f08fa8",
+              "stale": 0,
+              "tiles": 192
+            },
+            "L1": {
+              "hash": "c8e56d70e07ebc2ca18bfd4ada60afdd72fa37c7462a5ff79bfb5c1100e4cc32",
+              "stale": 0,
+              "tiles": 48
+            }
+          },
+          "content_gen": 3,
+          "processed_l0": {
+            "hash": "339107d35858d866c3956cbc1cd3099adabfa8b8c8471ac2130639f03dae592e",
+            "tiles": 192
+          },
+          "viewport_level": 1
+        }
+      ],
+      "stable": true
+    },
+    {
+      "hash": {
+        "composite": {
+          "L0": {
+            "hash": "fda085ce29e6af9afeafd069522f0acd38ad0f826c462d025d30a1745c026908",
+            "stale": 0,
+            "tiles": 192
+          },
+          "L1": {
+            "hash": "dea8048f64287b04d8190742e90890c37f484e19d536ce7357e5ffe06c2995fe",
+            "stale": 0,
+            "tiles": 48
+          }
+        },
+        "content_gen": 6,
+        "processed_l0": {
+          "hash": "8161b3dbd78219fc3f0a94c4303969948d3f04cec50d6540294cbe7ba59717ac",
+          "tiles": 192
+        },
+        "viewport_level": 1
+      },
+      "levels": 16,
+      "pixel_size": 8,
+      "runs": [
+        {
+          "composite": {
+            "L0": {
+              "hash": "fda085ce29e6af9afeafd069522f0acd38ad0f826c462d025d30a1745c026908",
+              "stale": 0,
+              "tiles": 192
+            },
+            "L1": {
+              "hash": "dea8048f64287b04d8190742e90890c37f484e19d536ce7357e5ffe06c2995fe",
+              "stale": 0,
+              "tiles": 48
+            }
+          },
+          "content_gen": 4,
+          "processed_l0": {
+            "hash": "8161b3dbd78219fc3f0a94c4303969948d3f04cec50d6540294cbe7ba59717ac",
+            "tiles": 192
+          },
+          "viewport_level": 1
+        },
+        {
+          "composite": {
+            "L0": {
+              "hash": "fda085ce29e6af9afeafd069522f0acd38ad0f826c462d025d30a1745c026908",
+              "stale": 0,
+              "tiles": 192
+            },
+            "L1": {
+              "hash": "dea8048f64287b04d8190742e90890c37f484e19d536ce7357e5ffe06c2995fe",
+              "stale": 0,
+              "tiles": 48
+            }
+          },
+          "content_gen": 5,
+          "processed_l0": {
+            "hash": "8161b3dbd78219fc3f0a94c4303969948d3f04cec50d6540294cbe7ba59717ac",
+            "tiles": 192
+          },
+          "viewport_level": 1
+        },
+        {
+          "composite": {
+            "L0": {
+              "hash": "fda085ce29e6af9afeafd069522f0acd38ad0f826c462d025d30a1745c026908",
+              "stale": 0,
+              "tiles": 192
+            },
+            "L1": {
+              "hash": "dea8048f64287b04d8190742e90890c37f484e19d536ce7357e5ffe06c2995fe",
+              "stale": 0,
+              "tiles": 48
+            }
+          },
+          "content_gen": 6,
+          "processed_l0": {
+            "hash": "8161b3dbd78219fc3f0a94c4303969948d3f04cec50d6540294cbe7ba59717ac",
+            "tiles": 192
+          },
+          "viewport_level": 1
+        }
+      ],
+      "stable": true
+    },
+    {
+      "hash": {
+        "composite": {
+          "L0": {
+            "hash": "77a12da964b2a02e5df098cc69985bb6c1620e8a6cf3d7fadc89fa7f389526f9",
+            "stale": 0,
+            "tiles": 192
+          },
+          "L1": {
+            "hash": "d888a2899c7fed2031d60d14c6df7e0e3264c8cbbf92d5cfc59240abf11dc6e3",
+            "stale": 0,
+            "tiles": 48
+          }
+        },
+        "content_gen": 9,
+        "processed_l0": {
+          "hash": "35851856fe60f5e5c5b92d70772fddffc5e77d980ae244dfd93cb0d6bb5a60a0",
+          "tiles": 192
+        },
+        "viewport_level": 1
+      },
+      "levels": 16,
+      "pixel_size": 9,
+      "runs": [
+        {
+          "composite": {
+            "L0": {
+              "hash": "77a12da964b2a02e5df098cc69985bb6c1620e8a6cf3d7fadc89fa7f389526f9",
+              "stale": 0,
+              "tiles": 192
+            },
+            "L1": {
+              "hash": "d888a2899c7fed2031d60d14c6df7e0e3264c8cbbf92d5cfc59240abf11dc6e3",
+              "stale": 0,
+              "tiles": 48
+            }
+          },
+          "content_gen": 7,
+          "processed_l0": {
+            "hash": "35851856fe60f5e5c5b92d70772fddffc5e77d980ae244dfd93cb0d6bb5a60a0",
+            "tiles": 192
+          },
+          "viewport_level": 1
+        },
+        {
+          "composite": {
+            "L0": {
+              "hash": "77a12da964b2a02e5df098cc69985bb6c1620e8a6cf3d7fadc89fa7f389526f9",
+              "stale": 0,
+              "tiles": 192
+            },
+            "L1": {
+              "hash": "d888a2899c7fed2031d60d14c6df7e0e3264c8cbbf92d5cfc59240abf11dc6e3",
+              "stale": 0,
+              "tiles": 48
+            }
+          },
+          "content_gen": 8,
+          "processed_l0": {
+            "hash": "35851856fe60f5e5c5b92d70772fddffc5e77d980ae244dfd93cb0d6bb5a60a0",
+            "tiles": 192
+          },
+          "viewport_level": 1
+        },
+        {
+          "composite": {
+            "L0": {
+              "hash": "77a12da964b2a02e5df098cc69985bb6c1620e8a6cf3d7fadc89fa7f389526f9",
+              "stale": 0,
+              "tiles": 192
+            },
+            "L1": {
+              "hash": "d888a2899c7fed2031d60d14c6df7e0e3264c8cbbf92d5cfc59240abf11dc6e3",
+              "stale": 0,
+              "tiles": 48
+            }
+          },
+          "content_gen": 9,
+          "processed_l0": {
+            "hash": "35851856fe60f5e5c5b92d70772fddffc5e77d980ae244dfd93cb0d6bb5a60a0",
+            "tiles": 192
+          },
+          "viewport_level": 1
+        }
+      ],
+      "stable": true
+    },
+    {
+      "hash": {
+        "composite": {
+          "L0": {
+            "hash": "4820f17bf17af67288124a9fdc2f16f28451e5ca6b9b82ec3459970511ded732",
+            "stale": 0,
+            "tiles": 192
+          },
+          "L1": {
+            "hash": "13b10e3349acde54fd30679c2a6f0b2ec2b7be9ef091d8e7e1f92745786dc788",
+            "stale": 0,
+            "tiles": 48
+          }
+        },
+        "content_gen": 12,
+        "processed_l0": {
+          "hash": "616ebaf14e1d723e824a7db09fc215ee7b9c0d2af90851a192f5a16343b185de",
+          "tiles": 192
+        },
+        "viewport_level": 1
+      },
+      "levels": 32,
+      "pixel_size": 8,
+      "runs": [
+        {
+          "composite": {
+            "L0": {
+              "hash": "4820f17bf17af67288124a9fdc2f16f28451e5ca6b9b82ec3459970511ded732",
+              "stale": 0,
+              "tiles": 192
+            },
+            "L1": {
+              "hash": "13b10e3349acde54fd30679c2a6f0b2ec2b7be9ef091d8e7e1f92745786dc788",
+              "stale": 0,
+              "tiles": 48
+            }
+          },
+          "content_gen": 10,
+          "processed_l0": {
+            "hash": "616ebaf14e1d723e824a7db09fc215ee7b9c0d2af90851a192f5a16343b185de",
+            "tiles": 192
+          },
+          "viewport_level": 1
+        },
+        {
+          "composite": {
+            "L0": {
+              "hash": "4820f17bf17af67288124a9fdc2f16f28451e5ca6b9b82ec3459970511ded732",
+              "stale": 0,
+              "tiles": 192
+            },
+            "L1": {
+              "hash": "13b10e3349acde54fd30679c2a6f0b2ec2b7be9ef091d8e7e1f92745786dc788",
+              "stale": 0,
+              "tiles": 48
+            }
+          },
+          "content_gen": 11,
+          "processed_l0": {
+            "hash": "616ebaf14e1d723e824a7db09fc215ee7b9c0d2af90851a192f5a16343b185de",
+            "tiles": 192
+          },
+          "viewport_level": 1
+        },
+        {
+          "composite": {
+            "L0": {
+              "hash": "4820f17bf17af67288124a9fdc2f16f28451e5ca6b9b82ec3459970511ded732",
+              "stale": 0,
+              "tiles": 192
+            },
+            "L1": {
+              "hash": "13b10e3349acde54fd30679c2a6f0b2ec2b7be9ef091d8e7e1f92745786dc788",
+              "stale": 0,
+              "tiles": 48
+            }
+          },
+          "content_gen": 12,
+          "processed_l0": {
+            "hash": "616ebaf14e1d723e824a7db09fc215ee7b9c0d2af90851a192f5a16343b185de",
+            "tiles": 192
+          },
+          "viewport_level": 1
+        }
+      ],
+      "stable": true
+    }
+  ],
+  "determinism_ok": true,
+  "runs_per_config": 3,
+  "versions_enabled": true
+}

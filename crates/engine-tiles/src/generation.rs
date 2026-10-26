@@ -5,15 +5,13 @@
 //!
 //! # Overview
 //!
-//! The `GenerationTracker` maintains two-level versioning:
-//! - **document_gen**: Global generation counter, incremented on any change
+//! The `GenerationTracker` maintains three-level versioning:
+//! - **document_gen**: Structural / filter counter (strip discard, task stale)
 //! - **layer_gen**: Per-layer counters, incremented on layer-specific changes
+//! - **content_gen**: Monotonic pixel-content epoch (palette, soft-proof, filters, …)
 //!
-//! Tasks carry both generation values and are checked at execution time.
-//! If either value is stale (doesn't match current tracker state), the task is discarded.
-//!
-//! This enables selective invalidation: only affected layers re-trigger recomputation,
-//! while unaffected layers continue to use cached data.
+//! Tasks carry document/layer generation and are checked at execution time.
+//! Preview serve / FE `maxKnownGen` use `content_gen` so palette-only changes are visible.
 
 use crate::LayerId;
 use dashmap::DashMap;
@@ -21,38 +19,22 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Per-layer versioning system for selective cache invalidation.
 ///
-/// Maintains two-level versioning to support efficient, fine-grained invalidation:
-/// - `document_gen`: Incremented on any document-level change
-/// - `layer_gen`: Map of per-layer counters, each incremented on layer-specific changes
+/// Maintains document / layer / content versioning for cache invalidation:
+/// - `document_gen`: Structural / filter changes (ED strip discard, task stale)
+/// - `layer_gen`: Per-layer counters for selective invalidation
+/// - `content_gen`: Any pixel-affecting change (filters, palette, soft-proof, …)
 ///
 /// # Concurrency
 ///
 /// This type is thread-safe via atomic operations and concurrent DashMap.
 /// Multiple threads may safely call these methods simultaneously without blocking.
-///
-/// # Example
-///
-/// ```ignore
-/// let tracker = GenerationTracker::new();
-///
-/// // Initial state: all generations are 0
-/// assert_eq!(tracker.get_layer_gen(0), 0);
-/// assert_eq!(tracker.get_layer_gen(1), 0);
-///
-/// // Global change increments document generation
-/// let old_doc_gen = tracker.increment_document_gen();
-/// assert_eq!(old_doc_gen, 0);
-/// assert_eq!(tracker.get_layer_gen(0), 0); // Layer 0 unchanged
-///
-/// // Layer-specific change increments layer generation
-/// let new_layer_gen = tracker.increment_layer_gen(0);
-/// assert_eq!(new_layer_gen, 1);
-/// assert_eq!(tracker.get_layer_gen(1), 0); // Layer 1 unaffected
-/// ```
 pub struct GenerationTracker {
-    /// Global generation counter, incremented on any document change.
-    /// Used to detect any staleness at all.
+    /// Structural / filter generation (strip discard, worker task stale).
     pub document_gen: AtomicU64,
+
+    /// Pixel-content epoch for preview serve / FE maxKnownGen.
+    /// Always advances with `document_gen`, and also on palette / soft-proof-only paths.
+    pub content_gen: AtomicU64,
 
     /// Per-layer generation counters, incremented on layer-specific changes.
     /// Enables selective invalidation: unchanged layers keep using cached data.
@@ -63,6 +45,7 @@ impl Clone for GenerationTracker {
     fn clone(&self) -> Self {
         GenerationTracker {
             document_gen: AtomicU64::new(self.document_gen.load(Ordering::SeqCst)),
+            content_gen: AtomicU64::new(self.content_gen.load(Ordering::SeqCst)),
             layer_gen: self.layer_gen.clone(),
         }
     }
@@ -72,6 +55,7 @@ impl std::fmt::Debug for GenerationTracker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GenerationTracker")
             .field("document_gen", &self.document_gen.load(Ordering::SeqCst))
+            .field("content_gen", &self.content_gen.load(Ordering::SeqCst))
             .field("layer_gen_count", &self.layer_gen.len())
             .finish()
     }
@@ -79,41 +63,22 @@ impl std::fmt::Debug for GenerationTracker {
 
 impl GenerationTracker {
     /// Creates a new generation tracker with all counters initialized to 0.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let tracker = GenerationTracker::new();
-    /// assert_eq!(tracker.get_layer_gen(0), 0);
-    /// ```
     pub fn new() -> Self {
         Self {
             document_gen: AtomicU64::new(0),
+            content_gen: AtomicU64::new(0),
             layer_gen: DashMap::new(),
         }
     }
 
     /// Atomically increments and returns the old document generation value.
     ///
-    /// This is called when any document-level change occurs. The returned value
-    /// is the generation that was active before the change.
-    ///
-    /// # Ordering
-    ///
-    /// Uses `Ordering::Release` to ensure prior stores are visible to readers
-    /// before they observe the incremented value.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let tracker = GenerationTracker::new();
-    /// let old = tracker.increment_document_gen();
-    /// assert_eq!(old, 0);
-    /// let old2 = tracker.increment_document_gen();
-    /// assert_eq!(old2, 1);
-    /// ```
+    /// Also bumps [`Self::content_gen`] so filter/structural updates stay visible
+    /// to FE content gates.
     pub fn increment_document_gen(&self) -> u64 {
-        self.document_gen.fetch_add(1, Ordering::Release)
+        let old = self.document_gen.fetch_add(1, Ordering::Release);
+        let _ = self.increment_content_gen();
+        old
     }
 
     /// Current global generation.
@@ -122,8 +87,28 @@ impl GenerationTracker {
     }
 
     /// Set the global generation (document replace / restore past cache CAS).
+    /// Also raises `content_gen` to at least `gen` so serve freshness cannot lag.
     pub fn set_document_gen(&self, gen: u64) {
         self.document_gen.store(gen, Ordering::Release);
+        let cur = self.content_gen.load(Ordering::Acquire);
+        if gen > cur {
+            self.content_gen.store(gen, Ordering::Release);
+        }
+    }
+
+    /// Atomically increments and returns the **new** content generation.
+    pub fn increment_content_gen(&self) -> u64 {
+        self.content_gen.fetch_add(1, Ordering::Release) + 1
+    }
+
+    /// Current content generation (preview / FE).
+    pub fn current_content_gen(&self) -> u64 {
+        self.content_gen.load(Ordering::Acquire)
+    }
+
+    /// Set content generation (restore / tests).
+    pub fn set_content_gen(&self, gen: u64) {
+        self.content_gen.store(gen, Ordering::Release);
     }
 
     /// Atomically increments and returns the new per-layer generation value.
@@ -184,6 +169,18 @@ mod tests {
         assert_eq!(tracker.increment_document_gen(), 0);
         assert_eq!(tracker.increment_document_gen(), 1);
         assert_eq!(tracker.increment_document_gen(), 2);
+    }
+
+    #[test]
+    fn increment_document_gen_also_bumps_content_gen() {
+        let tracker = GenerationTracker::new();
+        assert_eq!(tracker.current_content_gen(), 0);
+        tracker.increment_document_gen();
+        assert_eq!(tracker.current_document_gen(), 1);
+        assert_eq!(tracker.current_content_gen(), 1);
+        tracker.increment_content_gen();
+        assert_eq!(tracker.current_document_gen(), 1);
+        assert_eq!(tracker.current_content_gen(), 2);
     }
 
     #[test]

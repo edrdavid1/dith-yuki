@@ -21,6 +21,7 @@ export default function DocumentTabBar({
   const dispatch = useAppDispatch();
   const { tabs, activeId } = useAppSelector((s) => s.tabs);
   const saving = useAppSelector((s) => s.document.saving);
+  const opening = useAppSelector((s) => s.document.loading);
 
   return (
     <div className={cn('tab-bar')} data-tauri-drag-region>
@@ -93,7 +94,10 @@ export default function DocumentTabBar({
         type="button"
         className={cn('tab-new')}
         data-tauri-drag-region="false"
-        aria-label="Open file"
+        aria-label={opening ? 'Opening…' : 'Open file'}
+        title={opening ? 'Opening…' : 'Open file'}
+        disabled={opening}
+        aria-busy={opening || undefined}
         onClick={onOpenFile}
       >
         +

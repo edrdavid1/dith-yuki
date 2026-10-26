@@ -47,12 +47,35 @@ fn note_blocked() {
     ED_BLOCKED_TOTAL.fetch_add(1, Ordering::Relaxed);
 }
 
-/// True when `entry` exists and is not dirty.
+/// True when `entry` exists, is not dirty, and matches the cache content epoch.
+///
+/// `generation >= content_epoch` is required so palette / soft-proof bumps
+/// (which advance `content_gen` without `doc_gen`) cannot leave the ED strip
+/// fast-path treating a clean left-column Processed tile as current.
+/// Callers must mirror live `content_gen` into [`TileCache::set_content_epoch`]
+/// so "not behind epoch" means "stamp matches live content".
 pub fn tile_fresh(cache: &TileCache, key: TileKey) -> bool {
     match cache.entries.get(&key) {
         None => false,
-        Some(entry) => !entry.dirty.load(Ordering::Acquire),
+        Some(entry) => {
+            !entry.dirty.load(Ordering::Acquire)
+                && entry.generation >= cache.content_epoch()
+                // STEP4: Composite assembled from superseded equal-gen inputs is not fresh.
+                && (key.stage != CacheStage::Composite || cache.composite_inputs_current(key))
+        }
     }
+}
+
+/// Body generation for a `tile-ready` emit, or `None` when the cache entry is
+/// missing / dirty / behind the content epoch.
+///
+/// Late-tiles mechanism (2): never forge `max(body, live_content)` — a missed
+/// insert must not raise FE `maxKnownGen`.
+pub fn tile_ready_emit_gen(cache: &TileCache, key: TileKey) -> Option<u64> {
+    if !tile_fresh(cache, key) {
+        return None;
+    }
+    cache.entries.get(&key).map(|e| e.generation)
 }
 
 fn raw_present(cache: &TileCache, key: TileKey) -> bool {
@@ -320,6 +343,17 @@ impl EdFrontier {
         self.waiting_on.retain(|_, v| !v.is_empty());
     }
 
+    /// Force-remove a parked task (e.g. strip discarded by gen — waiters must
+    /// re-enter the scheduler; deps will not become fresh from an insert).
+    pub fn take_blocked(&self, key: TileKey) -> Option<RecomputeTask> {
+        let (_, entry) = self.blocked.remove(&key)?;
+        for mut w in self.waiting_on.iter_mut() {
+            w.value_mut().remove(&key);
+        }
+        self.waiting_on.retain(|_, v| !v.is_empty());
+        Some(entry.task)
+    }
+
     /// After `completed` was inserted fresh, return blocked tasks that are ready.
     pub fn wake(&self, completed: TileKey, cache: &TileCache) -> Vec<RecomputeTask> {
         let Some((_, waiters)) = self.waiting_on.remove(&completed) else {
@@ -374,6 +408,27 @@ impl EdFrontier {
         }
         ready
     }
+
+    /// Re-check all parked tasks (missed wake / equal-gen replace without notify).
+    /// Ready tasks are unblocked and returned for enqueue.
+    pub fn sweep_ready(&self, cache: &TileCache) -> Vec<RecomputeTask> {
+        let keys: Vec<TileKey> = self.blocked.iter().map(|e| *e.key()).collect();
+        let mut ready = Vec::new();
+        for key in keys {
+            let Some(entry) = self.blocked.get(&key).map(|e| e.clone()) else {
+                continue;
+            };
+            let satisfied = match entry.task.key.stage {
+                CacheStage::Processed => ed_ready(cache, entry.task.key, true),
+                _ => all_deps_satisfied(cache, &entry.deps),
+            };
+            if satisfied {
+                self.unblock_key(key);
+                ready.push(entry.task);
+            }
+        }
+        ready
+    }
 }
 
 impl Default for EdFrontier {
@@ -418,6 +473,46 @@ mod tests {
 
     fn insert_processed_fresh(cache: &TileCache, x: u32, y: u32) {
         cache.insert_fresh(key(x, y), Arc::new(PixelTile::new()));
+    }
+
+    #[test]
+    fn tile_fresh_rejects_behind_content_epoch() {
+        let cache = TileCache::new(64 * 1024 * 1024);
+        cache.insert_fresh_gen(key(0, 0), Arc::new(PixelTile::new()), 1);
+        assert!(tile_fresh(&cache, key(0, 0)));
+        cache.set_content_epoch(2);
+        assert!(
+            !tile_fresh(&cache, key(0, 0)),
+            "clean tile stamped gen=1 must not be fresh at content_epoch=2"
+        );
+        cache.insert_fresh_gen(key(0, 0), Arc::new(PixelTile::new()), 2);
+        assert!(tile_fresh(&cache, key(0, 0)));
+    }
+
+    #[test]
+    fn tile_ready_emit_gen_skips_missed_insert_forge() {
+        let cache = TileCache::new(64 * 1024 * 1024);
+        let k = key(0, 0);
+        // Old Composite still in cache after a skipped insert (dirty, body gen=5).
+        cache.insert_fresh_gen(k, Arc::new(PixelTile::new()), 5);
+        cache.mark_dirty(k);
+        cache.set_content_epoch(7);
+        let live_content = 7u64;
+        // Historical forge: body.max(live) → 7 (would raise FE maxKnownGen).
+        let forged = cache
+            .entries
+            .get(&k)
+            .map(|e| e.generation.max(live_content))
+            .unwrap_or(live_content);
+        assert_eq!(forged, 7, "pre-fix forge raised ready_gen to live");
+        assert_eq!(
+            tile_ready_emit_gen(&cache, k),
+            None,
+            "missed insert must not emit tile-ready / raise maxKnownGen"
+        );
+        // Real insert at live stamp.
+        cache.insert_fresh_gen(k, Arc::new(PixelTile::new()), 7);
+        assert_eq!(tile_ready_emit_gen(&cache, k), Some(7));
     }
 
     #[test]

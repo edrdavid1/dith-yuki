@@ -22,6 +22,17 @@ describe('buildTileUrl', () => {
     );
   });
 
+  it('adds c= contentGen for palette cache-bust without bumping tileRev', () => {
+    expect(
+      buildTileUrl(1, { level: 0, x: 2, y: 3 }, 9, {
+        platform: 'windows',
+        contentGen: 42,
+      }),
+    ).toBe(
+      'http://tile.localhost/doc/1/layer/composite/stage/composite/l/0/2/3?g=9&c=42',
+    );
+  });
+
   it('builds macOS custom-scheme form', () => {
     expect(
       buildTileUrl(1, { level: 0, x: 2, y: 3 }, undefined, {

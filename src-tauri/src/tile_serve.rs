@@ -198,7 +198,15 @@ pub fn resolve_preview_tile_proofed(
             rgba_cache.insert(ck, encoded.clone());
             encoded
         };
-        let served = if TileCache::tile_entry_is_ready(dirty, gen, doc_gen) {
+        // Step B: Fresh only when clean and stamped for current content epoch.
+        // `doc_gen` arg is the live content_gen (callers pass content_gen).
+        // Dirty Composite always serves as Stale (outdated bytes returned).
+        let served = if dirty {
+            PreviewServe::Stale {
+                rgba8,
+                generation: gen,
+            }
+        } else if TileCache::tile_entry_is_ready(false, gen, doc_gen) {
             PreviewServe::Fresh {
                 rgba8,
                 generation: gen,
@@ -283,6 +291,17 @@ mod tests {
             resolve_preview_tile(&cache, key(0, 0, 0), 3),
             PreviewServe::Fresh { generation: 3, .. }
         ));
+    }
+
+    #[test]
+    fn clean_behind_content_gen_serves_stale_not_fresh() {
+        // Late-tiles (1): Fresh only when stamp matches live content_gen.
+        let cache = TileCache::new(50_000_000);
+        cache.insert_fresh_gen(key(0, 0, 0), solid(0.2), 3);
+        match resolve_preview_tile(&cache, key(0, 0, 0), 5) {
+            PreviewServe::Stale { generation, .. } => assert_eq!(generation, 3),
+            other => panic!("expected stale when stamp 3 < live content 5, got {other:?}"),
+        }
     }
 
     #[test]

@@ -55,6 +55,22 @@
   box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light);
 }
 
+.welcome-opening {
+  margin: 0;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-family);
+  font-size: 12px;
+  font-weight: bold;
+  color: #e8e8e8;
+}
+
+.empty-state-opening {
+  pointer-events: none;
+}
+
 .empty-state-drop-active {
   outline: 2px solid var(--color-primary);
   outline-offset: -8px;

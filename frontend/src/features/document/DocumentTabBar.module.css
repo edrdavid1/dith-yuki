@@ -122,9 +122,14 @@
   font-family: var(--font-family);
 }
 
-.tab-new:hover {
+.tab-new:hover:not(:disabled) {
   background: var(--color-primary);
   color: var(--color-black);
+}
+
+.tab-new:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .tab-drag-rest {

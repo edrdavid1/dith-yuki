@@ -42,6 +42,21 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
+      - name: Z9 H4 harnesses (sequential)
+        # Ignored stress tests must never run in parallel (shared AppState / GPU).
+        # Smoke only here; ×50 soak is nightly. One filter per invocation.
+        run: |
+          set -euo pipefail
+          for t in \
+            z9_rapid_param_composite_gen \
+            z9_rapid_param_shifted_viewport \
+            z9_slow_be_12mp_stale_retry
+          do
+            echo "::group::Z9 $t"
+            cargo test -p dither --release "$t" -- --ignored --nocapture --test-threads=1
+            echo "::endgroup::"
+          done
+
       - name: GPU dither parity (quick)
         # Subset of all critical categories; minutes. Full matrix is pre-release only
         # (see docs/adr/gpu-dither-families.md). Test is #[ignore] — needs a GPU.

@@ -1,0 +1,47 @@
+{
+  "any_discrepancy": true,
+  "n": 20,
+  "rows": [
+    {
+      "level_mismatches": {},
+      "mismatch": 0,
+      "mode": "fs",
+      "ok_n": 20,
+      "rate": 0.0,
+      "scenario": "ps_1_to_8",
+      "workers": 1
+    },
+    {
+      "level_mismatches": {
+        "L1": 9
+      },
+      "mismatch": 9,
+      "mode": "fs",
+      "ok_n": 20,
+      "rate": 0.45,
+      "scenario": "ps_1_to_8",
+      "workers": 8
+    },
+    {
+      "level_mismatches": {},
+      "mismatch": 0,
+      "mode": "fs",
+      "ok_n": 20,
+      "rate": 0.0,
+      "scenario": "ps_8_to_9",
+      "workers": 1
+    },
+    {
+      "level_mismatches": {
+        "L1": 4
+      },
+      "mismatch": 4,
+      "mode": "fs",
+      "ok_n": 20,
+      "rate": 0.2,
+      "scenario": "ps_8_to_9",
+      "workers": 8
+    }
+  ],
+  "versions_enabled": false
+}

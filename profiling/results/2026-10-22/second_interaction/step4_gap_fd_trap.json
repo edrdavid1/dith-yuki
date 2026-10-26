@@ -1,0 +1,120 @@
+{
+  "any_discrepancy": false,
+  "n": 10,
+  "rows": [
+    {
+      "footprint_after": {
+        "approx_manifest_bytes": 3840,
+        "composite_entries": 240,
+        "entries": 624,
+        "input_version_pairs": 0,
+        "tile_bytes_const": 1081600,
+        "used_mb": 643.65234375
+      },
+      "level_mismatches": {},
+      "mismatch": 0,
+      "mode": "blocked_fs",
+      "ok_n": 10,
+      "rate": 0.0,
+      "scenario": "ps_1_to_8",
+      "viewport_level": 1,
+      "workers": 8
+    },
+    {
+      "footprint_after": {
+        "approx_manifest_bytes": 3840,
+        "composite_entries": 240,
+        "entries": 624,
+        "input_version_pairs": 0,
+        "tile_bytes_const": 1081600,
+        "used_mb": 643.65234375
+      },
+      "level_mismatches": {},
+      "mismatch": 0,
+      "mode": "blocked_fs",
+      "ok_n": 10,
+      "rate": 0.0,
+      "scenario": "ps_8_to_9",
+      "viewport_level": 1,
+      "workers": 8
+    },
+    {
+      "footprint_after": {
+        "approx_manifest_bytes": 3840,
+        "composite_entries": 240,
+        "entries": 624,
+        "input_version_pairs": 0,
+        "tile_bytes_const": 1081600,
+        "used_mb": 643.65234375
+      },
+      "level_mismatches": {},
+      "mismatch": 0,
+      "mode": "blocked_fs",
+      "ok_n": 10,
+      "rate": 0.0,
+      "scenario": "levels_16_to_32",
+      "viewport_level": 1,
+      "workers": 8
+    },
+    {
+      "footprint_after": {
+        "approx_manifest_bytes": 3840,
+        "composite_entries": 240,
+        "entries": 624,
+        "input_version_pairs": 0,
+        "tile_bytes_const": 1081600,
+        "used_mb": 643.65234375
+      },
+      "level_mismatches": {},
+      "mismatch": 0,
+      "mode": "blue_noise",
+      "ok_n": 10,
+      "rate": 0.0,
+      "scenario": "ps_1_to_8",
+      "viewport_level": 1,
+      "workers": 8
+    },
+    {
+      "footprint_after": {
+        "approx_manifest_bytes": 3840,
+        "composite_entries": 240,
+        "entries": 624,
+        "input_version_pairs": 0,
+        "tile_bytes_const": 1081600,
+        "used_mb": 643.65234375
+      },
+      "level_mismatches": {},
+      "mismatch": 0,
+      "mode": "blue_noise",
+      "ok_n": 10,
+      "rate": 0.0,
+      "scenario": "ps_8_to_9",
+      "viewport_level": 1,
+      "workers": 8
+    },
+    {
+      "footprint_after": {
+        "approx_manifest_bytes": 3840,
+        "composite_entries": 240,
+        "entries": 624,
+        "input_version_pairs": 0,
+        "tile_bytes_const": 1081600,
+        "used_mb": 643.65234375
+      },
+      "level_mismatches": {},
+      "mismatch": 0,
+      "mode": "blue_noise",
+      "ok_n": 10,
+      "rate": 0.0,
+      "scenario": "levels_16_to_32",
+      "viewport_level": 1,
+      "workers": 8
+    }
+  ],
+  "trap_proven_modes": [],
+  "trap_unproven_modes": [
+    "blocked_fs",
+    "blue_noise"
+  ],
+  "versions_enabled": false
+}

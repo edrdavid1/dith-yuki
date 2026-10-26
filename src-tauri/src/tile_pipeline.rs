@@ -118,6 +118,10 @@ pub fn compute_processed_tile(
 
     // 2. Get document snapshot and find the layer
     let snapshot = snapshot_for_key(state, key)?;
+    state
+        .tiles
+        .tile_cache
+        .set_content_epoch(snapshot.generations.current_content_gen());
     let layer = find_layer_by_id(&snapshot.root, key.layer).ok_or_else(|| {
         EngineError::layer_not_found(engine_project::types::LayerId::new(key.layer))
     })?;
@@ -188,11 +192,11 @@ pub fn compute_processed_tile(
             }
         }
         crate::commands::emit_gpu_dither_status(state, key.doc);
-        let now_gen = snapshot_for_key(state, key)?
-            .generations
-            .document_gen
-            .load(Ordering::Acquire);
-        if now_gen != compute_gen {
+        let compute_content = snapshot.generations.current_content_gen();
+        let now_snap = snapshot_for_key(state, key)?;
+        let now_gen = now_snap.generations.document_gen.load(Ordering::Acquire);
+        let now_content = now_snap.generations.current_content_gen();
+        if now_gen != compute_gen || now_content != compute_content {
             return Err(EngineError::invalid_state(
                 "full-document result stale after compute",
             ));
@@ -234,14 +238,15 @@ pub fn compute_processed_tile(
         if was_missing && diag != 0 {
             crate::preview_diag::record_tile_fallback_insert(key.doc, compute_gen);
         }
-        let inserted =
-            state
-                .tiles
-                .tile_cache
-                .insert_fresh_gen(processed_key, Arc::clone(&arc), compute_gen);
+        let inserted = state.tiles.tile_cache.insert_fresh_gen(
+            processed_key,
+            Arc::clone(&arc),
+            compute_content,
+        );
         if inserted {
             state.evict_for_pressure_if_needed();
             engine_project::dither_profile::mark("tiles_published");
+            invalidate_composites_fed_by(state, processed_key);
         }
         reschedule_if_insert_rejected(state, processed_key, inserted);
         return Ok(arc);
@@ -364,6 +369,26 @@ pub fn compute_processed_tile(
                     }
                 }
             };
+            if crate::tile_gen_trace::enabled() {
+                crate::tile_gen_trace::emit(
+                    "strip_owner_acquired",
+                    Some(key.layer),
+                    Some(start_gen),
+                    Some(snapshot.generations.get_layer_gen(key.layer)),
+                    Some(crate::tile_gen_trace::tile(level, key.coord.x, ty)),
+                    Some(start_gen),
+                    serde_json::json!({
+                        "doc": key.doc,
+                        "layer": key.layer,
+                        "level": level,
+                        "ty": ty,
+                        "claim_x": key.coord.x,
+                        "min_x": bounds.min_x,
+                        "max_x": bounds.max_x,
+                        "is_min_x_owner": key.coord.x == bounds.min_x,
+                    }),
+                );
+            }
 
             // Re-check after claiming: previous owner finished while we waited.
             if engine_tiles::tile_fresh(&state.tiles.tile_cache, processed_key) {
@@ -399,15 +424,15 @@ pub fn compute_processed_tile(
                 }
             }
 
-            // doc_gen check between stripes (after prev-row ensure, before ED).
+            // doc_gen / content_gen check between stripes (after prev-row ensure, before ED).
             let compute_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
-            let mid_gen = snapshot_for_key(state, key)?
-                .generations
-                .document_gen
-                .load(Ordering::Acquire);
-            if mid_gen != compute_gen {
+            let compute_content = snapshot.generations.current_content_gen();
+            let mid_snap = snapshot_for_key(state, key)?;
+            let mid_gen = mid_snap.generations.document_gen.load(Ordering::Acquire);
+            let mid_content = mid_snap.generations.current_content_gen();
+            if mid_gen != compute_gen || mid_content != compute_content {
                 return Err(EngineError::invalid_state(
-                    "ED strip stale: document_gen advanced between stripes",
+                    "ED strip stale: document_gen/content_gen advanced between stripes",
                 ));
             }
 
@@ -458,13 +483,13 @@ pub fn compute_processed_tile(
                 &mut outputs,
             )?;
 
-            let now_gen = snapshot_for_key(state, key)?
-                .generations
-                .document_gen
-                .load(Ordering::Acquire);
+            let now_snap = snapshot_for_key(state, key)?;
+            let now_gen = now_snap.generations.document_gen.load(Ordering::Acquire);
+            let now_content = now_snap.generations.current_content_gen();
             let mut requested = None;
-            if now_gen == compute_gen {
+            if now_gen == compute_gen && now_content == compute_content {
                 let mut inserted_keys = Vec::with_capacity(coords.len());
+                let mut insert_order: Vec<serde_json::Value> = Vec::with_capacity(coords.len());
                 for (i, coord) in coords.iter().enumerate() {
                     let pkey = TileKey {
                         doc: key.doc,
@@ -477,18 +502,46 @@ pub fn compute_processed_tile(
                         let _cw = engine_project::filters::fs_ed_prof::Scope::new(
                             engine_project::filters::fs_ed_prof::add_ns_cache_write,
                         );
-                        state
-                            .tiles
-                            .tile_cache
-                            .insert_fresh_gen(pkey, Arc::clone(&arc), compute_gen)
+                        // Stamp with content_gen (FE / serve freshness epoch).
+                        state.tiles.tile_cache.insert_fresh_gen(
+                            pkey,
+                            Arc::clone(&arc),
+                            compute_content,
+                        )
                     };
                     if inserted {
                         inserted_keys.push(pkey);
+                    }
+                    if crate::tile_gen_trace::enabled() {
+                        insert_order.push(serde_json::json!({
+                            "x": coord.x,
+                            "y": coord.y,
+                            "inserted": inserted,
+                            "order_i": i,
+                        }));
                     }
                     reschedule_if_insert_rejected(state, pkey, inserted);
                     if coord.x == key.coord.x && coord.y == key.coord.y {
                         requested = Some(arc);
                     }
+                }
+                if crate::tile_gen_trace::enabled() {
+                    crate::tile_gen_trace::emit(
+                        "strip_insert",
+                        Some(key.layer),
+                        Some(compute_gen),
+                        Some(snapshot.generations.get_layer_gen(key.layer)),
+                        Some(crate::tile_gen_trace::tile(level, key.coord.x, ty)),
+                        Some(compute_content),
+                        serde_json::json!({
+                            "ty": ty,
+                            "claim_x": key.coord.x,
+                            "min_x": bounds.min_x,
+                            "inserted_n": inserted_keys.len(),
+                            "content_gen": compute_content,
+                            "tiles": insert_order,
+                        }),
+                    );
                 }
                 if !inserted_keys.is_empty() {
                     state.evict_for_pressure_if_needed();
@@ -498,6 +551,26 @@ pub fn compute_processed_tile(
                     wake_ed_frontier_after_strip_batch(state, &inserted_keys);
                 }
             } else {
+                if crate::tile_gen_trace::enabled() {
+                    crate::tile_gen_trace::emit(
+                        "strip_discarded_by_doc_gen",
+                        Some(key.layer),
+                        Some(now_gen),
+                        Some(snapshot.generations.get_layer_gen(key.layer)),
+                        Some(crate::tile_gen_trace::tile(level, key.coord.x, ty)),
+                        Some(compute_gen),
+                        serde_json::json!({
+                            "ty": ty,
+                            "claim_x": key.coord.x,
+                            "compute_gen": compute_gen,
+                            "live_gen": now_gen,
+                            "compute_content_gen": compute_content,
+                            "live_content_gen": now_content,
+                            "tile_count": coords.len(),
+                        }),
+                    );
+                }
+                reschedule_ed_strip_after_discard(state, key, &coords);
                 for (i, coord) in coords.iter().enumerate() {
                     if coord.x == key.coord.x && coord.y == key.coord.y {
                         requested = Some(Arc::new(std::mem::replace(
@@ -529,21 +602,23 @@ pub fn compute_processed_tile(
     // 4. Single Arc: insert + return the same allocation (no return-path copy).
     let arc = Arc::new(processed);
     let compute_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
-    let now_gen = snapshot_for_key(state, key)?
-        .generations
-        .document_gen
-        .load(Ordering::Acquire);
-    if now_gen == compute_gen {
-        let inserted =
-            state
-                .tiles
-                .tile_cache
-                .insert_fresh_gen(processed_key, Arc::clone(&arc), compute_gen);
+    let compute_content = snapshot.generations.current_content_gen();
+    let now_snap = snapshot_for_key(state, key)?;
+    let now_gen = now_snap.generations.document_gen.load(Ordering::Acquire);
+    let now_content = now_snap.generations.current_content_gen();
+    if now_gen == compute_gen && now_content == compute_content {
+        let inserted = state.tiles.tile_cache.insert_fresh_gen(
+            processed_key,
+            Arc::clone(&arc),
+            compute_content,
+        );
         if inserted {
             state.evict_for_pressure_if_needed();
             wake_ed_frontier_after_insert(state, processed_key);
         }
         reschedule_if_insert_rejected(state, processed_key, inserted);
+    } else {
+        reschedule_if_insert_rejected(state, processed_key, false);
     }
 
     Ok(arc)
@@ -570,6 +645,10 @@ pub fn compute_composite_tile(
 ) -> Result<Arc<PixelTile>, EngineError> {
     // 1. Get document snapshot for the layer tree
     let snapshot = snapshot_for_key(state, key)?;
+    state
+        .tiles
+        .tile_cache
+        .set_content_epoch(snapshot.generations.current_content_gen());
 
     // Display pyramid only: zoom-out tiles are a 2×2 box-filter of *full-res*
     // Composite children. Filters always run at level 0 so Bayer/ED/pixel_size
@@ -623,9 +702,44 @@ pub fn compute_composite_tile(
                 );
             }
         }
-        if waiting {
+            if waiting {
             return retry_pyramid_parent(state, key, doc_gen);
         }
+        // Late-tiles (3): stamp = min(children), never live content_gen alone.
+        let Some(child_stamp) = engine_tiles::pyramid_min_child_generation(
+            &state.tiles.tile_cache,
+            key,
+            snapshot.width,
+            snapshot.height,
+        ) else {
+            return retry_pyramid_parent(state, key, doc_gen);
+        };
+        // Already clean at matching min-child stamp — reuse without rebuild
+        // only when STEP4 input versions still match (kill-switch off → always).
+        if let Some(entry) = state.tiles.tile_cache.entries.get(&key) {
+            if !entry.dirty.load(Ordering::Acquire)
+                && entry.generation == child_stamp
+                && state.tiles.tile_cache.composite_inputs_current(key)
+            {
+                if let Some(arc) = state.tiles.tile_cache.get_entry(key) {
+                    return Ok(arc);
+                }
+            }
+        }
+        // Snapshot child versions *before* box-filter so the manifest matches
+        // the bodies we actually read (STEP4 TOCTOU: post-assemble sample can
+        // latch a newer version onto older pixels → false-fresh parent).
+        let track = engine_tiles::composite_input_versions_enabled();
+        let inputs_before = if track {
+            pyramid_composite_input_versions(
+                &state.tiles.tile_cache,
+                key,
+                snapshot.width,
+                snapshot.height,
+            )
+        } else {
+            Vec::new()
+        };
         if let Some(pyramid_tile) = engine_tiles::generate_pyramid_tile(
             key.coord.level,
             key.coord,
@@ -639,18 +753,49 @@ pub fn compute_composite_tile(
                 .generations
                 .document_gen
                 .load(Ordering::Acquire);
-            if now_gen == doc_gen {
-                let inserted =
-                    state
-                        .tiles
-                        .tile_cache
-                        .insert_fresh_gen(key, Arc::clone(&arc), doc_gen);
+            let content_gen = snapshot.generations.current_content_gen();
+            let now_content = snapshot_for_key(state, key)?
+                .generations
+                .current_content_gen();
+            let inputs_ok = if track {
+                let inputs_after = pyramid_composite_input_versions(
+                    &state.tiles.tile_cache,
+                    key,
+                    snapshot.width,
+                    snapshot.height,
+                );
+                inputs_before == inputs_after && !inputs_before.is_empty()
+            } else {
+                true
+            };
+            if now_gen == doc_gen && now_content == content_gen && inputs_ok {
+                let inserted = state.tiles.tile_cache.insert_fresh_gen_inputs(
+                    key,
+                    Arc::clone(&arc),
+                    child_stamp,
+                    &inputs_before,
+                );
                 if inserted {
                     state.evict_for_pressure_if_needed();
+                    invalidate_composites_fed_by(state, key);
                     enqueue_coarser_parent(state, key);
                 } else {
                     reschedule_if_insert_rejected(state, key, false);
                 }
+            } else if now_gen == doc_gen && now_content == content_gen {
+                // Input churn mid-assemble at live gen — force dirty + retry
+                // (reschedule_if_insert_rejected no-ops when gen is not behind).
+                state.tiles.tile_cache.mark_dirty(key);
+                let layer_gen = snapshot.generations.get_layer_gen(key.layer);
+                state.tiles.scheduler.enqueue_dedup(RecomputeTask {
+                    key,
+                    generation: now_gen,
+                    layer_generation: layer_gen,
+                    priority: Priority::Immediate,
+                });
+                state.worker_wake.notify_one();
+            } else {
+                reschedule_if_insert_rejected(state, key, false);
             }
             return Ok(arc);
         }
@@ -679,7 +824,51 @@ pub fn compute_composite_tile(
     //    ED layers schedule wavefront prefix; Composite parks in EdFrontier until ready.
     ensure_processed_tiles_fresh(&snapshot.root, key.doc, key.coord, state)?;
 
+    let compute_gen_start = snapshot.generations.document_gen.load(Ordering::Acquire);
+    let processed_key_l0 = TileKey {
+        doc: key.doc,
+        layer: 1, // primary raster layer in preview docs
+        coord: key.coord,
+        stage: CacheStage::Processed,
+    };
+    let processed_in_gen = state
+        .tiles
+        .tile_cache
+        .entries
+        .get(&processed_key_l0)
+        .map(|e| e.generation);
+    if crate::tile_gen_trace::enabled() {
+        crate::tile_gen_trace::emit(
+            "composite_start",
+            Some(key.layer),
+            Some(compute_gen_start),
+            Some(snapshot.generations.get_layer_gen(key.layer)),
+            Some(crate::tile_gen_trace::tile(
+                key.coord.level,
+                key.coord.x,
+                key.coord.y,
+            )),
+            Some(compute_gen_start),
+            serde_json::json!({
+                "processed_input_gen": processed_in_gen,
+                "in_pending": crate::pending_tiles::is_pending(
+                    key.doc,
+                    key.coord.level,
+                    key.coord.x,
+                    key.coord.y,
+                ),
+            }),
+        );
+    }
+
     // 3. Composite all visible layers at this tile coordinate.
+    // Snapshot Processed versions before blend (STEP4 TOCTOU guard — see L>0).
+    let track = engine_tiles::composite_input_versions_enabled();
+    let inputs_before = if track {
+        l0_composite_input_versions(&snapshot.root, key.doc, key.coord, state)
+    } else {
+        Vec::new()
+    };
     let diag = crate::preview_diag::level();
     let t_comp = (diag != 0).then(Instant::now);
     let composited = composite_tile(&snapshot.root, key.doc, key.coord, &state.tiles.tile_cache)?;
@@ -697,29 +886,85 @@ pub fn compute_composite_tile(
         stage: CacheStage::Composite,
     };
     let compute_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
-    let now_gen = snapshot_for_key(state, key)?
-        .generations
-        .document_gen
-        .load(Ordering::Acquire);
-    if now_gen == compute_gen {
-        let inserted =
-            state
-                .tiles
-                .tile_cache
-                .insert_fresh_gen(composite_key, Arc::clone(&arc), compute_gen);
+    let compute_content = snapshot.generations.current_content_gen();
+    let now_snap = snapshot_for_key(state, key)?;
+    let now_gen = now_snap.generations.document_gen.load(Ordering::Acquire);
+    let now_content = now_snap.generations.current_content_gen();
+    let mut inserted = false;
+    let inputs_ok = if track {
+        let inputs_after =
+            l0_composite_input_versions(&snapshot.root, key.doc, key.coord, state);
+        inputs_before == inputs_after && !inputs_before.is_empty()
+    } else {
+        true
+    };
+    if now_gen == compute_gen && now_content == compute_content && inputs_ok {
+        // Re-check Processed freshness after the blend: palette/param bumps can
+        // dirty inputs between ensure_processed and insert. Publishing Composite
+        // at the new content_gen from behind-epoch Processed sticks x=0.
+        if !visible_processed_tile_fresh(&snapshot.root, key.doc, key.coord, state) {
+            reschedule_if_insert_rejected(state, composite_key, false);
+            return Err(EngineError::EdPrefixPending);
+        }
+        inserted = state.tiles.tile_cache.insert_fresh_gen_inputs(
+            composite_key,
+            Arc::clone(&arc),
+            compute_content,
+            &inputs_before,
+        );
         if inserted {
             state.evict_for_pressure_if_needed();
+            invalidate_composites_fed_by(state, composite_key);
             enqueue_coarser_parent(state, composite_key);
         } else {
             reschedule_if_insert_rejected(state, composite_key, false);
         }
+    } else if now_gen == compute_gen && now_content == compute_content {
+        state.tiles.tile_cache.mark_dirty(composite_key);
+        let layer_gen = snapshot.generations.get_layer_gen(key.layer);
+        state.tiles.scheduler.enqueue_dedup(RecomputeTask {
+            key: composite_key,
+            generation: now_gen,
+            layer_generation: layer_gen,
+            priority: Priority::Immediate,
+        });
+        state.worker_wake.notify_one();
+    } else {
+        reschedule_if_insert_rejected(state, composite_key, false);
+    }
+    if crate::tile_gen_trace::enabled() {
+        crate::tile_gen_trace::emit(
+            "composite_end",
+            Some(key.layer),
+            Some(now_gen),
+            Some(snapshot.generations.get_layer_gen(key.layer)),
+            Some(crate::tile_gen_trace::tile(
+                key.coord.level,
+                key.coord.x,
+                key.coord.y,
+            )),
+            Some(compute_gen),
+            serde_json::json!({
+                "compute_gen": compute_gen,
+                "live_gen": now_gen,
+                "processed_input_gen": processed_in_gen,
+                "inserted": inserted,
+                "discarded_by_doc_gen": now_gen != compute_gen,
+                "in_pending": crate::pending_tiles::is_pending(
+                    key.doc,
+                    key.coord.level,
+                    key.coord.x,
+                    key.coord.y,
+                ),
+            }),
+        );
     }
 
     Ok(arc)
 }
 
-/// After `insert_fresh_gen` refuses a stale write, if live doc_gen is ahead of
-/// the cached entry, mark dirty and enqueue the current generation.
+/// After `insert_fresh_gen` refuses a stale write, if live **content_gen** is
+/// ahead of the cached entry, mark dirty and enqueue (task still carries doc_gen).
 pub(crate) fn reschedule_if_insert_rejected(state: &AppState, key: TileKey, inserted: bool) {
     if inserted {
         return;
@@ -727,22 +972,87 @@ pub(crate) fn reschedule_if_insert_rejected(state: &AppState, key: TileKey, inse
     let Ok(snapshot) = snapshot_for_key(state, key) else {
         return;
     };
-    let live = snapshot.generations.document_gen.load(Ordering::Acquire);
+    let live_content = snapshot.generations.current_content_gen();
+    let live_doc = snapshot.generations.document_gen.load(Ordering::Acquire);
     if !state
         .tiles
         .tile_cache
-        .mark_dirty_if_generation_behind(key, live)
+        .mark_dirty_if_generation_behind(key, live_content)
     {
         return;
     }
     let layer_gen = snapshot.generations.get_layer_gen(key.layer);
     state.tiles.scheduler.enqueue_dedup(RecomputeTask {
         key,
-        generation: live,
+        generation: live_doc,
         layer_generation: layer_gen,
         priority: Priority::Immediate,
     });
     state.worker_wake.notify_one();
+}
+
+/// After an ED strip is discarded (doc_gen or content_gen raced), re-place the
+/// owner row and force-wake `EdStripBusy` parkers so they are not stuck forever.
+pub(crate) fn reschedule_ed_strip_after_discard(
+    state: &AppState,
+    owner_key: TileKey,
+    coords: &[engine_tiles::TileCoord],
+) {
+    let Ok(snapshot) = snapshot_for_key(state, owner_key) else {
+        return;
+    };
+    let live_doc = snapshot.generations.document_gen.load(Ordering::Acquire);
+    let live_content = snapshot.generations.current_content_gen();
+    let layer_gen = snapshot.generations.get_layer_gen(owner_key.layer);
+    let mut strip_keys = Vec::with_capacity(coords.len());
+    for coord in coords {
+        let pkey = TileKey {
+            doc: owner_key.doc,
+            layer: owner_key.layer,
+            coord: *coord,
+            stage: CacheStage::Processed,
+        };
+        state.tiles.tile_cache.mark_dirty(pkey);
+        // Ensure behind-check path also sees content epoch.
+        let _ = state
+            .tiles
+            .tile_cache
+            .mark_dirty_if_generation_behind(pkey, live_content);
+        if let Some(task) = state.tiles.ed_frontier.take_blocked(pkey) {
+            state.tiles.scheduler.enqueue_or_bump(task);
+        }
+        state.tiles.scheduler.enqueue_dedup(RecomputeTask {
+            key: pkey,
+            generation: live_doc,
+            layer_generation: layer_gen,
+            priority: Priority::Immediate,
+        });
+        strip_keys.push(pkey);
+    }
+    // Wake anyone still parked on strip deps (Composite / causal).
+    wake_ed_frontier_after_strip_batch(state, &strip_keys);
+    state.worker_wake.notify_all();
+    if crate::tile_gen_trace::enabled() {
+        crate::tile_gen_trace::emit(
+            "strip_discard_rescheduled",
+            Some(owner_key.layer),
+            Some(live_doc),
+            Some(layer_gen),
+            Some(crate::tile_gen_trace::tile(
+                owner_key.coord.level,
+                owner_key.coord.x,
+                owner_key.coord.y,
+            )),
+            Some(live_content),
+            serde_json::json!({
+                "tile_count": coords.len(),
+                "claim_x": owner_key.coord.x,
+                "ty": owner_key.coord.y,
+                "live_doc_gen": live_doc,
+                "live_content_gen": live_content,
+            }),
+        );
+    }
 }
 
 /// After an L0/L1 Composite lands, wake the coarser display parent.
@@ -1082,6 +1392,7 @@ pub fn wake_ed_frontier_after_insert(state: &AppState, completed: TileKey) {
         state.tiles.scheduler.enqueue_or_bump(task);
         state.worker_wake.notify_one();
     }
+    invalidate_composites_fed_by(state, completed);
 }
 
 /// Deps to park on when [`EngineError::EdStripBusy`]: other Processed tiles in
@@ -1250,6 +1561,7 @@ fn collect_dirty_recursive(
                     coord,
                     stage: CacheStage::Processed,
                 };
+                let epoch = state.tiles.tile_cache.content_epoch();
                 let needs_compute = match state.tiles.tile_cache.entries.get(&key) {
                     None => {
                         if crate::preview_diag::level() != 0 {
@@ -1268,7 +1580,11 @@ fn collect_dirty_recursive(
                         }
                         true
                     }
-                    Some(entry) => entry.dirty.load(Ordering::Acquire),
+                    // Match composite_needs_compute / tile_fresh: behind content_epoch
+                    // must recompute even when the dirty bit was cleared by a race.
+                    Some(entry) => {
+                        entry.dirty.load(Ordering::Acquire) || entry.generation < epoch
+                    }
                 };
                 if needs_compute {
                     keys.push(key);
@@ -1286,10 +1602,189 @@ fn collect_dirty_recursive(
 
 fn composite_needs_compute(state: &AppState, key: &TileKey) -> bool {
     use std::sync::atomic::Ordering;
-    match state.tiles.tile_cache.entries.get(key) {
+    let epoch = state.tiles.tile_cache.content_epoch();
+    let base = match state.tiles.tile_cache.entries.get(key) {
         None => true,
-        Some(entry) => entry.dirty.load(Ordering::Acquire),
+        Some(entry) => {
+            entry.dirty.load(Ordering::Acquire)
+                || entry.generation < epoch
+                || !state.tiles.tile_cache.composite_inputs_current(*key)
+        }
+    };
+    if base {
+        return true;
     }
+    // L1+: rebuild clean parents whose stamp diverges from min(children).
+    if key.coord.level == 0 {
+        return false;
+    }
+    let Ok(session) = state.session(key.doc) else {
+        return true;
+    };
+    let snap = session.document_handle.snapshot();
+    engine_tiles::pyramid_parent_needs_rebuild(
+        &state.tiles.tile_cache,
+        *key,
+        snap.width,
+        snap.height,
+    )
+}
+
+fn l0_composite_input_versions(
+    nodes: &[LayerNode],
+    doc: u32,
+    coord: engine_tiles::TileCoord,
+    state: &AppState,
+) -> Vec<(TileKey, u64)> {
+    let mut out = Vec::new();
+    fn walk(
+        nodes: &[LayerNode],
+        doc: u32,
+        coord: engine_tiles::TileCoord,
+        state: &AppState,
+        out: &mut Vec<(TileKey, u64)>,
+    ) {
+        for node in nodes {
+            match node {
+                LayerNode::Leaf(layer) => {
+                    if !layer.visible {
+                        continue;
+                    }
+                    let key = TileKey {
+                        doc,
+                        layer: layer.id.0,
+                        coord,
+                        stage: CacheStage::Processed,
+                    };
+                    if let Some(v) = state.tiles.tile_cache.entry_version(key) {
+                        out.push((key, v));
+                    }
+                }
+                LayerNode::Group(group) => {
+                    if !group.visible {
+                        continue;
+                    }
+                    walk(&group.children, doc, coord, state, out);
+                }
+            }
+        }
+    }
+    walk(nodes, doc, coord, state, &mut out);
+    out
+}
+
+fn pyramid_composite_input_versions(
+    cache: &engine_tiles::TileCache,
+    parent: TileKey,
+    doc_w: u32,
+    doc_h: u32,
+) -> Vec<(TileKey, u64)> {
+    let mut out = Vec::new();
+    for child in engine_tiles::pyramid_child_coords(parent.coord) {
+        let (cols, rows) = engine_tiles::tile_grid_at_level(doc_w, doc_h, child.level);
+        if child.x >= cols || child.y >= rows {
+            continue;
+        }
+        let key = TileKey {
+            doc: parent.doc,
+            layer: parent.layer,
+            coord: child,
+            stage: CacheStage::Composite,
+        };
+        if let Some(v) = cache.entry_version(key) {
+            out.push((key, v));
+        }
+    }
+    out
+}
+
+/// After a body insert, mark Composite dependents dirty and enqueue (STEP4).
+fn invalidate_composites_fed_by(state: &AppState, completed: TileKey) {
+    if !engine_tiles::composite_input_versions_enabled() {
+        return;
+    }
+    let Ok(snapshot) = snapshot_for_key(state, completed) else {
+        return;
+    };
+    let doc_gen = snapshot
+        .generations
+        .document_gen
+        .load(Ordering::Acquire);
+
+    if completed.stage == CacheStage::Processed && completed.coord.level == 0 {
+        let comp = TileKey {
+            doc: completed.doc,
+            layer: 0,
+            coord: completed.coord,
+            stage: CacheStage::Composite,
+        };
+        state.tiles.tile_cache.mark_dirty(comp);
+        enqueue_composite_dedup(state, comp, doc_gen, engine_tiles::Priority::Immediate);
+        // Climb: dirty parent so enqueue_coarser_parent does not early-out.
+        if let Some(parent) = coarser_composite_key(comp) {
+            state.tiles.tile_cache.mark_dirty(parent);
+        }
+        enqueue_coarser_parent(state, comp);
+    }
+
+    if completed.stage == CacheStage::Composite {
+        if let Some(parent) = coarser_composite_key(completed) {
+            state.tiles.tile_cache.mark_dirty(parent);
+            enqueue_coarser_parent(state, completed);
+        }
+    }
+}
+
+fn coarser_composite_key(child: TileKey) -> Option<TileKey> {
+    if child.stage != CacheStage::Composite || child.layer != 0 {
+        return None;
+    }
+    Some(TileKey {
+        doc: child.doc,
+        layer: 0,
+        coord: engine_tiles::TileCoord {
+            level: child.coord.level + 1,
+            x: child.coord.x / 2,
+            y: child.coord.y / 2,
+        },
+        stage: CacheStage::Composite,
+    })
+}
+
+/// True when every visible leaf has a `tile_fresh` Processed entry at `coord`.
+fn visible_processed_tile_fresh(
+    nodes: &[LayerNode],
+    doc: u32,
+    coord: engine_tiles::TileCoord,
+    state: &AppState,
+) -> bool {
+    for node in nodes {
+        match node {
+            LayerNode::Leaf(layer) => {
+                if !layer.visible {
+                    continue;
+                }
+                let key = TileKey {
+                    doc,
+                    layer: layer.id.0,
+                    coord,
+                    stage: CacheStage::Processed,
+                };
+                if !engine_tiles::tile_fresh(&state.tiles.tile_cache, key) {
+                    return false;
+                }
+            }
+            LayerNode::Group(group) => {
+                if !group.visible {
+                    continue;
+                }
+                if !visible_processed_tile_fresh(&group.children, doc, coord, state) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
 }
 
 fn coord_in_document(coord: engine_tiles::TileCoord, doc_w: u32, doc_h: u32) -> bool {
@@ -1672,6 +2167,53 @@ mod tests {
                 );
             }
             assert!(!state.tiles.ed_strip_gates.any_owned());
+        }
+    }
+
+    #[test]
+    fn ed_strip_discard_reschedule_enqueues_owner_row() {
+        let state = make_ed_state();
+        reset_ed_processed(&state);
+        let coords: Vec<_> = (0..4u32)
+            .map(|x| engine_tiles::TileCoord {
+                level: 0,
+                x,
+                y: 1,
+            })
+            .collect();
+        // Park a waiter as EdStripBusy would.
+        let waiter = RecomputeTask {
+            key: ed_key(2, 1),
+            generation: 0,
+            layer_generation: 0,
+            priority: Priority::Immediate,
+        };
+        let deps = ed_strip_busy_deps(ed_key(2, 1), 0, 3);
+        let _ = state
+            .tiles
+            .ed_frontier
+            .block_on(waiter, deps, &state.tiles.tile_cache);
+
+        let before = state.tiles.scheduler.queued_len();
+        reschedule_ed_strip_after_discard(&state, ed_key(0, 1), &coords);
+        let after = state.tiles.scheduler.queued_len();
+        assert!(
+            after > before,
+            "discard reschedule must enqueue strip tiles (before={before} after={after})"
+        );
+        assert!(
+            state.tiles.ed_frontier.take_blocked(ed_key(2, 1)).is_none(),
+            "parked strip waiter must be force-taken"
+        );
+        for x in 0..4u32 {
+            let dirty = state
+                .tiles
+                .tile_cache
+                .entries
+                .get(&ed_key(x, 1))
+                .map(|e| e.dirty.load(Ordering::Acquire))
+                .unwrap_or(true);
+            assert!(dirty, "strip tile ({x},1) must be dirty after discard reschedule");
         }
     }
 

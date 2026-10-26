@@ -4,7 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import MenuBar from '../components/MenuBar';
 import DocumentTabBar from '../features/document/DocumentTabBar';
 import { WindowShell } from '../components/WindowShell';
-import Notification from '../components/common/Notification';
+import Notification, { BusyNotification } from '../components/common/Notification';
 import NewProjectDialog from '../components/NewProjectDialog';
 import HelpDialog from '../components/HelpDialog';
 import PreferencesDialog from '../features/preferences/PreferencesDialog';
@@ -521,6 +521,9 @@ export default function AppLayout() {
   const toastError =
     currentError && !isTooNewFileError(currentError) ? currentError : null;
   const displayError = toastError && toastError !== dismissedError ? toastError : null;
+  // Welcome screen has its own Opening…; with a document open, show a toast.
+  const openingToast =
+    doc.loading && doc.hasDocument ? 'Opening…' : null;
 
   const gridTemplateColumns = `${leftW}px 1fr ${rightW}px`;
 
@@ -531,6 +534,7 @@ export default function AppLayout() {
           <div data-tauri-drag-region="false">
             <MenuBar
               hasDocument={doc.hasDocument}
+              opening={doc.loading}
               canUndo={canUndo}
               canRedo={canRedo}
               recentEntries={welcome.recentEntries}
@@ -776,19 +780,17 @@ export default function AppLayout() {
         </>
       )}
 
+      <BusyNotification message={openingToast} />
       <Notification
         message={displayError}
-        type="error"
         onDismiss={() => setDismissedError(currentError)}
       />
       <Notification
         message={doc.notification}
-        type="success"
         onDismiss={doc.clearNotification}
       />
       <Notification
         message={layoutToast}
-        type="success"
         onDismiss={clearLayoutToast}
       />
       <NewProjectDialog

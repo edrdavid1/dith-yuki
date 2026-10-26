@@ -119,6 +119,9 @@ pub fn take(doc: u32, level: u8, x: u32, y: u32) -> bool {
 }
 
 /// After a Composite insert, emit `tile-ready` if the tile was pending (any level).
+///
+/// Late-tiles (2): body stamp via [`engine_tiles::tile_ready_emit_gen`] only —
+/// never emit live `content_gen` when the insert was missed / body is dirty.
 pub fn notify_if_pending<R: tauri::Runtime>(
     state: &AppState,
     app: &tauri::AppHandle<R>,
@@ -128,9 +131,29 @@ pub fn notify_if_pending<R: tauri::Runtime>(
     if key.stage != CacheStage::Composite {
         return;
     }
+    if let Ok(s) = state.session(key.doc) {
+        let live = s.document_handle.snapshot().generations.current_content_gen();
+        state.tiles.tile_cache.set_content_epoch(live);
+    }
+    let Some(body_gen) = engine_tiles::tile_ready_emit_gen(&state.tiles.tile_cache, key) else {
+        return;
+    };
     if !take(key.doc, key.coord.level, key.coord.x, key.coord.y) {
         return;
     }
+    let (doc_gen, content_gen) = state
+        .session(key.doc)
+        .ok()
+        .map(|s| {
+            let snap = s.document_handle.snapshot();
+            (
+                snap.generations
+                    .document_gen
+                    .load(std::sync::atomic::Ordering::Acquire),
+                snap.generations.current_content_gen(),
+            )
+        })
+        .map_or((None, None), |(d, c)| (Some(d), Some(c)));
     let payload = TileReadyPayload {
         doc_id,
         layer_id: key.layer,
@@ -138,27 +161,29 @@ pub fn notify_if_pending<R: tauri::Runtime>(
         level: key.coord.level,
         x: key.coord.x,
         y: key.coord.y,
+        gen: Some(body_gen),
     };
     if crate::tile_gen_trace::enabled() {
         crate::tile_gen_trace::emit(
             "tile_ready_emitted",
             Some(key.layer),
-            None,
+            doc_gen,
             None,
             Some(crate::tile_gen_trace::tile(
                 key.coord.level,
                 key.coord.x,
                 key.coord.y,
             )),
-            Some(key.doc as u64),
+            Some(body_gen),
             serde_json::json!({
                 "reason": "pending_registry",
                 "viewport_agnostic": true,
+                "content_gen": content_gen,
+                "body_gen": body_gen,
             }),
         );
     }
     let _ = app.emit_to(tauri::EventTarget::Any, "tile-ready", payload);
-    let _ = state; // reserved for future gen checks
 }
 
 #[derive(Clone, Debug, Serialize)]

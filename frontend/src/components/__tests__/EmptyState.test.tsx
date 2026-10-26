@@ -108,6 +108,27 @@ describe('EmptyState (Welcome)', () => {
     expect(screen.queryByText('file-6.png')).not.toBeInTheDocument();
   });
 
+  it('replaces welcome controls with an opening status while the first file loads', () => {
+    const onOpenImage = vi.fn();
+    const onOpenRecent = vi.fn();
+    render(
+      <EmptyState
+        opening
+        recentEntries={[imageEntry]}
+        onOpenImage={onOpenImage}
+        onOpenRecent={onOpenRecent}
+      />,
+      { wrapper }
+    );
+    expect(screen.getByRole('status')).toHaveTextContent('Opening…');
+    expect(screen.queryByText('Open image')).not.toBeInTheDocument();
+    expect(screen.queryByText('Open project')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('welcome-recent')).not.toBeInTheDocument();
+    expect(screen.getByTestId('welcome-drop-zone')).toHaveAttribute('aria-busy', 'true');
+    expect(onOpenImage).not.toHaveBeenCalled();
+    expect(onOpenRecent).not.toHaveBeenCalled();
+  });
+
   it('clears recent on double-click of the Recent heading', () => {
     const onClearRecent = vi.fn();
     render(

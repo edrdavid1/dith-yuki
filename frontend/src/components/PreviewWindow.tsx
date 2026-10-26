@@ -23,6 +23,10 @@ import type {
   GpuSelftestStatusPayload,
 } from '../shared/ipc/events';
 import { previewBackgroundStyle } from '../features/preview/previewBackground';
+import {
+  shouldShowRecomputingChip,
+  shouldShowRenderingOverlay,
+} from '../features/preview/previewBusyUi';
 import styles from '../features/preview/PreviewWindow.module.css';
 import previewStyles from '../features/preview/Preview.module.css';
 import { bind } from '../shared/ui/cn';
@@ -112,6 +116,10 @@ export default function PreviewWindow({
     setGpuDitherStatus(null);
   }, [docId]);
 
+  const handleFirstFrameDrawn = useCallback(() => {
+    setHadPreviewFrame(true);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
@@ -119,6 +127,8 @@ export default function PreviewWindow({
       if (cancelled) return;
       if (event.payload.doc_id !== docId) return;
       setFullDocumentBusy(event.payload.busy);
+      // Keep busy:false → hadFrame as a belt-and-suspenders path; primary
+      // latch is onFirstFrameDrawn (incl. retained tiles after content_changed).
       if (!event.payload.busy) {
         setHadPreviewFrame(true);
       }
@@ -321,13 +331,14 @@ export default function PreviewWindow({
           viewport={viewport}
           onViewportChange={handleViewportChange}
           tileRepeat3x3={tileRepeat3x3}
+          onFirstFrameDrawn={handleFirstFrameDrawn}
         />
-        {fullDocumentBusy && !hadPreviewFrame && (
+        {shouldShowRenderingOverlay(fullDocumentBusy, hadPreviewFrame) && (
           <div className={cn('preview-loading')} role="status" aria-live="polite">
             <span className={cn('pv-rendering-label')}>Rendering…</span>
           </div>
         )}
-        {fullDocumentBusy && hadPreviewFrame && (
+        {shouldShowRecomputingChip(fullDocumentBusy, hadPreviewFrame) && (
           <div
             className={cn('preview-recomputing')}
             role="status"

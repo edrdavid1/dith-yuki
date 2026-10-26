@@ -141,17 +141,29 @@ impl Document {
         }
     }
 
-    /// Increment document generation (global version)
+    /// Increment document generation (global version).
+    /// Also advances [`GenerationTracker::content_gen`] (pixel epoch).
     pub fn increment_generation(&mut self) {
         self.revision += 1;
         self.generations.increment_document_gen();
     }
 
+    /// Advance pixel-content epoch without raising `document_gen`
+    /// (palette / soft-proof paths that keep structural gen stable).
+    pub fn bump_content_gen(&mut self) -> u64 {
+        self.generations.increment_content_gen()
+    }
+
     /// Bump [`Layer::raw_rev`] for a leaf layer after Raw pixels change.
+    ///
+    /// Also advances [`GenerationTracker::content_gen`] so preview freshness
+    /// tracks paint / import even when `document_gen` is unchanged.
     ///
     /// Returns the new revision, or `None` if the layer is missing / not a leaf.
     pub fn bump_layer_raw_rev(&mut self, layer_id: LayerId) -> Option<u64> {
-        Self::find_leaf_mut(&mut self.root, layer_id).map(|l| l.bump_raw_rev())
+        let rev = Self::find_leaf_mut(&mut self.root, layer_id).map(|l| l.bump_raw_rev())?;
+        let _ = self.bump_content_gen();
+        Some(rev)
     }
 
     /// Set [`Layer::raw_rev`] (used when materializing Raw from an opened `.dyproj`).

@@ -21,6 +21,7 @@ import {
   feSnapshotFromTiles,
   ingestFeEventIntoSeriesTrace,
   runQuietThenCheck,
+  summarizeStaleByColumnRow,
   type SeriesTileTrace,
   type VpViolation,
 } from './viewportTraceChecker';
@@ -33,7 +34,20 @@ function attachSeriesTrace(): { trace: SeriesTileTrace; detach: () => void } {
   return { trace, detach };
 }
 
-export type ZoomScenario = 'Z1' | 'Z2' | 'Z3' | 'Z4' | 'Z5' | 'Z6' | 'Z7' | 'Z_INJECT';
+export type ZoomScenario =
+  | 'Z1'
+  | 'Z2'
+  | 'Z3'
+  | 'Z4'
+  | 'Z5'
+  | 'Z6'
+  | 'Z7'
+  | 'Z9'
+  | 'Z10'
+  | 'Z11a'
+  | 'Z11b'
+  | 'Z11c'
+  | 'Z_INJECT';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -75,6 +89,10 @@ export async function runZoomScenario(args: {
   /** Optional: no-op / change params for Z7. */
   noopParams?: () => Promise<void> | void;
   changeParams?: () => Promise<void> | void;
+  /** Z11: pulse palette color via `update_palette_color` (no doc_gen bump). */
+  changePalette?: () => Promise<void> | void;
+  docId?: number | null;
+  paletteId?: number | null;
 }): Promise<ZoomSeriesReport[]> {
   if (!tileGenTraceEnabled()) throw new Error('DITHER_TRACE not enabled');
   const reports: ZoomSeriesReport[] = [];
@@ -180,7 +198,95 @@ export async function runZoomScenario(args: {
       }
 
       let freshnessT0: number | undefined;
-      if (args.scenario === 'Z3') {
+      if (args.scenario === 'Z9') {
+        // H4 race: 5–10 quick param changes over ~300–500 ms, then quiet check.
+        if (!args.changeParams) {
+          throw new Error('Z9 requires changeParams (threshold / dither slider)');
+        }
+        if (args.applyFilter) await args.applyFilter();
+        await waitForSilence(60_000);
+        const bursts = 8;
+        const gapMs = 50; // 8 × 50 = 400 ms window
+        noteTraceEvent('z9_burst_begin', {
+          details: { bursts, gap_ms: gapMs, window_ms: bursts * gapMs },
+        });
+        for (let i = 0; i < bursts; i++) {
+          await args.changeParams();
+          noteTraceEvent('z9_param_pulse', { details: { i, gap_ms: gapMs } });
+          await sleep(gapMs);
+        }
+        noteTraceEvent('z9_burst_end', { details: { bursts } });
+        freshnessT0 = performance.now();
+        // Stay at current zoom — isolate param-change race (pan/zoom already heals).
+      } else if (args.scenario === 'Z10') {
+        // Continuous slider drag (~60 Hz) for 1–2 s — real trigger for x=0 stickiness.
+        if (!args.changeParams) {
+          throw new Error('Z10 requires changeParams (threshold / dither slider)');
+        }
+        if (args.applyFilter) await args.applyFilter();
+        await waitForSilence(60_000);
+        const hz = 60;
+        const durationMs = 1500;
+        const gapMs = 1000 / hz;
+        const pulses = Math.round(durationMs / gapMs);
+        noteTraceEvent('z10_drag_begin', {
+          details: { hz, duration_ms: durationMs, pulses, gap_ms: gapMs },
+        });
+        for (let i = 0; i < pulses; i++) {
+          await args.changeParams();
+          noteTraceEvent('z10_param_pulse', { details: { i, gap_ms: gapMs } });
+          await sleep(gapMs);
+        }
+        noteTraceEvent('z10_drag_end', { details: { pulses } });
+        freshnessT0 = performance.now();
+      } else if (
+        args.scenario === 'Z11a' ||
+        args.scenario === 'Z11b' ||
+        args.scenario === 'Z11c'
+      ) {
+        // Palette path: revision++ only — doc_gen / layer_gen / DocumentChanged stay put.
+        if (!args.changePalette) {
+          throw new Error(
+            'Z11 requires changePalette (bound palette + update_palette_color). Bind a palette in Color Lab first.',
+          );
+        }
+        if (args.applyFilter) await args.applyFilter();
+        await waitForSilence(60_000);
+        noteTraceEvent('z11_begin', {
+          details: {
+            variant: args.scenario,
+            docId: args.docId,
+            paletteId: args.paletteId,
+            gen_policy: 'palette_rev_not_in_X-Tile-Gen',
+          },
+        });
+        if (args.scenario === 'Z11a') {
+          await args.changePalette();
+          noteTraceEvent('z11_palette_pulse', { details: { i: 0, variant: 'single' } });
+        } else if (args.scenario === 'Z11b') {
+          const hz = 60;
+          const durationMs = 1500;
+          const gapMs = 1000 / hz;
+          const pulses = Math.round(durationMs / gapMs);
+          noteTraceEvent('z11_drag_begin', {
+            details: { hz, duration_ms: durationMs, pulses },
+          });
+          for (let i = 0; i < pulses; i++) {
+            await args.changePalette();
+            noteTraceEvent('z11_palette_pulse', { details: { i, gap_ms: gapMs } });
+            await sleep(gapMs);
+          }
+          noteTraceEvent('z11_drag_end', { details: { pulses } });
+        } else {
+          const n = 8;
+          for (let i = 0; i < n; i++) {
+            await args.changePalette();
+            noteTraceEvent('z11_palette_pulse', { details: { i, gap_ms: 50 } });
+            await sleep(50);
+          }
+        }
+        freshnessT0 = performance.now();
+      } else if (args.scenario === 'Z3') {
         // Cold Processed/Composite (keep Raw); prove via `cache_cold_start` in trace.
         try {
           await invoke('tile_gen_trace_cold_cache');
@@ -227,7 +333,10 @@ export async function runZoomScenario(args: {
       await sleep(jitter);
       const quietArgs = {
         getFeSnapshot: () =>
-          feSnapshotFromTiles(cam.getLevel(), cam.getVisibleTiles(), cam.getTileRev()),
+          feSnapshotFromTiles(cam.getLevel(), cam.getVisibleTiles(), cam.getTileRev(), {
+            tileGens: cam.getTileGens?.(),
+            maxKnownGen: cam.getMaxKnownGen?.(),
+          }),
         trace,
         flushViewport: () => cam.flushViewport?.(),
         freshnessT0,
@@ -236,6 +345,35 @@ export async function runZoomScenario(args: {
       };
 
       let { silence, violations, freshness } = await runQuietThenCheck(quietArgs);
+
+      if (args.scenario === 'Z10' || args.scenario.startsWith('Z11')) {
+        const expected =
+          cam.getMaxKnownGen?.() ??
+          Math.max(0, ...Object.values(cam.getTileGens?.() ?? {}));
+        const grid = summarizeStaleByColumnRow({
+          tiles: cam.getVisibleTiles(),
+          tileGens: cam.getTileGens?.(),
+          expectedGen: expected,
+        });
+        const evt =
+          args.scenario === 'Z10' ? 'z10_column_row_summary' : 'z11_column_row_summary';
+        noteTraceEvent(evt, {
+          details: {
+            scenario: args.scenario,
+            expected_gen: expected,
+            by_col: grid.byCol,
+            by_row: grid.byRow,
+            stale_keys: grid.staleKeys,
+            stale_x0: grid.byCol['0']?.stale ?? 0,
+            visible_x0: grid.byCol['0']?.visible ?? 0,
+            // Palette: STALE_GEN_AT_QUIET can be 0 while pixels are wrong (gen-blind).
+            note:
+              args.scenario.startsWith('Z11')
+                ? 'gen metrics may be clean; use Probe visible tiles for FE vs BE fingerprint'
+                : undefined,
+          },
+        });
+      }
 
       if (args.scenario === 'Z4' && violations.length > 0) {
         cam.panBy(8, 0);
