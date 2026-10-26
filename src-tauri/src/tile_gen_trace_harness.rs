@@ -3485,3 +3485,285 @@ fn z11_palette_series_12mp_warm() {
 fn z11_palette_drag_12mp_cold() {
     run_z11_once(Z11Variant::Drag, true);
 }
+
+/// Z11 expand: palette → pixel_size → levels → mode → soft_proof → zoom-out-to-fit,
+/// fingerprint + content stamp on **all** visible pyramid levels.
+fn run_z11_expand_once(series_idx: usize) -> bool {
+    use std::collections::HashMap;
+
+    #[cfg(test)]
+    tile_gen_trace::clear_test_state();
+    tile_gen_trace::force_enable(true);
+    crate::tile_gen_trace_host::install_evict_hook_if_needed();
+
+    let size = SizeSpec {
+        w: 1920,
+        h: 1080,
+        label: "1920x1080",
+    };
+    let budget = 1024 * 1024 * 1024;
+    let state = Arc::new(AppState::empty_process(None, budget, true));
+    let (doc, palette_id) = dither_doc_with_palette(Mode::FloydSteinberg, size.w, size.h);
+    state.spawn_session(doc);
+    fill_raw(&state, size.w, size.h);
+    let _ = ViewportService::new(Arc::clone(&state)).set_viewport(1.0, 0.0, 0.0, 1200.0, 800.0);
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2)
+        .clamp(1, 4);
+    let mut joins = Vec::new();
+    for _ in 0..cores {
+        let st = Arc::clone(&state);
+        let stop = Arc::clone(&stop);
+        joins.push(thread::spawn(move || harness_worker_loop(st, stop)));
+    }
+
+    crate::commands::schedule_dirty_viewport_tiles(&state);
+    if !wait_silence(&state, Duration::from_secs(120)) {
+        teardown(&state, &stop, joins);
+        return false;
+    }
+
+    let mut fp_before: HashMap<(u8, u32, u32), Option<u64>> = HashMap::new();
+    let snapshot_fps = |st: &AppState, map: &mut HashMap<(u8, u32, u32), Option<u64>>| {
+        let vp = st.ui.viewport.lock().unwrap().clone();
+        for c in &vp.visible_tiles {
+            let key = TileKey {
+                doc: 1,
+                layer: 0,
+                coord: *c,
+                stage: CacheStage::Composite,
+            };
+            map.insert((c.level, c.x, c.y), tile_fingerprint(st, key));
+        }
+    };
+    snapshot_fps(&state, &mut fp_before);
+
+    // 1) palette
+    apply_palette_color_pulse(&state, palette_id, series_idx);
+    // 2) pixel_size
+    apply_dither_param_pulse(&state, |p| {
+        p.pixel_size = if series_idx % 2 == 0 { 2 } else { 3 };
+    });
+    // 3) levels
+    apply_dither_param_pulse(&state, |p| {
+        p.levels = if series_idx % 2 == 0 { 8 } else { 12 };
+    });
+    // 4) mode (ordered ↔ ED keeps CPU path interesting)
+    apply_dither_param_pulse(&state, |p| {
+        p.mode = if series_idx % 2 == 0 {
+            DitherModeV2::Bayer4x4
+        } else {
+            DitherModeV2::FloydSteinberg
+        };
+    });
+    // Back to FS for soft-proof / zoom (ED late-tiles surface).
+    apply_dither_param_pulse(&state, |p| {
+        p.mode = DitherModeV2::FloydSteinberg;
+        p.pixel_size = 1;
+        p.levels = 16;
+    });
+    // 5) soft_proof content epoch
+    apply_soft_proof_pulse(&state, series_idx % 2 == 0);
+
+    if !wait_silence(&state, Duration::from_secs(180)) {
+        teardown(&state, &stop, joins);
+        return false;
+    }
+
+    // 6) zoom out to fit — all pyramid levels in play
+    let fit = (1200.0 / size.w as f64).min(800.0 / size.h as f64);
+    let _ = ViewportService::new(Arc::clone(&state)).set_viewport(fit, 0.0, 0.0, 1200.0, 800.0);
+    crate::commands::schedule_dirty_viewport_tiles(&state);
+    if !wait_silence(&state, Duration::from_secs(180)) {
+        teardown(&state, &stop, joins);
+        return false;
+    }
+
+    let snap = state.must_active().document_handle.snapshot();
+    let content_gen = snap.generations.current_content_gen();
+    state.tiles.tile_cache.set_content_epoch(content_gen);
+    let vp = state.ui.viewport.lock().unwrap().clone();
+    let mut gen_stale = 0usize;
+    let mut pixel_unchanged = 0usize;
+    let mut level_counts: HashMap<u8, usize> = HashMap::new();
+    for c in &vp.visible_tiles {
+        *level_counts.entry(c.level).or_insert(0) += 1;
+        let key = TileKey {
+            doc: 1,
+            layer: 0,
+            coord: *c,
+            stage: CacheStage::Composite,
+        };
+        let fresh = engine_tiles::tile_fresh(&state.tiles.tile_cache, key);
+        let gen = state
+            .tiles
+            .tile_cache
+            .entries
+            .get(&key)
+            .map(|e| e.generation);
+        if !fresh || gen != Some(content_gen) {
+            // Pyramid parents stamp min(children); allow == content_gen or
+            // (for edge parents) min may equal content when children caught up.
+            if gen.map(|g| g < content_gen).unwrap_or(true) || !fresh {
+                gen_stale += 1;
+            }
+        }
+        if c.level > 0 {
+            if engine_tiles::pyramid_parent_needs_rebuild(
+                &state.tiles.tile_cache,
+                key,
+                snap.width,
+                snap.height,
+            ) {
+                gen_stale += 1;
+            }
+        }
+        let fp = tile_fingerprint(&state, key);
+        if let Some(before) = fp_before.get(&(c.level, c.x, c.y)) {
+            if fp.is_some() && fp == *before {
+                pixel_unchanged += 1;
+            }
+        }
+    }
+
+    tile_gen_trace::emit_simple(
+        "z11_expand_result",
+        json!({
+            "series_idx": series_idx,
+            "content_gen": content_gen,
+            "viewport_level": vp.level,
+            "visible": vp.visible_tiles.len(),
+            "levels": level_counts,
+            "gen_stale": gen_stale,
+            "pixel_unchanged_overlap": pixel_unchanged,
+            "fit_zoom": fit,
+        }),
+    );
+
+    let ok = gen_stale == 0 && content_gen > 0;
+    teardown(&state, &stop, joins);
+    ok
+}
+
+fn apply_dither_param_pulse(state: &AppState, edit: impl FnOnce(&mut DitherParamsV2)) {
+    use engine_tiles::invalidation::{invalidate, InvalidationEvent};
+
+    let gen_before = state
+        .must_active()
+        .document_handle
+        .snapshot()
+        .generations
+        .document_gen
+        .load(Ordering::Acquire);
+    state.must_active().document_handle.mutate(|doc| {
+        if let LayerNode::Leaf(layer) = &mut doc.root[0] {
+            if let Some(f) = layer.filters.first_mut() {
+                if let FilterParams::DitherV2(ref mut p) = f.params {
+                    edit(p);
+                }
+            }
+        }
+        doc.increment_generation();
+        doc.generations.increment_layer_gen(1);
+    });
+    let snap = state.must_active().document_handle.snapshot();
+    let doc_id = snap.id.0;
+    invalidate(
+        &state.tiles.tile_cache,
+        InvalidationEvent::LayerFilterChanged {
+            doc: doc_id,
+            layer: 1,
+        },
+    );
+    state.tiles.error_residuals.evict_document(doc_id);
+    state.tiles.ed_frontier.clear();
+    crate::commands::schedule_dirty_viewport_tiles(state);
+    let gen_after = snap.generations.document_gen.load(Ordering::Acquire);
+    tile_gen_trace::emit(
+        "z11_expand_param_pulse",
+        Some(1),
+        Some(gen_after),
+        Some(snap.generations.get_layer_gen(1)),
+        None,
+        Some(snap.generations.current_content_gen()),
+        json!({
+            "doc_gen_before": gen_before,
+            "doc_gen_after": gen_after,
+            "content_gen": snap.generations.current_content_gen(),
+        }),
+    );
+}
+
+fn apply_soft_proof_pulse(state: &AppState, enable: bool) {
+    use engine_tiles::invalidation::{invalidate, InvalidationEvent};
+
+    let mut content_gen = 0u64;
+    state.must_active().document_handle.mutate(|doc| {
+        doc.soft_proof.enabled = enable;
+        content_gen = doc.bump_content_gen();
+    });
+    let snap = state.must_active().document_handle.snapshot();
+    let doc_id = snap.id.0;
+    invalidate(
+        &state.tiles.tile_cache,
+        InvalidationEvent::LayerPropsChanged {
+            doc: doc_id,
+            layer: 0,
+        },
+    );
+    crate::tile_serve::preview_rgba8_cache().clear_doc(doc_id);
+    crate::commands::schedule_dirty_viewport_tiles(state);
+    tile_gen_trace::emit_simple(
+        "z11_expand_soft_proof",
+        json!({ "enabled": enable, "content_gen": content_gen }),
+    );
+}
+
+#[test]
+#[ignore]
+fn z11_expand_matrix_smoke() {
+    assert!(
+        run_z11_expand_once(0),
+        "Z11 expand smoke (palette/pixel/levels/mode/proof/zoom-fit) failed"
+    );
+}
+
+/// 50× expand matrix — release/dev soak (nightly / local gate).
+#[test]
+#[ignore]
+fn z11_expand_50_series() {
+    use std::io::Write;
+
+    let out_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("profiling")
+        .join("results")
+        .join("2026-10-21")
+        .join("h4_z11");
+    let _ = std::fs::create_dir_all(&out_dir);
+    let profile = if cfg!(debug_assertions) {
+        "dev"
+    } else {
+        "release"
+    };
+    let n = 50usize;
+    let mut fail = 0usize;
+    for i in 0..n {
+        if !run_z11_expand_once(i) {
+            fail += 1;
+            eprintln!("[z11_expand_50] FAIL i={i}");
+        }
+    }
+    let md = out_dir.join(format!("z11_expand_50_{profile}.md"));
+    let mut f = std::fs::File::create(&md).expect("z11_expand_50 md");
+    writeln!(
+        f,
+        "# Z11 expand ×50 — {profile}\n\n- series={n} failures={fail}\n"
+    )
+    .ok();
+    eprintln!("[z11_expand_50] profile={profile} n={n} fail={fail}");
+    assert_eq!(fail, 0, "{fail}/{n} Z11 expand series failed");
+}

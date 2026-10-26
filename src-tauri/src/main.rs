@@ -48,7 +48,13 @@ mod recent_files;
 mod services;
 mod state;
 #[cfg(test)]
+mod second_interaction_harness;
+#[cfg(test)]
 mod step0_harness;
+#[cfg(test)]
+mod step3b_composite_nondeterminism_harness;
+#[cfg(test)]
+mod step4_composite_versions_harness;
 mod tile_gen_trace;
 #[cfg(test)]
 mod tile_gen_trace_harness;
@@ -855,14 +861,15 @@ fn handle_tile_request(
             )
         }
         tile_serve::PreviewServe::Stale { rgba8, generation } => {
-            // Expected content epoch on stale bodies so FE can lag-detect.
-            let tg = gen_hdr_owned(content_gen);
-            let _ = generation;
+            // Stamp the *body* generation (not live content_gen). Forging the
+            // live epoch made FE treat early dirty Composite as caught-up —
+            // worst on x=0 while the ED strip owner is still computing.
+            let tg = gen_hdr_owned(generation);
             tile_response(
                 200,
                 "application/octet-stream",
                 rgba8,
-                Some(content_gen),
+                Some(generation),
                 Some(tg.as_str()),
                 &[
                     ("X-Dither-Tile-Stale", "1"),

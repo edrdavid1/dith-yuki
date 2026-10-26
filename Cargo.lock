@@ -1272,6 +1272,7 @@ name = "dither"
 version = "2.0.5-beta"
 dependencies = [
  "base64 0.22.1",
+ "blake3",
  "block",
  "cocoa",
  "ctrlc",
