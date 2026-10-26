@@ -210,6 +210,11 @@ fn invalidate_palette_changed(
         // Encoded preview bytes are keyed by (tile, generation); clear so a
         // same-gen replace cannot replay pre-palette RGBA.
         crate::tile_serve::preview_rgba8_cache().clear_doc(doc);
+        // GPU resident slots are keyed by doc_gen only — palette bumps content_gen
+        // without doc_gen, so warm GpuDownload would republish old pixels as fresh.
+        if let Some(gpu) = state.gpu_resident.as_ref() {
+            gpu.evict_document(doc);
+        }
         state
             .tiles
             .tile_cache

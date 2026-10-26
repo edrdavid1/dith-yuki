@@ -294,6 +294,17 @@ mod tests {
     }
 
     #[test]
+    fn clean_behind_content_gen_serves_stale_not_fresh() {
+        // Late-tiles (1): Fresh only when stamp matches live content_gen.
+        let cache = TileCache::new(50_000_000);
+        cache.insert_fresh_gen(key(0, 0, 0), solid(0.2), 3);
+        match resolve_preview_tile(&cache, key(0, 0, 0), 5) {
+            PreviewServe::Stale { generation, .. } => assert_eq!(generation, 3),
+            other => panic!("expected stale when stamp 3 < live content 5, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn evicted_l0_uses_l1_pyramid() {
         let cache = TileCache::new(50_000_000);
         cache.insert_fresh(key(1, 0, 0), solid(0.8));

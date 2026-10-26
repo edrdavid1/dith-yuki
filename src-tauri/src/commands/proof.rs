@@ -136,6 +136,10 @@ pub fn proof_set_config(
         },
     );
     crate::tile_serve::preview_rgba8_cache().clear_doc(doc_id);
+    // Same as palette: resident slots key on doc_gen only.
+    if let Some(gpu) = state.inner().gpu_resident.as_ref() {
+        gpu.evict_document(doc_id);
+    }
     crate::commands::schedule_dirty_viewport_tiles(state.inner());
     emit_dirty_doc(Some(&app_handle), state.inner(), doc_id);
     emit_document_changed(&app_handle, "soft_proof_changed", None, Some(doc_id));

@@ -515,8 +515,27 @@ pub fn tile_worker_loop<R: tauri::Runtime>(state: Arc<AppState>, app_handle: tau
                                 );
                             }
                             let viewport_level = state.ui.viewport.lock().unwrap().level;
-                            let in_cache = state.tiles.tile_cache.get_entry(task.key).is_some();
-                            if task.key.stage == CacheStage::Composite && in_cache {
+                            // Late-tiles (2): emit only when Composite is tile_fresh; ready_gen
+                            // is the body stamp (never max(body, live_content)).
+                            if task.key.stage == CacheStage::Composite {
+                                if let Ok(s) = state.session(task.key.doc) {
+                                    let live_c = s
+                                        .document_handle
+                                        .snapshot()
+                                        .generations
+                                        .current_content_gen();
+                                    state.tiles.tile_cache.set_content_epoch(live_c);
+                                }
+                            }
+                            let ready_gen = if task.key.stage == CacheStage::Composite {
+                                engine_tiles::tile_ready_emit_gen(
+                                    &state.tiles.tile_cache,
+                                    task.key,
+                                )
+                            } else {
+                                None
+                            };
+                            if let Some(ready_gen) = ready_gen {
                                 // Always notify if FE registered a 202 (any level).
                                 // Also keep the legacy viewport-level emit for tiles
                                 // that arrived without going through 202.
@@ -553,15 +572,6 @@ pub fn tile_worker_loop<R: tauri::Runtime>(state: Arc<AppState>, app_handle: tau
                                         .unwrap_or_else(|| {
                                             snapshot.generations.current_content_gen()
                                         });
-                                    // Prefer cache stamp / live content epoch for FE maxKnown.
-                                    let ready_gen = state
-                                        .tiles
-                                        .tile_cache
-                                        .entries
-                                        .get(&task.key)
-                                        .map(|e| e.generation)
-                                        .unwrap_or(live_content)
-                                        .max(live_content);
                                     let payload = TileReadyPayload {
                                         doc_id: snapshot.id.0,
                                         layer_id: task.key.layer,
