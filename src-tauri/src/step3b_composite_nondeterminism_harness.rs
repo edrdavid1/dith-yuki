@@ -501,98 +501,98 @@ fn prod_shaped_worker_loop(state: Arc<AppState>, stop: Arc<AtomicBool>) {
                 continue;
             }
 
-            let result: Result<Arc<PixelTile>, engine_project::error::EngineError> =
-                match task.key.stage {
-                    CacheStage::Raw => state.tiles.tile_cache.get_entry(task.key).ok_or_else(|| {
-                        engine_project::error::EngineError::invalid_state("raw missing")
-                    }),
-                    CacheStage::Processed => {
-                        if task.key.coord.level > 0
-                            && crate::tile_pipeline::layer_has_error_diffusion(
-                                &snapshot.root,
-                                task.key.layer,
-                            )
-                        {
-                            state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
-                            crate::commands::on_preview_task_finished(&state);
-                            continue;
-                        }
-                        if crate::tile_pipeline::layer_has_error_diffusion(
+            let result: Result<Arc<PixelTile>, engine_project::error::EngineError> = match task
+                .key
+                .stage
+            {
+                CacheStage::Raw => state.tiles.tile_cache.get_entry(task.key).ok_or_else(|| {
+                    engine_project::error::EngineError::invalid_state("raw missing")
+                }),
+                CacheStage::Processed => {
+                    if task.key.coord.level > 0
+                        && crate::tile_pipeline::layer_has_error_diffusion(
                             &snapshot.root,
                             task.key.layer,
-                        ) && !engine_tiles::ed_ready(&state.tiles.tile_cache, task.key, true)
-                        {
-                            if let Some(ready) =
-                                state.tiles.ed_frontier.block(task, &state.tiles.tile_cache)
-                            {
-                                state.tiles.scheduler.enqueue_or_bump(ready);
-                                state.worker_wake.notify_one();
-                            }
-                            state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
-                            crate::commands::on_preview_task_finished(&state);
-                            continue;
-                        }
-                        match crate::tile_pipeline::compute_processed_tile(task.key, &state) {
-                            Err(engine_project::error::EngineError::EdStripBusy) => {
-                                let deps = crate::tile_pipeline::ed_strip_busy_park_deps(
-                                    &state, task.key,
-                                );
-                                if deps.is_empty() {
-                                    state.tiles.scheduler.enqueue_or_bump(task);
-                                    state.worker_wake.notify_one();
-                                } else {
-                                    let _ = state.tiles.ed_frontier.block_on(
-                                        task,
-                                        deps,
-                                        &state.tiles.tile_cache,
-                                    );
-                                }
-                                state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
-                                crate::commands::on_preview_task_finished(&state);
-                                continue;
-                            }
-                            other => other,
-                        }
+                        )
+                    {
+                        state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
+                        crate::commands::on_preview_task_finished(&state);
+                        continue;
                     }
-                    CacheStage::Composite => {
-                        match instrumented_compute_composite(&state, task.key) {
-                            Err(engine_project::error::EngineError::EdPrefixPending) => {
-                                let attempt = crate::tile_gen_trace::bump_requeue_attempt(
-                                    task.key.doc,
-                                    task.key.coord.level,
-                                    task.key.coord.x,
-                                    task.key.coord.y,
-                                    task.generation,
-                                );
-                                let deps = crate::tile_pipeline::composite_ed_park_deps(
-                                    &state,
-                                    &snapshot.root,
-                                    task.key.doc,
-                                    task.key.coord,
-                                );
-                                if deps.is_empty() {
-                                    let backoff_ms = 1u64 << attempt.min(4);
-                                    state.delayed_requeue.schedule(
-                                        Arc::clone(&state),
-                                        task,
-                                        Duration::from_millis(backoff_ms),
-                                    );
-                                } else if let Some(ready) = state.tiles.ed_frontier.block_on(
+                    if crate::tile_pipeline::layer_has_error_diffusion(
+                        &snapshot.root,
+                        task.key.layer,
+                    ) && !engine_tiles::ed_ready(&state.tiles.tile_cache, task.key, true)
+                    {
+                        if let Some(ready) =
+                            state.tiles.ed_frontier.block(task, &state.tiles.tile_cache)
+                        {
+                            state.tiles.scheduler.enqueue_or_bump(ready);
+                            state.worker_wake.notify_one();
+                        }
+                        state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
+                        crate::commands::on_preview_task_finished(&state);
+                        continue;
+                    }
+                    match crate::tile_pipeline::compute_processed_tile(task.key, &state) {
+                        Err(engine_project::error::EngineError::EdStripBusy) => {
+                            let deps =
+                                crate::tile_pipeline::ed_strip_busy_park_deps(&state, task.key);
+                            if deps.is_empty() {
+                                state.tiles.scheduler.enqueue_or_bump(task);
+                                state.worker_wake.notify_one();
+                            } else {
+                                let _ = state.tiles.ed_frontier.block_on(
                                     task,
                                     deps,
                                     &state.tiles.tile_cache,
-                                ) {
-                                    state.tiles.scheduler.enqueue_or_bump(ready);
-                                    state.worker_wake.notify_one();
-                                }
-                                state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
-                                crate::commands::on_preview_task_finished(&state);
-                                continue;
+                                );
                             }
-                            other => other,
+                            state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
+                            crate::commands::on_preview_task_finished(&state);
+                            continue;
                         }
+                        other => other,
                     }
-                };
+                }
+                CacheStage::Composite => match instrumented_compute_composite(&state, task.key) {
+                    Err(engine_project::error::EngineError::EdPrefixPending) => {
+                        let attempt = crate::tile_gen_trace::bump_requeue_attempt(
+                            task.key.doc,
+                            task.key.coord.level,
+                            task.key.coord.x,
+                            task.key.coord.y,
+                            task.generation,
+                        );
+                        let deps = crate::tile_pipeline::composite_ed_park_deps(
+                            &state,
+                            &snapshot.root,
+                            task.key.doc,
+                            task.key.coord,
+                        );
+                        if deps.is_empty() {
+                            let backoff_ms = 1u64 << attempt.min(4);
+                            state.delayed_requeue.schedule(
+                                Arc::clone(&state),
+                                task,
+                                Duration::from_millis(backoff_ms),
+                            );
+                        } else if let Some(ready) =
+                            state
+                                .tiles
+                                .ed_frontier
+                                .block_on(task, deps, &state.tiles.tile_cache)
+                        {
+                            state.tiles.scheduler.enqueue_or_bump(ready);
+                            state.worker_wake.notify_one();
+                        }
+                        state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
+                        crate::commands::on_preview_task_finished(&state);
+                        continue;
+                    }
+                    other => other,
+                },
+            };
 
             if let Ok(_tile) = result {
                 let snapshot = match state.session(task.key.doc) {
@@ -659,9 +659,7 @@ fn setup(
         let zoom = (cw / size.w as f64).min(ch / size.h as f64).min(1.0);
         (zoom, cw, ch)
     } else {
-        let zoom = (1200.0 / size.w as f64)
-            .min(800.0 / size.h as f64)
-            .min(1.0);
+        let zoom = (1200.0 / size.w as f64).min(800.0 / size.h as f64).min(1.0);
         (zoom, 1200.0, 800.0)
     };
     let _ = ViewportService::new(Arc::clone(&state)).set_viewport(zoom, 0.0, 0.0, cw, ch);
@@ -730,10 +728,7 @@ fn apply_dither(
         &state.tiles.tile_cache,
         engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { doc: 1, layer: 1 },
     );
-    state
-        .tiles
-        .error_residuals
-        .evict_layer(1, LayerId::new(1));
+    state.tiles.error_residuals.evict_layer(1, LayerId::new(1));
     state.tiles.block_representatives.clear_dithered();
     state.tiles.full_document.invalidate_layer(1, 1);
     if apply == ApplyKind::ClearGates {
@@ -1065,8 +1060,7 @@ fn step3b_l1_mismatch_frequency() {
                     for _ in 0..reps {
                         let _ = apply_dither(&state, mode.clone(), 1, 16, ApplyKind::ClearGates);
                     }
-                    let (ok, _) =
-                        apply_dither(&state, mode.clone(), 8, 16, ApplyKind::ClearGates);
+                    let (ok, _) = apply_dither(&state, mode.clone(), 8, 16, ApplyKind::ClearGates);
                     if !ok {
                         continue;
                     }
@@ -1084,10 +1078,7 @@ fn step3b_l1_mismatch_frequency() {
                         l1_mismatch += 1;
                     }
                     if l0_bad || l1_bad {
-                        let bad0 = (
-                            h0["l0_composite"].clone(),
-                            h0["visible_composite"].clone(),
-                        );
+                        let bad0 = (h0["l0_composite"].clone(), h0["visible_composite"].clone());
                         thread::sleep(Duration::from_millis(500));
                         reschedule_visible(&state);
                         let _ = wait_silence(&state, Duration::from_secs(30));
@@ -1147,7 +1138,10 @@ fn step3b_l1_mismatch_frequency() {
                     arr.push(row);
                 }
                 let _ = std::fs::create_dir_all(out_dir());
-                let _ = std::fs::write(&path, serde_json::to_vec_pretty(&report).unwrap_or_default());
+                let _ = std::fs::write(
+                    &path,
+                    serde_json::to_vec_pretty(&report).unwrap_or_default(),
+                );
                 eprintln!(
                     "[step3b_l1] cell done {} {:?} w={workers} l1_rate={:.3}",
                     size.label,
@@ -1179,7 +1173,11 @@ fn step3b_scenario_minimal_set() {
     };
     let workers = 8;
     let kind = WorkerKind::ProdShaped;
-    let scenarios: Vec<(&str, Option<(DitherModeV2, u8, u16)>, (DitherModeV2, u8, u16))> = vec![
+    let scenarios: Vec<(
+        &str,
+        Option<(DitherModeV2, u8, u16)>,
+        (DitherModeV2, u8, u16),
+    )> = vec![
         (
             "ps_1_to_8",
             Some((DitherModeV2::FloydSteinberg, 1, 16)),
@@ -1341,9 +1339,11 @@ fn step3b_worker_diff_and_frequency_matrix() {
                 eprintln!(
                     "[step3b] ref size={} fit={fit} kind={kind:?} apply={apply:?} ref={:?}",
                     size.label,
-                    reference
-                        .as_ref()
-                        .map(|(p, l0, _)| format!("proc={}… l0c={}…", &p[..16], &l0[..16]))
+                    reference.as_ref().map(|(p, l0, _)| format!(
+                        "proc={}… l0c={}…",
+                        &p[..16],
+                        &l0[..16]
+                    ))
                 );
 
                 for &workers in &worker_sets {
@@ -1455,7 +1455,11 @@ fn step3b_worker_diff_and_frequency_matrix() {
         label: "4000x3000",
     };
     let scen_n = if quick() { 5 } else { 15 };
-    let scenarios: Vec<(&str, Option<(DitherModeV2, u8, u16)>, (DitherModeV2, u8, u16))> = vec![
+    let scenarios: Vec<(
+        &str,
+        Option<(DitherModeV2, u8, u16)>,
+        (DitherModeV2, u8, u16),
+    )> = vec![
         (
             "ps_1_to_8",
             Some((DitherModeV2::FloydSteinberg, 1, 16)),
@@ -1532,7 +1536,10 @@ fn step3b_worker_diff_and_frequency_matrix() {
 
     let path = out_dir().join("step3b_matrix.json");
     let _ = std::fs::create_dir_all(out_dir());
-    let _ = std::fs::write(&path, serde_json::to_vec_pretty(&report).unwrap_or_default());
+    let _ = std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&report).unwrap_or_default(),
+    );
     eprintln!("[step3b] wrote {}", path.display());
 }
 
@@ -1623,7 +1630,10 @@ fn step3b_same_session_ps1_then_ps8_x30() {
     }
 
     let path = out_dir().join("step3b_same_session.json");
-    let _ = std::fs::write(&path, serde_json::to_vec_pretty(&report).unwrap_or_default());
+    let _ = std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&report).unwrap_or_default(),
+    );
     eprintln!("[step3b_same] wrote {}", path.display());
 }
 
@@ -1649,7 +1659,10 @@ fn step3b_converge_and_io_proof() {
         ApplyKind::ClearGates,
         target.clone(),
     );
-    eprintln!("[step3b_io] cold_ref={:?}", reference.as_ref().map(|(_, l0, _)| &l0[..16]));
+    eprintln!(
+        "[step3b_io] cold_ref={:?}",
+        reference.as_ref().map(|(_, l0, _)| &l0[..16])
+    );
 
     // Keep trying until we catch a mismatch or hit 20 attempts.
     let mut caught = None;
@@ -1664,8 +1677,14 @@ fn step3b_converge_and_io_proof() {
             target.clone(),
             true,
         );
-        let l0c = row["hashes_t0"]["l0_composite"].as_str().unwrap_or("").to_string();
-        let proc = row["hashes_t0"]["processed_l0"].as_str().unwrap_or("").to_string();
+        let l0c = row["hashes_t0"]["l0_composite"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        let proc = row["hashes_t0"]["processed_l0"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
         let mismatch = reference
             .as_ref()
             .map(|(rp, rl0, _)| proc == *rp && l0c != *rl0)
@@ -1673,12 +1692,10 @@ fn step3b_converge_and_io_proof() {
         eprintln!(
             "[step3b_io] attempt={attempt} mismatch={mismatch} flips={} converge={:?}",
             row["equal_gen_proc_flips"],
-            row["converge"]
-                .as_array()
-                .map(|a| a
-                    .iter()
-                    .map(|c| c["same_l0c_as_t0"].as_bool().unwrap_or(true))
-                    .collect::<Vec<_>>())
+            row["converge"].as_array().map(|a| a
+                .iter()
+                .map(|c| c["same_l0c_as_t0"].as_bool().unwrap_or(true))
+                .collect::<Vec<_>>())
         );
         if mismatch || row["equal_gen_proc_flips"].as_u64().unwrap_or(0) > 0 {
             caught = Some(row);

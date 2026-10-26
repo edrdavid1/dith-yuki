@@ -528,10 +528,7 @@ pub fn tile_worker_loop<R: tauri::Runtime>(state: Arc<AppState>, app_handle: tau
                                 }
                             }
                             let ready_gen = if task.key.stage == CacheStage::Composite {
-                                engine_tiles::tile_ready_emit_gen(
-                                    &state.tiles.tile_cache,
-                                    task.key,
-                                )
+                                engine_tiles::tile_ready_emit_gen(&state.tiles.tile_cache, task.key)
                             } else {
                                 None
                             };
@@ -560,11 +557,12 @@ pub fn tile_worker_loop<R: tauri::Runtime>(state: Arc<AppState>, app_handle: tau
                                         .map(|s| s.document_handle.snapshot());
                                     let live_doc = live_snap
                                         .as_ref()
-                                        .map(|s| {
-                                            s.generations.document_gen.load(Ordering::Acquire)
-                                        })
+                                        .map(|s| s.generations.document_gen.load(Ordering::Acquire))
                                         .unwrap_or_else(|| {
-                                            snapshot.generations.document_gen.load(Ordering::Acquire)
+                                            snapshot
+                                                .generations
+                                                .document_gen
+                                                .load(Ordering::Acquire)
                                         });
                                     let live_content = live_snap
                                         .as_ref()

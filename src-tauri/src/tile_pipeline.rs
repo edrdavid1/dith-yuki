@@ -702,7 +702,7 @@ pub fn compute_composite_tile(
                 );
             }
         }
-            if waiting {
+        if waiting {
             return retry_pyramid_parent(state, key, doc_gen);
         }
         // Late-tiles (3): stamp = min(children), never live content_gen alone.
@@ -892,8 +892,7 @@ pub fn compute_composite_tile(
     let now_content = now_snap.generations.current_content_gen();
     let mut inserted = false;
     let inputs_ok = if track {
-        let inputs_after =
-            l0_composite_input_versions(&snapshot.root, key.doc, key.coord, state);
+        let inputs_after = l0_composite_input_versions(&snapshot.root, key.doc, key.coord, state);
         inputs_before == inputs_after && !inputs_before.is_empty()
     } else {
         true
@@ -1582,9 +1581,7 @@ fn collect_dirty_recursive(
                     }
                     // Match composite_needs_compute / tile_fresh: behind content_epoch
                     // must recompute even when the dirty bit was cleared by a race.
-                    Some(entry) => {
-                        entry.dirty.load(Ordering::Acquire) || entry.generation < epoch
-                    }
+                    Some(entry) => entry.dirty.load(Ordering::Acquire) || entry.generation < epoch,
                 };
                 if needs_compute {
                     keys.push(key);
@@ -1706,10 +1703,7 @@ fn invalidate_composites_fed_by(state: &AppState, completed: TileKey) {
     let Ok(snapshot) = snapshot_for_key(state, completed) else {
         return;
     };
-    let doc_gen = snapshot
-        .generations
-        .document_gen
-        .load(Ordering::Acquire);
+    let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
 
     if completed.stage == CacheStage::Processed && completed.coord.level == 0 {
         let comp = TileKey {
@@ -2175,11 +2169,7 @@ mod tests {
         let state = make_ed_state();
         reset_ed_processed(&state);
         let coords: Vec<_> = (0..4u32)
-            .map(|x| engine_tiles::TileCoord {
-                level: 0,
-                x,
-                y: 1,
-            })
+            .map(|x| engine_tiles::TileCoord { level: 0, x, y: 1 })
             .collect();
         // Park a waiter as EdStripBusy would.
         let waiter = RecomputeTask {
@@ -2213,7 +2203,10 @@ mod tests {
                 .get(&ed_key(x, 1))
                 .map(|e| e.dirty.load(Ordering::Acquire))
                 .unwrap_or(true);
-            assert!(dirty, "strip tile ({x},1) must be dirty after discard reschedule");
+            assert!(
+                dirty,
+                "strip tile ({x},1) must be dirty after discard reschedule"
+            );
         }
     }
 

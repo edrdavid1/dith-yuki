@@ -132,7 +132,11 @@ pub fn notify_if_pending<R: tauri::Runtime>(
         return;
     }
     if let Ok(s) = state.session(key.doc) {
-        let live = s.document_handle.snapshot().generations.current_content_gen();
+        let live = s
+            .document_handle
+            .snapshot()
+            .generations
+            .current_content_gen();
         state.tiles.tile_cache.set_content_epoch(live);
     }
     let Some(body_gen) = engine_tiles::tile_ready_emit_gen(&state.tiles.tile_cache, key) else {

@@ -45,10 +45,10 @@ mod preview_diag;
 #[cfg(test)]
 mod preview_latency_diag;
 mod recent_files;
-mod services;
-mod state;
 #[cfg(test)]
 mod second_interaction_harness;
+mod services;
+mod state;
 #[cfg(test)]
 mod step0_harness;
 #[cfg(test)]

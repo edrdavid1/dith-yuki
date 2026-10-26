@@ -478,10 +478,19 @@ pub fn tile_gen_trace_cache_probe(
     let processed = stage_probe(processed_layer, engine_tiles::CacheStage::Processed);
     // Backward-compatible top-level fields (Composite).
     let (present, dirty, tile_gen, fresh) = (
-        composite.get("present").and_then(|v| v.as_bool()).unwrap_or(false),
-        composite.get("dirty").and_then(|v| v.as_bool()).unwrap_or(true),
+        composite
+            .get("present")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        composite
+            .get("dirty")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
         composite.get("tile_gen").cloned().unwrap_or(json!(null)),
-        composite.get("fresh").and_then(|v| v.as_bool()).unwrap_or(false),
+        composite
+            .get("fresh")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
     );
     json!({
         "ok": true,
