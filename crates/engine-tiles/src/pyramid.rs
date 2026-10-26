@@ -21,8 +21,106 @@
 //! - Applied per-channel (RGBA)
 //! - Deterministic and reproducible
 
-use crate::{CacheStage, PixelTile, TileCache, TileCoord, TileKey, HALO, TILE_SIZE};
+use crate::{
+    tile_fresh, CacheStage, PixelTile, TileCache, TileCoord, TileKey, HALO, TILE_SIZE,
+};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
+
+/// Four child coords that box-filter into `parent` (level must be > 0).
+pub fn pyramid_child_coords(parent: TileCoord) -> [TileCoord; 4] {
+    let child_level = parent.level.saturating_sub(1);
+    [
+        TileCoord {
+            level: child_level,
+            x: parent.x * 2,
+            y: parent.y * 2,
+        },
+        TileCoord {
+            level: child_level,
+            x: parent.x * 2 + 1,
+            y: parent.y * 2,
+        },
+        TileCoord {
+            level: child_level,
+            x: parent.x * 2,
+            y: parent.y * 2 + 1,
+        },
+        TileCoord {
+            level: child_level,
+            x: parent.x * 2 + 1,
+            y: parent.y * 2 + 1,
+        },
+    ]
+}
+
+/// Minimum `generation` among in-bounds, [`tile_fresh`] children of a pyramid parent.
+///
+/// Late-tiles mechanism (3): parent stamp must be `min(children)`, never a live
+/// content_gen forged ahead of a lagging child. Returns `None` when any in-bounds
+/// child is missing or not fresh — caller must wait / rebuild.
+pub fn pyramid_min_child_generation(
+    cache: &TileCache,
+    parent: TileKey,
+    doc_width: u32,
+    doc_height: u32,
+) -> Option<u64> {
+    if parent.coord.level == 0 {
+        return None;
+    }
+    let mut min_gen: Option<u64> = None;
+    let mut saw = false;
+    for child in pyramid_child_coords(parent.coord) {
+        let (cols, rows) = tile_grid_at_level(doc_width, doc_height, child.level);
+        if child.x >= cols || child.y >= rows {
+            continue;
+        }
+        saw = true;
+        let child_key = TileKey {
+            doc: parent.doc,
+            layer: parent.layer,
+            coord: child,
+            stage: parent.stage,
+        };
+        if !tile_fresh(cache, child_key) {
+            return None;
+        }
+        let gen = cache.entries.get(&child_key)?.generation;
+        min_gen = Some(min_gen.map_or(gen, |m| m.min(gen)));
+    }
+    if !saw {
+        return None;
+    }
+    min_gen
+}
+
+/// True when a clean parent stamp diverges from [`pyramid_min_child_generation`].
+///
+/// Forces rebuild of an already-"clean" parent after palette / zoom-out when
+/// children advanced (or one child lags) under the same content epoch.
+pub fn pyramid_parent_needs_rebuild(
+    cache: &TileCache,
+    parent: TileKey,
+    doc_width: u32,
+    doc_height: u32,
+) -> bool {
+    if parent.coord.level == 0 {
+        return false;
+    }
+    let Some(entry) = cache.entries.get(&parent) else {
+        return true;
+    };
+    if entry.dirty.load(Ordering::Acquire) {
+        return true;
+    }
+    if !cache.composite_inputs_current(parent) {
+        return true;
+    }
+    match pyramid_min_child_generation(cache, parent, doc_width, doc_height) {
+        None => true,
+        Some(min) => entry.generation != min,
+    }
+}
 
 /// Maximum pyramid level for a document: `floor(log2(max_dim / TILE_SIZE))`.
 ///
@@ -778,5 +876,56 @@ mod tests {
         let (coord, tile) = find_cached_ancestor(&cache, key).expect("L2");
         assert_eq!(coord.level, 2);
         assert!((tile.at(HALO, HALO, 0) - 0.25).abs() < 1e-5);
+    }
+
+    fn composite_key(level: u8, x: u32, y: u32) -> TileKey {
+        TileKey {
+            doc: 1,
+            layer: 0,
+            coord: TileCoord { level, x, y },
+            stage: CacheStage::Composite,
+        }
+    }
+
+    #[test]
+    fn pyramid_min_child_generation_is_min_of_fresh_children() {
+        let cache = TileCache::new(64 * 1024 * 1024);
+        cache.set_content_epoch(5);
+        let parent = composite_key(1, 0, 0);
+        // 1024² → L0 grid 4×4, so all four children of (1,0,0) are in bounds.
+        for (x, y, gen) in [(0, 0, 7u64), (1, 0, 5), (0, 1, 6), (1, 1, 8)] {
+            cache.insert_fresh_gen(composite_key(0, x, y), Arc::new(PixelTile::new()), gen);
+        }
+        cache.set_content_epoch(5);
+        assert_eq!(
+            pyramid_min_child_generation(&cache, parent, 1024, 1024),
+            Some(5),
+            "parent stamp must be min(children), not live max"
+        );
+        // Pre-fix live forge would have used content_gen=8.
+        assert_ne!(
+            pyramid_min_child_generation(&cache, parent, 1024, 1024).unwrap(),
+            8
+        );
+    }
+
+    #[test]
+    fn pyramid_parent_needs_rebuild_when_clean_but_diverges() {
+        let cache = TileCache::new(64 * 1024 * 1024);
+        let parent = composite_key(1, 0, 0);
+        cache.set_content_epoch(6);
+        for (x, y) in [(0u32, 0u32), (1, 0), (0, 1), (1, 1)] {
+            cache.insert_fresh_gen(composite_key(0, x, y), Arc::new(PixelTile::new()), 6);
+        }
+        // Clean parent stamped ahead of min(children) (historical live-content forge).
+        cache.insert_fresh_gen(parent, Arc::new(PixelTile::new()), 9);
+        assert!(
+            pyramid_parent_needs_rebuild(&cache, parent, 1024, 1024),
+            "clean parent at 9 with children min=6 must rebuild"
+        );
+        // insert_fresh_gen refuses older stamps — clear then write matching min.
+        cache.entries.remove(&parent);
+        assert!(cache.insert_fresh_gen(parent, Arc::new(PixelTile::new()), 6));
+        assert!(!pyramid_parent_needs_rebuild(&cache, parent, 1024, 1024));
     }
 }

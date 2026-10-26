@@ -109,6 +109,23 @@ pub fn coord_feeds_visible_set(coord: TileCoord, viewport: &HashSet<TileCoord>) 
 /// = 260² × 4 × 4 = 1,081,600 bytes
 pub const TILE_BYTES: usize = ((256 + 2 * 2) as usize) * ((256 + 2 * 2) as usize) * 4 * 4;
 
+/// Monotonic body version: bumps on every successful [`TileCache::insert_fresh_gen`]
+/// (including equal-`generation` replaces). Used so Composite parents can detect
+/// that an input body changed without bumping `content_gen`.
+static NEXT_ENTRY_VERSION: AtomicU64 = AtomicU64::new(1);
+
+/// Kill switch: `DITHER_COMPOSITE_INPUT_VERSIONS=0` restores pre-STEP4 freshness
+/// (generation + dirty only). Default: enabled. Cached after first read.
+pub fn composite_input_versions_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("DITHER_COMPOSITE_INPUT_VERSIONS")
+            .ok()
+            .as_deref()
+            != Some("0")
+    })
+}
+
 /// Metadata for a cached tile entry.
 ///
 /// Tracks the tile data, its version, access time, and dirty status.
@@ -118,6 +135,11 @@ pub struct CacheEntry {
     /// Version counter for invalidation tracking.
     /// Used to detect stale tasks and enable selective recomputation.
     pub generation: u64,
+    /// Monotonic body version (independent of `generation` / content_gen).
+    pub entry_version: u64,
+    /// For Composite: `(input_key, entry_version)` snapshot at assemble time.
+    /// Empty for Raw/Processed or when input-version tracking is off.
+    pub input_versions: Arc<[(TileKey, u64)]>,
     /// Timestamp of last access (used for LRU ordering).
     pub last_touched: Instant,
     /// Flag indicating whether this tile is marked dirty (stale, needs recomputation).
@@ -233,11 +255,14 @@ impl TileCache {
         if let Some(entry) = self.entries.get(&key) {
             entry.value().tile.clone()
         } else {
+            let entry_version = NEXT_ENTRY_VERSION.fetch_add(1, Ordering::Relaxed);
             self.entries.insert(
                 key,
                 CacheEntry {
                     tile: tile.clone(),
                     generation: 0,
+                    entry_version,
+                    input_versions: Arc::from([]),
                     last_touched: Instant::now(),
                     dirty: AtomicBool::new(false),
                 },
@@ -523,14 +548,36 @@ impl TileCache {
         let _ = self.insert_fresh_gen(key, tile, 0);
     }
 
-    /// Insert a freshly computed tile at `generation`.
+    /// Insert a freshly computed tile at `generation` (no Composite input manifest).
     ///
     /// Returns `false` (and leaves the cache unchanged) if the key already holds
     /// a **newer** generation — so a slow stale Composite cannot overwrite a
     /// newer result. Same or older cached generation is replaced. The per-key
     /// DashMap entry lock makes the compare-and-swap atomic.
     pub fn insert_fresh_gen(&self, key: TileKey, tile: Arc<PixelTile>, generation: u64) -> bool {
+        self.insert_fresh_gen_inputs(key, tile, generation, &[])
+    }
+
+    /// Like [`Self::insert_fresh_gen`], recording `input_versions` for Composite
+    /// freshness (STEP4). Pass the `(TileKey, entry_version)` of every body this
+    /// tile was assembled from. Ignored when kill-switch disables tracking.
+    pub fn insert_fresh_gen_inputs(
+        &self,
+        key: TileKey,
+        tile: Arc<PixelTile>,
+        generation: u64,
+        inputs: &[(TileKey, u64)],
+    ) -> bool {
         use dashmap::mapref::entry::Entry;
+        let entry_version = NEXT_ENTRY_VERSION.fetch_add(1, Ordering::Relaxed);
+        let input_versions: Arc<[(TileKey, u64)]> = if composite_input_versions_enabled()
+            && key.stage == CacheStage::Composite
+            && !inputs.is_empty()
+        {
+            Arc::from(inputs)
+        } else {
+            Arc::from([])
+        };
         match self.entries.entry(key) {
             Entry::Occupied(mut occ) => {
                 if occ.get().generation > generation {
@@ -539,6 +586,8 @@ impl TileCache {
                 occ.insert(CacheEntry {
                     tile,
                     generation,
+                    entry_version,
+                    input_versions,
                     last_touched: Instant::now(),
                     dirty: AtomicBool::new(false),
                 });
@@ -548,6 +597,8 @@ impl TileCache {
                 v.insert(CacheEntry {
                     tile,
                     generation,
+                    entry_version,
+                    input_versions,
                     last_touched: Instant::now(),
                     dirty: AtomicBool::new(false),
                 });
@@ -556,6 +607,32 @@ impl TileCache {
                 true
             }
         }
+    }
+
+    /// Current body version of `key`, if present.
+    pub fn entry_version(&self, key: TileKey) -> Option<u64> {
+        self.entries.get(&key).map(|e| e.entry_version)
+    }
+
+    /// True when a Composite's recorded input versions still match live bodies.
+    /// Non-Composite / empty manifest / kill-switch → true.
+    pub fn composite_inputs_current(&self, key: TileKey) -> bool {
+        if !composite_input_versions_enabled() {
+            return true;
+        }
+        let Some(entry) = self.entries.get(&key) else {
+            return false;
+        };
+        if entry.input_versions.is_empty() {
+            return true;
+        }
+        for (ik, want) in entry.input_versions.iter() {
+            match self.entries.get(ik) {
+                Some(inp) if inp.entry_version == *want && !inp.dirty.load(Ordering::Acquire) => {}
+                _ => return false,
+            }
+        }
+        true
     }
 
     /// Fresh preview: clean and not behind `doc_gen`. Dirty still serves stale bytes.
