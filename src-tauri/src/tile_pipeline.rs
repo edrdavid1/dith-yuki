@@ -2792,14 +2792,20 @@ mod tests {
             "L1 must wait for full-res children, not filter downsampled raw"
         );
 
-        let mut l0_computed = 0usize;
+        // Input-version / invalidate_composites_fed_by can re-enqueue the same
+        // L0 child; count unique coords, not dequeue events.
+        let mut l0_coords = std::collections::BTreeSet::new();
         while let Some(task) = state.tiles.scheduler.dequeue() {
             if task.key.coord.level == 0 && task.key.stage == CacheStage::Composite {
                 compute_composite_tile(task.key, &state).unwrap();
-                l0_computed += 1;
+                l0_coords.insert((task.key.coord.x, task.key.coord.y));
             }
         }
-        assert_eq!(l0_computed, 4, "512×512 → four L0 children");
+        assert_eq!(
+            l0_coords.len(),
+            4,
+            "512×512 → four L0 children, got {l0_coords:?}"
+        );
 
         let tile = compute_composite_tile(l1_key, &state).unwrap();
         assert!((tile.at(engine_tiles::HALO, engine_tiles::HALO, 0) - 0.6).abs() < 1e-4);
