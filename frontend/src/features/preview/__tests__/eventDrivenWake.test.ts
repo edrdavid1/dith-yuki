@@ -85,6 +85,37 @@ describe('gen gates', () => {
     ).toBe(false);
   });
 
+  it('retries stale/upsample quality even when gen already matches maxKnown', () => {
+    // Forged live content_gen on a dirty body used to finalize x=0 early.
+    expect(
+      shouldRetryForMaxGen({
+        responseGen: 42,
+        maxKnownGen: 42,
+        needsRefetch: false,
+        refetchDone: false,
+        quality: 'stale',
+      }),
+    ).toBe(true);
+    expect(
+      shouldRetryForMaxGen({
+        responseGen: 42,
+        maxKnownGen: 42,
+        needsRefetch: false,
+        refetchDone: false,
+        quality: 'upsample',
+      }),
+    ).toBe(true);
+    expect(
+      shouldRetryForMaxGen({
+        responseGen: 42,
+        maxKnownGen: 42,
+        needsRefetch: false,
+        refetchDone: true,
+        quality: 'stale',
+      }),
+    ).toBe(false);
+  });
+
   it('flags collapsed retry that still returned stale for safety recovery', () => {
     expect(
       collapsedRetryStillStale({

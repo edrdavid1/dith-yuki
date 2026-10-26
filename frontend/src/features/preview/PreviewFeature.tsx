@@ -43,6 +43,7 @@ export default function PreviewFeature({
   const docWidth = useAppSelector((s) => s.document.width);
   const docHeight = useAppSelector((s) => s.document.height);
   const hasDocument = useAppSelector((s) => s.document.hasDocument);
+  const openingDocument = useAppSelector((s) => s.document.loading);
   const hydrated = useAppSelector((s) => s.document.hydrated);
   const { previewBackground } = useShell();
   // Tabs stay correct even if a raced refreshDocument fails to parse snap.id.
@@ -197,6 +198,7 @@ export default function PreviewFeature({
       ) : empty ? (
         <EmptyState
           fill={fill}
+          opening={openingDocument}
           recentEntries={welcome?.recentEntries}
           onNewProject={welcome?.onNewProject}
           onOpenImage={welcome?.onOpenImage}

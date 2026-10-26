@@ -55,15 +55,21 @@ export function shouldDiscardStaleGen(
  *
  * `maxKnownGen` must only track gens observed as ready (tile-ready / 200),
  * never an optimistic filter-apply / 202 target — that causes request storms.
+ *
+ * `quality: stale|upsample|pyramid` is never final — retry once even when the
+ * gen number already matches (body may still be old pixels).
  */
 export function shouldRetryForMaxGen(args: {
   responseGen: number | null | undefined;
   maxKnownGen: number;
   needsRefetch: boolean;
   refetchDone: boolean;
+  quality?: string | null;
 }): boolean {
   if (args.refetchDone) return false;
   if (args.needsRefetch) return true;
+  const q = args.quality;
+  if (q === 'stale' || q === 'upsample' || q === 'pyramid') return true;
   if (args.responseGen == null) return false;
   return args.responseGen < args.maxKnownGen;
 }
