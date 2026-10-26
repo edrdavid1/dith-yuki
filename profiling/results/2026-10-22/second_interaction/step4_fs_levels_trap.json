@@ -1,0 +1,69 @@
+{
+  "any_discrepancy": true,
+  "n": 30,
+  "rows": [
+    {
+      "footprint_after": {
+        "approx_manifest_bytes": 3840,
+        "composite_entries": 240,
+        "entries": 624,
+        "input_version_pairs": 0,
+        "tile_bytes_const": 1081600,
+        "used_mb": 643.65234375
+      },
+      "level_mismatches": {},
+      "mismatch": 0,
+      "mode": "fs",
+      "ok_n": 30,
+      "rate": 0.0,
+      "scenario": "ps_1_to_8",
+      "viewport_level": 1,
+      "workers": 8
+    },
+    {
+      "footprint_after": {
+        "approx_manifest_bytes": 3840,
+        "composite_entries": 240,
+        "entries": 624,
+        "input_version_pairs": 0,
+        "tile_bytes_const": 1081600,
+        "used_mb": 643.65234375
+      },
+      "level_mismatches": {
+        "L1": 11
+      },
+      "mismatch": 11,
+      "mode": "fs",
+      "ok_n": 30,
+      "rate": 0.36666666666666664,
+      "scenario": "ps_8_to_9",
+      "viewport_level": 1,
+      "workers": 8
+    },
+    {
+      "footprint_after": {
+        "approx_manifest_bytes": 3840,
+        "composite_entries": 240,
+        "entries": 624,
+        "input_version_pairs": 0,
+        "tile_bytes_const": 1081600,
+        "used_mb": 643.65234375
+      },
+      "level_mismatches": {
+        "L1": 1
+      },
+      "mismatch": 1,
+      "mode": "fs",
+      "ok_n": 30,
+      "rate": 0.03333333333333333,
+      "scenario": "levels_16_to_32",
+      "viewport_level": 1,
+      "workers": 8
+    }
+  ],
+  "trap_proven_modes": [
+    "fs"
+  ],
+  "trap_unproven_modes": [],
+  "versions_enabled": false
+}

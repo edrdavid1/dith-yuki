@@ -1,0 +1,165 @@
+{
+  "n": 30,
+  "rows": [
+    {
+      "fit": false,
+      "l0_mismatch": 0,
+      "l0_mismatch_rate": 0.0,
+      "l1_only_mismatch": 0,
+      "l1_only_mismatch_rate": 0.0,
+      "n": 30,
+      "ok_n": 30,
+      "on_mismatch_healed_a": 0,
+      "on_mismatch_persist_b": 0,
+      "reference": {
+        "l0_composite": "83bed3407ac38474b3d7b49173c6d60a99d5f2206b358cc06e263a5c20a30879",
+        "processed_l0": "b47c6efdb1f697f8f90175f8e7e0c267e6c34a3b3a94cab9bf8852db3a70d12f",
+        "visible_composite": "9c404b6fbe446427a22a39e6966e1b92566cb03d8527ce3116b2b1e34b3590f6"
+      },
+      "session": "reuse_pool_per_cell",
+      "size": "4000x3000",
+      "worker_kind": "Harness",
+      "workers": 1
+    },
+    {
+      "fit": false,
+      "l0_mismatch": 0,
+      "l0_mismatch_rate": 0.0,
+      "l1_only_mismatch": 5,
+      "l1_only_mismatch_rate": 0.16666666666666666,
+      "n": 30,
+      "ok_n": 30,
+      "on_mismatch_healed_a": 0,
+      "on_mismatch_persist_b": 5,
+      "reference": {
+        "l0_composite": "83bed3407ac38474b3d7b49173c6d60a99d5f2206b358cc06e263a5c20a30879",
+        "processed_l0": "b47c6efdb1f697f8f90175f8e7e0c267e6c34a3b3a94cab9bf8852db3a70d12f",
+        "visible_composite": "9c404b6fbe446427a22a39e6966e1b92566cb03d8527ce3116b2b1e34b3590f6"
+      },
+      "session": "reuse_pool_per_cell",
+      "size": "4000x3000",
+      "worker_kind": "Harness",
+      "workers": 2
+    },
+    {
+      "fit": false,
+      "l0_mismatch": 0,
+      "l0_mismatch_rate": 0.0,
+      "l1_only_mismatch": 6,
+      "l1_only_mismatch_rate": 0.2,
+      "n": 30,
+      "ok_n": 30,
+      "on_mismatch_healed_a": 0,
+      "on_mismatch_persist_b": 6,
+      "reference": {
+        "l0_composite": "83bed3407ac38474b3d7b49173c6d60a99d5f2206b358cc06e263a5c20a30879",
+        "processed_l0": "b47c6efdb1f697f8f90175f8e7e0c267e6c34a3b3a94cab9bf8852db3a70d12f",
+        "visible_composite": "9c404b6fbe446427a22a39e6966e1b92566cb03d8527ce3116b2b1e34b3590f6"
+      },
+      "session": "reuse_pool_per_cell",
+      "size": "4000x3000",
+      "worker_kind": "Harness",
+      "workers": 4
+    },
+    {
+      "fit": false,
+      "l0_mismatch": 2,
+      "l0_mismatch_rate": 0.06666666666666667,
+      "l1_only_mismatch": 8,
+      "l1_only_mismatch_rate": 0.26666666666666666,
+      "n": 30,
+      "ok_n": 30,
+      "on_mismatch_healed_a": 0,
+      "on_mismatch_persist_b": 10,
+      "reference": {
+        "l0_composite": "83bed3407ac38474b3d7b49173c6d60a99d5f2206b358cc06e263a5c20a30879",
+        "processed_l0": "b47c6efdb1f697f8f90175f8e7e0c267e6c34a3b3a94cab9bf8852db3a70d12f",
+        "visible_composite": "9c404b6fbe446427a22a39e6966e1b92566cb03d8527ce3116b2b1e34b3590f6"
+      },
+      "session": "reuse_pool_per_cell",
+      "size": "4000x3000",
+      "worker_kind": "Harness",
+      "workers": 8
+    },
+    {
+      "fit": false,
+      "l0_mismatch": 0,
+      "l0_mismatch_rate": 0.0,
+      "l1_only_mismatch": 0,
+      "l1_only_mismatch_rate": 0.0,
+      "n": 30,
+      "ok_n": 30,
+      "on_mismatch_healed_a": 0,
+      "on_mismatch_persist_b": 0,
+      "reference": {
+        "l0_composite": "83bed3407ac38474b3d7b49173c6d60a99d5f2206b358cc06e263a5c20a30879",
+        "processed_l0": "b47c6efdb1f697f8f90175f8e7e0c267e6c34a3b3a94cab9bf8852db3a70d12f",
+        "visible_composite": "9c404b6fbe446427a22a39e6966e1b92566cb03d8527ce3116b2b1e34b3590f6"
+      },
+      "session": "reuse_pool_per_cell",
+      "size": "4000x3000",
+      "worker_kind": "ProdShaped",
+      "workers": 1
+    },
+    {
+      "fit": false,
+      "l0_mismatch": 0,
+      "l0_mismatch_rate": 0.0,
+      "l1_only_mismatch": 2,
+      "l1_only_mismatch_rate": 0.06666666666666667,
+      "n": 30,
+      "ok_n": 30,
+      "on_mismatch_healed_a": 0,
+      "on_mismatch_persist_b": 2,
+      "reference": {
+        "l0_composite": "83bed3407ac38474b3d7b49173c6d60a99d5f2206b358cc06e263a5c20a30879",
+        "processed_l0": "b47c6efdb1f697f8f90175f8e7e0c267e6c34a3b3a94cab9bf8852db3a70d12f",
+        "visible_composite": "9c404b6fbe446427a22a39e6966e1b92566cb03d8527ce3116b2b1e34b3590f6"
+      },
+      "session": "reuse_pool_per_cell",
+      "size": "4000x3000",
+      "worker_kind": "ProdShaped",
+      "workers": 2
+    },
+    {
+      "fit": false,
+      "l0_mismatch": 0,
+      "l0_mismatch_rate": 0.0,
+      "l1_only_mismatch": 5,
+      "l1_only_mismatch_rate": 0.16666666666666666,
+      "n": 30,
+      "ok_n": 30,
+      "on_mismatch_healed_a": 0,
+      "on_mismatch_persist_b": 5,
+      "reference": {
+        "l0_composite": "83bed3407ac38474b3d7b49173c6d60a99d5f2206b358cc06e263a5c20a30879",
+        "processed_l0": "b47c6efdb1f697f8f90175f8e7e0c267e6c34a3b3a94cab9bf8852db3a70d12f",
+        "visible_composite": "9c404b6fbe446427a22a39e6966e1b92566cb03d8527ce3116b2b1e34b3590f6"
+      },
+      "session": "reuse_pool_per_cell",
+      "size": "4000x3000",
+      "worker_kind": "ProdShaped",
+      "workers": 4
+    },
+    {
+      "fit": false,
+      "l0_mismatch": 2,
+      "l0_mismatch_rate": 0.06666666666666667,
+      "l1_only_mismatch": 8,
+      "l1_only_mismatch_rate": 0.26666666666666666,
+      "n": 30,
+      "ok_n": 30,
+      "on_mismatch_healed_a": 0,
+      "on_mismatch_persist_b": 10,
+      "reference": {
+        "l0_composite": "83bed3407ac38474b3d7b49173c6d60a99d5f2206b358cc06e263a5c20a30879",
+        "processed_l0": "b47c6efdb1f697f8f90175f8e7e0c267e6c34a3b3a94cab9bf8852db3a70d12f",
+        "visible_composite": "9c404b6fbe446427a22a39e6966e1b92566cb03d8527ce3116b2b1e34b3590f6"
+      },
+      "session": "reuse_pool_per_cell",
+      "size": "4000x3000",
+      "worker_kind": "ProdShaped",
+      "workers": 8
+    }
+  ]
+}
