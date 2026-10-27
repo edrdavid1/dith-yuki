@@ -46,11 +46,12 @@ export async function probeVisibleTiles(args: {
     const fe_gen = gens[key] ?? null;
     const beFresh = be?.fresh === true;
     const beDirty = be?.dirty === true;
+    const compositeGen = (be?.composite as { tile_gen?: number } | null | undefined)?.tile_gen;
     const beGen =
       typeof be?.tile_gen === 'number'
         ? be.tile_gen
-        : typeof (be?.composite as { tile_gen?: number } | undefined)?.tile_gen === 'number'
-          ? (be.composite as { tile_gen: number }).tile_gen
+        : typeof compositeGen === 'number'
+          ? compositeGen
           : null;
     const docGen = typeof be?.doc_gen === 'number' ? be.doc_gen : null;
 
