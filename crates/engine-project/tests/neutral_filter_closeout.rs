@@ -759,7 +759,7 @@ fn assert_blend_matrix_for_identity(
             // Row strip
             let mut layer_with = Layer::new(LayerId::new(1), LayerKind::Raster, IMG_W, IMG_H);
             layer_with.filters = vec![f.clone()];
-            let mut layer_without = Layer::new(LayerId::new(1), LayerKind::Raster, IMG_W, IMG_H);
+            let layer_without = Layer::new(LayerId::new(1), LayerKind::Raster, IMG_W, IMG_H);
             let row_with = apply_row_strip_layer(&layer_with, &tile);
             let row_without = apply_row_strip_layer(&layer_without, &tile);
             if expected_skip {
