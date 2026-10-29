@@ -18,11 +18,207 @@ use std::time::Instant;
 use engine_project::composite_tile;
 use engine_project::error::EngineError;
 use engine_project::filter::{DitherParamsV2, FilterParams};
-use engine_project::filters::apply::apply_filter_to_tile_with_caches;
+use engine_project::filters::apply::{
+    apply_enabled_filters_to_tile, apply_filter_to_tile_with_caches,
+};
 use engine_project::layer::LayerNode;
 use engine_tiles::{CacheStage, PixelTile, Priority, RecomputeTask, TileKey};
 
 use crate::commands::AppState;
+
+fn tile_rgba_fingerprint(tile: &PixelTile) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    // Interior only (skip HALO) — matches visual Processed.
+    let halo = engine_tiles::HALO;
+    let end = halo + 256;
+    for y in halo..end {
+        for x in halo..end {
+            for c in 0u32..4 {
+                tile.at(x, y, c).to_bits().hash(&mut h);
+            }
+        }
+    }
+    h.finish()
+}
+
+/// P2: if `Dithered` is fresh, apply only Post filters → Processed (skip barrier).
+fn try_processed_from_dithered_cache(
+    key: TileKey,
+    state: &AppState,
+    layer: &engine_project::layer::Layer,
+    snapshot: &engine_project::Document,
+    raw_tile: &PixelTile,
+) -> Option<Result<Arc<PixelTile>, EngineError>> {
+    if !engine_project::post_cache_enabled() {
+        return None;
+    }
+    let Some((through, post)) = engine_project::split_enabled_at_barrier(&layer.filters) else {
+        return None;
+    };
+    if through.is_empty() || post.is_empty() {
+        return None;
+    }
+    let dithered_key = TileKey {
+        doc: key.doc,
+        layer: key.layer,
+        coord: key.coord,
+        stage: CacheStage::Dithered,
+    };
+    if !engine_tiles::tile_fresh(&state.tiles.tile_cache, dithered_key) {
+        return None;
+    }
+    let dithered = state.tiles.tile_cache.get_entry(dithered_key)?;
+    let processed_key = TileKey {
+        doc: key.doc,
+        layer: key.layer,
+        coord: key.coord,
+        stage: CacheStage::Processed,
+    };
+    let result = engine_tiles::with_tile_buffer_park(|park| {
+        apply_enabled_filters_to_tile(
+            dithered.as_ref(),
+            &post,
+            layer.id,
+            key.coord,
+            &state.tiles.palette_cache,
+            &state.tiles.palette_lut_cache,
+            &state.tiles.threshold_cache,
+            snapshot,
+            &state.tiles.error_residuals,
+            &state.tiles.block_representatives,
+            state.gpu.as_deref(),
+            park,
+        )
+    });
+    Some(match result {
+        Ok(processed) => {
+            if engine_project::post_verify_enabled() {
+                // Isolated full recompute (scratch residuals) — safe for non-strip
+                // stacks. Strip ED needs neighbor residuals; those are verified
+                // when Dithered is filled (see strip insert path).
+                let strip_topo = engine_project::filters::layer_needs_ed_strip(layer)
+                    || engine_project::filters::layer_needs_ed_column_strip(layer)
+                    || engine_project::filters::layer_needs_ed_wavefront(layer);
+                if !strip_topo {
+                    let scratch_residuals =
+                        engine_project::filters::ErrorResidualsStore::new();
+                    let scratch_blocks = engine_tiles::block_cache::BlockRepresentativeCache::new();
+                    let mut all = through.clone();
+                    all.extend(post.iter().copied());
+                    let full = engine_tiles::with_tile_buffer_park(|park| {
+                        apply_enabled_filters_to_tile(
+                            raw_tile,
+                            &all,
+                            layer.id,
+                            key.coord,
+                            &state.tiles.palette_cache,
+                            &state.tiles.palette_lut_cache,
+                            &state.tiles.threshold_cache,
+                            snapshot,
+                            &scratch_residuals,
+                            &scratch_blocks,
+                            state.gpu.as_deref(),
+                            park,
+                        )
+                    });
+                    match full {
+                        Ok(ref full_tile) => {
+                            let a = tile_rgba_fingerprint(&processed);
+                            let b = tile_rgba_fingerprint(full_tile);
+                            if a != b {
+                                log::error!(
+                                    target: "post_barrier",
+                                    "DITHER_POST_VERIFY mismatch layer={} ({},{}) cache={:016x} full={:016x}",
+                                    key.layer,
+                                    key.coord.x,
+                                    key.coord.y,
+                                    a,
+                                    b
+                                );
+                                debug_assert!(
+                                    false,
+                                    "Post-from-Dithered diverged from full stack"
+                                );
+                            } else {
+                                log::debug!(
+                                    target: "post_barrier",
+                                    "verify ok layer={} ({},{}) hash={:016x}",
+                                    key.layer,
+                                    key.coord.x,
+                                    key.coord.y,
+                                    a
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                target: "post_barrier",
+                                "DITHER_POST_VERIFY full-path failed layer={}: {e}",
+                                key.layer
+                            );
+                        }
+                    }
+                }
+            }
+            let arc = Arc::new(processed);
+            let compute_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
+            let compute_content = snapshot.generations.current_content_gen();
+            let now_snap = snapshot_for_key(state, key).ok()?;
+            let now_gen = now_snap.generations.document_gen.load(Ordering::Acquire);
+            let now_content = now_snap.generations.current_content_gen();
+            if now_gen == compute_gen && now_content == compute_content {
+                let inserted = state.tiles.tile_cache.insert_fresh_gen(
+                    processed_key,
+                    Arc::clone(&arc),
+                    compute_content,
+                );
+                if inserted {
+                    state.evict_for_pressure_if_needed();
+                    wake_ed_frontier_after_insert(state, processed_key);
+                }
+                reschedule_if_insert_rejected(state, processed_key, inserted);
+            } else {
+                reschedule_if_insert_rejected(state, processed_key, false);
+            }
+            log::debug!(
+                target: "post_barrier",
+                "Post-from-Dithered layer={} coord=({},{})",
+                key.layer,
+                key.coord.x,
+                key.coord.y
+            );
+            Ok(arc)
+        }
+        Err(e) => Err(e),
+    })
+}
+
+fn insert_dithered_if_enabled(
+    state: &AppState,
+    key: TileKey,
+    tile: &PixelTile,
+    content_gen: u64,
+) {
+    if !engine_project::post_cache_enabled() {
+        return;
+    }
+    let dithered_key = TileKey {
+        doc: key.doc,
+        layer: key.layer,
+        coord: key.coord,
+        stage: CacheStage::Dithered,
+    };
+    let arc = Arc::new({
+        let mut t = PixelTile::new();
+        t.copy_from(tile);
+        t
+    });
+    let _ = state
+        .tiles
+        .tile_cache
+        .insert_fresh_gen(dithered_key, arc, content_gen);
+}
 
 /// Once-per-`(doc, layer, gen)` publish claim set (Option A).
 ///
@@ -31,6 +227,20 @@ use crate::commands::AppState;
 fn fd_published_set() -> &'static Mutex<HashSet<(u32, u32, u64)>> {
     static FD_PUBLISHED: OnceLock<Mutex<HashSet<(u32, u32, u64)>>> = OnceLock::new();
     FD_PUBLISHED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Bridge GPU strip callbacks → `ed-progress` for the preview footer %.
+fn install_gpu_strip_progress_hook(state: &AppState, doc: u32, doc_gen: u64) {
+    let Ok(guard) = state.app_handle.lock() else {
+        return;
+    };
+    let Some(ref app) = *guard else {
+        return;
+    };
+    let app = app.clone();
+    engine_gpu::set_gpu_apply_progress_listener(Some(Box::new(move |done, total| {
+        crate::ed_progress::emit_gpu_strip_progress(&app, doc, doc_gen, done, total);
+    })));
 }
 
 /// Returns true iff this caller should perform the mass publish (first claim wins).
@@ -126,18 +336,30 @@ pub fn compute_processed_tile(
         EngineError::layer_not_found(engine_project::types::LayerId::new(key.layer))
     })?;
 
-    let has_error_diffusion = layer
-        .filters
-        .iter()
-        .any(|f| f.enabled && f.requires_full_row);
-    if has_error_diffusion
-        && !engine_tiles::ed_ready(
+    if let Some(early) =
+        try_processed_from_dithered_cache(key, state, layer, &snapshot, raw_tile.as_ref())
+    {
+        return early;
+    }
+
+    let ed_topo = if engine_project::filters::layer_needs_ed_wavefront(layer) {
+        Some(engine_tiles::EdTopology::Wavefront2D)
+    } else if engine_project::filters::layer_needs_ed_column_strip(layer)
+        || engine_project::filters::layer_needs_ed_strip(layer)
+    {
+        // Row ed1d and column ed1d: no 2D residual deps (strips own the axis).
+        Some(engine_tiles::EdTopology::HorizontalOnly)
+    } else {
+        None
+    };
+    if let Some(topo) = ed_topo {
+        if !engine_tiles::ed_ready_topo(
             &state.tiles.tile_cache,
             key.with_stage(CacheStage::Processed),
-            true,
-        )
-    {
-        return Err(EngineError::EdDependenciesPending);
+            topo,
+        ) {
+            return Err(EngineError::EdDependenciesPending);
+        }
     }
 
     // Full-document algorithms (Riemersma / ASCII): monolithic pass, then slice tiles.
@@ -148,6 +370,8 @@ pub fn compute_processed_tile(
         let compute_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
         let diag = crate::preview_diag::level();
         crate::commands::begin_full_document_busy(state, key.doc);
+        // GPU strip % → same `ed-progress` channel the footer already listens to.
+        install_gpu_strip_progress_hook(state, key.doc, compute_gen);
         let mut trace = engine_project::filters::EnsureTrace::default();
         let result = if diag == 0 {
             engine_project::filters::ensure_full_document_ex(
@@ -170,6 +394,7 @@ pub fn compute_processed_tile(
                 &mut trace,
             )
         };
+        engine_gpu::set_gpu_apply_progress_listener(None);
         crate::commands::end_full_document_busy(state, key.doc);
         let result = result?;
         if diag != 0 {
@@ -208,19 +433,32 @@ pub fn compute_processed_tile(
         if claim_fd_publish(key.doc, key.layer, compute_gen) {
             let cache = Arc::clone(&state.tiles.tile_cache);
             let published = result.clone();
+            let layer_for_pub = layer.clone();
+            let snap_for_pub = Arc::clone(&snapshot);
             let doc = key.doc;
-            let layer = key.layer;
-            let gen = compute_gen;
+            let layer_id = key.layer;
+            let gen = compute_content;
             let handle = std::thread::Builder::new()
                 .name("fd-publish".into())
                 .spawn(move || {
                     let t_pub = Instant::now();
-                    engine_project::filters::publish_processed_tiles(
-                        &cache, &published, doc, layer, gen,
-                    );
+                    if let Err(e) = engine_project::filters::publish_fd_result_tiles(
+                        &cache,
+                        &published,
+                        &layer_for_pub,
+                        &snap_for_pub,
+                        doc,
+                        layer_id,
+                        gen,
+                    ) {
+                        log::warn!(
+                            target: "post_barrier",
+                            "fd publish failed doc={doc} layer={layer_id}: {e}"
+                        );
+                    }
                     let pub_dt = t_pub.elapsed();
                     if crate::preview_diag::level() != 0 {
-                        crate::preview_diag::record_publish(doc, gen, pub_dt);
+                        crate::preview_diag::record_publish(doc, compute_gen, pub_dt);
                     }
                 })
                 .expect("spawn fd-publish");
@@ -232,7 +470,34 @@ pub fn compute_processed_tile(
             drop(handle); // detach — production never joins
             let _ = diag;
         }
-        let tile = engine_project::filters::slice_processed_tile(&result, key.coord);
+        // Through-barrier FD buffer needs Post before display as Processed.
+        let tile = if result.needs_post {
+            match engine_project::split_enabled_at_barrier(&layer.filters) {
+                Some((_, post)) if !post.is_empty() => {
+                    let dithered =
+                        engine_project::filters::slice_processed_tile(&result, key.coord);
+                    engine_tiles::with_tile_buffer_park(|park| {
+                        apply_enabled_filters_to_tile(
+                            &dithered,
+                            &post,
+                            layer.id,
+                            key.coord,
+                            &state.tiles.palette_cache,
+                            &state.tiles.palette_lut_cache,
+                            &state.tiles.threshold_cache,
+                            &snapshot,
+                            &state.tiles.error_residuals,
+                            &state.tiles.block_representatives,
+                            state.gpu.as_deref(),
+                            park,
+                        )
+                    })?
+                }
+                _ => engine_project::filters::slice_processed_tile(&result, key.coord),
+            }
+        } else {
+            engine_project::filters::slice_processed_tile(&result, key.coord)
+        };
         let arc = Arc::new(tile);
         let was_missing = state.tiles.tile_cache.get_entry(processed_key).is_none();
         if was_missing && diag != 0 {
@@ -295,6 +560,258 @@ pub fn compute_processed_tile(
             }
         }
 
+        // Column ed1d (`modulated_diffuse_x`): full-height strip at this tx.
+        // Columns are independent — no prev-column ensure. Mixed row+column
+        // stacks are routed to the full-document path above and never reach here.
+        if engine_project::filters::layer_needs_ed_column_strip(layer) {
+            use crate::state::ed_strip_gate::{STRIP_WAIT_SLICE, STRIP_WAIT_SLICES};
+            use crate::state::EdStripKey;
+            use engine_project::filters::apply_filter_stack_tile_column_strip;
+
+            let bounds = layer.bounds_l0;
+            let tx = key.coord.x;
+            let level = key.coord.level;
+            let processed_key = TileKey {
+                doc: key.doc,
+                layer: key.layer,
+                coord: key.coord,
+                stage: CacheStage::Processed,
+            };
+            if engine_tiles::tile_fresh(&state.tiles.tile_cache, processed_key) {
+                if let Some(arc) = state.tiles.tile_cache.get_entry(processed_key) {
+                    return Ok(arc);
+                }
+            }
+
+            let strip_key = EdStripKey {
+                doc: key.doc,
+                layer: key.layer,
+                level,
+                ty: tx,
+                column: true,
+            };
+            let gate = state.tiles.strip_gate(strip_key);
+            let start_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
+            let _strip_owner = {
+                let mut claimed = gate.try_claim();
+                if claimed.is_none() {
+                    for _ in 0..STRIP_WAIT_SLICES {
+                        if engine_tiles::tile_fresh(&state.tiles.tile_cache, processed_key) {
+                            if let Some(arc) = state.tiles.tile_cache.get_entry(processed_key) {
+                                return Ok(arc);
+                            }
+                        }
+                        let now_gen = snapshot_for_key(state, key)?
+                            .generations
+                            .document_gen
+                            .load(Ordering::Acquire);
+                        if now_gen != start_gen {
+                            return Err(EngineError::invalid_state(
+                                "ED column strip stale while waiting for owner",
+                            ));
+                        }
+                        let _ = gate.wait_free_timeout(STRIP_WAIT_SLICE);
+                        claimed = gate.try_claim();
+                        if claimed.is_some() {
+                            break;
+                        }
+                    }
+                }
+                match claimed {
+                    Some(g) => g,
+                    None => return Err(EngineError::EdStripBusy),
+                }
+            };
+
+            if engine_tiles::tile_fresh(&state.tiles.tile_cache, processed_key) {
+                if let Some(arc) = state.tiles.tile_cache.get_entry(processed_key) {
+                    return Ok(arc);
+                }
+            }
+
+            let compute_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
+            let compute_content = snapshot.generations.current_content_gen();
+            let mid_snap = snapshot_for_key(state, key)?;
+            let mid_gen = mid_snap.generations.document_gen.load(Ordering::Acquire);
+            let mid_content = mid_snap.generations.current_content_gen();
+            if mid_gen != compute_gen || mid_content != compute_content {
+                return Err(EngineError::invalid_state(
+                    "ED column strip stale: document_gen/content_gen advanced",
+                ));
+            }
+
+            let mut coords = Vec::new();
+            let mut raw_arcs = Vec::new();
+            for ty in bounds.min_y..=bounds.max_y {
+                let coord = engine_tiles::TileCoord {
+                    level,
+                    x: tx,
+                    y: ty,
+                };
+                let raw_key = TileKey {
+                    doc: key.doc,
+                    layer: key.layer,
+                    coord,
+                    stage: CacheStage::Raw,
+                };
+                let raw = state.tiles.tile_cache.get_entry(raw_key).ok_or_else(|| {
+                    EngineError::invalid_state(format!(
+                        "Raw tile missing for ED column strip layer={} ({tx},{ty})",
+                        key.layer
+                    ))
+                })?;
+                coords.push(coord);
+                raw_arcs.push(raw);
+            }
+            let strip: Vec<(engine_tiles::TileCoord, &PixelTile)> = coords
+                .iter()
+                .zip(raw_arcs.iter())
+                .map(|(c, t)| (*c, t.as_ref()))
+                .collect();
+            let mut outputs: Vec<PixelTile> = (0..strip.len()).map(|_| PixelTile::new()).collect();
+            let capture_dithered = engine_project::post_cache_enabled()
+                .then(|| engine_project::barrier_index(&layer.filters))
+                .flatten()
+                .and_then(|b| layer.filters.get(b).map(|f| f.id.as_u128()));
+            let mut dithered_buf: Option<Vec<PixelTile>> =
+                capture_dithered.map(|_| (0..strip.len()).map(|_| PixelTile::new()).collect());
+            if let Some(bid) = capture_dithered {
+                let enabled: Vec<&engine_project::FilterInstance> =
+                    layer.filters.iter().rev().filter(|f| f.enabled).collect();
+                engine_project::filters::apply::apply_enabled_filters_column_strip(
+                    &strip,
+                    &enabled,
+                    layer.id,
+                    &state.tiles.palette_cache,
+                    &state.tiles.palette_lut_cache,
+                    &state.tiles.threshold_cache,
+                    &snapshot,
+                    &state.tiles.error_residuals,
+                    &state.tiles.block_representatives,
+                    state.gpu.as_deref(),
+                    &mut outputs,
+                    dithered_buf.as_mut().map(|v| (v.as_mut_slice(), bid)),
+                )?;
+            } else {
+                apply_filter_stack_tile_column_strip(
+                    &strip,
+                    layer,
+                    &state.tiles.palette_cache,
+                    &state.tiles.palette_lut_cache,
+                    &state.tiles.threshold_cache,
+                    &snapshot,
+                    &state.tiles.error_residuals,
+                    &state.tiles.block_representatives,
+                    state.gpu.as_deref(),
+                    &mut outputs,
+                )?;
+            }
+
+            let now_snap = snapshot_for_key(state, key)?;
+            let now_gen = now_snap.generations.document_gen.load(Ordering::Acquire);
+            let now_content = now_snap.generations.current_content_gen();
+            let mut requested = None;
+            if now_gen == compute_gen && now_content == compute_content {
+                if let Some(ref mids) = dithered_buf {
+                    if engine_project::post_verify_enabled() {
+                        if let Some((_, post)) =
+                            engine_project::split_enabled_at_barrier(&layer.filters)
+                        {
+                            if !post.is_empty() {
+                                for (i, mid) in mids.iter().enumerate() {
+                                    let from_mid = engine_tiles::with_tile_buffer_park(|park| {
+                                        apply_enabled_filters_to_tile(
+                                            mid,
+                                            &post,
+                                            layer.id,
+                                            coords[i],
+                                            &state.tiles.palette_cache,
+                                            &state.tiles.palette_lut_cache,
+                                            &state.tiles.threshold_cache,
+                                            &snapshot,
+                                            &state.tiles.error_residuals,
+                                            &state.tiles.block_representatives,
+                                            state.gpu.as_deref(),
+                                            park,
+                                        )
+                                    });
+                                    if let Ok(from_mid) = from_mid {
+                                        let a = tile_rgba_fingerprint(&from_mid);
+                                        let b = tile_rgba_fingerprint(&outputs[i]);
+                                        if a != b {
+                                            log::error!(
+                                                target: "post_barrier",
+                                                "DITHER_POST_VERIFY column mismatch layer={} ({},{}) mid+post={:016x} full={:016x}",
+                                                key.layer,
+                                                coords[i].x,
+                                                coords[i].y,
+                                                a,
+                                                b
+                                            );
+                                            debug_assert!(false, "column Dithered+Post != full");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    for (i, coord) in coords.iter().enumerate() {
+                        insert_dithered_if_enabled(
+                            state,
+                            TileKey {
+                                doc: key.doc,
+                                layer: key.layer,
+                                coord: *coord,
+                                stage: CacheStage::Processed,
+                            },
+                            &mids[i],
+                            compute_content,
+                        );
+                    }
+                }
+                let mut inserted_keys = Vec::with_capacity(coords.len());
+                for (i, coord) in coords.iter().enumerate() {
+                    let pkey = TileKey {
+                        doc: key.doc,
+                        layer: key.layer,
+                        coord: *coord,
+                        stage: CacheStage::Processed,
+                    };
+                    let arc = Arc::new(std::mem::replace(&mut outputs[i], PixelTile::new()));
+                    let inserted = state.tiles.tile_cache.insert_fresh_gen(
+                        pkey,
+                        Arc::clone(&arc),
+                        compute_content,
+                    );
+                    if inserted {
+                        inserted_keys.push(pkey);
+                    }
+                    reschedule_if_insert_rejected(state, pkey, inserted);
+                    if coord.x == key.coord.x && coord.y == key.coord.y {
+                        requested = Some(arc);
+                    }
+                }
+                if !inserted_keys.is_empty() {
+                    state.evict_for_pressure_if_needed();
+                    wake_ed_frontier_after_strip_batch(state, &inserted_keys);
+                }
+            } else {
+                reschedule_ed_strip_after_discard(state, key, &coords);
+                for (i, coord) in coords.iter().enumerate() {
+                    if coord.x == key.coord.x && coord.y == key.coord.y {
+                        requested = Some(Arc::new(std::mem::replace(
+                            &mut outputs[i],
+                            PixelTile::new(),
+                        )));
+                        break;
+                    }
+                }
+            }
+            return requested.ok_or_else(|| {
+                EngineError::invalid_state("ED column strip did not produce requested tile")
+            });
+        }
+
         // Any ED in the stack: process the full horizontal tile-row as one strip
         // so FS below-left taps work even when Glow/Glitch/ordered wrap the ED.
         //
@@ -331,6 +848,7 @@ pub fn compute_processed_tile(
                 layer: key.layer,
                 level,
                 ty,
+                column: false,
             };
             let gate = state.tiles.strip_gate(strip_key);
             let start_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
@@ -397,10 +915,11 @@ pub fn compute_processed_tile(
                 }
             }
 
-            // Previous strip must be finalized so top residuals exist.
+            // Previous strip must be finalized so top residuals exist (2D ED only).
+            // 1D H (`modulated_diffuse_y`) has no vertical carry — strips are independent.
             // Time only freshness probes here — recursive compute is counted in
             // its own scopes (avoid double-counting in fs_ed_prof %).
-            if ty > 0 {
+            if ty > 0 && engine_project::filters::layer_needs_ed_wavefront(layer) {
                 for tx in bounds.min_x..=bounds.max_x {
                     let prev = TileKey {
                         doc: key.doc,
@@ -470,24 +989,111 @@ pub fn compute_processed_tile(
                 .map(|(c, t)| (*c, t.as_ref()))
                 .collect();
             let mut outputs: Vec<PixelTile> = (0..strip.len()).map(|_| PixelTile::new()).collect();
-            apply_filter_stack_tile_row_strip(
-                &strip,
-                layer,
-                &state.tiles.palette_cache,
-                &state.tiles.palette_lut_cache,
-                &state.tiles.threshold_cache,
-                &snapshot,
-                &state.tiles.error_residuals,
-                &state.tiles.block_representatives,
-                state.gpu.as_deref(),
-                &mut outputs,
-            )?;
+            let capture_dithered = engine_project::post_cache_enabled()
+                .then(|| engine_project::barrier_index(&layer.filters))
+                .flatten()
+                .and_then(|b| layer.filters.get(b).map(|f| f.id.as_u128()));
+            let mut dithered_buf: Option<Vec<PixelTile>> = capture_dithered.map(|_| {
+                (0..strip.len()).map(|_| PixelTile::new()).collect()
+            });
+            if let Some(bid) = capture_dithered {
+                let enabled: Vec<&engine_project::FilterInstance> = layer
+                    .filters
+                    .iter()
+                    .rev()
+                    .filter(|f| f.enabled)
+                    .collect();
+                engine_project::filters::apply::apply_enabled_filters_row_strip(
+                    &strip,
+                    &enabled,
+                    layer.id,
+                    &state.tiles.palette_cache,
+                    &state.tiles.palette_lut_cache,
+                    &state.tiles.threshold_cache,
+                    &snapshot,
+                    &state.tiles.error_residuals,
+                    &state.tiles.block_representatives,
+                    state.gpu.as_deref(),
+                    &mut outputs,
+                    dithered_buf.as_mut().map(|v| (v.as_mut_slice(), bid)),
+                )?;
+            } else {
+                apply_filter_stack_tile_row_strip(
+                    &strip,
+                    layer,
+                    &state.tiles.palette_cache,
+                    &state.tiles.palette_lut_cache,
+                    &state.tiles.threshold_cache,
+                    &snapshot,
+                    &state.tiles.error_residuals,
+                    &state.tiles.block_representatives,
+                    state.gpu.as_deref(),
+                    &mut outputs,
+                )?;
+            }
 
             let now_snap = snapshot_for_key(state, key)?;
             let now_gen = now_snap.generations.document_gen.load(Ordering::Acquire);
             let now_content = now_snap.generations.current_content_gen();
             let mut requested = None;
             if now_gen == compute_gen && now_content == compute_content {
+                if let Some(ref mids) = dithered_buf {
+                    if engine_project::post_verify_enabled() {
+                        if let Some((_, post)) =
+                            engine_project::split_enabled_at_barrier(&layer.filters)
+                        {
+                            if !post.is_empty() {
+                                for (i, mid) in mids.iter().enumerate() {
+                                    let from_mid = engine_tiles::with_tile_buffer_park(|park| {
+                                        apply_enabled_filters_to_tile(
+                                            mid,
+                                            &post,
+                                            layer.id,
+                                            coords[i],
+                                            &state.tiles.palette_cache,
+                                            &state.tiles.palette_lut_cache,
+                                            &state.tiles.threshold_cache,
+                                            &snapshot,
+                                            &state.tiles.error_residuals,
+                                            &state.tiles.block_representatives,
+                                            state.gpu.as_deref(),
+                                            park,
+                                        )
+                                    });
+                                    if let Ok(from_mid) = from_mid {
+                                        let a = tile_rgba_fingerprint(&from_mid);
+                                        let b = tile_rgba_fingerprint(&outputs[i]);
+                                        if a != b {
+                                            log::error!(
+                                                target: "post_barrier",
+                                                "DITHER_POST_VERIFY strip mismatch layer={} ({},{}) mid+post={:016x} full={:016x}",
+                                                key.layer,
+                                                coords[i].x,
+                                                coords[i].y,
+                                                a,
+                                                b
+                                            );
+                                            debug_assert!(false, "strip Dithered+Post != full");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    for (i, coord) in coords.iter().enumerate() {
+                        insert_dithered_if_enabled(
+                            state,
+                            TileKey {
+                                doc: key.doc,
+                                layer: key.layer,
+                                coord: *coord,
+                                stage: CacheStage::Processed,
+                            },
+                            &mids[i],
+                            compute_content,
+                        );
+                    }
+                }
                 let mut inserted_keys = Vec::with_capacity(coords.len());
                 let mut insert_order: Vec<serde_json::Value> = Vec::with_capacity(coords.len());
                 for (i, coord) in coords.iter().enumerate() {
@@ -583,6 +1189,70 @@ pub fn compute_processed_tile(
             }
             return requested
                 .ok_or_else(|| EngineError::invalid_state("ED strip missing requested tile"));
+        }
+
+        if engine_project::post_cache_enabled() {
+            if let Some((through, post)) =
+                engine_project::split_enabled_at_barrier(&layer.filters)
+            {
+                if !through.is_empty() && !post.is_empty() {
+                    let (dithered, processed) = engine_tiles::with_tile_buffer_park(|park| {
+                        let dithered = apply_enabled_filters_to_tile(
+                            &raw_tile,
+                            &through,
+                            layer.id,
+                            key.coord,
+                            &state.tiles.palette_cache,
+                            &state.tiles.palette_lut_cache,
+                            &state.tiles.threshold_cache,
+                            &snapshot,
+                            &state.tiles.error_residuals,
+                            &state.tiles.block_representatives,
+                            state.gpu.as_deref(),
+                            park,
+                        )?;
+                        let processed = apply_enabled_filters_to_tile(
+                            &dithered,
+                            &post,
+                            layer.id,
+                            key.coord,
+                            &state.tiles.palette_cache,
+                            &state.tiles.palette_lut_cache,
+                            &state.tiles.threshold_cache,
+                            &snapshot,
+                            &state.tiles.error_residuals,
+                            &state.tiles.block_representatives,
+                            state.gpu.as_deref(),
+                            park,
+                        )?;
+                        Ok::<_, EngineError>((dithered, processed))
+                    })?;
+                    let compute_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
+                    let compute_content = snapshot.generations.current_content_gen();
+                    let now_snap = snapshot_for_key(state, key)?;
+                    let now_gen = now_snap.generations.document_gen.load(Ordering::Acquire);
+                    let now_content = now_snap.generations.current_content_gen();
+                    if now_gen == compute_gen && now_content == compute_content {
+                        insert_dithered_if_enabled(state, key, &dithered, compute_content);
+                    }
+                    let arc = Arc::new(processed);
+                    if now_gen == compute_gen && now_content == compute_content {
+                        let inserted = state.tiles.tile_cache.insert_fresh_gen(
+                            processed_key,
+                            Arc::clone(&arc),
+                            compute_content,
+                        );
+                        if inserted {
+                            state.evict_for_pressure_if_needed();
+                            wake_ed_frontier_after_insert(state, processed_key);
+                        }
+                        reschedule_if_insert_rejected(state, processed_key, inserted);
+                    } else {
+                        reschedule_if_insert_rejected(state, processed_key, false);
+                    }
+                    return Ok(arc);
+                }
+            }
         }
 
         apply_filter_to_tile_with_caches(
@@ -1129,6 +1799,9 @@ fn retry_pyramid_parent(
 
 /// Enqueue ED Processed causal prefix for `(doc, layer, level)` up to `(max_x, max_y)`,
 /// bumping each tile to at least `priority` (Decision 2 inheritance).
+///
+/// When `row_only` is true (1D H ED), only the strip at `max_y` is scheduled —
+/// there is no vertical wavefront.
 pub fn schedule_ed_prefix_closure(
     state: &AppState,
     doc: u32,
@@ -1140,8 +1813,30 @@ pub fn schedule_ed_prefix_closure(
     doc_gen: u64,
     layer_gen: u64,
 ) -> usize {
+    schedule_ed_prefix_closure_ex(
+        state, doc, layer, level, max_x, max_y, priority, doc_gen, layer_gen, false,
+    )
+}
+
+fn schedule_ed_prefix_closure_ex(
+    state: &AppState,
+    doc: u32,
+    layer: u32,
+    level: u8,
+    max_x: u32,
+    max_y: u32,
+    priority: Priority,
+    doc_gen: u64,
+    layer_gen: u64,
+    row_only: bool,
+) -> usize {
     let mut enqueued = 0usize;
-    for coord in engine_tiles::ed_prefix_coords(level, max_x, max_y) {
+    let coords = if row_only {
+        engine_tiles::ed_row_prefix_coords(level, max_x, max_y)
+    } else {
+        engine_tiles::ed_prefix_coords(level, max_x, max_y)
+    };
+    for coord in coords {
         let processed = TileKey {
             doc,
             layer,
@@ -1209,6 +1904,13 @@ pub fn schedule_ed_for_viewport(state: &AppState) {
 
     collect_ed_layers(&snapshot.root, &mut |layer_id| {
         let layer_gen = snapshot.generations.get_layer_gen(layer_id);
+        let leaf = find_layer_by_id(&snapshot.root, layer_id);
+        let row_only = leaf
+            .map(engine_project::filters::layer_is_ed1d_strip_only)
+            .unwrap_or(false);
+        let col_only = leaf
+            .map(engine_project::filters::layer_is_ed1d_column_only)
+            .unwrap_or(false);
         for coord in &viewport.visible_tiles {
             let (level, max_x, max_y) = if coord.level == 0 {
                 (0u8, coord.x, coord.y)
@@ -1218,23 +1920,69 @@ pub fn schedule_ed_for_viewport(state: &AppState) {
                 let y1 = ((coord.y + 1) << shift).saturating_sub(1);
                 (0u8, x1, y1)
             };
-            schedule_ed_prefix_closure(
-                state,
-                doc,
-                layer_id,
-                level,
-                max_x,
-                max_y,
-                Priority::Immediate,
-                doc_gen,
-                layer_gen,
-            );
+            if col_only {
+                // 1D V: schedule each L0 column covering the viewport (full height
+                // of that column's tiles up to max_y).
+                let x0 = if coord.level == 0 {
+                    coord.x
+                } else {
+                    coord.x << coord.level
+                };
+                for tx in x0..=max_x {
+                    // Enqueue the column's tiles via a "row" prefix at each ty
+                    // but only at this tx (single-tile "prefix").
+                    for ty in 0..=max_y {
+                        schedule_ed_prefix_closure_ex(
+                            state,
+                            doc,
+                            layer_id,
+                            level,
+                            tx,
+                            ty,
+                            Priority::Immediate,
+                            doc_gen,
+                            layer_gen,
+                            true,
+                        );
+                    }
+                }
+            } else if row_only {
+                // 1D H: schedule each L0 strip row covered by the viewport tile,
+                // without the full 2D causal rectangle above it.
+                let y0 = if coord.level == 0 {
+                    coord.y
+                } else {
+                    coord.y << coord.level
+                };
+                for ty in y0..=max_y {
+                    schedule_ed_prefix_closure_ex(
+                        state,
+                        doc,
+                        layer_id,
+                        level,
+                        max_x,
+                        ty,
+                        Priority::Immediate,
+                        doc_gen,
+                        layer_gen,
+                        true,
+                    );
+                }
+            } else {
+                schedule_ed_prefix_closure(
+                    state,
+                    doc,
+                    layer_id,
+                    level,
+                    max_x,
+                    max_y,
+                    Priority::Immediate,
+                    doc_gen,
+                    layer_gen,
+                );
+            }
         }
     });
-}
-
-pub fn collect_ed_layer_ids(nodes: &[LayerNode], out: &mut Vec<u32>) {
-    collect_ed_layers(nodes, &mut |id| out.push(id));
 }
 
 fn collect_ed_layers(nodes: &[LayerNode], f: &mut impl FnMut(u32)) {
@@ -1242,10 +1990,9 @@ fn collect_ed_layers(nodes: &[LayerNode], f: &mut impl FnMut(u32)) {
         match node {
             LayerNode::Leaf(layer) => {
                 if layer.visible
-                    && layer
-                        .filters
-                        .iter()
-                        .any(|filt| filt.enabled && filt.requires_full_row)
+                    && layer.filters.iter().any(|filt| {
+                        filt.enabled && (filt.requires_full_row || filt.requires_full_column)
+                    })
                 {
                     f(layer.id.0);
                 }
@@ -1256,14 +2003,54 @@ fn collect_ed_layers(nodes: &[LayerNode], f: &mut impl FnMut(u32)) {
     }
 }
 
+/// Layers whose L0 Processed tiles drive the footer progress bar: ED strips,
+/// ordered dither, and other enabled dither/ASCII filters (not GPU-family
+/// full-document applies — those report strip progress separately).
+pub fn collect_preview_progress_layer_ids(nodes: &[LayerNode], out: &mut Vec<u32>) {
+    collect_preview_progress_layers(nodes, &mut |id| out.push(id));
+}
+
+fn layer_counts_for_preview_progress(layer: &engine_project::Layer) -> bool {
+    if !layer.visible {
+        return false;
+    }
+    layer.filters.iter().any(|filt| {
+        if !filt.enabled {
+            return false;
+        }
+        if filt.requires_full_row || filt.requires_full_column {
+            return true;
+        }
+        matches!(
+            filt.params,
+            FilterParams::DitherV2(_) | FilterParams::Dither { .. } | FilterParams::Ascii(_)
+        )
+    })
+}
+
+fn collect_preview_progress_layers(nodes: &[LayerNode], f: &mut impl FnMut(u32)) {
+    for node in nodes {
+        match node {
+            LayerNode::Leaf(layer) => {
+                if layer_counts_for_preview_progress(layer) {
+                    f(layer.id.0);
+                }
+            }
+            LayerNode::Group(group) if group.visible => {
+                collect_preview_progress_layers(&group.children, f)
+            }
+            _ => {}
+        }
+    }
+}
+
 pub(crate) fn layer_has_error_diffusion(nodes: &[LayerNode], layer_id: u32) -> bool {
     for node in nodes {
         match node {
             LayerNode::Leaf(layer) if layer.id.0 == layer_id => {
-                return layer
-                    .filters
-                    .iter()
-                    .any(|f| f.enabled && f.requires_full_row);
+                return layer.filters.iter().any(|f| {
+                    f.enabled && (f.requires_full_row || f.requires_full_column)
+                });
             }
             LayerNode::Group(group) if layer_has_error_diffusion(&group.children, layer_id) => {
                 return true;
@@ -1272,6 +2059,35 @@ pub(crate) fn layer_has_error_diffusion(nodes: &[LayerNode], layer_id: u32) -> b
         }
     }
     false
+}
+
+/// ED topology for a layer id, if it needs the strip/wavefront path.
+pub(crate) fn layer_ed_topology(
+    nodes: &[LayerNode],
+    layer_id: u32,
+) -> Option<engine_tiles::EdTopology> {
+    for node in nodes {
+        match node {
+            LayerNode::Leaf(layer) if layer.id.0 == layer_id => {
+                return if engine_project::filters::layer_needs_ed_wavefront(layer) {
+                    Some(engine_tiles::EdTopology::Wavefront2D)
+                } else if engine_project::filters::layer_needs_ed_column_strip(layer)
+                    || engine_project::filters::layer_needs_ed_strip(layer)
+                {
+                    Some(engine_tiles::EdTopology::HorizontalOnly)
+                } else {
+                    None
+                };
+            }
+            LayerNode::Group(group) => {
+                if let Some(t) = layer_ed_topology(&group.children, layer_id) {
+                    return Some(t);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// ED Processed keys at `coord` that Composite must wait on (dirty/missing).
@@ -1319,7 +2135,21 @@ pub fn composite_ed_park_deps(
         (x1, y1)
     };
     collect_ed_layers(nodes, &mut |layer_id| {
-        for py in 0..=max_y {
+        let topo = layer_ed_topology(nodes, layer_id)
+            .unwrap_or(engine_tiles::EdTopology::Wavefront2D);
+        let y_range = match topo {
+            // 1D H: only the strip(s) covering this composite coord matter.
+            engine_tiles::EdTopology::HorizontalOnly => {
+                if coord.level == 0 {
+                    coord.y..=coord.y
+                } else {
+                    let y0 = coord.y << coord.level;
+                    y0..=max_y
+                }
+            }
+            engine_tiles::EdTopology::Wavefront2D => 0..=max_y,
+        };
+        for py in y_range {
             for px in 0..=max_x {
                 let key = TileKey {
                     doc,
@@ -1333,7 +2163,7 @@ pub fn composite_ed_park_deps(
                 };
                 if !engine_tiles::tile_fresh(cache, key) {
                     deps.push(key);
-                    for miss in engine_tiles::ed_missing_deps(cache, key) {
+                    for miss in engine_tiles::ed_missing_deps_topo(cache, key, topo) {
                         deps.push(miss);
                     }
                 }
@@ -1345,6 +2175,7 @@ pub fn composite_ed_park_deps(
             CacheStage::Raw => 0u8,
             CacheStage::Processed => 1,
             CacheStage::Composite => 2,
+            CacheStage::Dithered => 3,
         };
         (
             a.layer,
@@ -1942,7 +2773,9 @@ mod tests {
             engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
                 doc: 1,
                 layer: ED_LAYER,
-            },
+                changed_index: None,
+                preserve_dithered: false,
+},
         );
     }
 
@@ -2225,6 +3058,7 @@ mod tests {
             layer: ED_LAYER,
             level: 0,
             ty: 1,
+            column: false,
         };
         let gate = state.tiles.strip_gate(strip_key);
         let barrier = Arc::new(Barrier::new(3));

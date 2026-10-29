@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed
+
+- **Neutral filter skip (Post levers):** default-state **Curves** (linear diagonal) and
+  **Levels** (0/1/gamma 1) now use an exact `copy_from` apply path so they can be
+  skipped when enabled at defaults. Projects that relied on the old LUT/SIMD path may
+  shift by **≤ 1/255** on those defaults; non-default params are unchanged.
+- Dev: `DITHER_NEUTRAL_VERIFY=1` re-runs each skipped neutral filter and asserts
+  bitwise passthrough (`DITHER_POST_CACHE` independent).
+
 ## 2.0.6-beta
 
 ### Fixed

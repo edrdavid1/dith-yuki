@@ -5,7 +5,7 @@
 //! - Levels: Histogram adjustment + gamma correction
 //! - Dither: Color reduction (Bayer, ThresholdMap, ErrorDiffusion)
 //! - PaletteQuantize: Oklab-based palette quantization
-//! - Glitch: Creative effects (RGB shift, block displacement)
+//! - Glitch: JPEG-style gather corruption (block / interlace / channel swap)
 //! - Adjust: Contrast / brightness / saturation / blur / sharpness / noise
 
 pub mod adjust;
@@ -18,6 +18,8 @@ pub mod dither;
 pub mod dither_diffusion;
 pub mod dither_ordered;
 pub mod dither_residuals;
+pub mod ed1d;
+pub mod ed1d_styles;
 pub mod ed_wrap_padding;
 pub mod full_document;
 pub mod glitch;
@@ -27,6 +29,7 @@ pub mod gpu_graph;
 pub mod hilbert;
 pub mod levels;
 pub mod line_screen;
+pub mod neutral;
 pub mod ostromoukhov_table;
 pub mod palette_quantize;
 pub mod random_dot_stipple;
@@ -39,11 +42,17 @@ pub mod apply;
 pub mod fs_ed_prof;
 
 // Re-export main API
+pub use apply::apply_enabled_filters_to_tile;
 pub use apply::apply_filter_to_tile;
 pub use apply::apply_filter_to_tile_with_caches;
 pub use apply::apply_filter_to_tile_with_park;
 pub use apply::apply_filter_to_tile_with_residuals;
-pub use apply::{apply_filter_stack_tile_row_strip, layer_needs_ed_strip};
+pub use apply::{
+    apply_enabled_filters_column_strip, apply_enabled_filters_row_strip,
+    apply_filter_stack_tile_column_strip, apply_filter_stack_tile_row_strip,
+    layer_has_mixed_ed_topology, layer_is_ed1d_column_only, layer_is_ed1d_strip_only,
+    layer_needs_ed_column_strip, layer_needs_ed_strip, layer_needs_ed_wavefront,
+};
 pub use ascii_job::{
     apply_ascii_rgba, export_ascii_bytes, prepare_layer_for_txt_export, run_ascii_job,
     AsciiExportFormat, AsciiJobResult,
@@ -53,10 +62,11 @@ pub use dither::{DitherAlgorithm, DitherFilter};
 pub use full_document::{
     compute_ascii_job, ensure_full_document, ensure_full_document_ex,
     ensure_full_document_ex_timed, filter_uses_ed_wrap_padding, last_fd_render_stages,
-    layer_has_full_document_filter, layer_has_full_document_filter_ex, publish_processed_tiles,
-    slice_processed_tile, EnsureTrace, FdRenderStages, FullDocumentCache, FullDocumentResult,
+    apply_post_to_fd_result, layer_has_full_document_filter, layer_has_full_document_filter_ex,
+    publish_fd_result_tiles, publish_processed_tiles, publish_stage_tiles, slice_processed_tile,
+    EnsureTrace, FdRenderStages, FullDocumentCache, FullDocumentResult,
 };
-pub use glitch::{GlitchFilter, GlitchType};
+pub use glitch::{GlitchFilter, GlitchParams, GlitchSubOp};
 pub use levels::LevelsFilter;
 pub use palette_quantize::PaletteQuantizeFilter;
 
@@ -68,7 +78,12 @@ pub use dither_residuals::{ErrorResiduals, ErrorResidualsStore, CORNER_PATCH};
 
 // Re-export error diffusion engine
 pub use dither_diffusion::{
+    apply_ed1d_tile_column_strip, apply_ed1d_tile_row_strip, apply_ed1d_with_cache_into,
     apply_error_diffusion, apply_error_diffusion_tile_row_strip, apply_error_diffusion_with_cache,
+};
+pub use ed1d_styles::{
+    ed1d_axis_for_mode, ed1d_cfg_from_params, ed1d_style, style_params_from_dither, Ed1dDeps,
+    Ed1dStyleEntry, Ed1dStyleKind, StyleParams, ED1D_STYLES,
 };
 pub use ed_wrap_padding::{
     apply_ed_buffer_no_wrap, apply_ed_with_wrap_padding, apply_ed_with_wrap_padding_simple,

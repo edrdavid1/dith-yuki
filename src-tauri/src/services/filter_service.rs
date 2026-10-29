@@ -3,7 +3,7 @@ use tauri::AppHandle;
 
 use engine_project::filter::{DiffusionKernel, DitherMode};
 use engine_project::filters::curves::CurveChannel;
-use engine_project::filters::glitch::GlitchType;
+use engine_project::filters::glitch::GlitchParams as GlitchFilterParams;
 use engine_project::types::FilterInstanceId;
 use engine_project::{
     filter_kind_for_algorithm_id, FilterInstance, FilterKind, FilterParams, PlaceholderParams,
@@ -11,10 +11,75 @@ use engine_project::{
 use serde::{Deserialize, Serialize};
 
 use crate::commands::{
-    emit_document_changed, layer_needs_dither_cache_reset, request_preview_refresh,
+    emit_document_changed, layer_needs_dither_cache_reset, request_preview_refresh_at,
     schedule_dirty_viewport_tiles, AppState,
 };
 use crate::services::AppError;
+
+fn layer_filters(
+    nodes: &[engine_project::LayerNode],
+    layer_id: u32,
+) -> Option<Vec<engine_project::FilterInstance>> {
+    for node in nodes {
+        match node {
+            engine_project::LayerNode::Leaf(layer) if layer.id.0 == layer_id => {
+                return Some(layer.filters.clone());
+            }
+            engine_project::LayerNode::Group(group) => {
+                if let Some(f) = layer_filters(&group.children, layer_id) {
+                    return Some(f);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// P2: when Post-cache is on and classify says Post, skip residual clears and
+/// preserve Dithered tiles. Otherwise keep today's clear rule.
+fn post_cache_refresh_policy(
+    old: &[engine_project::FilterInstance],
+    new: &[engine_project::FilterInstance],
+    base_clear: bool,
+) -> (bool, bool) {
+    if !engine_project::post_cache_enabled() {
+        return (base_clear, false);
+    }
+    match engine_project::classify_change(old, new) {
+        engine_project::ChangeClass::Post => (false, true),
+        _ => (base_clear, false),
+    }
+}
+
+fn layer_raw_rev(nodes: &[engine_project::LayerNode], layer_id: u32) -> Option<u64> {
+    for node in nodes {
+        match node {
+            engine_project::LayerNode::Leaf(layer) if layer.id.0 == layer_id => {
+                return Some(layer.raw_rev);
+            }
+            engine_project::LayerNode::Group(group) => {
+                if let Some(v) = layer_raw_rev(&group.children, layer_id) {
+                    return Some(v);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn note_prefix_externals(
+    snapshot: &engine_project::Document,
+    layer_id: u32,
+    filters: &[engine_project::FilterInstance],
+) -> engine_project::PrefixExternals {
+    engine_project::prefix_externals_for_layer(
+        filters,
+        &snapshot.palettes,
+        layer_raw_rev(&snapshot.root, layer_id).unwrap_or(0),
+    )
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AddFilterRequest {
@@ -322,30 +387,9 @@ impl FilterService {
                     }
                 }
                 FilterKind::Glitch => {
-                    let glitch_type = match req
-                        .params
-                        .get("glitch_type")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("RGBShift")
-                    {
-                        "BlockDisplace" => GlitchType::BlockDisplace,
-                        _ => GlitchType::RGBShift,
-                    };
-                    let intensity = req
-                        .params
-                        .get("intensity")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.5) as f32;
-                    let seed = req
-                        .params
-                        .get("seed")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(42);
-                    FilterParams::Glitch {
-                        glitch_type,
-                        intensity,
-                        seed,
-                    }
+                    let p: GlitchFilterParams =
+                        serde_json::from_value(req.params.clone()).unwrap_or_default();
+                    FilterParams::Glitch(p)
                 }
                 FilterKind::Glow => {
                     let radius = req
@@ -439,6 +483,16 @@ impl FilterService {
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
             let layer_id = req.layer_id;
             let mut found = false;
+            let old_filters = layer_filters(
+                &self
+                    .state
+                    .require_session(doc_id)?
+                    .document_handle
+                    .snapshot()
+                    .root,
+                layer_id,
+            )
+            .unwrap_or_default();
 
             if matches!(
                 &filter.params,
@@ -506,18 +560,31 @@ impl FilterService {
                 snapshot.generations.increment_layer_gen(layer_id);
             }
 
-            let doc = self
+            let snapshot = self
                 .state
                 .require_session(doc_id)?
                 .document_handle
-                .snapshot()
-                .id
-                .0;
+                .snapshot();
+            let doc = snapshot.id.0;
+            let new_filters = layer_filters(&snapshot.root, layer_id).unwrap_or_default();
+            let changed_index = new_filters
+                .iter()
+                .position(|f| f.id.to_string() == filter_id);
+            engine_project::note_stack_change(
+                layer_id,
+                &old_filters,
+                &new_filters,
+                changed_index,
+                true,
+                &note_prefix_externals(&snapshot, layer_id, &new_filters),
+            );
             engine_tiles::invalidation::invalidate(
                 &self.state.tiles.tile_cache,
                 engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
                     doc,
                     layer: layer_id,
+                    changed_index,
+                    preserve_dithered: false,
                 },
             );
 
@@ -537,6 +604,19 @@ impl FilterService {
         let doc_id = req.doc_id;
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
             let mut found = false;
+            let old_filters = layer_filters(
+                &self
+                    .state
+                    .require_session(doc_id)?
+                    .document_handle
+                    .snapshot()
+                    .root,
+                req.layer_id,
+            )
+            .unwrap_or_default();
+            let changed_index = old_filters
+                .iter()
+                .position(|f| f.id.to_string() == req.filter_id);
 
             self.state
                 .require_session(doc_id)?
@@ -589,18 +669,29 @@ impl FilterService {
                 ));
             }
 
-            request_preview_refresh(
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
+            let base_clear = layer_needs_dither_cache_reset(&snapshot.root, req.layer_id);
+            let new_filters = layer_filters(&snapshot.root, req.layer_id).unwrap_or_default();
+            let (clear, preserve_dithered) =
+                post_cache_refresh_policy(&old_filters, &new_filters, base_clear);
+            engine_project::note_stack_change(
+                req.layer_id,
+                &old_filters,
+                &new_filters,
+                changed_index,
+                clear,
+                &note_prefix_externals(&snapshot, req.layer_id, &new_filters),
+            );
+            request_preview_refresh_at(
                 &self.state,
                 req.layer_id,
-                layer_needs_dither_cache_reset(
-                    &self
-                        .state
-                        .require_session(doc_id)?
-                        .document_handle
-                        .snapshot()
-                        .root,
-                    req.layer_id,
-                ),
+                clear,
+                changed_index,
+                preserve_dithered,
             );
 
             emit_document_changed(
@@ -622,6 +713,19 @@ impl FilterService {
         let doc_id = req.doc_id;
         crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
             let mut success = false;
+            let old_filters = layer_filters(
+                &self
+                    .state
+                    .require_session(doc_id)?
+                    .document_handle
+                    .snapshot()
+                    .root,
+                req.layer_id,
+            )
+            .unwrap_or_default();
+            let from_index = old_filters
+                .iter()
+                .position(|f| f.id.to_string() == req.filter_id);
 
             self.state
                 .require_session(doc_id)?
@@ -686,18 +790,33 @@ impl FilterService {
                 ));
             }
 
-            request_preview_refresh(
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
+            let base_clear = layer_needs_dither_cache_reset(&snapshot.root, req.layer_id);
+            let new_filters = layer_filters(&snapshot.root, req.layer_id).unwrap_or_default();
+            let changed_index = match from_index {
+                Some(from) => Some(from.min(req.new_index)),
+                None => None,
+            };
+            let (clear, preserve_dithered) =
+                post_cache_refresh_policy(&old_filters, &new_filters, base_clear);
+            engine_project::note_stack_change(
+                req.layer_id,
+                &old_filters,
+                &new_filters,
+                changed_index,
+                clear,
+                &note_prefix_externals(&snapshot, req.layer_id, &new_filters),
+            );
+            request_preview_refresh_at(
                 &self.state,
                 req.layer_id,
-                layer_needs_dither_cache_reset(
-                    &self
-                        .state
-                        .require_session(doc_id)?
-                        .document_handle
-                        .snapshot()
-                        .root,
-                    req.layer_id,
-                ),
+                clear,
+                changed_index,
+                preserve_dithered,
             );
 
             emit_document_changed(
@@ -983,30 +1102,9 @@ impl FilterService {
                     }
                 }
                 FilterKind::Glitch => {
-                    let glitch_type = match req
-                        .params
-                        .get("glitch_type")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("RGBShift")
-                    {
-                        "BlockDisplace" => GlitchType::BlockDisplace,
-                        _ => GlitchType::RGBShift,
-                    };
-                    let intensity = req
-                        .params
-                        .get("intensity")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.5) as f32;
-                    let seed = req
-                        .params
-                        .get("seed")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(42);
-                    FilterParams::Glitch {
-                        glitch_type,
-                        intensity,
-                        seed,
-                    }
+                    let p: GlitchFilterParams =
+                        serde_json::from_value(req.params.clone()).unwrap_or_default();
+                    FilterParams::Glitch(p)
                 }
                 FilterKind::Glow => {
                     let radius = req
@@ -1253,6 +1351,17 @@ impl FilterService {
                 .generations
                 .document_gen
                 .load(std::sync::atomic::Ordering::Acquire);
+            let old_filters = layer_filters(
+                &self
+                    .state
+                    .require_session(doc_id)?
+                    .document_handle
+                    .snapshot()
+                    .root,
+                layer_id,
+            )
+            .unwrap_or_default();
+            let changed_index = engine_project::post_filter_index(&old_filters, filter_id);
             self.state
                 .require_session(doc_id)?
                 .document_handle
@@ -1287,6 +1396,10 @@ impl FilterService {
                                             }
                                             filter.requires_full_row =
                                             engine_project::FilterInstance::params_require_full_row(
+                                                &new_params,
+                                            );
+                                            filter.requires_full_column =
+                                            engine_project::FilterInstance::params_require_full_column(
                                                 &new_params,
                                             );
                                             filter.params = new_params;
@@ -1375,25 +1488,32 @@ impl FilterService {
                 );
             }
 
-            request_preview_refresh(
-                &self.state,
-                layer_id,
-                layer_needs_dither_cache_reset(
-                    &self
-                        .state
-                        .require_session(doc_id)?
-                        .document_handle
-                        .snapshot()
-                        .root,
-                    layer_id,
-                ),
-            );
-
-            let live_gen = self
+            let snapshot = self
                 .state
                 .require_session(doc_id)?
                 .document_handle
-                .snapshot()
+                .snapshot();
+            let base_clear = layer_needs_dither_cache_reset(&snapshot.root, layer_id);
+            let new_filters = layer_filters(&snapshot.root, layer_id).unwrap_or_default();
+            let (clear, preserve_dithered) =
+                post_cache_refresh_policy(&old_filters, &new_filters, base_clear);
+            engine_project::note_stack_change(
+                layer_id,
+                &old_filters,
+                &new_filters,
+                changed_index,
+                clear,
+                &note_prefix_externals(&snapshot, layer_id, &new_filters),
+            );
+            request_preview_refresh_at(
+                &self.state,
+                layer_id,
+                clear,
+                changed_index,
+                preserve_dithered,
+            );
+
+            let live_gen = snapshot
                 .generations
                 .document_gen
                 .load(std::sync::atomic::Ordering::Acquire);

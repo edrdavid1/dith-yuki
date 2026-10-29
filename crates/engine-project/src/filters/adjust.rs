@@ -146,6 +146,16 @@ pub fn apply_adjust_into(
     noise: f32,
     dst: &mut PixelTile,
 ) {
+    if contrast == 0.0
+        && brightness == 0.0
+        && saturation == 0.0
+        && blur == 0.0
+        && sharpness == 0.0
+        && noise == 0.0
+    {
+        dst.copy_from(tile);
+        return;
+    }
     let contrast_m = 1.0 + contrast;
     let sat_m = if saturation >= 0.0 {
         1.0 + saturation * 2.0
@@ -260,6 +270,33 @@ mod tests {
         let tile = uniform(0.4);
         let out = apply_adjust(&tile, coord(), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
         assert_eq!(out.data, tile.data);
+    }
+
+    #[test]
+    fn identity_is_noop_bitwise_matrix() {
+        let c = coord();
+        let mut tile = PixelTile::new();
+        for y in 0..TILE_FULL_SIZE {
+            for x in 0..TILE_FULL_SIZE {
+                let v = f32::from_bits(
+                    0x3f000000_u32 | ((x as u32).wrapping_mul(2654435761) ^ (y as u32).wrapping_mul(2246822519))
+                        & 0x007fffff,
+                );
+                let a = if (x + y) % 5 == 0 {
+                    0.0
+                } else if (x + y) % 3 == 0 {
+                    0.35
+                } else {
+                    1.0
+                };
+                tile.set(x, y, 0, v);
+                tile.set(x, y, 1, v * 0.5);
+                tile.set(x, y, 2, 1.0 - v * 0.25);
+                tile.set(x, y, 3, a);
+            }
+        }
+        let out = apply_adjust(&tile, c, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+        assert_eq!(out.data, tile.data, "all-zero Adjust must be bitwise identity (skip-safe)");
     }
 
     #[test]
