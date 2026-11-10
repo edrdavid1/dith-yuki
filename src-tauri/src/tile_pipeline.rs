@@ -1461,22 +1461,25 @@ pub fn compute_processed_tile(
                         None
                     };
                     let processed = engine_tiles::with_tile_buffer_park(|park| {
-                        engine_project::filters::with_spatial_neighbors(neighborhood.as_ref(), || {
-                            apply_enabled_filters_to_tile(
-                                &dithered,
-                                &post,
-                                layer.id,
-                                key.coord,
-                                &state.tiles.palette_cache,
-                                &state.tiles.palette_lut_cache,
-                                &state.tiles.threshold_cache,
-                                &snapshot,
-                                &state.tiles.error_residuals,
-                                &state.tiles.block_representatives,
-                                state.gpu.as_deref(),
-                                park,
-                            )
-                        })
+                        engine_project::filters::with_spatial_neighbors(
+                            neighborhood.as_ref(),
+                            || {
+                                apply_enabled_filters_to_tile(
+                                    &dithered,
+                                    &post,
+                                    layer.id,
+                                    key.coord,
+                                    &state.tiles.palette_cache,
+                                    &state.tiles.palette_lut_cache,
+                                    &state.tiles.threshold_cache,
+                                    &snapshot,
+                                    &state.tiles.error_residuals,
+                                    &state.tiles.block_representatives,
+                                    state.gpu.as_deref(),
+                                    park,
+                                )
+                            },
+                        )
                     })?;
                     let now_snap = snapshot_for_key(state, key)?;
                     let now_gen = now_snap.generations.document_gen.load(Ordering::Acquire);
@@ -2139,6 +2142,136 @@ fn schedule_ed_prefix_closure_ex(
     engine_tiles::add_ed_prefix_tiles_enqueued(enqueued as u64);
     if enqueued > 0 {
         state.worker_wake.notify_one();
+    }
+    enqueued
+}
+
+/// Expand viewport tile coords to L0 covering tiles (pyramid levels → L0 grid).
+pub fn visible_tiles_to_l0(visible: &[engine_tiles::TileCoord]) -> Vec<engine_tiles::TileCoord> {
+    let mut out = Vec::new();
+    for coord in visible {
+        if coord.level == 0 {
+            out.push(*coord);
+            continue;
+        }
+        let shift = coord.level;
+        let x0 = coord.x << shift;
+        let y0 = coord.y << shift;
+        let x1 = ((coord.x + 1) << shift).saturating_sub(1);
+        let y1 = ((coord.y + 1) << shift).saturating_sub(1);
+        for ty in y0..=y1 {
+            for tx in x0..=x1 {
+                out.push(engine_tiles::TileCoord {
+                    level: 0,
+                    x: tx,
+                    y: ty,
+                });
+            }
+        }
+    }
+    out.sort_by(|a, b| (a.y, a.x).cmp(&(b.y, b.x)));
+    out.dedup();
+    out
+}
+
+/// True when every visible coord already has a clean `Dithered` entry (any gen).
+/// Lever 1 uses this to scrub Post at the viewport pyramid level without starting ED.
+pub fn visible_dithered_cached(
+    cache: &engine_tiles::TileCache,
+    doc: u32,
+    layer: u32,
+    visible: &[engine_tiles::TileCoord],
+) -> bool {
+    if visible.is_empty() {
+        return false;
+    }
+    visible.iter().all(|coord| {
+        let key = TileKey {
+            doc,
+            layer,
+            coord: *coord,
+            stage: CacheStage::Dithered,
+        };
+        cache
+            .entries
+            .get(&key)
+            .is_some_and(|e| !e.dirty.load(Ordering::Acquire))
+    })
+}
+
+/// Lever 1 Post scrub: enqueue visible **Processed** for `layer` (Post-from-Dithered)
+/// plus visible **Composite**, with center/edge priority. Does **not** expand ED —
+/// Dithered is preserved; starting ED at L1 would undo P2.
+///
+/// If every visible tile already has cached `Dithered` at the viewport level, scrub
+/// Processed at that level. Otherwise expand to visible L0 only (never kick off L1 ED).
+pub fn schedule_post_scrub_viewport(state: &AppState, layer: u32) -> usize {
+    use crate::viewport::classify_priority;
+
+    let viewport = state.ui.viewport.lock().unwrap().clone();
+    let Ok(session) = state.active_session() else {
+        return 0;
+    };
+    let snapshot = session.document_handle.snapshot();
+    let doc = snapshot.id.0;
+    let doc_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
+    let layer_gen = snapshot.generations.get_layer_gen(layer);
+
+    let use_viewport_level =
+        visible_dithered_cached(&state.tiles.tile_cache, doc, layer, &viewport.visible_tiles);
+    let processed_coords: Vec<engine_tiles::TileCoord> = if use_viewport_level {
+        viewport.visible_tiles.clone()
+    } else {
+        visible_tiles_to_l0(&viewport.visible_tiles)
+    };
+    let mut enqueued = 0usize;
+
+    for coord in &processed_coords {
+        let key = TileKey {
+            doc,
+            layer,
+            coord: *coord,
+            stage: CacheStage::Processed,
+        };
+        let priority = classify_priority(coord, &processed_coords);
+        if state.tiles.scheduler.enqueue_or_bump(RecomputeTask {
+            key,
+            generation: doc_gen,
+            layer_generation: layer_gen,
+            priority,
+        }) {
+            enqueued += 1;
+            state.worker_wake.notify_one();
+        }
+    }
+
+    for coord in &viewport.visible_tiles {
+        let key = TileKey {
+            doc,
+            layer: 0,
+            coord: *coord,
+            stage: CacheStage::Composite,
+        };
+        let priority = classify_priority(coord, &viewport.visible_tiles);
+        if state.tiles.scheduler.enqueue_or_bump(RecomputeTask {
+            key,
+            generation: doc_gen,
+            layer_generation: 0,
+            priority,
+        }) {
+            enqueued += 1;
+            state.worker_wake.notify_one();
+        }
+    }
+
+    if enqueued > 0 {
+        log::debug!(
+            target: "post_barrier",
+            "post scrub schedule layer={layer} processed={} level_mode={} composite={} enqueued={enqueued}",
+            processed_coords.len(),
+            if use_viewport_level { "viewport" } else { "l0" },
+            viewport.visible_tiles.len()
+        );
     }
     enqueued
 }
@@ -4432,5 +4565,137 @@ mod tests {
         );
 
         engine_project::set_post_cache_enabled_for_test(false);
+    }
+
+    #[test]
+    fn visible_tiles_to_l0_passthrough_and_expand() {
+        let l0 = TileCoord {
+            level: 0,
+            x: 3,
+            y: 4,
+        };
+        assert_eq!(visible_tiles_to_l0(&[l0]), vec![l0]);
+
+        let l1 = TileCoord {
+            level: 1,
+            x: 1,
+            y: 0,
+        };
+        let expanded = visible_tiles_to_l0(&[l1]);
+        assert_eq!(
+            expanded,
+            vec![
+                TileCoord {
+                    level: 0,
+                    x: 2,
+                    y: 0
+                },
+                TileCoord {
+                    level: 0,
+                    x: 3,
+                    y: 0
+                },
+                TileCoord {
+                    level: 0,
+                    x: 2,
+                    y: 1
+                },
+                TileCoord {
+                    level: 0,
+                    x: 3,
+                    y: 1
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn lever1_post_scrub_falls_back_to_visible_l0_without_ed() {
+        let (state, _guard) = make_ed_state();
+        let l1 = TileCoord {
+            level: 1,
+            x: 0,
+            y: 0,
+        };
+        *state.ui.viewport.lock().unwrap() = ViewportState {
+            level: 1,
+            visible_tiles: vec![l1],
+            ..ViewportState::default()
+        };
+
+        let n = schedule_post_scrub_viewport(&state, ED_LAYER);
+        // 4 L0 Processed + 1 Composite at L1
+        assert_eq!(n, 5);
+
+        let mut processed = Vec::new();
+        let mut composite = Vec::new();
+        let mut stages = Vec::new();
+        while let Some(task) = state.tiles.scheduler.dequeue() {
+            stages.push(task.key.stage);
+            match task.key.stage {
+                CacheStage::Processed => {
+                    assert_eq!(task.key.layer, ED_LAYER);
+                    assert_eq!(task.key.coord.level, 0);
+                    processed.push(task.key.coord);
+                }
+                CacheStage::Composite => {
+                    assert_eq!(task.key.coord, l1);
+                    composite.push(task.key.coord);
+                }
+                other => panic!("unexpected stage {other:?} — must not expand ED/Raw/Dithered"),
+            }
+        }
+        processed.sort_by(|a, b| (a.y, a.x).cmp(&(b.y, b.x)));
+        assert_eq!(processed, visible_tiles_to_l0(&[l1]));
+        assert_eq!(composite.len(), 1);
+        assert!(!stages.contains(&CacheStage::Raw));
+        assert!(!stages.contains(&CacheStage::Dithered));
+    }
+
+    #[test]
+    fn lever1_post_scrub_uses_cached_viewport_dithered() {
+        let (state, _guard) = make_ed_state();
+        let l1 = TileCoord {
+            level: 1,
+            x: 0,
+            y: 0,
+        };
+        state.tiles.tile_cache.insert_fresh(
+            TileKey {
+                doc: 1,
+                layer: ED_LAYER,
+                coord: l1,
+                stage: CacheStage::Dithered,
+            },
+            Arc::new(PixelTile::new()),
+        );
+        *state.ui.viewport.lock().unwrap() = ViewportState {
+            level: 1,
+            visible_tiles: vec![l1],
+            ..ViewportState::default()
+        };
+
+        assert!(visible_dithered_cached(
+            &state.tiles.tile_cache,
+            1,
+            ED_LAYER,
+            &[l1]
+        ));
+        let n = schedule_post_scrub_viewport(&state, ED_LAYER);
+        // 1 Processed at L1 + 1 Composite
+        assert_eq!(n, 2);
+
+        let mut saw_l1_processed = false;
+        while let Some(task) = state.tiles.scheduler.dequeue() {
+            match task.key.stage {
+                CacheStage::Processed => {
+                    assert_eq!(task.key.coord, l1);
+                    saw_l1_processed = true;
+                }
+                CacheStage::Composite => assert_eq!(task.key.coord, l1),
+                other => panic!("unexpected stage {other:?}"),
+            }
+        }
+        assert!(saw_l1_processed);
     }
 }

@@ -160,7 +160,13 @@ fn build_op(filter: &FilterInstance) -> Result<FusibleOp, EngineError> {
 }
 
 #[inline]
-fn apply_curves_rgba(curves: &CurvesFilter, r: f32, g: f32, b: f32, a: f32) -> (f32, f32, f32, f32) {
+fn apply_curves_rgba(
+    curves: &CurvesFilter,
+    r: f32,
+    g: f32,
+    b: f32,
+    a: f32,
+) -> (f32, f32, f32, f32) {
     match curves.channel {
         CurveChannel::Red => (curves.lut_lookup(r), g, b, a),
         CurveChannel::Green => (r, curves.lut_lookup(g), b, a),
@@ -177,7 +183,13 @@ fn apply_curves_rgba(curves: &CurvesFilter, r: f32, g: f32, b: f32, a: f32) -> (
 }
 
 #[inline]
-fn apply_levels_rgba(levels: &LevelsFilter, r: f32, g: f32, b: f32, a: f32) -> (f32, f32, f32, f32) {
+fn apply_levels_rgba(
+    levels: &LevelsFilter,
+    r: f32,
+    g: f32,
+    b: f32,
+    a: f32,
+) -> (f32, f32, f32, f32) {
     let r = if levels.channel_r {
         levels.lut_lookup(r)
     } else {

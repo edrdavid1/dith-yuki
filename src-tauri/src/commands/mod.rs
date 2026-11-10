@@ -444,11 +444,13 @@ pub(crate) fn schedule_dirty_viewport_tiles_with_reason(state: &AppState, reason
 
         if needs {
             dirty += 1;
+            // Lever 1: center-out priority (was flat Immediate).
+            let priority = crate::viewport::classify_priority(coord, &viewport.visible_tiles);
             let task = RecomputeTask {
                 key,
                 generation: doc_gen,
                 layer_generation: 0,
-                priority: Priority::Immediate,
+                priority,
             };
             state.tiles.scheduler.enqueue_dedup(task);
             state.worker_wake.notify_one();
@@ -676,7 +678,23 @@ fn run_preview_refresh(
         });
     }
     let queued_before = state.tiles.scheduler.queued_len();
-    schedule_dirty_viewport_tiles_with_reason(state, reason);
+    if preserve_dithered {
+        // Lever 1: Post scrub — visible L0 Processed first; skip ED expand.
+        let n = crate::tile_pipeline::schedule_post_scrub_viewport(state, layer_id);
+        if crate::tile_gen_trace::enabled() {
+            crate::tile_gen_trace::emit(
+                "post_scrub_schedule",
+                Some(layer_id),
+                None,
+                None,
+                None,
+                Some(content_gen),
+                serde_json::json!({ "enqueued": n, "reason": reason }),
+            );
+        }
+    } else {
+        schedule_dirty_viewport_tiles_with_reason(state, reason);
+    }
     crate::ed_progress::note_ed_pass_start(state, doc_id);
     // Seed footer % immediately (0/N) so ordered/GPU-tiled waves have a denominator.
     if let Ok(guard) = state.app_handle.lock() {
