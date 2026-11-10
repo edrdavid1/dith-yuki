@@ -7,6 +7,7 @@
 //! - PaletteQuantize: Oklab-based palette quantization
 //! - Glitch: JPEG-style gather corruption (block / interlace / channel swap)
 //! - Adjust: Contrast / brightness / saturation / blur / sharpness / noise
+//! - Exposure: EV stops (pointwise Post)
 
 pub mod adjust;
 pub mod ascii_job;
@@ -21,6 +22,7 @@ pub mod dither_residuals;
 pub mod ed1d;
 pub mod ed1d_styles;
 pub mod ed_wrap_padding;
+pub mod exposure;
 pub mod full_document;
 pub mod fusion;
 pub mod glitch;

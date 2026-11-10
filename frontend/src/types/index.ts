@@ -26,6 +26,7 @@ export type FilterKind =
   | 'Glow'
   | 'Crt'
   | 'Adjust'
+  | 'Exposure'
   | 'Ascii';
 
 export type FilterParams =
@@ -38,6 +39,7 @@ export type FilterParams =
   | GlowParams
   | CrtParams
   | AdjustParams
+  | ExposureParams
   | AsciiParams;
 
 export interface DitherParams {
@@ -217,6 +219,12 @@ export interface AdjustParams {
   blur: number;        // 0–2
   sharpness: number;   // 0–2
   noise: number;       // 0–1
+}
+
+export interface ExposureParams {
+  type: 'Exposure';
+  /** EV stops (−5 … 5). 0 = identity. */
+  stops: number;
 }
 
 /** Text-art / ASCII — not a dither mode. */

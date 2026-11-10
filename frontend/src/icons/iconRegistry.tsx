@@ -28,6 +28,7 @@ import { Save } from 'pixelarticons/react/Save';
 import { Settings2 } from 'pixelarticons/react/Settings2';
 import { SettingsCog } from 'pixelarticons/react/SettingsCog';
 import { SortVertical } from 'pixelarticons/react/SortVertical';
+import { Sun } from 'pixelarticons/react/Sun';
 import { Trash } from 'pixelarticons/react/Trash';
 import { Upload } from 'pixelarticons/react/Upload';
 import { Zap } from 'pixelarticons/react/Zap';
@@ -42,6 +43,7 @@ export type IconName =
   | 'effect.glow'
   | 'effect.crt'
   | 'effect.adjust'
+  | 'effect.exposure'
   | 'effect.ascii'
   | 'effect.nearest_color'
   | 'effect.palette_quantize'
@@ -94,6 +96,7 @@ const PIXEL_ICONS: Record<string, PixelIcon> = {
   'effect.glow': Lightbulb,
   'effect.crt': Monitor,
   'effect.adjust': Settings2,
+  'effect.exposure': Sun,
   'effect.ascii': LetterA,
   'effect.nearest_color': Pipette,
   'effect.palette_quantize': ColorsSwatch,

@@ -18,6 +18,7 @@ mod crt;
 mod curves;
 mod dispersed_dot_ordered;
 mod error_diffusion;
+mod exposure;
 pub mod fixed_point;
 mod glitch;
 mod glow;
@@ -90,6 +91,7 @@ pub fn register_all(registry: &mut AlgorithmRegistry) {
     registry.register(Box::new(adjust::Adjust));
     registry.register(Box::new(ascii::Ascii));
     registry.register(Box::new(curves::Curves));
+    registry.register(Box::new(exposure::Exposure));
     registry.register(Box::new(glitch::Glitch));
     registry.register(Box::new(error_diffusion::ZhouFang));
     registry.register(Box::new(error_diffusion::ModulatedDiffuseY));

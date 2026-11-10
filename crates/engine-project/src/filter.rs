@@ -28,6 +28,8 @@ pub enum FilterKind {
     Glow,
     Crt,
     Adjust,
+    /// Photographic exposure in EV stops (pointwise Post).
+    Exposure,
     /// Text-art / ASCII (not a dither mode).
     Ascii,
     Placeholder,
@@ -44,6 +46,7 @@ impl std::fmt::Display for FilterKind {
             FilterKind::Glow => write!(f, "Glow"),
             FilterKind::Crt => write!(f, "Crt"),
             FilterKind::Adjust => write!(f, "Adjust"),
+            FilterKind::Exposure => write!(f, "Exposure"),
             FilterKind::Ascii => write!(f, "Ascii"),
             FilterKind::Placeholder => write!(f, "Placeholder"),
         }
@@ -54,7 +57,10 @@ impl FilterKind {
     /// Tone/correction ops. Newly added instances go at the bottom of the
     /// Layers list (end of `filters`) so they run before stylize filters.
     pub fn inserts_under_stylize(self) -> bool {
-        matches!(self, Self::Adjust | Self::Curves | Self::Levels)
+        matches!(
+            self,
+            Self::Adjust | Self::Curves | Self::Levels | Self::Exposure
+        )
     }
 }
 
@@ -1062,6 +1068,11 @@ pub enum FilterParams {
         /// Deterministic RGB noise amount (0 .. 1). 0 = skip.
         noise: f32,
     },
+    /// Exposure in EV stops. `out = in * 2^stops`. 0 = identity.
+    Exposure {
+        /// Stops (−5 .. 5). 0 = identity.
+        stops: f32,
+    },
     /// Text-art / ASCII output stage (`engine-ascii`). Not a dither mode.
     Ascii(AsciiParams),
     /// Placeholder for unknown or future filters.
@@ -1602,6 +1613,14 @@ impl FilterInstance {
                 }
                 Ok(())
             }
+            FilterParams::Exposure { stops } => {
+                if !(-5.0..=5.0).contains(stops) {
+                    return Err(EngineError::invalid_filter_params(
+                        "Exposure stops must be in range [-5.0, 5.0]",
+                    ));
+                }
+                Ok(())
+            }
             FilterParams::Ascii(p) => p.validate(),
             FilterParams::Placeholder(_) => Ok(()),
         }
@@ -1621,6 +1640,7 @@ pub fn algorithm_id_for_params(params: &FilterParams) -> Option<&'static str> {
         FilterParams::Crt { .. } => Some("crt"),
         FilterParams::Glow { .. } => Some("glow"),
         FilterParams::Adjust { .. } => Some("adjust"),
+        FilterParams::Exposure { .. } => Some("exposure"),
         FilterParams::Curves { .. } => Some("curves"),
         FilterParams::Glitch(_) => Some("glitch"),
         FilterParams::Ascii(_) => Some("ascii"),
@@ -1673,6 +1693,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         "crt" => Some(FilterKind::Crt),
         "glow" => Some(FilterKind::Glow),
         "adjust" => Some(FilterKind::Adjust),
+        "exposure" => Some(FilterKind::Exposure),
         "curves" => Some(FilterKind::Curves),
         "glitch" => Some(FilterKind::Glitch),
         "ascii" => Some(FilterKind::Ascii),
@@ -1746,6 +1767,7 @@ pub fn filter_params_to_json(params: &FilterParams) -> Result<serde_json::Value,
             "sharpness": sharpness,
             "noise": noise,
         })),
+        FilterParams::Exposure { stops } => Ok(serde_json::json!({ "stops": stops })),
         FilterParams::Curves { curve, channel } => Ok(serde_json::json!({
             "curve": curve,
             "channel": channel,
