@@ -205,6 +205,7 @@ impl FilterService {
             "Crt" => FilterKind::Crt,
             "Adjust" => FilterKind::Adjust,
             "Exposure" => FilterKind::Exposure,
+            "HighlightsShadows" => FilterKind::HighlightsShadows,
             "Ascii" => FilterKind::Ascii,
             other => filter_kind_for_algorithm_id(other).ok_or_else(|| {
                 AppError::InvalidOperation(format!("Invalid filter kind: {other}"))
@@ -462,6 +463,22 @@ impl FilterService {
                         .and_then(|v| v.as_f64())
                         .unwrap_or(0.0) as f32;
                     FilterParams::Exposure { stops }
+                }
+                FilterKind::HighlightsShadows => {
+                    let shadows = req
+                        .params
+                        .get("shadows")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as f32;
+                    let highlights = req
+                        .params
+                        .get("highlights")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as f32;
+                    FilterParams::HighlightsShadows {
+                        shadows,
+                        highlights,
+                    }
                 }
                 FilterKind::Ascii => {
                     let p: engine_project::filter::AsciiParams =
@@ -1223,6 +1240,31 @@ impl FilterService {
                         .map(|v| v as f32)
                         .unwrap_or(existing);
                     FilterParams::Exposure { stops }
+                }
+                FilterKind::HighlightsShadows => {
+                    let (es, eh) = match existing_params {
+                        FilterParams::HighlightsShadows {
+                            shadows,
+                            highlights,
+                        } => (shadows, highlights),
+                        _ => (0.0, 0.0),
+                    };
+                    let shadows = req
+                        .params
+                        .get("shadows")
+                        .and_then(|v| v.as_f64())
+                        .map(|v| v as f32)
+                        .unwrap_or(es);
+                    let highlights = req
+                        .params
+                        .get("highlights")
+                        .and_then(|v| v.as_f64())
+                        .map(|v| v as f32)
+                        .unwrap_or(eh);
+                    FilterParams::HighlightsShadows {
+                        shadows,
+                        highlights,
+                    }
                 }
                 FilterKind::Ascii => {
                     let p: engine_project::filter::AsciiParams =

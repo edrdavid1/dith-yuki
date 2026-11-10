@@ -112,6 +112,7 @@ function filterKindToName(
     case 'Crt': return 'CRT';
     case 'Adjust': return 'Adjust';
     case 'Exposure': return 'Exposure';
+    case 'HighlightsShadows': return 'Highlights / Shadows';
     case 'Ascii': return 'ASCII';
     case 'PaletteQuantize': return 'Palette Quantize';
     default: return kind;
@@ -137,6 +138,7 @@ function filterKindToIconType(
     case 'Crt': return 'crt';
     case 'Adjust': return 'adjust';
     case 'Exposure': return 'exposure';
+    case 'HighlightsShadows': return 'highlights_shadows';
     case 'Ascii': return 'ascii';
     case 'PaletteQuantize': return 'palette_quantize';
     default: return 'dithering';
@@ -791,6 +793,8 @@ function EffectIconSvg({ type }: { type: string }) {
       return <Icon name="effect.adjust" width={18} height={18} />;
     case 'exposure':
       return <Icon name="effect.exposure" width={18} height={18} />;
+    case 'highlights_shadows':
+      return <Icon name="effect.highlights_shadows" width={18} height={18} />;
     case 'ascii':
       return <Icon name="effect.ascii" width={18} height={18} />;
     case 'nearest_color':

@@ -13,6 +13,7 @@ use crate::filter::{FilterInstance, FilterParams};
 use crate::filters::adjust::{adjust_sat_m, apply_adjust_point_rgba};
 use crate::filters::curves::{CurveChannel, CurvesFilter};
 use crate::filters::exposure::apply_exposure_point_rgba;
+use crate::filters::highlights_shadows::apply_highlights_shadows_point_rgba;
 use crate::filters::levels::LevelsFilter;
 use crate::filters::neutral::filter_is_neutral_for_apply;
 use crate::types::BlendMode;
@@ -78,7 +79,8 @@ pub fn is_fusible_pointwise(filter: &FilterInstance) -> bool {
         } => *blur == 0.0 && *sharpness == 0.0 && *noise == 0.0,
         FilterParams::Curves { .. }
         | FilterParams::Levels { .. }
-        | FilterParams::Exposure { .. } => true,
+        | FilterParams::Exposure { .. }
+        | FilterParams::HighlightsShadows { .. } => true,
         _ => false,
     }
 }
@@ -109,6 +111,10 @@ enum FusibleOp {
     Levels(LevelsFilter),
     Exposure {
         gain: f32,
+    },
+    HighlightsShadows {
+        shadows: f32,
+        highlights: f32,
     },
 }
 
@@ -161,6 +167,13 @@ fn build_op(filter: &FilterInstance) -> Result<FusibleOp, EngineError> {
         }
         FilterParams::Exposure { stops } => Ok(FusibleOp::Exposure {
             gain: 2f32.powf(stops.clamp(-5.0, 5.0)),
+        }),
+        FilterParams::HighlightsShadows {
+            shadows,
+            highlights,
+        } => Ok(FusibleOp::HighlightsShadows {
+            shadows: shadows.clamp(-1.0, 1.0),
+            highlights: highlights.clamp(-1.0, 1.0),
         }),
         _ => Err(EngineError::invalid_filter_params(
             "filter is not fusible pointwise",
@@ -228,6 +241,10 @@ fn apply_op_rgba(op: &FusibleOp, r: f32, g: f32, b: f32, a: f32) -> (f32, f32, f
         FusibleOp::Curves(c) => apply_curves_rgba(c, r, g, b, a),
         FusibleOp::Levels(l) => apply_levels_rgba(l, r, g, b, a),
         FusibleOp::Exposure { gain } => apply_exposure_point_rgba(r, g, b, a, *gain),
+        FusibleOp::HighlightsShadows {
+            shadows,
+            highlights,
+        } => apply_highlights_shadows_point_rgba(r, g, b, a, *shadows, *highlights),
     }
 }
 

@@ -27,6 +27,7 @@ pub mod gpu_dither_cpu;
 pub mod gpu_geometry;
 pub mod gpu_selftest;
 mod halftone_screen_angled;
+mod highlights_shadows;
 mod line_screen;
 mod nearest_color;
 mod palette_quantize;
@@ -92,6 +93,7 @@ pub fn register_all(registry: &mut AlgorithmRegistry) {
     registry.register(Box::new(ascii::Ascii));
     registry.register(Box::new(curves::Curves));
     registry.register(Box::new(exposure::Exposure));
+    registry.register(Box::new(highlights_shadows::HighlightsShadows));
     registry.register(Box::new(glitch::Glitch));
     registry.register(Box::new(error_diffusion::ZhouFang));
     registry.register(Box::new(error_diffusion::ModulatedDiffuseY));

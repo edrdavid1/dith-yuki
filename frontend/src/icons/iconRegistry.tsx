@@ -22,6 +22,7 @@ import { LetterA } from 'pixelarticons/react/LetterA';
 import { Lightbulb } from 'pixelarticons/react/Lightbulb';
 import { Minus } from 'pixelarticons/react/Minus';
 import { Monitor } from 'pixelarticons/react/Monitor';
+import { Moon } from 'pixelarticons/react/Moon';
 import { Pipette } from 'pixelarticons/react/Pipette';
 import { Plus } from 'pixelarticons/react/Plus';
 import { Save } from 'pixelarticons/react/Save';
@@ -44,6 +45,7 @@ export type IconName =
   | 'effect.crt'
   | 'effect.adjust'
   | 'effect.exposure'
+  | 'effect.highlights_shadows'
   | 'effect.ascii'
   | 'effect.nearest_color'
   | 'effect.palette_quantize'
@@ -97,6 +99,7 @@ const PIXEL_ICONS: Record<string, PixelIcon> = {
   'effect.crt': Monitor,
   'effect.adjust': Settings2,
   'effect.exposure': Sun,
+  'effect.highlights_shadows': Moon,
   'effect.ascii': LetterA,
   'effect.nearest_color': Pipette,
   'effect.palette_quantize': ColorsSwatch,

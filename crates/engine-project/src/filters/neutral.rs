@@ -78,6 +78,10 @@ fn params_are_identity(filter: &FilterInstance) -> bool {
                 && *channel_b
         }
         FilterParams::Exposure { stops } => *stops == 0.0,
+        FilterParams::HighlightsShadows {
+            shadows,
+            highlights,
+        } => *shadows == 0.0 && *highlights == 0.0,
         _ => false,
     }
 }
