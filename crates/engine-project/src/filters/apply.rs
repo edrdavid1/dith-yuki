@@ -29,14 +29,49 @@ use engine_color::threshold_map::ThresholdMapCache;
 use engine_gpu::GpuContext;
 use engine_tiles::block_cache::BlockRepresentativeCache;
 use engine_tiles::{with_tile_buffer_park, PixelTile, TileBufferPark, TileCoord};
+use rayon::prelude::*;
 
 #[inline]
-fn abort_if_post_cancelled(cancel_check: Option<&dyn Fn() -> bool>) -> Result<(), EngineError> {
+fn abort_if_post_cancelled(
+    cancel_check: Option<&(dyn Fn() -> bool + Sync)>,
+) -> Result<(), EngineError> {
     if cancel_check.is_some_and(|f| f()) {
         crate::post_barrier_metrics::record_post_tile_cancelled();
         return Err(crate::post_barrier_metrics::post_cancelled());
     }
     Ok(())
+}
+
+/// Lever 4: independent strip tiles (pointwise / fused Post) via the pixel pool.
+/// Full-row/column ED stays serial. Cancel is still checked between tiles.
+fn map_strip_tiles_parallel<F>(
+    front: &[PixelTile],
+    back: &mut [PixelTile],
+    cancel_check: Option<&(dyn Fn() -> bool + Sync)>,
+    f: F,
+) -> Result<(), EngineError>
+where
+    F: Fn(usize, &PixelTile, &mut PixelTile) -> Result<(), EngineError> + Sync,
+{
+    debug_assert_eq!(front.len(), back.len());
+    let n = front.len();
+    if n == 0 {
+        return Ok(());
+    }
+    if n == 1 {
+        abort_if_post_cancelled(cancel_check)?;
+        return f(0, &front[0], &mut back[0]);
+    }
+    crate::pixel_pool::install(|| {
+        front
+            .par_iter()
+            .zip(back.par_iter_mut())
+            .enumerate()
+            .try_for_each(|(i, (src, dst))| {
+                abort_if_post_cancelled(cancel_check)?;
+                f(i, src, dst)
+            })
+    })
 }
 
 fn verify_neutral_passthrough_tile(
@@ -494,7 +529,7 @@ pub fn apply_enabled_filters_row_strip(
     gpu: Option<&GpuContext>,
     outputs: &mut [PixelTile],
     mut dithered_out: Option<(&mut [PixelTile], u128)>,
-    cancel_check: Option<&dyn Fn() -> bool>,
+    cancel_check: Option<&(dyn Fn() -> bool + Sync)>,
 ) -> Result<(), EngineError> {
     if tiles.is_empty() {
         return Ok(());
@@ -613,16 +648,15 @@ pub fn apply_enabled_filters_row_strip(
 
         let run = crate::filters::fusion::fusible_run_len(&enabled[idx..]);
         if run >= 2 {
-            for i in 0..n {
-                abort_if_post_cancelled(cancel_check)?;
+            map_strip_tiles_parallel(&front, &mut back, cancel_check, |_i, src, dst| {
                 engine_tiles::with_raw_block_sampling(!applied_any, || {
                     crate::filters::fusion::apply_fused_pointwise_into(
-                        &front[i],
-                        &mut back[i],
+                        src,
+                        dst,
                         &enabled[idx..idx + run],
                     )
-                })?;
-            }
+                })
+            })?;
             std::mem::swap(&mut front, &mut back);
             applied_any = true;
             // Barrier capture: only if the last filter in the fused run is the barrier.
@@ -673,13 +707,13 @@ pub fn apply_enabled_filters_row_strip(
                 }
             }
         } else if opacity >= 1.0 && filter.blend_mode == BlendMode::Normal {
-            for i in 0..n {
-                abort_if_post_cancelled(cancel_check)?;
+            // Lever 4: pointwise Post tiles are independent (ED stays serial above).
+            map_strip_tiles_parallel(&front, &mut back, cancel_check, |i, src, dst| {
                 let coord = tiles[i].0;
                 engine_tiles::with_raw_block_sampling(!applied_any, || {
                     apply_single_filter_into(
-                        &front[i],
-                        &mut back[i],
+                        src,
+                        dst,
                         filter,
                         coord,
                         palette_cache,
@@ -691,16 +725,15 @@ pub fn apply_enabled_filters_row_strip(
                         layer_id,
                         gpu,
                     )
-                })?;
-            }
+                })
+            })?;
         } else {
-            for i in 0..n {
-                abort_if_post_cancelled(cancel_check)?;
+            map_strip_tiles_parallel(&front, &mut back, cancel_check, |i, src, dst| {
                 let coord = tiles[i].0;
                 let mut scratch = PixelTile::new();
-                let apply_result = engine_tiles::with_raw_block_sampling(!applied_any, || {
+                engine_tiles::with_raw_block_sampling(!applied_any, || {
                     apply_single_filter_into(
-                        &front[i],
+                        src,
                         &mut scratch,
                         filter,
                         coord,
@@ -713,11 +746,11 @@ pub fn apply_enabled_filters_row_strip(
                         layer_id,
                         gpu,
                     )
-                });
-                apply_result?;
-                back[i].copy_from(&front[i]);
-                blend_tile(&mut back[i], &scratch, filter.blend_mode, opacity);
-            }
+                })?;
+                dst.copy_from(src);
+                blend_tile(dst, &scratch, filter.blend_mode, opacity);
+                Ok(())
+            })?;
         }
         std::mem::swap(&mut front, &mut back);
         applied_any = true;
@@ -790,7 +823,7 @@ pub fn apply_enabled_filters_column_strip(
     gpu: Option<&GpuContext>,
     outputs: &mut [PixelTile],
     mut dithered_out: Option<(&mut [PixelTile], u128)>,
-    cancel_check: Option<&dyn Fn() -> bool>,
+    cancel_check: Option<&(dyn Fn() -> bool + Sync)>,
 ) -> Result<(), EngineError> {
     if tiles.is_empty() {
         return Ok(());
@@ -895,16 +928,15 @@ pub fn apply_enabled_filters_column_strip(
 
         let run = crate::filters::fusion::fusible_run_len(&enabled[idx..]);
         if run >= 2 {
-            for i in 0..n {
-                abort_if_post_cancelled(cancel_check)?;
+            map_strip_tiles_parallel(&front, &mut back, cancel_check, |_i, src, dst| {
                 engine_tiles::with_raw_block_sampling(!applied_any, || {
                     crate::filters::fusion::apply_fused_pointwise_into(
-                        &front[i],
-                        &mut back[i],
+                        src,
+                        dst,
                         &enabled[idx..idx + run],
                     )
-                })?;
-            }
+                })
+            })?;
             std::mem::swap(&mut front, &mut back);
             applied_any = true;
             if !captured_barrier {
@@ -955,13 +987,12 @@ pub fn apply_enabled_filters_column_strip(
                  use a single ED-family filter per layer",
             ));
         } else if opacity >= 1.0 && filter.blend_mode == BlendMode::Normal {
-            for i in 0..n {
-                abort_if_post_cancelled(cancel_check)?;
+            map_strip_tiles_parallel(&front, &mut back, cancel_check, |i, src, dst| {
                 let coord = tiles[i].0;
                 engine_tiles::with_raw_block_sampling(!applied_any, || {
                     apply_single_filter_into(
-                        &front[i],
-                        &mut back[i],
+                        src,
+                        dst,
                         filter,
                         coord,
                         palette_cache,
@@ -973,16 +1004,15 @@ pub fn apply_enabled_filters_column_strip(
                         layer_id,
                         gpu,
                     )
-                })?;
-            }
+                })
+            })?;
         } else {
-            for i in 0..n {
-                abort_if_post_cancelled(cancel_check)?;
+            map_strip_tiles_parallel(&front, &mut back, cancel_check, |i, src, dst| {
                 let coord = tiles[i].0;
                 let mut scratch = PixelTile::new();
                 engine_tiles::with_raw_block_sampling(!applied_any, || {
                     apply_single_filter_into(
-                        &front[i],
+                        src,
                         &mut scratch,
                         filter,
                         coord,
@@ -996,9 +1026,10 @@ pub fn apply_enabled_filters_column_strip(
                         gpu,
                     )
                 })?;
-                back[i].copy_from(&front[i]);
-                blend_tile(&mut back[i], &scratch, filter.blend_mode, opacity);
-            }
+                dst.copy_from(src);
+                blend_tile(dst, &scratch, filter.blend_mode, opacity);
+                Ok(())
+            })?;
         }
         std::mem::swap(&mut front, &mut back);
         applied_any = true;
