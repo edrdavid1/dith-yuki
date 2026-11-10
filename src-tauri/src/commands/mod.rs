@@ -37,7 +37,7 @@ use std::time::Instant;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
-use engine_tiles::{CacheStage, Priority, RecomputeTask, TileKey};
+use engine_tiles::{CacheStage, RecomputeTask, TileKey};
 
 use crate::worker::WorkerWake;
 
