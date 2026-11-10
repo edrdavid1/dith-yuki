@@ -204,6 +204,7 @@ impl FilterService {
             "Glow" => FilterKind::Glow,
             "Crt" => FilterKind::Crt,
             "Adjust" => FilterKind::Adjust,
+            "Exposure" => FilterKind::Exposure,
             "Ascii" => FilterKind::Ascii,
             other => filter_kind_for_algorithm_id(other).ok_or_else(|| {
                 AppError::InvalidOperation(format!("Invalid filter kind: {other}"))
@@ -453,6 +454,14 @@ impl FilterService {
                 }
                 FilterKind::Adjust => {
                     parse_adjust_params(&req.params, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+                }
+                FilterKind::Exposure => {
+                    let stops = req
+                        .params
+                        .get("stops")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as f32;
+                    FilterParams::Exposure { stops }
                 }
                 FilterKind::Ascii => {
                     let p: engine_project::filter::AsciiParams =
@@ -1201,6 +1210,19 @@ impl FilterService {
                         _ => (0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
                     };
                     parse_adjust_params(&req.params, ec, eb, es, ebl, esh, en)
+                }
+                FilterKind::Exposure => {
+                    let existing = match existing_params {
+                        FilterParams::Exposure { stops } => stops,
+                        _ => 0.0,
+                    };
+                    let stops = req
+                        .params
+                        .get("stops")
+                        .and_then(|v| v.as_f64())
+                        .map(|v| v as f32)
+                        .unwrap_or(existing);
+                    FilterParams::Exposure { stops }
                 }
                 FilterKind::Ascii => {
                     let p: engine_project::filter::AsciiParams =

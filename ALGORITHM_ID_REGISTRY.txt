@@ -16,6 +16,7 @@ crosshatch_dither
 crt
 curves
 dispersed_dot_ordered
+exposure
 fan93
 floyd_steinberg
 glitch

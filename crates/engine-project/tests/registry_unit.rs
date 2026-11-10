@@ -98,6 +98,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "crt",
         "curves",
         "dispersed_dot_ordered",
+        "exposure",
         "fan93",
         "floyd_steinberg",
         "glitch",
@@ -270,8 +271,8 @@ fn register_all_ids_unique() {
     );
     assert_eq!(
         all_ids.len(),
-        46,
-        "must register all 46 built-in algorithms"
+        47,
+        "must register all 47 built-in algorithms"
     );
 }
 

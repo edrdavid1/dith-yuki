@@ -12,6 +12,7 @@ use crate::error::EngineError;
 use crate::filter::{FilterInstance, FilterParams};
 use crate::filters::adjust::{adjust_sat_m, apply_adjust_point_rgba};
 use crate::filters::curves::{CurveChannel, CurvesFilter};
+use crate::filters::exposure::apply_exposure_point_rgba;
 use crate::filters::levels::LevelsFilter;
 use crate::filters::neutral::filter_is_neutral_for_apply;
 use crate::types::BlendMode;
@@ -75,7 +76,9 @@ pub fn is_fusible_pointwise(filter: &FilterInstance) -> bool {
             noise,
             ..
         } => *blur == 0.0 && *sharpness == 0.0 && *noise == 0.0,
-        FilterParams::Curves { .. } | FilterParams::Levels { .. } => true,
+        FilterParams::Curves { .. }
+        | FilterParams::Levels { .. }
+        | FilterParams::Exposure { .. } => true,
         _ => false,
     }
 }
@@ -104,6 +107,9 @@ enum FusibleOp {
     },
     Curves(CurvesFilter),
     Levels(LevelsFilter),
+    Exposure {
+        gain: f32,
+    },
 }
 
 fn build_op(filter: &FilterInstance) -> Result<FusibleOp, EngineError> {
@@ -153,6 +159,9 @@ fn build_op(filter: &FilterInstance) -> Result<FusibleOp, EngineError> {
             levels.rebuild_lut();
             Ok(FusibleOp::Levels(levels))
         }
+        FilterParams::Exposure { stops } => Ok(FusibleOp::Exposure {
+            gain: 2f32.powf(stops.clamp(-5.0, 5.0)),
+        }),
         _ => Err(EngineError::invalid_filter_params(
             "filter is not fusible pointwise",
         )),
@@ -218,6 +227,7 @@ fn apply_op_rgba(op: &FusibleOp, r: f32, g: f32, b: f32, a: f32) -> (f32, f32, f
         } => apply_adjust_point_rgba(r, g, b, a, *contrast_m, *brightness, *sat_m),
         FusibleOp::Curves(c) => apply_curves_rgba(c, r, g, b, a),
         FusibleOp::Levels(l) => apply_levels_rgba(l, r, g, b, a),
+        FusibleOp::Exposure { gain } => apply_exposure_point_rgba(r, g, b, a, *gain),
     }
 }
 

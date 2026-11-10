@@ -77,6 +77,7 @@ fn params_are_identity(filter: &FilterInstance) -> bool {
                 && *channel_g
                 && *channel_b
         }
+        FilterParams::Exposure { stops } => *stops == 0.0,
         _ => false,
     }
 }

@@ -239,6 +239,8 @@ export function specForAlgorithm(
       return { kind: 'Glow', params: { ...EFFECT_DEFAULTS.Glow } };
     case 'adjust':
       return { kind: 'Adjust', params: { ...EFFECT_DEFAULTS.Adjust } };
+    case 'exposure':
+      return { kind: 'Exposure', params: { stops: 0 } };
     case 'curves':
       return { kind: 'Curves', params: { ...EFFECT_DEFAULTS.Curves } };
     case 'glitch':

@@ -359,6 +359,7 @@ impl Document {
             | FilterParams::Glow { .. }
             | FilterParams::Crt { .. }
             | FilterParams::Adjust { .. }
+            | FilterParams::Exposure { .. }
             | FilterParams::Ascii(_)
             | FilterParams::Placeholder(_) => false,
         }
