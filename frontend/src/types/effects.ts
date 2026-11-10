@@ -251,6 +251,8 @@ export function specForAlgorithm(
         kind: 'TemperatureTint',
         params: { temperature: 0, tint: 0 },
       };
+    case 'vibrance':
+      return { kind: 'Vibrance', params: { amount: 0 } };
     case 'curves':
       return { kind: 'Curves', params: { ...EFFECT_DEFAULTS.Curves } };
     case 'glitch':

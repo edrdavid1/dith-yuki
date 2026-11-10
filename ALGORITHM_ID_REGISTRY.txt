@@ -41,6 +41,7 @@ smooth_diffuse
 stevenson_arce
 stucki
 temperature_tint
+vibrance
 void_and_cluster
 voronoi_stipple
 wave

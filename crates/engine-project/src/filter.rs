@@ -34,6 +34,8 @@ pub enum FilterKind {
     HighlightsShadows,
     /// Warm/cool temperature and green/magenta tint (pointwise Post).
     TemperatureTint,
+    /// Saturation-aware vibrance (pointwise Post).
+    Vibrance,
     /// Text-art / ASCII (not a dither mode).
     Ascii,
     Placeholder,
@@ -53,6 +55,7 @@ impl std::fmt::Display for FilterKind {
             FilterKind::Exposure => write!(f, "Exposure"),
             FilterKind::HighlightsShadows => write!(f, "HighlightsShadows"),
             FilterKind::TemperatureTint => write!(f, "TemperatureTint"),
+            FilterKind::Vibrance => write!(f, "Vibrance"),
             FilterKind::Ascii => write!(f, "Ascii"),
             FilterKind::Placeholder => write!(f, "Placeholder"),
         }
@@ -71,6 +74,7 @@ impl FilterKind {
                 | Self::Exposure
                 | Self::HighlightsShadows
                 | Self::TemperatureTint
+                | Self::Vibrance
         )
     }
 }
@@ -1098,6 +1102,8 @@ pub enum FilterParams {
         /// Tint (−1 magenta .. 1 green). 0 = identity.
         tint: f32,
     },
+    /// Vibrance amount (−1 .. 1). 0 = identity.
+    Vibrance { amount: f32 },
     /// Text-art / ASCII output stage (`engine-ascii`). Not a dither mode.
     Ascii(AsciiParams),
     /// Placeholder for unknown or future filters.
@@ -1675,6 +1681,14 @@ impl FilterInstance {
                 }
                 Ok(())
             }
+            FilterParams::Vibrance { amount } => {
+                if !(-1.0..=1.0).contains(amount) {
+                    return Err(EngineError::invalid_filter_params(
+                        "Vibrance amount must be in range [-1.0, 1.0]",
+                    ));
+                }
+                Ok(())
+            }
             FilterParams::Ascii(p) => p.validate(),
             FilterParams::Placeholder(_) => Ok(()),
         }
@@ -1697,6 +1711,7 @@ pub fn algorithm_id_for_params(params: &FilterParams) -> Option<&'static str> {
         FilterParams::Exposure { .. } => Some("exposure"),
         FilterParams::HighlightsShadows { .. } => Some("highlights_shadows"),
         FilterParams::TemperatureTint { .. } => Some("temperature_tint"),
+        FilterParams::Vibrance { .. } => Some("vibrance"),
         FilterParams::Curves { .. } => Some("curves"),
         FilterParams::Glitch(_) => Some("glitch"),
         FilterParams::Ascii(_) => Some("ascii"),
@@ -1752,6 +1767,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         "exposure" => Some(FilterKind::Exposure),
         "highlights_shadows" => Some(FilterKind::HighlightsShadows),
         "temperature_tint" => Some(FilterKind::TemperatureTint),
+        "vibrance" => Some(FilterKind::Vibrance),
         "curves" => Some(FilterKind::Curves),
         "glitch" => Some(FilterKind::Glitch),
         "ascii" => Some(FilterKind::Ascii),
@@ -1837,6 +1853,7 @@ pub fn filter_params_to_json(params: &FilterParams) -> Result<serde_json::Value,
             "temperature": temperature,
             "tint": tint,
         })),
+        FilterParams::Vibrance { amount } => Ok(serde_json::json!({ "amount": amount })),
         FilterParams::Curves { curve, channel } => Ok(serde_json::json!({
             "curve": curve,
             "channel": channel,

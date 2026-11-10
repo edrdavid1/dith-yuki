@@ -83,6 +83,7 @@ fn params_are_identity(filter: &FilterInstance) -> bool {
             highlights,
         } => *shadows == 0.0 && *highlights == 0.0,
         FilterParams::TemperatureTint { temperature, tint } => *temperature == 0.0 && *tint == 0.0,
+        FilterParams::Vibrance { amount } => *amount == 0.0,
         _ => false,
     }
 }

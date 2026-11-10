@@ -114,6 +114,7 @@ function filterKindToName(
     case 'Exposure': return 'Exposure';
     case 'HighlightsShadows': return 'Highlights / Shadows';
     case 'TemperatureTint': return 'Temperature / Tint';
+    case 'Vibrance': return 'Vibrance';
     case 'Ascii': return 'ASCII';
     case 'PaletteQuantize': return 'Palette Quantize';
     default: return kind;
@@ -141,6 +142,7 @@ function filterKindToIconType(
     case 'Exposure': return 'exposure';
     case 'HighlightsShadows': return 'highlights_shadows';
     case 'TemperatureTint': return 'temperature_tint';
+    case 'Vibrance': return 'vibrance';
     case 'Ascii': return 'ascii';
     case 'PaletteQuantize': return 'palette_quantize';
     default: return 'dithering';
@@ -799,6 +801,8 @@ function EffectIconSvg({ type }: { type: string }) {
       return <Icon name="effect.highlights_shadows" width={18} height={18} />;
     case 'temperature_tint':
       return <Icon name="effect.temperature_tint" width={18} height={18} />;
+    case 'vibrance':
+      return <Icon name="effect.vibrance" width={18} height={18} />;
     case 'ascii':
       return <Icon name="effect.ascii" width={18} height={18} />;
     case 'nearest_color':
