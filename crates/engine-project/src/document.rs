@@ -363,6 +363,7 @@ impl Document {
             | FilterParams::HighlightsShadows { .. }
             | FilterParams::TemperatureTint { .. }
             | FilterParams::Vibrance { .. }
+            | FilterParams::Hue { .. }
             | FilterParams::Ascii(_)
             | FilterParams::Placeholder(_) => false,
         }

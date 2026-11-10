@@ -24,6 +24,7 @@ glitch_dither
 glow
 halftone_screen_angled
 highlights_shadows
+hue
 jarvis_judice_ninke
 line_screen
 modulated_diffuse_x
