@@ -2169,7 +2169,7 @@ pub fn visible_tiles_to_l0(visible: &[engine_tiles::TileCoord]) -> Vec<engine_ti
             }
         }
     }
-    out.sort_by(|a, b| (a.y, a.x).cmp(&(b.y, b.x)));
+    out.sort_by_key(|a| (a.y, a.x));
     out.dedup();
     out
 }
@@ -4645,7 +4645,7 @@ mod tests {
                 other => panic!("unexpected stage {other:?} — must not expand ED/Raw/Dithered"),
             }
         }
-        processed.sort_by(|a, b| (a.y, a.x).cmp(&(b.y, b.x)));
+        processed.sort_by_key(|a| (a.y, a.x));
         assert_eq!(processed, visible_tiles_to_l0(&[l1]));
         assert_eq!(composite.len(), 1);
         assert!(!stages.contains(&CacheStage::Raw));
