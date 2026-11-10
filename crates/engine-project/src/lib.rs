@@ -45,6 +45,7 @@ pub use filter::{
     resolve_algorithm_id, DiffusionKernel, DitherMode, FilterInstance, FilterKind, FilterParams,
     PlaceholderParams,
 };
+pub use filters::neutral::filter_is_neutral_for_apply;
 pub use filters::FilterContext;
 pub use headless::{
     expand_output_name, palette_from_srgb, run_headless_batch, run_headless_job,
@@ -63,21 +64,20 @@ pub use palette_gen::{generate_palette_from_layer, generate_palette_from_layer_w
 pub use post_barrier::{
     barrier_index, classify_change, cost_class_for_instance, cost_class_for_params,
     ensure_filter_ids, filter_fingerprint, material_stack_unchanged, post_region_indices,
-    prefix_externals_for_layer, prefix_hash_through_barrier, split_enabled_at_barrier, stack_edit_bump,
-    stack_hash, ChangeClass, CostClass, PrefixExternals, StackEditBump,
+    prefix_externals_for_layer, prefix_hash_through_barrier, split_enabled_at_barrier,
+    stack_edit_bump, stack_hash, ChangeClass, CostClass, PrefixExternals, StackEditBump,
 };
 pub use post_barrier_metrics::{
-    filter_index as post_filter_index, is_post_cancelled, note_stack_change,
-    post_cancelled, record_clear as record_post_clear, record_ed_run_started,
-    record_post_tile_cancelled, record_post_tile_discarded_after_compute,
-    snapshot as post_barrier_counters, PostBarrierCounters, POST_CANCELLED_REASON,
+    filter_index as post_filter_index, is_post_cancelled, note_stack_change, post_cancelled,
+    record_clear as record_post_clear, record_ed_run_started, record_post_tile_cancelled,
+    record_post_tile_discarded_after_compute, snapshot as post_barrier_counters,
+    PostBarrierCounters, POST_CANCELLED_REASON,
 };
 pub use post_cache::{
     init_from_env as init_post_cache_from_env, neutral_verify_enabled, post_cache_enabled,
     post_verify_enabled, refresh_policy_for_change, set_neutral_verify_enabled_for_test,
     set_post_cache_enabled_for_test, set_post_verify_enabled_for_test,
 };
-pub use filters::neutral::filter_is_neutral_for_apply;
 pub use seamless::{
     check_seamless, nearest_multiples, ordered_matrix_side, pattern_angle_breaks_periodicity,
     pattern_period_px, seamless_warning_lines, SeamlessKind, SeamlessReport,

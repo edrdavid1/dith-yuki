@@ -102,6 +102,7 @@ fn hash_key_bytes(hasher: &mut blake3::Hasher, key: TileKey, tile: &PixelTile) {
         CacheStage::Raw => 0u8,
         CacheStage::Processed => 1u8,
         CacheStage::Composite => 2u8,
+        CacheStage::Dithered => 3u8,
     };
     hasher.update(&[key.coord.level]);
     hasher.update(&key.coord.x.to_le_bytes());
@@ -394,6 +395,11 @@ fn harness_worker_loop(state: Arc<AppState>, stop: Arc<AtomicBool>) {
                     state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
                     crate::commands::on_preview_task_finished(&state);
                 }
+                CacheStage::Dithered => {
+                    state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
+                    crate::commands::on_preview_task_finished(&state);
+                    continue;
+                }
                 CacheStage::Processed => {
                     if crate::tile_pipeline::layer_has_error_diffusion(&snap.root, task.key.layer)
                         && task.key.coord.level == 0
@@ -508,6 +514,9 @@ fn prod_shaped_worker_loop(state: Arc<AppState>, stop: Arc<AtomicBool>) {
                 CacheStage::Raw => state.tiles.tile_cache.get_entry(task.key).ok_or_else(|| {
                     engine_project::error::EngineError::invalid_state("raw missing")
                 }),
+                CacheStage::Dithered => Err(engine_project::error::EngineError::invalid_state(
+                    "Dithered is not a scheduled stage",
+                )),
                 CacheStage::Processed => {
                     if task.key.coord.level > 0
                         && crate::tile_pipeline::layer_has_error_diffusion(
@@ -606,6 +615,7 @@ fn prod_shaped_worker_loop(state: Arc<AppState>, stop: Arc<AtomicBool>) {
                 if !task_is_stale(&task, &snapshot) {
                     match task.key.stage {
                         CacheStage::Raw => {}
+                        CacheStage::Dithered => {}
                         CacheStage::Processed | CacheStage::Composite => {
                             crate::tile_gen_trace::clear_requeue_attempt(
                                 task.key.doc,
@@ -726,7 +736,12 @@ fn apply_dither(
     sync_content_epoch(state, content_gen);
     engine_tiles::invalidation::invalidate(
         &state.tiles.tile_cache,
-        engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { doc: 1, layer: 1 },
+        engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
+            doc: 1,
+            layer: 1,
+            changed_index: None,
+            preserve_dithered: false,
+        },
     );
     state.tiles.error_residuals.evict_layer(1, LayerId::new(1));
     state.tiles.block_representatives.clear_dithered();

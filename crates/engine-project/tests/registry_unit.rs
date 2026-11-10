@@ -92,6 +92,8 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "burkes",
         "clustered_dot_ordered",
         "cmyk_halftone",
+        "contrast_aware_x",
+        "contrast_aware_y",
         "crosshatch_dither",
         "crt",
         "curves",
@@ -99,10 +101,13 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "fan93",
         "floyd_steinberg",
         "glitch",
+        "glitch_dither",
         "glow",
         "halftone_screen_angled",
         "jarvis_judice_ninke",
         "line_screen",
+        "modulated_diffuse_x",
+        "modulated_diffuse_y",
         "nearest_color",
         "ostromoukhov",
         "palette_quantize",
@@ -112,11 +117,14 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "sierra",
         "sierra_lite",
         "sierra_two_row",
+        "smooth_diffuse",
         "stevenson_arce",
         "stucki",
         "void_and_cluster",
         "voronoi_stipple",
         "wave",
+        "wave_modulation_x",
+        "wave_modulation_y",
         "zhou_fang",
     ];
     assert_eq!(
@@ -262,8 +270,8 @@ fn register_all_ids_unique() {
     );
     assert_eq!(
         all_ids.len(),
-        38,
-        "must register all 38 built-in algorithms"
+        46,
+        "must register all 46 built-in algorithms"
     );
 }
 

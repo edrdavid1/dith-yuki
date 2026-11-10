@@ -92,4 +92,12 @@ pub fn register_all(registry: &mut AlgorithmRegistry) {
     registry.register(Box::new(curves::Curves));
     registry.register(Box::new(glitch::Glitch));
     registry.register(Box::new(error_diffusion::ZhouFang));
+    registry.register(Box::new(error_diffusion::ModulatedDiffuseY));
+    registry.register(Box::new(error_diffusion::ModulatedDiffuseX));
+    registry.register(Box::new(error_diffusion::GlitchDither));
+    registry.register(Box::new(error_diffusion::ContrastAwareY));
+    registry.register(Box::new(error_diffusion::ContrastAwareX));
+    registry.register(Box::new(error_diffusion::SmoothDiffuse));
+    registry.register(Box::new(error_diffusion::WaveModulationY));
+    registry.register(Box::new(error_diffusion::WaveModulationX));
 }

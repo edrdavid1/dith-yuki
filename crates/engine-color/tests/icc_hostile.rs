@@ -3,10 +3,8 @@
 //! Complements `catch_unwind` + structural precheck. Run under `--release` in CI
 //! to prove panics unwind into `SoftProofError` rather than aborting the process.
 
-use engine_color::soft_proof::{
-    ProofProfile, SoftProofIntent, SoftProofTransform,
-};
 use engine_color::load_fogra51_fixture;
+use engine_color::soft_proof::{ProofProfile, SoftProofIntent, SoftProofTransform};
 use engine_color::{precheck_icc_bytes, DisplayRgbF32};
 
 fn mutate(seed: u64, bytes: &[u8]) -> Vec<u8> {

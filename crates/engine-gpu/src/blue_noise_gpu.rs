@@ -139,12 +139,14 @@ pub fn apply_blue_noise_gpu_opts(
         mapped_at_creation: false,
     });
 
+    let total_strips = height.div_ceil(strip_h).max(1);
     let mut out_u32 = vec![0u32; n];
     let mut strips = 0u32;
     let upload_ms;
     let mut dispatch_ms = 0.0;
     let mut readback_ms = 0.0;
     let mut ts_diag = DispatchTimestampDiag::begin(device, "blue_noise", width, height);
+    crate::apply_progress::report(0, total_strips);
 
     if use_full {
         let input_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -202,6 +204,7 @@ pub fn apply_blue_noise_gpu_opts(
                 dispatch_bn(device, queue, pipeline, &bind_group, width, h);
             }
             strips += 1;
+            crate::apply_progress::report(strips, total_strips);
             y0 += h;
         }
         device.poll(wgpu::Maintain::Wait);
@@ -282,6 +285,7 @@ pub fn apply_blue_noise_gpu_opts(
             }
             dispatch_ms += t_d0.elapsed().as_secs_f64() * 1000.0;
             strips += 1;
+            crate::apply_progress::report(strips, total_strips);
             let t_r0 = Instant::now();
             let strip_out = readback_u32(device, queue, &output_buf, bind_bytes)?;
             readback_ms += t_r0.elapsed().as_secs_f64() * 1000.0;

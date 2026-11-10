@@ -1,8 +1,8 @@
 //! Print-export goldens: lcms2 forward CMYK + pure-K rules + TIFF round identity.
 
+use engine_color::load_fogra51_fixture;
 use engine_color::print_export::{rgba8_to_cmyk8, scale_cmyk8_nearest, PrintExportTransform};
 use engine_color::soft_proof::SoftProofIntent;
-use engine_color::load_fogra51_fixture;
 use engine_io::{write_cmyk_tiff, CmykTiffCompression};
 use std::io::Cursor;
 
@@ -28,8 +28,8 @@ fn scale_preserves_blocks() {
 
 #[test]
 fn tiff_bytes_deterministic() {
-    let x =
-        PrintExportTransform::new(&load_fogra51_fixture(), SoftProofIntent::Relative, false).unwrap();
+    let x = PrintExportTransform::new(&load_fogra51_fixture(), SoftProofIntent::Relative, false)
+        .unwrap();
     let mut rgba = Vec::new();
     for y in 0..8u8 {
         for xch in 0..8u8 {

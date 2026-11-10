@@ -8,14 +8,13 @@ use engine_project::filter::{
     DitherColorMode, DitherModeV2, DitherParamsV2, FilterInstance, FilterKind, FilterParams,
 };
 use engine_project::filter_is_neutral_for_apply;
+use engine_project::filters::apply::apply_enabled_filters_to_tile;
 use engine_project::filters::apply::{
     apply_filter_stack_tile_column_strip, apply_filter_stack_tile_row_strip,
 };
 use engine_project::filters::curves::CurveChannel;
 use engine_project::filters::dither_residuals::ErrorResidualsStore;
-use engine_project::filters::full_document::{
-    ensure_full_document_ex, FullDocumentCache,
-};
+use engine_project::filters::full_document::{ensure_full_document_ex, FullDocumentCache};
 use engine_project::filters::glitch::{GlitchParams, GlitchSubOp};
 use engine_project::layer::{Layer, LayerNode};
 use engine_project::post_barrier::{
@@ -27,10 +26,9 @@ use engine_project::{
     note_stack_change, record_post_clear, refresh_policy_for_change,
     set_neutral_verify_enabled_for_test, set_post_cache_enabled_for_test,
 };
-use engine_project::filters::apply::apply_enabled_filters_to_tile;
-use engine_tiles::with_tile_buffer_park;
 use engine_tiles::block_cache::BlockRepresentativeCache;
 use engine_tiles::decompose::decompose_image_to_tiles;
+use engine_tiles::with_tile_buffer_park;
 use engine_tiles::{PixelTile, TileCache, TileCoord, HALO, TILE_SIZE};
 use std::sync::Mutex;
 
@@ -364,7 +362,10 @@ fn post_cache_zero_ed_for_neutral_post_edits_and_add_remove() {
 
     // Remove that neutral Adjust.
     let (clear3, preserve3) = refresh_policy_for_change(&with, &base, true);
-    assert!(!clear3 && preserve3, "remove neutral Pre must skip ED clear");
+    assert!(
+        !clear3 && preserve3,
+        "remove neutral Pre must skip ED clear"
+    );
     assert_eq!(classify_change(&with, &base), ChangeClass::Post);
     note_stack_change(1, &with, &base, Some(2), clear3, &ext);
     record_post_clear(clear3);
@@ -735,10 +736,7 @@ fn apply_column_strip_layer(layer: &Layer, tile: &PixelTile) -> PixelTile {
     out.remove(0)
 }
 
-fn assert_blend_matrix_for_identity(
-    label: &str,
-    make: impl Fn() -> FilterInstance,
-) {
+fn assert_blend_matrix_for_identity(label: &str, make: impl Fn() -> FilterInstance) {
     let coord = TileCoord {
         level: 0,
         x: 0,
@@ -857,7 +855,10 @@ fn a3_barrier_glitch_adjust_scenarios() {
     {
         *brightness = 0.35;
     }
-    assert_eq!(classify_change(&stack_post, &adjust_edit), ChangeClass::Post);
+    assert_eq!(
+        classify_change(&stack_post, &adjust_edit),
+        ChangeClass::Post
+    );
     let (clear_a, preserve_a) = refresh_policy_for_change(&stack_post, &adjust_edit, true);
     assert!(!clear_a && preserve_a, "Post Adjust must preserve Dithered");
     note_stack_change(1, &stack_post, &adjust_edit, Some(1), clear_a, &ext);
@@ -867,7 +868,10 @@ fn a3_barrier_glitch_adjust_scenarios() {
     if let FilterParams::Glitch(ref mut p) = glitch_edit[0].params {
         p.block_shift.amount = 14.0;
     }
-    assert_eq!(classify_change(&stack_post, &glitch_edit), ChangeClass::Post);
+    assert_eq!(
+        classify_change(&stack_post, &glitch_edit),
+        ChangeClass::Post
+    );
     let (clear_g, preserve_g) = refresh_policy_for_change(&stack_post, &glitch_edit, true);
     assert!(!clear_g && preserve_g, "Post Glitch must preserve Dithered");
     note_stack_change(1, &stack_post, &glitch_edit, Some(0), clear_g, &ext);
@@ -890,7 +894,10 @@ fn a3_barrier_glitch_adjust_scenarios() {
         ChangeClass::Pre
     );
     let (clear_pre, preserve_pre) = refresh_policy_for_change(&stack_pre, &pre_adjust_edit, true);
-    assert!(clear_pre && !preserve_pre, "Pre Adjust must clear residuals");
+    assert!(
+        clear_pre && !preserve_pre,
+        "Pre Adjust must clear residuals"
+    );
     note_stack_change(1, &stack_pre, &pre_adjust_edit, Some(2), clear_pre, &ext);
     record_post_clear(clear_pre);
 
@@ -915,7 +922,10 @@ fn a3_barrier_glitch_adjust_scenarios() {
     let crossed = vec![g.clone(), a_pre.clone(), d.clone()];
     assert_eq!(classify_change(&stack_pre, &crossed), ChangeClass::Barrier);
     let (clear_x, preserve_x) = refresh_policy_for_change(&stack_pre, &crossed, true);
-    assert!(clear_x && !preserve_x, "crossing barrier invalidates Dithered");
+    assert!(
+        clear_x && !preserve_x,
+        "crossing barrier invalidates Dithered"
+    );
     note_stack_change(1, &stack_pre, &crossed, Some(1), clear_x, &ext);
     record_post_clear(clear_x);
 

@@ -504,7 +504,7 @@ fn harness_worker_loop(
                 CacheStage::Composite => {
                     counters.dequeue_composite.fetch_add(1, Ordering::Relaxed);
                 }
-                CacheStage::Raw => {}
+                CacheStage::Raw | CacheStage::Dithered => {}
             }
 
             state.preview_pass_inflight.fetch_add(1, Ordering::AcqRel);
@@ -557,6 +557,11 @@ fn harness_worker_loop(
                 CacheStage::Raw => {
                     state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
                     crate::commands::on_preview_task_finished(&state);
+                }
+                CacheStage::Dithered => {
+                    state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
+                    crate::commands::on_preview_task_finished(&state);
+                    continue;
                 }
                 CacheStage::Processed => {
                     if crate::tile_pipeline::layer_has_error_diffusion(&snap.root, task.key.layer)
@@ -777,7 +782,12 @@ fn interaction_add(
     let t_inv = Instant::now();
     engine_tiles::invalidation::invalidate(
         &state.tiles.tile_cache,
-        engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { doc: 1, layer: 1 },
+        engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
+            doc: 1,
+            layer: 1,
+            changed_index: None,
+            preserve_dithered: false,
+        },
     );
     let needs_ed_reset = matches!(
         &mode,
@@ -1452,6 +1462,7 @@ fn hash_tile_bytes(hasher: &mut blake3::Hasher, key: TileKey, tile: &PixelTile) 
         CacheStage::Raw => 0u8,
         CacheStage::Processed => 1u8,
         CacheStage::Composite => 2u8,
+        CacheStage::Dithered => 3u8,
     };
     hasher.update(&[key.coord.level]);
     hasher.update(&key.coord.x.to_le_bytes());
@@ -1596,7 +1607,12 @@ fn apply_dither_and_quiet(
     sync_content_epoch(state, content_gen);
     engine_tiles::invalidation::invalidate(
         &state.tiles.tile_cache,
-        engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { doc: 1, layer: 1 },
+        engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
+            doc: 1,
+            layer: 1,
+            changed_index: None,
+            preserve_dithered: false,
+        },
     );
     state.tiles.error_residuals.evict_layer(1, LayerId::new(1));
     state.tiles.block_representatives.clear_dithered();

@@ -82,47 +82,67 @@ fn raw_present(cache: &TileCache, key: TileKey) -> bool {
     cache.entries.contains_key(&key.with_stage(CacheStage::Raw))
 }
 
-/// Neighbor Processed keys that must be fresh before `key` (ED topology).
+/// Causal topology for ED Processed readiness.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EdTopology {
+    /// Classic 2D error diffusion: left + top + diag residuals.
+    Wavefront2D,
+    /// Horizontal 1D ED strip: rows are independent; strip owns the full width.
+    /// No Processed neighbor deps (only Raw must exist).
+    HorizontalOnly,
+}
+
+/// Neighbor Processed keys that must be fresh before `key` (2D wavefront).
 pub fn ed_dependency_keys(key: TileKey) -> Vec<TileKey> {
-    let mut deps = Vec::with_capacity(3);
-    let c = key.coord;
-    if c.x > 0 {
-        deps.push(TileKey {
-            doc: key.doc,
-            layer: key.layer,
-            coord: TileCoord {
-                level: c.level,
-                x: c.x - 1,
-                y: c.y,
-            },
-            stage: CacheStage::Processed,
-        });
+    ed_dependency_keys_topo(key, EdTopology::Wavefront2D)
+}
+
+/// Neighbor Processed deps for the given topology.
+pub fn ed_dependency_keys_topo(key: TileKey, topo: EdTopology) -> Vec<TileKey> {
+    match topo {
+        EdTopology::HorizontalOnly => Vec::new(),
+        EdTopology::Wavefront2D => {
+            let mut deps = Vec::with_capacity(3);
+            let c = key.coord;
+            if c.x > 0 {
+                deps.push(TileKey {
+                    doc: key.doc,
+                    layer: key.layer,
+                    coord: TileCoord {
+                        level: c.level,
+                        x: c.x - 1,
+                        y: c.y,
+                    },
+                    stage: CacheStage::Processed,
+                });
+            }
+            if c.y > 0 {
+                deps.push(TileKey {
+                    doc: key.doc,
+                    layer: key.layer,
+                    coord: TileCoord {
+                        level: c.level,
+                        x: c.x,
+                        y: c.y - 1,
+                    },
+                    stage: CacheStage::Processed,
+                });
+            }
+            if c.x > 0 && c.y > 0 {
+                deps.push(TileKey {
+                    doc: key.doc,
+                    layer: key.layer,
+                    coord: TileCoord {
+                        level: c.level,
+                        x: c.x - 1,
+                        y: c.y - 1,
+                    },
+                    stage: CacheStage::Processed,
+                });
+            }
+            deps
+        }
     }
-    if c.y > 0 {
-        deps.push(TileKey {
-            doc: key.doc,
-            layer: key.layer,
-            coord: TileCoord {
-                level: c.level,
-                x: c.x,
-                y: c.y - 1,
-            },
-            stage: CacheStage::Processed,
-        });
-    }
-    if c.x > 0 && c.y > 0 {
-        deps.push(TileKey {
-            doc: key.doc,
-            layer: key.layer,
-            coord: TileCoord {
-                level: c.level,
-                x: c.x - 1,
-                y: c.y - 1,
-            },
-            stage: CacheStage::Processed,
-        });
-    }
-    deps
 }
 
 /// Keys that may become ready after `completed` Processed finishes
@@ -163,19 +183,24 @@ pub fn ed_dependent_keys(completed: TileKey) -> Vec<TileKey> {
     ]
 }
 
-/// Decision 1: ED Processed may run only when Raw exists and left/top/diag
-/// Processed are fresh (or at image edge).
+/// Decision 1: ED Processed may run only when Raw exists and topology deps
+/// are fresh (2D: left/top/diag; 1D H: Raw only).
 pub fn ed_ready(cache: &TileCache, key: TileKey, layer_has_ed: bool) -> bool {
     if !layer_has_ed {
         return true;
     }
+    ed_ready_topo(cache, key, EdTopology::Wavefront2D)
+}
+
+/// Like [`ed_ready`], with an explicit topology (1D H skips vertical deps).
+pub fn ed_ready_topo(cache: &TileCache, key: TileKey, topo: EdTopology) -> bool {
     if key.stage != CacheStage::Processed {
         return true;
     }
     if !raw_present(cache, key) {
         return false;
     }
-    for dep in ed_dependency_keys(key) {
+    for dep in ed_dependency_keys_topo(key, topo) {
         if !tile_fresh(cache, dep) {
             return false;
         }
@@ -185,12 +210,17 @@ pub fn ed_ready(cache: &TileCache, key: TileKey, layer_has_ed: bool) -> bool {
 
 /// Keys this ED tile is still waiting on (own Raw and/or neighbor Processed).
 pub fn ed_missing_deps(cache: &TileCache, key: TileKey) -> Vec<TileKey> {
+    ed_missing_deps_topo(cache, key, EdTopology::Wavefront2D)
+}
+
+/// Like [`ed_missing_deps`] with an explicit topology.
+pub fn ed_missing_deps_topo(cache: &TileCache, key: TileKey, topo: EdTopology) -> Vec<TileKey> {
     let mut missing = Vec::new();
     let raw = key.with_stage(CacheStage::Raw);
     if !cache.entries.contains_key(&raw) {
         missing.push(raw);
     }
-    for dep in ed_dependency_keys(key) {
+    for dep in ed_dependency_keys_topo(key, topo) {
         if !tile_fresh(cache, dep) {
             missing.push(dep);
         }
@@ -201,7 +231,9 @@ pub fn ed_missing_deps(cache: &TileCache, key: TileKey) -> Vec<TileKey> {
 fn dep_satisfied(cache: &TileCache, dep: TileKey) -> bool {
     match dep.stage {
         CacheStage::Raw => cache.entries.contains_key(&dep),
-        CacheStage::Processed | CacheStage::Composite => tile_fresh(cache, dep),
+        CacheStage::Processed | CacheStage::Composite | CacheStage::Dithered => {
+            tile_fresh(cache, dep)
+        }
     }
 }
 
@@ -448,6 +480,15 @@ pub fn ed_prefix_coords(level: u8, max_x: u32, max_y: u32) -> Vec<TileCoord> {
     out
 }
 
+/// Single strip-row prefix for 1D H ED: `[0..=max_x] @ max_y` only.
+pub fn ed_row_prefix_coords(level: u8, max_x: u32, row_y: u32) -> Vec<TileCoord> {
+    let mut out = Vec::with_capacity((max_x + 1) as usize);
+    for x in 0..=max_x {
+        out.push(TileCoord { level, x, y: row_y });
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -521,6 +562,20 @@ mod tests {
         assert!(!ed_ready(&cache, key(0, 0), true));
         insert_raw(&cache, 0, 0);
         assert!(ed_ready(&cache, key(0, 0), true));
+    }
+
+    #[test]
+    fn horizontal_only_ready_without_top_neighbor() {
+        let cache = TileCache::new(64 * 1024 * 1024);
+        insert_raw(&cache, 1, 1);
+        assert!(
+            !ed_ready_topo(&cache, key(1, 1), EdTopology::Wavefront2D),
+            "2D still needs top/left"
+        );
+        assert!(
+            ed_ready_topo(&cache, key(1, 1), EdTopology::HorizontalOnly),
+            "1D H strip only needs Raw"
+        );
     }
 
     #[test]
@@ -621,6 +676,12 @@ mod tests {
 
     #[test]
     fn prefix_coords_rectangle() {
+        let row = ed_row_prefix_coords(0, 2, 5);
+        assert_eq!(row.len(), 3);
+        assert!(row.iter().all(|c| c.y == 5 && c.level == 0));
+        assert_eq!(row[0].x, 0);
+        assert_eq!(row[2].x, 2);
+
         let coords = ed_prefix_coords(0, 1, 1);
         assert_eq!(coords.len(), 4);
     }

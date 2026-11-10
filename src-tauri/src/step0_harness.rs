@@ -911,7 +911,12 @@ fn bump_and_invalidate(state: &AppState) -> u64 {
     state.tiles.full_document.invalidate_layer(1, 1);
     engine_tiles::invalidation::invalidate(
         &state.tiles.tile_cache,
-        engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { doc: 1, layer: 1 },
+        engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
+            doc: 1,
+            layer: 1,
+            changed_index: None,
+            preserve_dithered: false,
+        },
     );
     state
         .active_session()
@@ -1021,6 +1026,9 @@ fn run_task(state: &AppState, task: engine_tiles::RecomputeTask) {
             .ok_or_else(|| engine_project::error::EngineError::invalid_state("raw missing")),
         CacheStage::Processed => crate::tile_pipeline::compute_processed_tile(task.key, state),
         CacheStage::Composite => crate::tile_pipeline::compute_composite_tile(task.key, state),
+        CacheStage::Dithered => Err(engine_project::error::EngineError::invalid_state(
+            "Dithered is not a scheduled stage",
+        )),
     };
 
     if let Ok(_tile) = result {
@@ -1039,6 +1047,7 @@ fn run_task(state: &AppState, task: engine_tiles::RecomputeTask) {
                     CacheStage::Raw => 0,
                     CacheStage::Processed => 1,
                     CacheStage::Composite => 2,
+                    CacheStage::Dithered => 3,
                 };
                 crate::preview_diag::commit_task_phases(
                     task.key.doc,

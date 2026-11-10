@@ -52,7 +52,10 @@ fn params_are_identity(filter: &FilterInstance) -> bool {
                 && curve[1].1 == 1.0
                 && matches!(
                     channel,
-                    CurveChannel::All | CurveChannel::Red | CurveChannel::Green | CurveChannel::Blue
+                    CurveChannel::All
+                        | CurveChannel::Red
+                        | CurveChannel::Green
+                        | CurveChannel::Blue
                 )
         }
         FilterParams::Levels {

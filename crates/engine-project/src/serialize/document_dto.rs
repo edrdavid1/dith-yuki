@@ -10,7 +10,7 @@
 use crate::filter::{FilterInstance, FilterKind, FilterParams};
 use crate::layer::{Layer, LayerGroup, LayerNode, FORWARD_COMPAT_NODE_KEY};
 use crate::mask::MaskRef;
-use crate::types::{BlendMode, ColorProfileRef, LayerId, LayerKind, TileBounds};
+use crate::types::{BlendMode, ColorProfileRef, FilterInstanceId, LayerId, LayerKind, TileBounds};
 use engine_color::palette::{LinearColor, Palette};
 use engine_color::SoftProofConfig;
 use engine_registry::AlgorithmRegistry;
@@ -217,6 +217,8 @@ fn default_filter_opacity() -> f32 {
 /// Filter instance without `requires_full_row` (recomputed on load).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilterInstanceFile {
+    /// Missing in pre-`filter_id` archives → fresh UUID on load; persisted on next save.
+    #[serde(default)]
     pub id: crate::types::FilterInstanceId,
     pub kind: FilterKind,
     /// Tagged `FilterParams` JSON, or verbatim unknown-algorithm params (task 5.2).
@@ -397,6 +399,10 @@ pub fn filter_from_file(
 ) -> FilterInstance {
     let registry = registry.unwrap_or_else(|| crate::algorithms::builtin_registry());
     let mut params_json = f.params.clone();
+    let mut file_id = f.id;
+    if file_id.as_u128() == 0 {
+        file_id = FilterInstanceId::new();
+    }
 
     if let Some(id) = f.algorithm_id.as_deref() {
         if registry.get_by_str(id).is_none() {
@@ -407,7 +413,7 @@ pub fn filter_from_file(
                     raw_params: Some(f.params.clone()),
                 }),
             );
-            inst.id = f.id;
+            inst.id = file_id;
             inst.enabled = false;
             inst.opacity = f.opacity;
             inst.blend_mode = f.blend_mode;
@@ -433,7 +439,7 @@ pub fn filter_from_file(
         })
     });
     let mut inst = FilterInstance::new(f.kind, params);
-    inst.id = f.id;
+    inst.id = file_id;
     inst.enabled = f.enabled;
     inst.opacity = f.opacity;
     inst.blend_mode = f.blend_mode;
@@ -742,6 +748,25 @@ mod tests {
         let f: FilterInstanceFile = serde_json::from_value(v).unwrap();
         assert_eq!(f.opacity, 1.0);
         assert_eq!(f.blend_mode, BlendMode::Normal);
+    }
+
+    #[test]
+    fn filter_instance_file_missing_id_gets_uuid_and_roundtrips() {
+        let v = serde_json::json!({
+            "kind": "Levels",
+            "params": { "Levels": {
+                "input_black": 0.0, "input_white": 1.0, "gamma": 1.0,
+                "output_black": 0.0, "output_white": 1.0
+            }},
+            "enabled": true
+        });
+        let f: FilterInstanceFile = serde_json::from_value(v).unwrap();
+        assert_ne!(f.id.as_u128(), 0);
+        let inst = filter_from_file(&f, None);
+        assert_eq!(inst.id, f.id);
+        let again: FilterInstanceFile =
+            serde_json::from_value(serde_json::to_value(filter_to_file(&inst)).unwrap()).unwrap();
+        assert_eq!(again.id, f.id);
     }
 
     #[test]

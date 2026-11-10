@@ -136,6 +136,7 @@ fn stage_tag(stage: CacheStage) -> u8 {
         CacheStage::Raw => 0,
         CacheStage::Processed => 1,
         CacheStage::Composite => 2,
+        CacheStage::Dithered => 3,
     }
 }
 

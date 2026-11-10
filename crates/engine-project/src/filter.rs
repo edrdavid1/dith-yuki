@@ -2,7 +2,7 @@
 
 use crate::error::EngineError;
 use crate::filters::curves::CurveChannel;
-use crate::filters::glitch::GlitchType;
+use crate::filters::glitch::GlitchParams as GlitchFilterParams;
 use crate::types::{BlendMode, FilterInstanceId, PaletteId};
 use serde::{Deserialize, Serialize};
 
@@ -355,10 +355,38 @@ pub enum DitherModeV2 {
     /// Threshold-shift blue noise (`ED-on-GPU.md` — `blue_noise`).
     #[serde(rename = "blue_noise")]
     BlueNoise,
+    /// 1D horizontal error diffusion with contrast-weighted carry (`ed1d`).
+    /// Uses the full-width strip path; not a 2D [`DiffusionKernel`].
+    #[serde(rename = "modulated_diffuse_y")]
+    ModulatedDiffuseY,
+    /// 1D vertical error diffusion with contrast-weighted carry (`ed1d`).
+    /// Uses the full-height column strip path; not a 2D [`DiffusionKernel`].
+    #[serde(rename = "modulated_diffuse_x")]
+    ModulatedDiffuseX,
+    /// 1D ED after source-row corruption (`glitch_dither`). Horizontal strip.
+    /// Distinct from spatial filter `glitch` (block/channel gather).
+    #[serde(rename = "glitch_dither")]
+    GlitchDither,
+    /// 1D H ED + local luminance-σ contrast weight (`contrast_aware_y`).
+    #[serde(rename = "contrast_aware_y")]
+    ContrastAwareY,
+    /// 1D V ED + local luminance-σ contrast weight (`contrast_aware_x`).
+    #[serde(rename = "contrast_aware_x")]
+    ContrastAwareX,
+    /// 1D H ED + neighbor contrast + EMA (`smooth_diffuse`).
+    #[serde(rename = "smooth_diffuse")]
+    SmoothDiffuse,
+    /// 1D H ED + sine weight → vertical bands (`wave_modulation_y`).
+    #[serde(rename = "wave_modulation_y")]
+    WaveModulationY,
+    /// 1D V ED + sine weight → horizontal bands (`wave_modulation_x`).
+    #[serde(rename = "wave_modulation_x")]
+    WaveModulationX,
 }
 
 impl DitherModeV2 {
-    /// Error-diffusion modes that use the residual / full-row path.
+    /// Classic 2D error-diffusion modes (FS family) that use a diffusion kernel
+    /// and cross-tile residuals / wavefront.
     pub fn is_error_diffusion(&self) -> bool {
         matches!(
             self,
@@ -378,7 +406,19 @@ impl DitherModeV2 {
         )
     }
 
-    /// Matching [`DiffusionKernel`] for ED modes.
+    /// 1D ED styles (`ed1d` core). Strip path by axis; **no** 2D kernel.
+    pub fn is_ed1d(&self) -> bool {
+        self.ed1d_axis().is_some()
+    }
+
+    /// Carry axis for 1D ED styles (`None` if not ed1d).
+    ///
+    /// Sourced from [`crate::filters::ed1d_styles::ED1D_STYLES`] (ticket 0.2a).
+    pub fn ed1d_axis(&self) -> Option<crate::filters::ed1d::Axis> {
+        crate::filters::ed1d_styles::ed1d_axis_for_mode(self)
+    }
+
+    /// Matching [`DiffusionKernel`] for 2D ED modes only (`is_ed1d` → `None`).
     pub fn diffusion_kernel(&self) -> Option<DiffusionKernel> {
         match self {
             Self::FloydSteinberg => Some(DiffusionKernel::FloydSteinberg),
@@ -394,7 +434,32 @@ impl DitherModeV2 {
             Self::StevensonArce => Some(DiffusionKernel::StevensonArce),
             Self::Ostromoukhov => Some(DiffusionKernel::Ostromoukhov),
             Self::ZhouFang => Some(DiffusionKernel::ZhouFang),
-            _ => None,
+            Self::ModulatedDiffuseY
+            | Self::ModulatedDiffuseX
+            | Self::GlitchDither
+            | Self::ContrastAwareY
+            | Self::ContrastAwareX
+            | Self::SmoothDiffuse
+            | Self::WaveModulationY
+            | Self::WaveModulationX
+            | Self::Bayer2x2
+            | Self::Bayer4x4
+            | Self::Bayer8x8
+            | Self::Bayer16x16
+            | Self::ClusteredDotOrdered
+            | Self::DispersedDotOrdered
+            | Self::CustomPng { .. }
+            | Self::Riemersma
+            | Self::VoidAndCluster
+            | Self::CrosshatchDither
+            | Self::LineScreen
+            | Self::VoronoiStipple
+            | Self::RandomDotStipple
+            | Self::CmykHalftone
+            | Self::HalftoneScreenAngled
+            | Self::Wave
+            | Self::BlockedFs
+            | Self::BlueNoise => None,
         }
     }
 
@@ -432,6 +497,14 @@ impl DitherModeV2 {
             Self::Wave => Some("wave"),
             Self::BlockedFs => Some("blocked_fs"),
             Self::BlueNoise => Some("blue_noise"),
+            Self::ModulatedDiffuseY => Some("modulated_diffuse_y"),
+            Self::ModulatedDiffuseX => Some("modulated_diffuse_x"),
+            Self::GlitchDither => Some("glitch_dither"),
+            Self::ContrastAwareY => Some("contrast_aware_y"),
+            Self::ContrastAwareX => Some("contrast_aware_x"),
+            Self::SmoothDiffuse => Some("smooth_diffuse"),
+            Self::WaveModulationY => Some("wave_modulation_y"),
+            Self::WaveModulationX => Some("wave_modulation_x"),
             Self::CustomPng { .. } => None,
         }
     }
@@ -560,6 +633,31 @@ pub struct DitherParamsV2 {
     /// Frozen after first external ship; bump only with an intentional geometry change.
     #[serde(default = "default_algo_version")]
     pub algo_version: u32,
+    /// Contrast scale for 1D ED styles (`modulated_diffuse_*`): 1..=20, default 5.
+    /// Ignored by 2D ED / ordered modes. `s = line_scale / 20` in the weight.
+    #[serde(default = "default_line_scale")]
+    pub line_scale: u8,
+    /// Corruption strength for `glitch_dither`: 1..=20, default 1.
+    #[serde(default = "default_glitch_intensity")]
+    pub glitch_intensity: u8,
+    /// Deterministic seed for `glitch_dither` PRNG. Default 42.
+    #[serde(default = "default_glitch_seed")]
+    pub glitch_seed: u32,
+    /// EMA strength for `smooth_diffuse`: 0..=20, default 5.
+    /// `0` ⇒ α = 1 (no smoothing; matches modulated at same `line_scale`).
+    #[serde(default = "default_smoothness")]
+    pub smoothness: u8,
+    /// Sine periods across the line for `wave_modulation_*`: 1..=30, default 8.
+    #[serde(default = "default_frequency")]
+    pub frequency: u8,
+    /// Sine amplitude for `wave_modulation_*`: 0..=100, default 50.
+    /// `0` ⇒ constant weight (plain 1D ED).
+    #[serde(default = "default_amplitude")]
+    pub amplitude: u8,
+    /// Optional nested style knobs (accepted on load). Canonical serialize is
+    /// flat; nested form is folded by [`Self::fold_style`].
+    #[serde(default, skip_serializing)]
+    pub style: Option<crate::filters::ed1d_styles::StyleParams>,
 }
 
 fn default_threshold_scale() -> f32 {
@@ -594,6 +692,30 @@ fn default_algo_version() -> u32 {
     1
 }
 
+fn default_line_scale() -> u8 {
+    5
+}
+
+fn default_glitch_intensity() -> u8 {
+    1
+}
+
+fn default_glitch_seed() -> u32 {
+    42
+}
+
+fn default_smoothness() -> u8 {
+    5
+}
+
+fn default_frequency() -> u8 {
+    8
+}
+
+fn default_amplitude() -> u8 {
+    50
+}
+
 fn default_nearest_metric() -> String {
     "oklab".to_string()
 }
@@ -620,6 +742,13 @@ impl Default for DitherParamsV2 {
             dither_alpha: true,
             wrap_padding: false,
             algo_version: default_algo_version(),
+            line_scale: default_line_scale(),
+            glitch_intensity: default_glitch_intensity(),
+            glitch_seed: default_glitch_seed(),
+            smoothness: default_smoothness(),
+            frequency: default_frequency(),
+            amplitude: default_amplitude(),
+            style: None,
         }
     }
 }
@@ -675,6 +804,13 @@ impl From<(DitherMode, u8)> for DitherParamsV2 {
             dither_alpha: true,
             wrap_padding: false,
             algo_version: default_algo_version(),
+            line_scale: default_line_scale(),
+            glitch_intensity: default_glitch_intensity(),
+            glitch_seed: default_glitch_seed(),
+            smoothness: default_smoothness(),
+            frequency: default_frequency(),
+            amplitude: default_amplitude(),
+            style: None,
         }
     }
 }
@@ -685,6 +821,19 @@ impl DitherParamsV2 {
     /// This is a convenience wrapper around the `From<(DitherMode, u8)>` trait impl.
     pub fn from_legacy(mode: DitherMode, color_depth: u8) -> Self {
         Self::from((mode, color_depth))
+    }
+
+    /// Fold optional nested [`crate::filters::ed1d_styles::StyleParams`] into flat
+    /// fields and clear `style`. Idempotent. Nested wins over flat when both set.
+    pub fn fold_style(&mut self) {
+        if let Some(style) = self.style.take() {
+            crate::filters::ed1d_styles::apply_style_params(self, &style);
+        }
+    }
+
+    /// Typed style view for the current mode (from flat fields).
+    pub fn style_params(&self) -> Option<crate::filters::ed1d_styles::StyleParams> {
+        crate::filters::ed1d_styles::style_params_from_dither(self)
     }
 
     /// Strict/Mixed with a bound palette: filter opacity must stay at 1.0.
@@ -754,6 +903,46 @@ impl DitherParamsV2 {
                     "channel_levels must be in range [2, 16]",
                 ));
             }
+        }
+        if matches!(
+            self.mode,
+            DitherModeV2::ModulatedDiffuseY
+                | DitherModeV2::ModulatedDiffuseX
+                | DitherModeV2::ContrastAwareY
+                | DitherModeV2::ContrastAwareX
+                | DitherModeV2::SmoothDiffuse
+        ) && !(1..=20).contains(&self.line_scale)
+        {
+            return Err(EngineError::invalid_filter_params(
+                "line_scale must be in range [1, 20]",
+            ));
+        }
+        if matches!(self.mode, DitherModeV2::SmoothDiffuse) && self.smoothness > 20 {
+            return Err(EngineError::invalid_filter_params(
+                "smoothness must be in range [0, 20]",
+            ));
+        }
+        if matches!(
+            self.mode,
+            DitherModeV2::WaveModulationY | DitherModeV2::WaveModulationX
+        ) {
+            if !(1..=30).contains(&self.frequency) {
+                return Err(EngineError::invalid_filter_params(
+                    "frequency must be in range [1, 30]",
+                ));
+            }
+            if self.amplitude > 100 {
+                return Err(EngineError::invalid_filter_params(
+                    "amplitude must be in range [0, 100]",
+                ));
+            }
+        }
+        if matches!(self.mode, DitherModeV2::GlitchDither)
+            && !(1..=20).contains(&self.glitch_intensity)
+        {
+            return Err(EngineError::invalid_filter_params(
+                "glitch_intensity must be in range [1, 20]",
+            ));
         }
         Ok(())
     }
@@ -835,15 +1024,8 @@ pub enum FilterParams {
         #[serde(default = "default_nearest_metric")]
         metric: String,
     },
-    /// Glitch: creative distortion effects
-    Glitch {
-        /// Glitch effect type
-        glitch_type: GlitchType,
-        /// Effect intensity (0.0-1.0)
-        intensity: f32,
-        /// Random seed for reproducibility
-        seed: u64,
-    },
+    /// Glitch: JPEG-style gather corruption (block / interlace / channel swap).
+    Glitch(GlitchFilterParams),
     /// Redesigned dither with full artistic parameters (V2)
     DitherV2(DitherParamsV2),
     /// Soft glow / bloom (blur + composite). Radius capped to HALO in v1.
@@ -1145,6 +1327,7 @@ impl Default for FilterParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilterInstance {
     /// Stable identifier for this filter
+    #[serde(default)]
     pub id: FilterInstanceId,
 
     /// Which filter to apply
@@ -1156,8 +1339,16 @@ pub struct FilterInstance {
     /// Whether this filter is active
     pub enabled: bool,
 
-    /// If true, this filter requires full-row processing (not tiled)
+    /// If true, this filter requires full-row processing (horizontal strip / wavefront).
     pub requires_full_row: bool,
+
+    /// If true, this filter requires full-column processing (vertical strip).
+    ///
+    /// Concurrent `requires_full_row` and `requires_full_column` on one layer
+    /// cannot share one strip schedule — preview/export route that stack through
+    /// the full-document path (see [`crate::filters::layer_has_mixed_ed_topology`]).
+    #[serde(default)]
+    pub requires_full_column: bool,
 
     /// Visual mix of this filter's full result over its input (`0.0..=1.0`).
     /// Residual ED always uses the full result; opacity is a post-step.
@@ -1181,17 +1372,21 @@ pub struct FilterInstance {
 impl FilterInstance {
     /// Create a new filter instance.
     ///
-    /// Automatically sets `requires_full_row = true` for error diffusion modes
-    /// (DitherV2 ED kernels), signaling the scheduler to process tiles in
-    /// wavefront order to satisfy cross-tile error dependencies.
-    pub fn new(kind: FilterKind, params: FilterParams) -> Self {
+    /// Sets strip topology flags from params (row wavefront / column strip).
+    /// Folds nested `DitherParamsV2.style` into flat fields when present.
+    pub fn new(kind: FilterKind, mut params: FilterParams) -> Self {
+        if let FilterParams::DitherV2(ref mut p) = params {
+            p.fold_style();
+        }
         let requires_full_row = Self::params_require_full_row(&params);
+        let requires_full_column = Self::params_require_full_column(&params);
         FilterInstance {
             id: FilterInstanceId::new(),
             kind,
             params,
             enabled: true,
             requires_full_row,
+            requires_full_column,
             opacity: 1.0,
             blend_mode: BlendMode::Normal,
             algorithm_id: None,
@@ -1209,12 +1404,32 @@ impl FilterInstance {
     }
 
     /// Whether these params need the residual / full-row scheduler path.
+    ///
+    /// 1D horizontal ed1d uses full-width strips but **not** the 2D wavefront.
+    /// Flags for ed1d come from [`crate::filters::ed1d_styles::ed1d_style`].
     pub fn params_require_full_row(params: &FilterParams) -> bool {
         match params {
-            FilterParams::DitherV2(p) => p.mode.is_error_diffusion(),
+            FilterParams::DitherV2(p) => {
+                if p.mode.is_error_diffusion() {
+                    return true;
+                }
+                crate::filters::ed1d_styles::ed1d_style(&p.mode)
+                    .map(|e| e.requires_full_row)
+                    .unwrap_or(false)
+            }
             FilterParams::Dither { mode, .. } => {
                 matches!(mode, DitherMode::ErrorDiffusion { .. })
             }
+            _ => false,
+        }
+    }
+
+    /// Whether these params need the full-height column strip path (1D V ed1d).
+    pub fn params_require_full_column(params: &FilterParams) -> bool {
+        match params {
+            FilterParams::DitherV2(p) => crate::filters::ed1d_styles::ed1d_style(&p.mode)
+                .map(|e| e.requires_full_column)
+                .unwrap_or(false),
             _ => false,
         }
     }
@@ -1300,14 +1515,7 @@ impl FilterInstance {
                 // palette_id validity is checked at apply-time (requires document context)
                 Ok(())
             }
-            FilterParams::Glitch { intensity, .. } => {
-                if !(0.0..=1.0).contains(intensity) {
-                    return Err(EngineError::invalid_filter_params(
-                        "Intensity must be in range [0.0, 1.0]",
-                    ));
-                }
-                Ok(())
-            }
+            FilterParams::Glitch(p) => p.validate(),
             FilterParams::DitherV2(params) => params.validate(),
             FilterParams::Glow {
                 radius,
@@ -1414,7 +1622,7 @@ pub fn algorithm_id_for_params(params: &FilterParams) -> Option<&'static str> {
         FilterParams::Glow { .. } => Some("glow"),
         FilterParams::Adjust { .. } => Some("adjust"),
         FilterParams::Curves { .. } => Some("curves"),
-        FilterParams::Glitch { .. } => Some("glitch"),
+        FilterParams::Glitch(_) => Some("glitch"),
         FilterParams::Ascii(_) => Some("ascii"),
         FilterParams::Levels { .. } | FilterParams::Placeholder(_) => None,
     }
@@ -1452,7 +1660,15 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         | "halftone_screen_angled"
         | "wave"
         | "blocked_fs"
-        | "blue_noise" => Some(FilterKind::Dither),
+        | "blue_noise"
+        | "modulated_diffuse_y"
+        | "modulated_diffuse_x"
+        | "glitch_dither"
+        | "contrast_aware_y"
+        | "contrast_aware_x"
+        | "smooth_diffuse"
+        | "wave_modulation_y"
+        | "wave_modulation_x" => Some(FilterKind::Dither),
         "palette_quantize" | "nearest_color" => Some(FilterKind::PaletteQuantize),
         "crt" => Some(FilterKind::Crt),
         "glow" => Some(FilterKind::Glow),
@@ -1534,15 +1750,7 @@ pub fn filter_params_to_json(params: &FilterParams) -> Result<serde_json::Value,
             "curve": curve,
             "channel": channel,
         })),
-        FilterParams::Glitch {
-            glitch_type,
-            intensity,
-            seed,
-        } => Ok(serde_json::json!({
-            "glitch_type": glitch_type,
-            "intensity": intensity,
-            "seed": seed,
-        })),
+        FilterParams::Glitch(p) => serde_json::to_value(p),
         FilterParams::Ascii(p) => serde_json::to_value(p),
         other => serde_json::to_value(other),
     }
@@ -1796,25 +2004,30 @@ mod tests {
 
     #[test]
     fn filter_validate_glitch() {
-        use crate::filters::glitch::GlitchType;
+        use crate::filters::glitch::{GlitchParams, GlitchSubOp};
 
         let filter = FilterInstance::new(
             FilterKind::Glitch,
-            FilterParams::Glitch {
-                glitch_type: GlitchType::RGBShift,
-                intensity: 0.5,
+            FilterParams::Glitch(GlitchParams {
+                channel_swap: GlitchSubOp {
+                    enabled: true,
+                    amount: 50.0,
+                },
                 seed: 12345,
-            },
+                ..GlitchParams::default()
+            }),
         );
         assert!(filter.validate().is_ok());
 
         let invalid_filter = FilterInstance::new(
             FilterKind::Glitch,
-            FilterParams::Glitch {
-                glitch_type: GlitchType::BlockDisplace,
-                intensity: 1.5,
-                seed: 0,
-            },
+            FilterParams::Glitch(GlitchParams {
+                channel_swap: GlitchSubOp {
+                    enabled: true,
+                    amount: 150.0,
+                },
+                ..GlitchParams::default()
+            }),
         );
         assert!(invalid_filter.validate().is_err());
     }
@@ -2032,6 +2245,75 @@ mod tests {
     }
 
     // ─── Task 6.3: requires_full_row Tests ───────────────────────────────
+
+    #[test]
+    fn dither_v2_modulated_diffuse_y_requires_full_row() {
+        let filter = FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::ModulatedDiffuseY,
+                line_scale: 5,
+                ..DitherParamsV2::default()
+            }),
+        );
+        assert!(
+            filter.requires_full_row,
+            "ed1d H must use the full-row strip path"
+        );
+        assert!(!filter.requires_full_column);
+        assert!(DitherModeV2::ModulatedDiffuseY.is_ed1d());
+        assert!(!DitherModeV2::ModulatedDiffuseY.is_error_diffusion());
+        assert!(DitherModeV2::ModulatedDiffuseY.diffusion_kernel().is_none());
+        assert!(matches!(
+            DitherParamsV2 {
+                mode: DitherModeV2::ModulatedDiffuseY,
+                line_scale: 5,
+                ..DitherParamsV2::default()
+            }
+            .validate(),
+            Ok(())
+        ));
+    }
+
+    #[test]
+    fn dither_v2_modulated_diffuse_x_requires_full_column() {
+        let filter = FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::ModulatedDiffuseX,
+                line_scale: 5,
+                ..DitherParamsV2::default()
+            }),
+        );
+        assert!(filter.requires_full_column);
+        assert!(!filter.requires_full_row);
+        assert!(DitherModeV2::ModulatedDiffuseX.is_ed1d());
+        assert_eq!(
+            DitherModeV2::ModulatedDiffuseX.ed1d_axis(),
+            Some(crate::filters::ed1d::Axis::Vertical)
+        );
+    }
+
+    #[test]
+    fn dither_v2_glitch_dither_requires_full_row() {
+        let filter = FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::GlitchDither,
+                glitch_intensity: 5,
+                glitch_seed: 42,
+                ..DitherParamsV2::default()
+            }),
+        );
+        assert!(filter.requires_full_row);
+        assert!(!filter.requires_full_column);
+        assert!(DitherModeV2::GlitchDither.is_ed1d());
+        assert!(!DitherModeV2::GlitchDither.is_error_diffusion());
+        assert_eq!(
+            DitherModeV2::GlitchDither.ed1d_axis(),
+            Some(crate::filters::ed1d::Axis::Horizontal)
+        );
+    }
 
     #[test]
     fn dither_v2_floyd_steinberg_requires_full_row() {

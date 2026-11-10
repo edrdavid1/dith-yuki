@@ -207,6 +207,20 @@ pub fn tile_worker_loop<R: tauri::Runtime>(state: Arc<AppState>, app_handle: tau
                 .stage
             {
                 CacheStage::Raw => load_raw_tile(task.key, &state),
+                CacheStage::Dithered => {
+                    // Dithered is filled as a side effect of Processed; never scheduled.
+                    log::warn!(
+                        target: "post_barrier",
+                        "unexpected Dithered recompute task layer={} ({},{}) — skipping",
+                        task.key.layer,
+                        task.key.coord.x,
+                        task.key.coord.y
+                    );
+                    state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
+                    crate::commands::on_preview_task_finished(&state);
+                    diag_task_finished(diag, &state, &task);
+                    continue;
+                }
                 CacheStage::Processed => {
                     // CPU ED is L0-only; drop stray L>0 ED Processed (e.g. old
                     // schedule_ed_for_viewport bug) instead of parking on missing Raw.
@@ -221,22 +235,22 @@ pub fn tile_worker_loop<R: tauri::Runtime>(state: Arc<AppState>, app_handle: tau
                         diag_task_finished(diag, &state, &task);
                         continue;
                     }
-                    if crate::tile_pipeline::layer_has_error_diffusion(
-                        &snapshot.root,
-                        task.key.layer,
-                    ) && !engine_tiles::ed_ready(&state.tiles.tile_cache, task.key, true)
+                    if let Some(topo) =
+                        crate::tile_pipeline::layer_ed_topology(&snapshot.root, task.key.layer)
                     {
-                        if let Some(ready) =
-                            state.tiles.ed_frontier.block(task, &state.tiles.tile_cache)
-                        {
-                            // Deps met during park publish — run now.
-                            state.tiles.scheduler.enqueue_or_bump(ready);
-                            state.worker_wake.notify_one();
+                        if !engine_tiles::ed_ready_topo(&state.tiles.tile_cache, task.key, topo) {
+                            if let Some(ready) =
+                                state.tiles.ed_frontier.block(task, &state.tiles.tile_cache)
+                            {
+                                // Deps met during park publish — run now.
+                                state.tiles.scheduler.enqueue_or_bump(ready);
+                                state.worker_wake.notify_one();
+                            }
+                            state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
+                            crate::commands::on_preview_task_finished(&state);
+                            diag_task_finished(diag, &state, &task);
+                            continue;
                         }
-                        state.preview_pass_inflight.fetch_sub(1, Ordering::AcqRel);
-                        crate::commands::on_preview_task_finished(&state);
-                        diag_task_finished(diag, &state, &task);
-                        continue;
                     }
                     l0_started = l0_compute_started(diag, &task);
                     match compute_processed_tile(task.key, &state) {
@@ -444,6 +458,7 @@ pub fn tile_worker_loop<R: tauri::Runtime>(state: Arc<AppState>, app_handle: tau
                                 CacheStage::Raw => 0,
                                 CacheStage::Processed => 1,
                                 CacheStage::Composite => 2,
+                                CacheStage::Dithered => 3,
                             };
                             crate::preview_diag::commit_task_phases(
                                 task.key.doc,
@@ -493,6 +508,9 @@ pub fn tile_worker_loop<R: tauri::Runtime>(state: Arc<AppState>, app_handle: tau
                             }
                         }
                         // Processed / Composite: pipeline already published a single Arc.
+                        CacheStage::Dithered => {
+                            // Unreachable: compute arm continues before insert.
+                        }
                         CacheStage::Processed | CacheStage::Composite => {
                             crate::tile_gen_trace::clear_requeue_attempt(
                                 task.key.doc,
@@ -664,7 +682,7 @@ fn l0_compute_started(diag: u8, task: &RecomputeTask) -> Option<Instant> {
     }
     match task.key.stage {
         CacheStage::Processed | CacheStage::Composite => Some(Instant::now()),
-        CacheStage::Raw => None,
+        CacheStage::Raw | CacheStage::Dithered => None,
     }
 }
 

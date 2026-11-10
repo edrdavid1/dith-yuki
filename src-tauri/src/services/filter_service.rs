@@ -60,11 +60,7 @@ fn apply_stack_gens_after_mutate(
     old: &[engine_project::FilterInstance],
     new: &[engine_project::FilterInstance],
 ) -> bool {
-    let bump = doc.apply_stack_edit_gens(
-        engine_project::types::LayerId::new(layer_id),
-        old,
-        new,
-    );
+    let bump = doc.apply_stack_edit_gens(engine_project::types::LayerId::new(layer_id), old, new);
     match bump {
         engine_project::StackEditBump::None => false,
         engine_project::StackEditBump::Post => !engine_project::post_cache_enabled(),

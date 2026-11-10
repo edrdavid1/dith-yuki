@@ -688,6 +688,8 @@ fn invalidate_palette_changed(palette_id: engine_project::types::PaletteId, stat
             engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
                 doc: snapshot.id.0,
                 layer: layer_id.0,
+                changed_index: None,
+                preserve_dithered: false,
             },
         );
     }

@@ -318,11 +318,13 @@ impl TileCache {
         let mut n = 0usize;
         for mut entry in self.entries.iter_mut() {
             let key = *entry.key();
-            if key.doc == doc && key.layer == layer && key.stage == stage {
-                if !entry.dirty.load(Ordering::Acquire) {
-                    entry.generation = generation;
-                    n += 1;
-                }
+            if key.doc == doc
+                && key.layer == layer
+                && key.stage == stage
+                && !entry.dirty.load(Ordering::Acquire)
+            {
+                entry.generation = generation;
+                n += 1;
             }
         }
         n

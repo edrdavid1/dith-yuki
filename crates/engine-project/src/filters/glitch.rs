@@ -188,11 +188,11 @@ impl GlitchParams {
             });
         }
         debug_assert!(
-            (TILE_SIZE % (self.block_size * self.group_size)) == 0,
+            TILE_SIZE.is_multiple_of(self.block_size * self.group_size),
             "B·G must divide TILE_SIZE"
         );
         debug_assert!(
-            (TILE_SIZE % self.scanline_segment) == 0,
+            TILE_SIZE.is_multiple_of(self.scanline_segment),
             "scanline_segment must divide TILE_SIZE"
         );
         check_amount("block_shift", self.block_shift.amount, 0.0, 20.0)?;
@@ -260,15 +260,9 @@ impl GlitchFilter {
         for y in 0..TILE_FULL_SIZE {
             for x in 0..TILE_FULL_SIZE {
                 let g = GlobalCoordSigned::from_local_with_halo(coord, x, y, HALO);
-                let rgba = gather_rgba(
-                    &self.params,
-                    g.x,
-                    g.y,
-                    lw,
-                    lh,
-                    coord.level,
-                    |sx, sy| sample_tile_rgba(tile, coord, sx, sy),
-                );
+                let rgba = gather_rgba(&self.params, g.x, g.y, lw, lh, coord.level, |sx, sy| {
+                    sample_tile_rgba(tile, coord, sx, sy)
+                });
                 for c in 0..4 {
                     dst.set(x, y, c, rgba[c as usize]);
                 }
@@ -359,17 +353,7 @@ where
         img_h,
         b,
     );
-    let (bx2, by2) = block_shift_src(
-        seed,
-        bx1,
-        by1,
-        g,
-        &params.block_shift,
-        mip,
-        img_w,
-        img_h,
-        b,
-    );
+    let (bx2, by2) = block_shift_src(seed, bx1, by1, g, &params.block_shift, mip, img_w, img_h, b);
 
     let sx = bx2 * b + ox;
     let sy = by2 * b + oy;
@@ -496,13 +480,7 @@ pub fn scramble_src(
 /// Channel-swap permutation for a dest block, or identity.
 pub fn swap_perm(seed: u64, gbx: i32, gby: i32, op: &GlitchSubOp, mip: u8) -> [usize; 3] {
     const ID: [usize; 3] = [0, 1, 2];
-    const PERMS: [[usize; 3]; 5] = [
-        [0, 2, 1],
-        [1, 0, 2],
-        [1, 2, 0],
-        [2, 0, 1],
-        [2, 1, 0],
-    ];
+    const PERMS: [[usize; 3]; 5] = [[0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
     if !sub_active(op) {
         return ID;
     }
@@ -524,12 +502,7 @@ fn apply_channel_swap(
     rgba: [f32; 4],
 ) -> [f32; 4] {
     let perm = swap_perm(seed, dest_bx, dest_by, &params.channel_swap, mip);
-    [
-        rgba[perm[0]],
-        rgba[perm[1]],
-        rgba[perm[2]],
-        rgba[3],
-    ]
+    [rgba[perm[0]], rgba[perm[1]], rgba[perm[2]], rgba[3]]
 }
 
 /// Interlace gather for modes 0–3.
@@ -659,10 +632,7 @@ fn shift_amplitude(amount: f32, g: i32) -> i32 {
 }
 
 fn block_in_image(bx: i32, by: i32, block_px: i32, img_w: i32, img_h: i32) -> bool {
-    bx >= 0
-        && by >= 0
-        && bx * block_px < img_w
-        && by * block_px < img_h
+    bx >= 0 && by >= 0 && bx * block_px < img_w && by * block_px < img_h
 }
 
 fn op_level(tag: u8, mip: u8) -> u8 {
@@ -726,11 +696,7 @@ pub fn apply_glitch_virtual_tiles(
     assert_eq!(src.len(), (width * height * 4) as usize);
     assert!(tile > 0);
     let cell = params.block_size * params.group_size;
-    assert_eq!(
-        tile % cell,
-        0,
-        "B·G must divide virtual tile size"
-    );
+    assert_eq!(tile % cell, 0, "B·G must divide virtual tile size");
     let mut out = src.to_vec();
     let w = width as i32;
     let h = height as i32;

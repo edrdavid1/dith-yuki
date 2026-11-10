@@ -1,11 +1,9 @@
 //! Soft-proof should pull colors toward the printer gamut (usually less chroma),
 //! not boost saturation vs proof-off.
 
-use engine_color::preview_encode::{delta_e2000_srgb8, encode_preview_rgb};
-use engine_color::soft_proof::{
-    ProofProfile, SoftProofIntent, SoftProofTransform,
-};
 use engine_color::load_fogra51_fixture;
+use engine_color::preview_encode::{delta_e2000_srgb8, encode_preview_rgb};
+use engine_color::soft_proof::{ProofProfile, SoftProofIntent, SoftProofTransform};
 
 /// Distance from equal-luma gray — correlates with perceived chroma.
 fn chroma_vs_gray(rgb: [u8; 3]) -> f64 {

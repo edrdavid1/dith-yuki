@@ -49,9 +49,21 @@ pub fn invalidate_layer_props_changed(cache: &TileCache, doc: u32, layer_id: Lay
 }
 
 pub fn invalidate_layer_filter_changed(cache: &TileCache, doc: u32, layer_id: LayerId) {
+    invalidate_layer_filter_changed_at(cache, doc, layer_id, None);
+}
+
+/// Same as [`invalidate_layer_filter_changed`], with optional `changed_index` for P0/P1.
+pub fn invalidate_layer_filter_changed_at(
+    cache: &TileCache,
+    doc: u32,
+    layer_id: LayerId,
+    changed_index: Option<usize>,
+) {
     let event = InvalidationEvent::LayerFilterChanged {
         doc,
         layer: layer_id.0,
+        changed_index,
+        preserve_dithered: false,
     };
     engine_tiles::invalidation::invalidate(cache, event);
 }

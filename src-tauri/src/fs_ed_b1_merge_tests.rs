@@ -146,6 +146,8 @@ fn invalidate(state: &AppState) {
         InvalidationEvent::LayerFilterChanged {
             doc: 1,
             layer: LAYER,
+            changed_index: None,
+            preserve_dithered: false,
         },
     );
 }

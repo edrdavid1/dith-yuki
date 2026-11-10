@@ -102,9 +102,8 @@ pub fn cost_class_for_params(params: &FilterParams, algorithm_id: Option<&str>) 
                         | crate::filter::DitherModeV2::BlockedFs
                         | crate::filter::DitherModeV2::BlueNoise
                 )
+                || (p.wrap_padding && p.mode.diffusion_kernel().is_some())
             {
-                CostClass::Expensive
-            } else if p.wrap_padding && p.mode.diffusion_kernel().is_some() {
                 CostClass::Expensive
             } else {
                 CostClass::Cheap
@@ -251,10 +250,10 @@ pub fn classify_change(old: &[FilterInstance], new: &[FilterInstance]) -> Change
     // Adding/removing only enabled-neutral filters must not force ED (prefix
     // already ignores them). Barrier *index* may shift when neutrals are
     // inserted above the expensive filter — still Post (no ED).
-    if material_fingerprints(old) == material_fingerprints(new) {
-        if fingerprints(old) != fingerprints(new) || old.len() != new.len() {
-            return ChangeClass::Post;
-        }
+    if material_fingerprints(old) == material_fingerprints(new)
+        && (fingerprints(old) != fingerprints(new) || old.len() != new.len())
+    {
+        return ChangeClass::Post;
     }
 
     if old.len() != new.len() {
@@ -487,8 +486,27 @@ mod tests {
 
     #[test]
     fn classify_reorder_across_barrier() {
-        let old = vec![curves(), floyd(), adjust()];
-        // Move curves under dither: [floyd, curves, adjust]
+        // Identity Curves is neutral — material fingerprints stay equal when it
+        // crosses the barrier, so classify stays Post (no ED). A material Curves
+        // change must still force Barrier.
+        let old_neutral = vec![curves(), floyd(), adjust()];
+        let new_neutral = vec![
+            old_neutral[1].clone(),
+            old_neutral[0].clone(),
+            old_neutral[2].clone(),
+        ];
+        assert_eq!(
+            classify_change(&old_neutral, &new_neutral),
+            ChangeClass::Post,
+            "neutral reorder across barrier must not force ED"
+        );
+
+        let mut material = curves();
+        if let FilterParams::Curves { curve, .. } = &mut material.params {
+            *curve = vec![(0.0, 0.0), (0.5, 0.4), (1.0, 1.0)];
+        }
+        let old = vec![material, floyd(), adjust()];
+        // Move material Curves under dither: [floyd, curves, adjust]
         let new = vec![old[1].clone(), old[0].clone(), old[2].clone()];
         assert_eq!(classify_change(&old, &new), ChangeClass::Barrier);
     }

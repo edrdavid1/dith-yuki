@@ -12,6 +12,8 @@ use crate::error::EngineError;
 use crate::filter::{DiffusionKernel, DitherColorMode, DitherParamsV2, PaletteDitherMode};
 use crate::filters::dither_ordered::{OrderedPalettePicker, SimpleRgbPicker};
 use crate::filters::dither_residuals::{ErrorResiduals, ErrorResidualsStore};
+use crate::filters::ed1d::{ed1d_row, Axis, Ed1dCfg, EdQuantizer};
+use crate::filters::ed1d_styles::ed1d_cfg_from_params;
 use crate::filters::ostromoukhov_table;
 use crate::filters::zhou_fang_table;
 use crate::types::LayerId;
@@ -24,6 +26,7 @@ use engine_color::palette_lut::{PaletteLut3D, PaletteLutCache, DEFAULT_LUT_SIZE}
 use engine_tiles::block_cache::{BlockCoord, BlockRepresentativeCache};
 use engine_tiles::coords::GlobalCoordSigned;
 use engine_tiles::{PixelTile, TileCoord, HALO, TILE_SIZE};
+use rayon::prelude::*;
 use std::sync::Arc;
 
 /// Core tile size as usize for indexing.
@@ -41,6 +44,7 @@ fn quantize_uniform(value: f32, levels: f32) -> f32 {
     scaled.round().clamp(0.0, levels - 1.0) / (levels - 1.0)
 }
 
+#[derive(Clone)]
 enum PaletteQuant<'a> {
     Uniform,
     Strict {
@@ -858,6 +862,21 @@ pub fn apply_error_diffusion_tile_row_strip(
     if tiles.is_empty() {
         return Ok(());
     }
+    if let Some(axis) = params.mode.ed1d_axis() {
+        return match axis {
+            Axis::Horizontal => apply_ed1d_tile_row_strip(
+                tiles,
+                params,
+                palette_cache,
+                lut_cache,
+                document,
+                outputs,
+            ),
+            Axis::Vertical => Err(EngineError::invalid_filter_params(
+                "ed1d vertical modes need apply_ed1d_tile_column_strip (full-height)",
+            )),
+        };
+    }
     if tiles.len() == 1 {
         return apply_error_diffusion_with_cache_into(
             tiles[0].1,
@@ -1308,6 +1327,492 @@ pub fn apply_error_diffusion_tile_row_strip(
     }
 
     Ok(())
+}
+
+// ─── 1D ED (ed1d) strip path ─────────────────────────────────────────────────
+
+#[derive(Clone)]
+struct Ed1dFsQuant<'a> {
+    pq: PaletteQuant<'a>,
+    levels: f32,
+    color_mode: DitherColorMode,
+    threshold_scale: f32,
+}
+
+impl EdQuantizer for Ed1dFsQuant<'_> {
+    fn quantize(&mut self, src: [f32; 3], acc_err: [f32; 3]) -> ([f32; 3], [f32; 3]) {
+        match (&self.pq, self.color_mode) {
+            (PaletteQuant::Simple(picker), _) => {
+                let (rgb, err) = simple_ed_step(
+                    picker,
+                    src[0],
+                    src[1],
+                    src[2],
+                    acc_err[0],
+                    acc_err[1],
+                    acc_err[2],
+                    self.threshold_scale,
+                );
+                ([rgb.0, rgb.1, rgb.2], err)
+            }
+            (_, DitherColorMode::Grayscale) => {
+                let lum = to_luminance(src[0], src[1], src[2]);
+                let adj = (lum + acc_err[0]).clamp(0.0, 1.0);
+                let (qr, qg, qb) = match &self.pq {
+                    PaletteQuant::Uniform => {
+                        let q = quantize_uniform(adj, self.levels);
+                        (q, q, q)
+                    }
+                    _ => quantize_ed_rgb(adj, adj, adj, self.levels, &self.pq),
+                };
+                let e = adj - qr;
+                ([qr, qg, qb], [e, e, e])
+            }
+            _ => {
+                let adj = [
+                    (src[0] + acc_err[0]).clamp(0.0, 1.0),
+                    (src[1] + acc_err[1]).clamp(0.0, 1.0),
+                    (src[2] + acc_err[2]).clamp(0.0, 1.0),
+                ];
+                let (qr, qg, qb) = quantize_ed_rgb(adj[0], adj[1], adj[2], self.levels, &self.pq);
+                ([qr, qg, qb], [adj[0] - qr, adj[1] - qg, adj[2] - qb])
+            }
+        }
+    }
+}
+
+fn build_palette_quant<'a>(
+    params: &DitherParamsV2,
+    document: &'a Document,
+    palette_cache: &PaletteKdCache,
+    lut_cache: &PaletteLutCache,
+) -> Result<PaletteQuant<'a>, EngineError> {
+    if let Some(palette_id) = params.palette_id {
+        let palette = document
+            .get_palette(palette_id)
+            .ok_or_else(|| EngineError::palette_not_found(palette_id))?;
+        Ok(match params.palette_dither_mode {
+            PaletteDitherMode::Guided { channel_levels } => PaletteQuant::Guided {
+                ranges: lut_cache.channel_ranges(document.id.0, palette),
+                levels: channel_levels.unwrap_or_else(|| default_channel_levels(palette)),
+            },
+            PaletteDitherMode::Mixed { channel_levels } => PaletteQuant::Mixed {
+                ranges: lut_cache.channel_ranges(document.id.0, palette),
+                levels: channel_levels.unwrap_or_else(|| default_channel_levels(palette)),
+                picker: if params.match_by_brightness {
+                    OrderedPalettePicker::with_match_by_brightness(palette, true)
+                } else {
+                    OrderedPalettePicker::new(palette)
+                },
+            },
+            PaletteDitherMode::Simple => PaletteQuant::Simple(SimpleRgbPicker::new(palette)),
+            PaletteDitherMode::Strict if params.match_by_brightness => {
+                let sorted = BrightnessSortedPalette::build(palette)
+                    .map_err(|_| EngineError::palette_not_found(palette_id))?;
+                PaletteQuant::StrictBrightness { palette, sorted }
+            }
+            PaletteDitherMode::Strict => {
+                let lut = lut_cache
+                    .get_or_build(document.id.0, palette, palette_cache, DEFAULT_LUT_SIZE)
+                    .map_err(|_| EngineError::palette_not_found(palette_id))?;
+                PaletteQuant::Strict { palette, lut }
+            }
+        })
+    } else {
+        Ok(PaletteQuant::Uniform)
+    }
+}
+
+/// Build [`Ed1dCfg`] for the strip drivers from dither params (table-driven).
+fn ed1d_cfg_for_params(params: &DitherParamsV2) -> Ed1dCfg {
+    let mut p = params.clone();
+    p.fold_style();
+    ed1d_cfg_from_params(&p)
+}
+
+/// Attach global line geometry so [`WeightFn::Sine`] has no strip/tile phase seams.
+fn ed1d_cfg_with_line(mut cfg: Ed1dCfg, origin: i32, full_len: u32) -> Ed1dCfg {
+    cfg.line_origin = origin.max(0) as u32;
+    cfg.line_stride = 1;
+    cfg.line_len = full_len;
+    cfg
+}
+
+/// Run 1D ED on block representatives along a scanline, then expand to `ps` blocks.
+///
+/// `origin` is the global coordinate of `src_full[0]` along the scan axis.
+/// `line` is the logical line index for [`SrcXf`] (typically `gy.div_euclid(ps)`).
+fn ed1d_row_with_pixel_size(
+    src_full: &[[f32; 3]],
+    dst_full: &mut [[f32; 3]],
+    cfg: &Ed1dCfg,
+    q: &mut impl EdQuantizer,
+    line: u64,
+    origin: i32,
+    ps: i32,
+) {
+    debug_assert_eq!(src_full.len(), dst_full.len());
+    let ps = ps.max(1);
+    if ps == 1 {
+        ed1d_row(src_full, dst_full, cfg, q, line);
+        return;
+    }
+    let mut idxs: Vec<usize> = Vec::new();
+    let mut src_s: Vec<[f32; 3]> = Vec::new();
+    for (i, sample) in src_full.iter().enumerate() {
+        let g = origin + i as i32;
+        if g.rem_euclid(ps) == 0 {
+            idxs.push(i);
+            src_s.push(*sample);
+        }
+    }
+    if src_s.is_empty() {
+        // No aligned sample in this span — treat index 0 as the block rep.
+        idxs.push(0);
+        src_s.push(src_full[0]);
+    }
+    let mut dst_s = vec![[0.0f32; 3]; src_s.len()];
+    // Sine weights need global cell indices; subsampled buffer uses stride = ps.
+    let mut cfg_ps = *cfg;
+    if matches!(cfg.weight, crate::filters::ed1d::WeightFn::Sine { .. }) {
+        let g0 = origin + idxs[0] as i32;
+        cfg_ps.line_origin = g0.max(0) as u32;
+        cfg_ps.line_stride = ps as u32;
+    }
+    ed1d_row(&src_s, &mut dst_s, &cfg_ps, q, line);
+
+    for (i, dst) in dst_full.iter_mut().enumerate() {
+        let g = origin + i as i32;
+        let block = g.div_euclid(ps) * ps;
+        let slot = idxs.iter().position(|&j| origin + j as i32 == block);
+        *dst = match slot {
+            Some(s) => dst_s[s],
+            None => dst_s[0], // block origin left of strip: use leftmost processed rep
+        };
+    }
+}
+
+/// If `local` is a non-representative sample, returns the local index of its
+/// block representative inside this strip. `None` means `local` is primary
+/// (run ED). Incomplete blocks that start before the strip use local `0` as
+/// the stand-in primary.
+fn block_rep_local(local: usize, origin: i32, ps: i32) -> Option<usize> {
+    let ps = ps.max(1);
+    if ps == 1 {
+        return None;
+    }
+    let g = origin + local as i32;
+    let rem = g.rem_euclid(ps);
+    if rem == 0 {
+        return None;
+    }
+    let rep = local as i32 - rem;
+    if rep >= 0 {
+        Some(rep as usize)
+    } else if local == 0 {
+        None // stand-in primary for an incomplete leading block
+    } else {
+        Some(0)
+    }
+}
+
+/// Full-width strip 1D ED. No residuals — carry stays inside each row of the strip.
+///
+/// Honours `pixel_size`: ED runs on block representatives (global-aligned), then
+/// expands to `ps×ps` blocks — same blocking contract as 2D FS, without residuals.
+pub fn apply_ed1d_tile_row_strip(
+    tiles: &[(TileCoord, &PixelTile)],
+    params: &DitherParamsV2,
+    palette_cache: &PaletteKdCache,
+    lut_cache: &PaletteLutCache,
+    document: &Document,
+    outputs: &mut [PixelTile],
+) -> Result<(), EngineError> {
+    if tiles.is_empty() {
+        return Ok(());
+    }
+    if outputs.len() != tiles.len() {
+        return Err(EngineError::invalid_filter_params(
+            "ed1d strip: outputs length must match tiles",
+        ));
+    }
+    let n = tiles.len();
+    let first_tx = tiles[0].0.x;
+    let ty = tiles[0].0.y;
+    let level = tiles[0].0.level;
+    for (i, (c, _)) in tiles.iter().enumerate() {
+        if c.level != level || c.y != ty || c.x != first_tx + i as u32 {
+            return Err(EngineError::invalid_filter_params(
+                "ed1d strip: need contiguous ascending tx in one ty",
+            ));
+        }
+    }
+
+    let pq = build_palette_quant(params, document, palette_cache, lut_cache)?;
+    let quant_proto = Ed1dFsQuant {
+        pq,
+        levels: params.levels as f32,
+        color_mode: params.color_mode,
+        threshold_scale: params.threshold_scale,
+    };
+    let cfg = ed1d_cfg_with_line(
+        ed1d_cfg_for_params(params),
+        first_tx as i32 * SIZE as i32,
+        document.width.max(1),
+    );
+    let ps = params.pixel_size.max(1) as i32;
+
+    let wide = n * SIZE;
+    let origin_gx = first_tx as i32 * SIZE as i32;
+    let origin_gy = ty as i32 * SIZE as i32;
+
+    for (i, (_, src)) in tiles.iter().enumerate() {
+        outputs[i].copy_from(src);
+    }
+
+    let src_rows: Vec<Vec<[f32; 3]>> = (0..SIZE)
+        .map(|local_y| {
+            let tile_y = local_y as u32 + HALO;
+            let mut src_row = vec![[0.0f32; 3]; wide];
+            for (ti, (_, src)) in tiles.iter().enumerate() {
+                for lx in 0..SIZE {
+                    let tile_x = lx as u32 + HALO;
+                    let i = ti * SIZE + lx;
+                    src_row[i] = [
+                        src.at(tile_x, tile_y, 0),
+                        src.at(tile_x, tile_y, 1),
+                        src.at(tile_x, tile_y, 2),
+                    ];
+                }
+            }
+            src_row
+        })
+        .collect();
+
+    // Primary rows (block-aligned in Y, plus local 0 if the strip starts mid-block).
+    let primary: Vec<usize> = (0..SIZE)
+        .filter(|&ly| block_rep_local(ly, origin_gy, ps).is_none())
+        .collect();
+
+    let mut dst_rows: Vec<Option<Vec<[f32; 3]>>> = (0..SIZE).map(|_| None).collect();
+    let primary_out: Vec<(usize, Vec<[f32; 3]>)> = primary
+        .into_par_iter()
+        .map(|local_y| {
+            let gy = origin_gy + local_y as i32;
+            let line = if ps > 1 {
+                gy.div_euclid(ps) as u64
+            } else {
+                gy as u64
+            };
+            let mut q = quant_proto.clone();
+            let mut dst_row = vec![[0.0f32; 3]; wide];
+            ed1d_row_with_pixel_size(
+                &src_rows[local_y],
+                &mut dst_row,
+                &cfg,
+                &mut q,
+                line,
+                origin_gx,
+                ps,
+            );
+            (local_y, dst_row)
+        })
+        .collect();
+    for (ly, row) in primary_out {
+        dst_rows[ly] = Some(row);
+    }
+
+    // Expand vertically: non-primary rows copy their block representative.
+    for local_y in 0..SIZE {
+        if dst_rows[local_y].is_some() {
+            continue;
+        }
+        let rep = block_rep_local(local_y, origin_gy, ps).unwrap_or(0);
+        let src = dst_rows[rep]
+            .as_ref()
+            .expect("ed1d strip: missing block representative row");
+        dst_rows[local_y] = Some(src.clone());
+    }
+
+    for (local_y, dst_row) in dst_rows.iter().enumerate() {
+        let dst_row = dst_row.as_ref().unwrap();
+        let tile_y = local_y as u32 + HALO;
+        for (ti, _) in tiles.iter().enumerate() {
+            for lx in 0..SIZE {
+                let tile_x = lx as u32 + HALO;
+                let i = ti * SIZE + lx;
+                outputs[ti].set(tile_x, tile_y, 0, dst_row[i][0]);
+                outputs[ti].set(tile_x, tile_y, 1, dst_row[i][1]);
+                outputs[ti].set(tile_x, tile_y, 2, dst_row[i][2]);
+                let src_a = tiles[ti].1.at(tile_x, tile_y, 3);
+                outputs[ti].set(tile_x, tile_y, 3, params.map_alpha(src_a, 0.5));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Full-height column strip 1D ED (vertical carry via transpose).
+///
+/// `tiles` must be contiguous ascending `ty` at one `tx`. Strip width is one
+/// tile (256). Each original column becomes a row of the transposed buffer,
+/// so carry runs the full layer height without seams.
+///
+/// Honours `pixel_size` like the row strip (block reps → ED → expand).
+/// Callers check cancel / document_gen between column strips (`tx`).
+pub fn apply_ed1d_tile_column_strip(
+    tiles: &[(TileCoord, &PixelTile)],
+    params: &DitherParamsV2,
+    palette_cache: &PaletteKdCache,
+    lut_cache: &PaletteLutCache,
+    document: &Document,
+    outputs: &mut [PixelTile],
+) -> Result<(), EngineError> {
+    if tiles.is_empty() {
+        return Ok(());
+    }
+    if outputs.len() != tiles.len() {
+        return Err(EngineError::invalid_filter_params(
+            "ed1d column strip: outputs length must match tiles",
+        ));
+    }
+    let n = tiles.len();
+    let tx = tiles[0].0.x;
+    let first_ty = tiles[0].0.y;
+    let level = tiles[0].0.level;
+    for (i, (c, _)) in tiles.iter().enumerate() {
+        if c.level != level || c.x != tx || c.y != first_ty + i as u32 {
+            return Err(EngineError::invalid_filter_params(
+                "ed1d column strip: need contiguous ascending ty in one tx",
+            ));
+        }
+    }
+
+    let pq = build_palette_quant(params, document, palette_cache, lut_cache)?;
+    let quant_proto = Ed1dFsQuant {
+        pq,
+        levels: params.levels as f32,
+        color_mode: params.color_mode,
+        threshold_scale: params.threshold_scale,
+    };
+    let cfg = ed1d_cfg_with_line(
+        ed1d_cfg_for_params(params),
+        first_ty as i32 * SIZE as i32,
+        document.height.max(1),
+    );
+    let ps = params.pixel_size.max(1) as i32;
+
+    let wide = SIZE;
+    let tall = n * SIZE;
+    let origin_gx = tx as i32 * SIZE as i32;
+    let origin_gy = first_ty as i32 * SIZE as i32;
+
+    for (i, (_, src)) in tiles.iter().enumerate() {
+        outputs[i].copy_from(src);
+    }
+
+    let mut plane = vec![[0.0f32; 3]; tall * wide];
+    for (ti, (_, src)) in tiles.iter().enumerate() {
+        for ly in 0..SIZE {
+            let tile_y = ly as u32 + HALO;
+            let gy = ti * SIZE + ly;
+            for lx in 0..SIZE {
+                let tile_x = lx as u32 + HALO;
+                plane[gy * wide + lx] = [
+                    src.at(tile_x, tile_y, 0),
+                    src.at(tile_x, tile_y, 1),
+                    src.at(tile_x, tile_y, 2),
+                ];
+            }
+        }
+    }
+
+    // Primary columns (block-aligned in X).
+    let primary: Vec<usize> = (0..wide)
+        .filter(|&x| block_rep_local(x, origin_gx, ps).is_none())
+        .collect();
+
+    let mut out_cols: Vec<Option<Vec<[f32; 3]>>> = (0..wide).map(|_| None).collect();
+    let primary_out: Vec<(usize, Vec<[f32; 3]>)> = primary
+        .into_par_iter()
+        .map(|x| {
+            let gx = origin_gx + x as i32;
+            let line = if ps > 1 {
+                gx.div_euclid(ps) as u64
+            } else {
+                gx as u64
+            };
+            let mut src_col = vec![[0.0f32; 3]; tall];
+            for y in 0..tall {
+                src_col[y] = plane[y * wide + x];
+            }
+            let mut q = quant_proto.clone();
+            let mut dst_col = vec![[0.0f32; 3]; tall];
+            // Along the column, pixel_size steps in Y (document vertical).
+            ed1d_row_with_pixel_size(&src_col, &mut dst_col, &cfg, &mut q, line, origin_gy, ps);
+            (x, dst_col)
+        })
+        .collect();
+    for (x, col) in primary_out {
+        out_cols[x] = Some(col);
+    }
+    for x in 0..wide {
+        if out_cols[x].is_some() {
+            continue;
+        }
+        let rep = block_rep_local(x, origin_gx, ps).unwrap_or(0);
+        let src = out_cols[rep]
+            .as_ref()
+            .expect("ed1d column strip: missing block representative column");
+        out_cols[x] = Some(src.clone());
+    }
+
+    for (x, dst_col) in out_cols.iter().enumerate() {
+        let dst_col = dst_col.as_ref().unwrap();
+        let tile_x = x as u32 + HALO;
+        for (y, px) in dst_col.iter().enumerate() {
+            let ti = y / SIZE;
+            let ly = y % SIZE;
+            let tile_y = ly as u32 + HALO;
+            outputs[ti].set(tile_x, tile_y, 0, px[0]);
+            outputs[ti].set(tile_x, tile_y, 1, px[1]);
+            outputs[ti].set(tile_x, tile_y, 2, px[2]);
+            let src_a = tiles[ti].1.at(tile_x, tile_y, 3);
+            outputs[ti].set(tile_x, tile_y, 3, params.map_alpha(src_a, 0.5));
+        }
+    }
+    Ok(())
+}
+
+/// Single-tile 1D ED (strip of length 1). Prefer the strip path in production.
+pub fn apply_ed1d_with_cache_into(
+    tile: &PixelTile,
+    coord: TileCoord,
+    params: &DitherParamsV2,
+    palette_cache: &PaletteKdCache,
+    lut_cache: &PaletteLutCache,
+    document: &Document,
+    dst: &mut PixelTile,
+) -> Result<(), EngineError> {
+    let _ = coord;
+    match params.mode.ed1d_axis() {
+        Some(Axis::Vertical) => apply_ed1d_tile_column_strip(
+            &[(coord, tile)],
+            params,
+            palette_cache,
+            lut_cache,
+            document,
+            std::slice::from_mut(dst),
+        ),
+        _ => apply_ed1d_tile_row_strip(
+            &[(coord, tile)],
+            params,
+            palette_cache,
+            lut_cache,
+            document,
+            std::slice::from_mut(dst),
+        ),
+    }
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -2688,5 +3193,72 @@ mod tests {
         )
         .unwrap();
         assert_eq!(a.data, b.data);
+    }
+
+    #[test]
+    fn ed1d_pixel_size_blocks_neighbors() {
+        // pixel_size>1 must form flat ps×ps blocks and differ from ps=1.
+        let mut tile = PixelTile::new();
+        let full = TILE_SIZE + 2 * HALO;
+        for y in 0..full {
+            for x in 0..full {
+                let t = (x as f32 * 0.013 + y as f32 * 0.007).fract();
+                tile.set(x, y, 0, t);
+                tile.set(x, y, 1, 1.0 - t);
+                tile.set(x, y, 2, 0.5);
+                tile.set(x, y, 3, 1.0);
+            }
+        }
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
+        let doc = Document::new(DocumentId::new(1), 256, 256);
+        let pc = PaletteKdCache::new();
+        let lc = PaletteLutCache::new();
+        let mut p1 = DitherParamsV2 {
+            mode: DitherModeV2::ModulatedDiffuseY,
+            levels: 4,
+            line_scale: 5,
+            pixel_size: 1,
+            color_mode: DitherColorMode::Rgb,
+            ..DitherParamsV2::default()
+        };
+        let mut out1 = [PixelTile::new()];
+        apply_ed1d_tile_row_strip(&[(coord, &tile)], &p1, &pc, &lc, &doc, &mut out1).unwrap();
+
+        p1.pixel_size = 4;
+        let mut out4 = [PixelTile::new()];
+        apply_ed1d_tile_row_strip(&[(coord, &tile)], &p1, &pc, &lc, &doc, &mut out4).unwrap();
+
+        let mut differ = false;
+        for y in 0..TILE_SIZE {
+            for x in 0..TILE_SIZE {
+                for c in 0..3u32 {
+                    if (out1[0].at(x + HALO, y + HALO, c) - out4[0].at(x + HALO, y + HALO, c)).abs()
+                        > 1e-6
+                    {
+                        differ = true;
+                    }
+                }
+            }
+        }
+        assert!(
+            differ,
+            "pixel_size=4 must change ed1d output vs pixel_size=1"
+        );
+
+        // Within a 4×4 block, RGB matches the representative.
+        let r0 = out4[0].at(HALO, HALO, 0);
+        let g0 = out4[0].at(HALO, HALO, 1);
+        let b0 = out4[0].at(HALO, HALO, 2);
+        for dy in 0..4u32 {
+            for dx in 0..4u32 {
+                assert_eq!(out4[0].at(HALO + dx, HALO + dy, 0), r0);
+                assert_eq!(out4[0].at(HALO + dx, HALO + dy, 1), g0);
+                assert_eq!(out4[0].at(HALO + dx, HALO + dy, 2), b0);
+            }
+        }
     }
 }

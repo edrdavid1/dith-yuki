@@ -511,6 +511,14 @@ pub trait FilterAlgorithm: Send + Sync {
         false
     }
 
+    /// Whether this algorithm needs full-height column strips (1D vertical ED).
+    ///
+    /// Default `false`. Mutually exclusive with typical `requires_full_row` ED
+    /// for a single filter instance.
+    fn requires_full_column(&self) -> bool {
+        false
+    }
+
     /// Whether this algorithm runs as a tiled pass or a full-document monolith.
     ///
     /// Default: [`ExecutionScope::Tiled`]. Riemersma (and future Hilbert-style

@@ -195,6 +195,8 @@ fn invalidate_palette_changed(
             engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
                 doc,
                 layer: layer_id.0,
+                changed_index: None,
+                preserve_dithered: false,
             },
         );
     }
@@ -1083,7 +1085,9 @@ impl PaletteService {
                 engine_tiles::invalidation::invalidate(
                     &self.state.tiles.tile_cache,
                     engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { doc, layer: *layer_id,
-                    },
+changed_index: None,
+preserve_dithered: false,
+},
                 );
             }
 

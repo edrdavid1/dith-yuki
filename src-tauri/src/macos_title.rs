@@ -69,6 +69,19 @@ pub fn refresh_traffic_lights(window: &tauri::Window) {
     }));
 }
 
+/// Photoshop-style `zoom:` (fit / restore) — never Mission Control fullscreen.
+/// Call only from the titlebar double-click command (not from FS observers).
+pub fn perform_zoom(window: &tauri::WebviewWindow) {
+    let Ok(ns_window) = window.ns_window() else {
+        return;
+    };
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        let ns = ns_window as id;
+        install_zoom_not_fullscreen(ns);
+        let _: () = msg_send![ns, zoom: nil];
+    }));
+}
+
 /// Photoshop-style green button: `zoom:` (fit screen), never Mission Control fullscreen.
 unsafe fn install_zoom_not_fullscreen(ns_window: id) {
     use cocoa::appkit::{NSWindow, NSWindowButton, NSWindowCollectionBehavior};
@@ -133,6 +146,10 @@ unsafe fn observe_zoom_not_fullscreen(ns_window: id) {
         std::mem::forget(block);
     }
 
+    // Titlebar double-click on Overlay CSD may still request Mission Control
+    // fullscreen. Cancel it only — do NOT call `zoom:` here. The HTML titlebar
+    // owns double-click → `zoom_window` / perform_zoom; a second zoom: in this
+    // observer made collapse immediately re-expand.
     let will: id = ns_string("NSWindowWillEnterFullScreenNotification");
     let win = ns_window;
     let block = ConcreteBlock::new(move |notification: id| {

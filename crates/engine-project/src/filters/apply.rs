@@ -78,10 +78,7 @@ fn verify_neutral_passthrough_tile(
             filter.kind,
             filter.id
         );
-        debug_assert!(
-            false,
-            "neutral filter apply must be bitwise passthrough"
-        );
+        debug_assert!(false, "neutral filter apply must be bitwise passthrough");
     }
     park.give(ran);
     Ok(())
@@ -771,14 +768,7 @@ pub fn apply_enabled_filters_column_strip(
     if enabled.len() == 1 && enabled[0].requires_full_column {
         let filter = enabled[0];
         let params = dither_params_for_ed(filter)?;
-        apply_ed1d_tile_column_strip(
-            tiles,
-            &params,
-            palette_cache,
-            lut_cache,
-            document,
-            outputs,
-        )?;
+        apply_ed1d_tile_column_strip(tiles, &params, palette_cache, lut_cache, document, outputs)?;
         let opacity = filter.effective_opacity();
         if opacity < 1.0 || filter.blend_mode != BlendMode::Normal {
             for (i, (_, pre)) in tiles.iter().enumerate() {
@@ -1293,15 +1283,7 @@ fn dispatch_dither_v2_inner_into(
         ),
         mode if mode.is_ed1d() => {
             use super::dither_diffusion::apply_ed1d_with_cache_into;
-            apply_ed1d_with_cache_into(
-                tile,
-                coord,
-                params,
-                palette_cache,
-                lut_cache,
-                document,
-                dst,
-            )
+            apply_ed1d_with_cache_into(tile, coord, params, palette_cache, lut_cache, document, dst)
         }
         _ => unreachable!("unhandled dither mode in dispatch"),
     }
@@ -1419,32 +1401,10 @@ mod tests {
         let rs2 = ErrorResidualsStore::new();
         let split = with_tile_buffer_park(|park| {
             let mid = apply_enabled_filters_to_tile(
-                &tile,
-                &through,
-                layer.id,
-                coord,
-                &pc,
-                &lc,
-                &tc,
-                &doc,
-                &rs2,
-                &blocks,
-                None,
-                park,
+                &tile, &through, layer.id, coord, &pc, &lc, &tc, &doc, &rs2, &blocks, None, park,
             )?;
             apply_enabled_filters_to_tile(
-                &mid,
-                &post,
-                layer.id,
-                coord,
-                &pc,
-                &lc,
-                &tc,
-                &doc,
-                &rs2,
-                &blocks,
-                None,
-                park,
+                &mid, &post, layer.id, coord, &pc, &lc, &tc, &doc, &rs2, &blocks, None, park,
             )
         })
         .unwrap();
@@ -2775,7 +2735,16 @@ mod tests {
         let inputs = [(coord, &tile)];
         let mut outputs = [PixelTile::new()];
         let err = apply_filter_stack_tile_column_strip(
-            &inputs, &layer, &pc, &lc, &tc, &doc, &rs, &blocks, None, &mut outputs,
+            &inputs,
+            &layer,
+            &pc,
+            &lc,
+            &tc,
+            &doc,
+            &rs,
+            &blocks,
+            None,
+            &mut outputs,
         )
         .expect_err("direct column strip must still reject mixed topology");
         let msg = format!("{err}");
