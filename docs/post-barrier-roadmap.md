@@ -111,7 +111,7 @@ First Post filters after P2: **Curves**, **Levels** (pointwise, LUT-friendly), *
 
 Priorities: Curves, Levels, Exposure, Highlights/Shadows, Temperature/Tint → detail → LUT. Keep existing `Adjust` as its own filter for compatibility; decide Grade-as-tabs vs separate filters **before** P5 to avoid a second format migration.
 
-**P5 decision (2026-11-11):** ship **separate stack filters** (same as Curves/Levels/Adjust). Grade-as-tabs deferred — avoids a format migration while tone ops land one PR at a time. First filter: **Exposure** (`stops` EV, registry id `exposure`).
+**P5 decision (2026-11-11):** ship **separate stack filters** (same as Curves/Levels/Adjust). Grade-as-tabs deferred — avoids a format migration while tone ops land one PR at a time. Landed: **Exposure** (`exposure`), **Highlights / Shadows** (`highlights_shadows`). Next: Temperature/Tint.
 
 ### Notes on current Adjust
 

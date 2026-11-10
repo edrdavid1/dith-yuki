@@ -27,6 +27,7 @@ export type FilterKind =
   | 'Crt'
   | 'Adjust'
   | 'Exposure'
+  | 'HighlightsShadows'
   | 'Ascii';
 
 export type FilterParams =
@@ -40,6 +41,7 @@ export type FilterParams =
   | CrtParams
   | AdjustParams
   | ExposureParams
+  | HighlightsShadowsParams
   | AsciiParams;
 
 export interface DitherParams {
@@ -225,6 +227,14 @@ export interface ExposureParams {
   type: 'Exposure';
   /** EV stops (−5 … 5). 0 = identity. */
   stops: number;
+}
+
+export interface HighlightsShadowsParams {
+  type: 'HighlightsShadows';
+  /** Shadow lift (−1 … 1). 0 = identity. */
+  shadows: number;
+  /** Highlight lift (−1 … 1). 0 = identity. */
+  highlights: number;
 }
 
 /** Text-art / ASCII — not a dither mode. */

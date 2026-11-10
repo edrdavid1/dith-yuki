@@ -30,6 +30,8 @@ pub enum FilterKind {
     Adjust,
     /// Photographic exposure in EV stops (pointwise Post).
     Exposure,
+    /// Soft luminance shadows / highlights lift (pointwise Post).
+    HighlightsShadows,
     /// Text-art / ASCII (not a dither mode).
     Ascii,
     Placeholder,
@@ -47,6 +49,7 @@ impl std::fmt::Display for FilterKind {
             FilterKind::Crt => write!(f, "Crt"),
             FilterKind::Adjust => write!(f, "Adjust"),
             FilterKind::Exposure => write!(f, "Exposure"),
+            FilterKind::HighlightsShadows => write!(f, "HighlightsShadows"),
             FilterKind::Ascii => write!(f, "Ascii"),
             FilterKind::Placeholder => write!(f, "Placeholder"),
         }
@@ -59,7 +62,7 @@ impl FilterKind {
     pub fn inserts_under_stylize(self) -> bool {
         matches!(
             self,
-            Self::Adjust | Self::Curves | Self::Levels | Self::Exposure
+            Self::Adjust | Self::Curves | Self::Levels | Self::Exposure | Self::HighlightsShadows
         )
     }
 }
@@ -1073,6 +1076,13 @@ pub enum FilterParams {
         /// Stops (−5 .. 5). 0 = identity.
         stops: f32,
     },
+    /// Shadows / highlights lift via soft luminance masks (−1 .. 1 each).
+    HighlightsShadows {
+        /// Shadow region amount (−1 .. 1). 0 = identity.
+        shadows: f32,
+        /// Highlight region amount (−1 .. 1). 0 = identity.
+        highlights: f32,
+    },
     /// Text-art / ASCII output stage (`engine-ascii`). Not a dither mode.
     Ascii(AsciiParams),
     /// Placeholder for unknown or future filters.
@@ -1621,6 +1631,22 @@ impl FilterInstance {
                 }
                 Ok(())
             }
+            FilterParams::HighlightsShadows {
+                shadows,
+                highlights,
+            } => {
+                if !(-1.0..=1.0).contains(shadows) {
+                    return Err(EngineError::invalid_filter_params(
+                        "HighlightsShadows shadows must be in range [-1.0, 1.0]",
+                    ));
+                }
+                if !(-1.0..=1.0).contains(highlights) {
+                    return Err(EngineError::invalid_filter_params(
+                        "HighlightsShadows highlights must be in range [-1.0, 1.0]",
+                    ));
+                }
+                Ok(())
+            }
             FilterParams::Ascii(p) => p.validate(),
             FilterParams::Placeholder(_) => Ok(()),
         }
@@ -1641,6 +1667,7 @@ pub fn algorithm_id_for_params(params: &FilterParams) -> Option<&'static str> {
         FilterParams::Glow { .. } => Some("glow"),
         FilterParams::Adjust { .. } => Some("adjust"),
         FilterParams::Exposure { .. } => Some("exposure"),
+        FilterParams::HighlightsShadows { .. } => Some("highlights_shadows"),
         FilterParams::Curves { .. } => Some("curves"),
         FilterParams::Glitch(_) => Some("glitch"),
         FilterParams::Ascii(_) => Some("ascii"),
@@ -1694,6 +1721,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         "glow" => Some(FilterKind::Glow),
         "adjust" => Some(FilterKind::Adjust),
         "exposure" => Some(FilterKind::Exposure),
+        "highlights_shadows" => Some(FilterKind::HighlightsShadows),
         "curves" => Some(FilterKind::Curves),
         "glitch" => Some(FilterKind::Glitch),
         "ascii" => Some(FilterKind::Ascii),
@@ -1768,6 +1796,13 @@ pub fn filter_params_to_json(params: &FilterParams) -> Result<serde_json::Value,
             "noise": noise,
         })),
         FilterParams::Exposure { stops } => Ok(serde_json::json!({ "stops": stops })),
+        FilterParams::HighlightsShadows {
+            shadows,
+            highlights,
+        } => Ok(serde_json::json!({
+            "shadows": shadows,
+            "highlights": highlights,
+        })),
         FilterParams::Curves { curve, channel } => Ok(serde_json::json!({
             "curve": curve,
             "channel": channel,

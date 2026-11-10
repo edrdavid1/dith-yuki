@@ -360,6 +360,7 @@ impl Document {
             | FilterParams::Crt { .. }
             | FilterParams::Adjust { .. }
             | FilterParams::Exposure { .. }
+            | FilterParams::HighlightsShadows { .. }
             | FilterParams::Ascii(_)
             | FilterParams::Placeholder(_) => false,
         }

@@ -29,6 +29,7 @@ pub mod glitch;
 pub mod glow;
 pub mod gpu_bridge;
 pub mod gpu_graph;
+pub mod highlights_shadows;
 pub mod hilbert;
 pub mod levels;
 pub mod line_screen;

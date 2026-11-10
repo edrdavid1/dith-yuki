@@ -23,6 +23,7 @@ glitch
 glitch_dither
 glow
 halftone_screen_angled
+highlights_shadows
 jarvis_judice_ninke
 line_screen
 modulated_diffuse_x

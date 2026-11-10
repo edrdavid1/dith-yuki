@@ -105,6 +105,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "glitch_dither",
         "glow",
         "halftone_screen_angled",
+        "highlights_shadows",
         "jarvis_judice_ninke",
         "line_screen",
         "modulated_diffuse_x",
@@ -271,8 +272,8 @@ fn register_all_ids_unique() {
     );
     assert_eq!(
         all_ids.len(),
-        47,
-        "must register all 47 built-in algorithms"
+        48,
+        "must register all 48 built-in algorithms"
     );
 }
 
