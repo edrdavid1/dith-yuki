@@ -28,6 +28,7 @@ export type FilterKind =
   | 'Adjust'
   | 'Exposure'
   | 'HighlightsShadows'
+  | 'TemperatureTint'
   | 'Ascii';
 
 export type FilterParams =
@@ -42,6 +43,7 @@ export type FilterParams =
   | AdjustParams
   | ExposureParams
   | HighlightsShadowsParams
+  | TemperatureTintParams
   | AsciiParams;
 
 export interface DitherParams {
@@ -235,6 +237,14 @@ export interface HighlightsShadowsParams {
   shadows: number;
   /** Highlight lift (−1 … 1). 0 = identity. */
   highlights: number;
+}
+
+export interface TemperatureTintParams {
+  type: 'TemperatureTint';
+  /** Warm/cool (−1 … 1). 0 = identity. */
+  temperature: number;
+  /** Green/magenta (−1 … 1). 0 = identity. */
+  tint: number;
 }
 
 /** Text-art / ASCII — not a dither mode. */

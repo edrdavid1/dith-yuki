@@ -122,6 +122,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "smooth_diffuse",
         "stevenson_arce",
         "stucki",
+        "temperature_tint",
         "void_and_cluster",
         "voronoi_stipple",
         "wave",
@@ -272,8 +273,8 @@ fn register_all_ids_unique() {
     );
     assert_eq!(
         all_ids.len(),
-        48,
-        "must register all 48 built-in algorithms"
+        49,
+        "must register all 49 built-in algorithms"
     );
 }
 

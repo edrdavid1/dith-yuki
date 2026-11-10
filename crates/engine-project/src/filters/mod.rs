@@ -39,6 +39,7 @@ pub mod ostromoukhov_table;
 pub mod palette_quantize;
 pub mod random_dot_stipple;
 pub mod riemersma;
+pub mod temperature_tint;
 pub mod void_and_cluster;
 pub mod voronoi_stipple;
 pub mod zhou_fang_table;

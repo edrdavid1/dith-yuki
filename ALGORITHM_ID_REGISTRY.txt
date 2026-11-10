@@ -40,6 +40,7 @@ sierra_two_row
 smooth_diffuse
 stevenson_arce
 stucki
+temperature_tint
 void_and_cluster
 voronoi_stipple
 wave

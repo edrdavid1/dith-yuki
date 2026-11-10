@@ -34,6 +34,7 @@ mod palette_quantize;
 mod random_dot_stipple;
 mod riemersma;
 mod scratch;
+mod temperature_tint;
 mod void_and_cluster;
 mod voronoi_stipple;
 mod wave;
@@ -94,6 +95,7 @@ pub fn register_all(registry: &mut AlgorithmRegistry) {
     registry.register(Box::new(curves::Curves));
     registry.register(Box::new(exposure::Exposure));
     registry.register(Box::new(highlights_shadows::HighlightsShadows));
+    registry.register(Box::new(temperature_tint::TemperatureTint));
     registry.register(Box::new(glitch::Glitch));
     registry.register(Box::new(error_diffusion::ZhouFang));
     registry.register(Box::new(error_diffusion::ModulatedDiffuseY));

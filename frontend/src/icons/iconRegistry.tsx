@@ -30,6 +30,7 @@ import { Settings2 } from 'pixelarticons/react/Settings2';
 import { SettingsCog } from 'pixelarticons/react/SettingsCog';
 import { SortVertical } from 'pixelarticons/react/SortVertical';
 import { Sun } from 'pixelarticons/react/Sun';
+import { Thermometer } from 'pixelarticons/react/Thermometer';
 import { Trash } from 'pixelarticons/react/Trash';
 import { Upload } from 'pixelarticons/react/Upload';
 import { Zap } from 'pixelarticons/react/Zap';
@@ -46,6 +47,7 @@ export type IconName =
   | 'effect.adjust'
   | 'effect.exposure'
   | 'effect.highlights_shadows'
+  | 'effect.temperature_tint'
   | 'effect.ascii'
   | 'effect.nearest_color'
   | 'effect.palette_quantize'
@@ -100,6 +102,7 @@ const PIXEL_ICONS: Record<string, PixelIcon> = {
   'effect.adjust': Settings2,
   'effect.exposure': Sun,
   'effect.highlights_shadows': Moon,
+  'effect.temperature_tint': Thermometer,
   'effect.ascii': LetterA,
   'effect.nearest_color': Pipette,
   'effect.palette_quantize': ColorsSwatch,

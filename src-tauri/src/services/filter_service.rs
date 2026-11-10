@@ -206,6 +206,7 @@ impl FilterService {
             "Adjust" => FilterKind::Adjust,
             "Exposure" => FilterKind::Exposure,
             "HighlightsShadows" => FilterKind::HighlightsShadows,
+            "TemperatureTint" => FilterKind::TemperatureTint,
             "Ascii" => FilterKind::Ascii,
             other => filter_kind_for_algorithm_id(other).ok_or_else(|| {
                 AppError::InvalidOperation(format!("Invalid filter kind: {other}"))
@@ -479,6 +480,19 @@ impl FilterService {
                         shadows,
                         highlights,
                     }
+                }
+                FilterKind::TemperatureTint => {
+                    let temperature = req
+                        .params
+                        .get("temperature")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as f32;
+                    let tint = req
+                        .params
+                        .get("tint")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as f32;
+                    FilterParams::TemperatureTint { temperature, tint }
                 }
                 FilterKind::Ascii => {
                     let p: engine_project::filter::AsciiParams =
@@ -1265,6 +1279,25 @@ impl FilterService {
                         shadows,
                         highlights,
                     }
+                }
+                FilterKind::TemperatureTint => {
+                    let (et, ei) = match existing_params {
+                        FilterParams::TemperatureTint { temperature, tint } => (temperature, tint),
+                        _ => (0.0, 0.0),
+                    };
+                    let temperature = req
+                        .params
+                        .get("temperature")
+                        .and_then(|v| v.as_f64())
+                        .map(|v| v as f32)
+                        .unwrap_or(et);
+                    let tint = req
+                        .params
+                        .get("tint")
+                        .and_then(|v| v.as_f64())
+                        .map(|v| v as f32)
+                        .unwrap_or(ei);
+                    FilterParams::TemperatureTint { temperature, tint }
                 }
                 FilterKind::Ascii => {
                     let p: engine_project::filter::AsciiParams =
