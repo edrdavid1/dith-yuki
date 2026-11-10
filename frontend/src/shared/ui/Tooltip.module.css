@@ -37,8 +37,8 @@
   color: var(--text-color, #000);
   border: var(--border, 1.5px solid #000);
   border-radius: 0;
-  font-family: var(--font-family, 'ChicagoFLF', 'Geneva', 'Chicago', monospace);
-  font-size: 12px;
+  font-family: var(--font-family, 'GranaPadano', 'Geneva', sans-serif);
+  font-size: 14px;
   line-height: 1.25;
   white-space: pre-wrap;
   overflow-wrap: anywhere;

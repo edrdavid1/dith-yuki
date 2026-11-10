@@ -54,7 +54,8 @@
   --shadow-field: inset calc(-1 * var(--bevel-size)) calc(-1 * var(--bevel-size)) 0 0 var(--color-white),
                   inset var(--bevel-size) var(--bevel-size) 0 0 var(--color-black);
 
-  --font-family: 'ChicagoFLF', 'Geneva', 'Chicago', monospace;
+  --font-family: 'GranaPadano', 'Geneva', sans-serif;
+  --font-weight: 800;
   --radius: 0px;
   /* Outer dock clip to match macOS window corner (disabled on Windows — see below). */
   --dock-outer-radius: 16px;

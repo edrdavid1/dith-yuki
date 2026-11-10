@@ -12,21 +12,26 @@ html, body, #root {
   box-sizing: border-box;
 }
 
-/* ─── Chicago FLF font (retro Mac OS) ─────────────────────────────────────── */
+/* ─── GranaPadano (UI font; single Medium face covers all weights) ─────────── */
 @font-face {
-  font-family: 'ChicagoFLF';
-  src: url('/fonts/ChicagoFLF.ttf') format('truetype');
-  font-weight: normal;
+  font-family: 'GranaPadano';
+  src: url('/fonts/GranaPadano.ttf') format('truetype');
+  font-weight: 100 900;
   font-style: normal;
+  font-display: swap;
 }
 
 /* ─── Base ─────────────────────────────────────────────────────────────────── */
 
 body {
-  font-family: 'ChicagoFLF', 'Geneva', 'Chicago', monospace;
+  font-family: 'GranaPadano', 'Geneva', sans-serif;
+  font-weight: 800;
+  /* Fake a bit of weight for single-cut GranaPadano (Medium). */
+  -webkit-text-stroke: 0.48px currentColor;
+  paint-order: stroke fill;
   background: #000;
   color: #000;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 /* Opt text fields (and marked copyable UI) back in when ancestors set user-select: none. */
@@ -36,6 +41,14 @@ textarea,
 .copyable-text {
   -webkit-user-select: text;
   user-select: text;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+  font-weight: inherit;
 }
 
 /* ─── Checkbox (square, dark-gray border; primary fill when checked) ───────── */

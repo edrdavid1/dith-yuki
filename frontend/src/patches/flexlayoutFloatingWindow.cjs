@@ -6,12 +6,16 @@
  * - Reuse named Window across React remounts (owner refcount).
  * - On real unmount (unfloat / dock), close the OS window after a short grace period
  *   so remounts don't leave a dead gray rectangle.
+ * - Sanitize window.open *name*: FlexLayout tab ids are `#uuid`; WKWebView truncates
+ *   names at `#`, so every popout shared one empty name and the second float reused
+ *   (navigated) the first OS window. Keep registry keyed by raw tab id.
  */
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FloatingWindow = void 0;
+exports.flexPopoutWindowName = flexPopoutWindowName;
 
 const React = require("react");
 const react_dom_1 = require("react-dom");
@@ -26,6 +30,13 @@ const CONTENT_CLASS = Types_1.CLASSES.FLEXLAYOUT__FLOATING_WINDOW_CONTENT;
  */
 const windowRegistry = new Map();
 
+/** Keep in sync with frontend/src/features/panels/flexPopoutWindowName.ts */
+function flexPopoutWindowName(tabId) {
+  const raw = String(tabId == null ? "" : tabId);
+  const stripped = raw.replace(/^#/, "");
+  const safe = stripped.replace(/[^a-zA-Z0-9_-]/g, "_") || "tab";
+  return "flex-" + safe;
+}
 function copyDomStyles(destDoc) {
   if (!destDoc || !destDoc.head) return;
   const marker = "data-flex-dom-styles";
@@ -65,18 +76,18 @@ function ensureBaseChrome(popoutDocument) {
   const base = popoutDocument.createElement("style");
   base.id = "flex-popout-base";
   base.textContent = [
-    "@font-face{font-family:'ChicagoFLF';src:url('" +
-      new URL("/fonts/ChicagoFLF.ttf", window.location.origin).href +
-      "') format('truetype');font-weight:normal;font-style:normal;}",
+    "@font-face{font-family:'GranaPadano';src:url('" +
+      new URL("/fonts/GranaPadano.ttf", window.location.origin).href +
+      "') format('truetype');font-weight:100 900;font-style:normal;font-display:swap;}",
     "html,body{margin:0;padding:0;height:100%;width:100%;overflow:hidden;background:#CDCDCD;",
-    "font-family:'ChicagoFLF','Geneva','Chicago',monospace;font-size:12px;color:#000;}",
+    "font-family:'GranaPadano','Geneva',sans-serif;font-size:12px;color:#000;font-weight:800;}",
     ":root{--color-gray:#CDCDCD;--color-dark-gray:#999;--color-black:#000;--color-white:#FFF;",
     "--color-primary:#8181FF;--bg-window:var(--color-gray);--bg-titlebar:var(--color-gray);",
     "--bg-input:var(--color-white);--bg-slider-track:var(--color-dark-gray);",
     "--border-color:var(--color-black);--text-color:var(--color-black);",
     "--border-width:1.5px;--border:var(--border-width) solid var(--border-color);",
     "--bevel-size:var(--border-width);",
-    "--font-family:'ChicagoFLF','Geneva','Chicago',monospace;--radius:0px;}",
+    "--font-family:'GranaPadano','Geneva',sans-serif;--radius:0px;}",
     "." + CONTENT_CLASS + "{height:100%;width:100%;}",
   ].join("");
   popoutDocument.head.appendChild(base);
@@ -191,7 +202,7 @@ const FloatingWindow = (props) => {
     } else {
       const win = window.open(
         url,
-        id,
+        flexPopoutWindowName(id),
         "left=" + r.x + ",top=" + r.y + ",width=" + r.width + ",height=" + r.height,
       );
       if (win !== null) {

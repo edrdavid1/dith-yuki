@@ -6,10 +6,11 @@
   <title>Panel</title>
   <style>
     @font-face {
-      font-family: 'ChicagoFLF';
-      src: url('/fonts/ChicagoFLF.ttf') format('truetype');
-      font-weight: normal;
+      font-family: 'GranaPadano';
+      src: url('/fonts/GranaPadano.ttf') format('truetype');
+      font-weight: 100 900;
       font-style: normal;
+      font-display: swap;
     }
     :root {
       --color-gray: #CDCDCD;
@@ -30,7 +31,8 @@
       --shadow-inset-light: inset var(--bevel-size) var(--bevel-size) 0 0 var(--color-white);
       --shadow-outset-dark: inset var(--bevel-size) var(--bevel-size) 0 0 var(--color-black);
       --shadow-outset-light: inset calc(-1 * var(--bevel-size)) calc(-1 * var(--bevel-size)) 0 0 var(--color-white);
-      --font-family: 'ChicagoFLF', 'Geneva', 'Chicago', monospace;
+      
+      --font-family: 'GranaPadano', 'Geneva', sans-serif;
       --radius: 0px;
     }
     html, body {
@@ -42,7 +44,10 @@
       /* Match window_background::THEME_BG / --bg-window. */
       background: #CDCDCD;
       font-family: var(--font-family);
-      font-size: 12px;
+      font-weight: 800;
+      -webkit-text-stroke: 0.5px currentColor;
+      paint-order: stroke fill;
+      font-size: 14px;
       color: #000;
     }
     .flexlayout__floating_window_content {
