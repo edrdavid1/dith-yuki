@@ -13,6 +13,7 @@ export type EffectType =
   | 'Glow'
   | 'CRT'
   | 'Adjust'
+  | 'BlurNoise'
   | 'Ascii';
 
 /** Maps EffectType to the corresponding FilterKind used in IPC.
@@ -27,6 +28,7 @@ export const EFFECT_TO_FILTER_KIND: Record<EffectType, FilterKind> = {
   Glow: 'Glow',
   CRT: 'Crt',
   Adjust: 'Adjust',
+  BlurNoise: 'BlurNoise',
   Ascii: 'Ascii',
 };
 
@@ -99,8 +101,12 @@ export const EFFECT_DEFAULTS: Record<EffectType, Record<string, unknown>> = {
     vibrance: 0,
     hue: 0,
     clarity: 0,
-    blur: 0,
     sharpness: 0,
+    blur: 0,
+    noise: 0,
+  },
+  BlurNoise: {
+    blur: 0,
     noise: 0,
   },
   Ascii: {
@@ -247,6 +253,8 @@ export function specForAlgorithm(
       return { kind: 'Glow', params: { ...EFFECT_DEFAULTS.Glow } };
     case 'adjust':
       return { kind: 'Adjust', params: { ...EFFECT_DEFAULTS.Adjust } };
+    case 'blur_noise':
+      return { kind: 'BlurNoise', params: { ...EFFECT_DEFAULTS.BlurNoise } };
     case 'exposure':
     case 'highlights_shadows':
     case 'temperature_tint':

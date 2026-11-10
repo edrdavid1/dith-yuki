@@ -14,6 +14,7 @@ use engine_tiles::{CacheStage, TileCache};
 use engine_tiles::{PixelTile, TileCoord, TileKey, HALO, TILE_SIZE};
 
 use crate::filter::{FilterInstance, FilterParams};
+use crate::filters::blur_noise::blur_noise_spatial_radius_px;
 use crate::filters::clarity::CLARITY_RADIUS;
 
 const TILE_FULL_SIZE: i32 = (TILE_SIZE + 2 * HALO) as i32;
@@ -158,14 +159,24 @@ pub fn clarity_spatial_radius_px(filter: &FilterInstance) -> i32 {
     }
 }
 
-/// Max spatial radius among Post filters. Only counts Adjust/Clarity that is the
-/// first non-neutral Post filter (neighbor samples are Dithered-domain).
+/// Blur/Noise spatial radius in px (0 if neutral / not BlurNoise).
+pub fn blur_noise_filter_radius_px(filter: &FilterInstance) -> i32 {
+    match &filter.params {
+        FilterParams::BlurNoise { blur, .. } => blur_noise_spatial_radius_px(*blur),
+        _ => 0,
+    }
+}
+
+/// Max spatial radius among Post filters. Only counts Adjust/Clarity/BlurNoise
+/// that is the first non-neutral Post filter (neighbor samples are Dithered-domain).
 pub fn post_direct_spatial_radius(post: &[&FilterInstance]) -> i32 {
     for f in post {
         if crate::filters::neutral::filter_is_neutral_for_apply(f) {
             continue;
         }
-        return adjust_spatial_radius_px(f).max(clarity_spatial_radius_px(f));
+        return adjust_spatial_radius_px(f)
+            .max(clarity_spatial_radius_px(f))
+            .max(blur_noise_filter_radius_px(f));
     }
     0
 }

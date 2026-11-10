@@ -226,6 +226,7 @@ impl FilterService {
             "Vibrance" => FilterKind::Vibrance,
             "Hue" => FilterKind::Hue,
             "Clarity" => FilterKind::Clarity,
+            "BlurNoise" => FilterKind::BlurNoise,
             "Ascii" => FilterKind::Ascii,
             other => filter_kind_for_algorithm_id(other).ok_or_else(|| {
                 AppError::InvalidOperation(format!("Invalid filter kind: {other}"))
@@ -550,6 +551,19 @@ impl FilterService {
                         .and_then(|v| v.as_f64())
                         .unwrap_or(0.0) as f32;
                     FilterParams::Clarity { amount }
+                }
+                FilterKind::BlurNoise => {
+                    let blur = req
+                        .params
+                        .get("blur")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as f32;
+                    let noise = req
+                        .params
+                        .get("noise")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as f32;
+                    FilterParams::BlurNoise { blur, noise }
                 }
                 FilterKind::Ascii => {
                     let p: engine_project::filter::AsciiParams =
@@ -1450,6 +1464,25 @@ impl FilterService {
                         .map(|v| v as f32)
                         .unwrap_or(existing);
                     FilterParams::Clarity { amount }
+                }
+                FilterKind::BlurNoise => {
+                    let (eb, en) = match existing_params {
+                        FilterParams::BlurNoise { blur, noise } => (blur, noise),
+                        _ => (0.0, 0.0),
+                    };
+                    let blur = req
+                        .params
+                        .get("blur")
+                        .and_then(|v| v.as_f64())
+                        .map(|v| v as f32)
+                        .unwrap_or(eb);
+                    let noise = req
+                        .params
+                        .get("noise")
+                        .and_then(|v| v.as_f64())
+                        .map(|v| v as f32)
+                        .unwrap_or(en);
+                    FilterParams::BlurNoise { blur, noise }
                 }
                 FilterKind::Ascii => {
                     let p: engine_project::filter::AsciiParams =

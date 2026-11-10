@@ -29,8 +29,9 @@ function AdjustSettings({ params, onUpdate }: AdjustSettingsProps) {
   const vibrance = clampParam(num(params, 'vibrance', 0), -1, 1);
   const hue = clampParam(num(params, 'hue', 0), -180, 180);
   const clarity = clampParam(num(params, 'clarity', 0), -1, 1);
-  const blur = clampParam(num(params, 'blur', 0), 0, 2);
   const sharpness = clampParam(num(params, 'sharpness', 0), 0, 2);
+  // Legacy blur/noise may still live on Adjust from old docs — preserve on update.
+  const blur = clampParam(num(params, 'blur', 0), 0, 2);
   const noise = clampParam(num(params, 'noise', 0), 0, 1);
 
   const emit = (overrides: Record<string, unknown>) => {
@@ -46,9 +47,9 @@ function AdjustSettings({ params, onUpdate }: AdjustSettingsProps) {
       vibrance: overrides.vibrance ?? vibrance,
       hue: overrides.hue ?? hue,
       clarity: overrides.clarity ?? clarity,
-      blur: overrides.blur ?? blur,
       sharpness: overrides.sharpness ?? sharpness,
-      noise: overrides.noise ?? noise,
+      blur,
+      noise,
     });
   };
 
@@ -154,15 +155,6 @@ function AdjustSettings({ params, onUpdate }: AdjustSettingsProps) {
         onChange={(v) => emit({ clarity: clampParam(v, -1, 1) })}
       />
       <Slider
-        label="Blur"
-        value={blur}
-        min={0}
-        max={2}
-        step={0.05}
-        decimals={2}
-        onChange={(v) => emit({ blur: clampParam(v, 0, 2) })}
-      />
-      <Slider
         label="Sharpness"
         value={sharpness}
         min={0}
@@ -170,15 +162,6 @@ function AdjustSettings({ params, onUpdate }: AdjustSettingsProps) {
         step={0.05}
         decimals={2}
         onChange={(v) => emit({ sharpness: clampParam(v, 0, 2) })}
-      />
-      <Slider
-        label="Noise"
-        value={noise}
-        min={0}
-        max={1}
-        step={0.01}
-        decimals={2}
-        onChange={(v) => emit({ noise: clampParam(v, 0, 1) })}
       />
     </div>
   );
