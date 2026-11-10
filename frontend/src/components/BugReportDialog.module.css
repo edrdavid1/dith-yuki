@@ -15,7 +15,7 @@
 .bug-report-lede {
   margin: 0;
   font-family: var(--font-family);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.4;
   color: #555;
 }
@@ -26,14 +26,14 @@
   border: var(--border);
   background: var(--color-white);
   font-family: var(--font-family);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.35;
   color: var(--color-black);
 }
 
 .bug-report-env-label {
   display: block;
-  font-weight: bold;
+  font-weight: 800;
   margin-bottom: 2px;
 }
 
@@ -43,14 +43,14 @@
   gap: 3px;
   margin: 0;
   font-family: var(--font-family);
-  font-size: 12px;
+  font-size: 14px;
   color: var(--color-black);
 }
 
 .bug-report-optional {
-  font-weight: normal;
+  font-weight: 800;
   color: #808080;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .bug-report-input,
@@ -63,7 +63,7 @@
   background: var(--bg-input);
   color: var(--text-color);
   font-family: var(--font-family);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .bug-report-input {
@@ -96,16 +96,16 @@
   min-height: 1.1em;
   margin: 0;
   font-family: var(--font-family);
-  font-size: 11px;
+  font-size: 13px;
   color: #808080;
 }
 
 .bug-report-status.is-ok {
   color: #2a5a1a;
-  font-weight: bold;
+  font-weight: 800;
 }
 
 .bug-report-status.is-err {
   color: #8a1f1f;
-  font-weight: bold;
+  font-weight: 800;
 }

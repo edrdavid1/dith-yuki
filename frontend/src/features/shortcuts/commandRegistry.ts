@@ -20,6 +20,8 @@ export type LayersCommands = {
 
 export type LayoutCommands = {
   toggleFocusMode: () => void;
+  swapSidebars: () => void;
+  copyPreviewImage: () => void;
 };
 
 let previewCommands: PreviewCommands | null = null;

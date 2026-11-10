@@ -52,9 +52,16 @@ export const EFFECT_DEFAULTS: Record<EffectType, Record<string, unknown>> = {
     match_by_brightness: false,
   },
   Glitching: {
-    glitch_type: 'RGBShift',
-    intensity: 0.5,
-    seed: 0,
+    enabled: true,
+    seed: 42,
+    block_size: 8,
+    group_size: 4,
+    scanline_segment: 64,
+    block_shift: { enabled: false, amount: 0 },
+    block_scramble: { enabled: false, amount: 0 },
+    channel_swap: { enabled: true, amount: 50 },
+    scanline: { enabled: false, amount: 0 },
+    interlace: { enabled: false, amount: 0 },
   },
   Curves: {
     curve: [[0, 0], [1, 1]],
@@ -110,6 +117,48 @@ export const EFFECT_DEFAULTS: Record<EffectType, Record<string, unknown>> = {
 export interface AlgorithmAddSpec {
   kind: string;
   params: Record<string, unknown>;
+}
+
+/** Registry ids under EffectCategory::Glitch — one chooser row, type picked in-panel. */
+export const GLITCH_FAMILY_ALGORITHM_IDS = [
+  'glitch',
+  'modulated_diffuse_y',
+  'modulated_diffuse_x',
+  'glitch_dither',
+  'contrast_aware_y',
+  'contrast_aware_x',
+  'smooth_diffuse',
+  'wave_modulation_y',
+  'wave_modulation_x',
+] as const;
+
+export type GlitchFamilyAlgorithmId = (typeof GLITCH_FAMILY_ALGORITHM_IDS)[number];
+
+export function isGlitchFamilyAlgorithmId(algorithmId: string | null | undefined): boolean {
+  return (
+    algorithmId != null &&
+    (GLITCH_FAMILY_ALGORITHM_IDS as readonly string[]).includes(algorithmId)
+  );
+}
+
+/** True when this filter belongs to the unified Glitching UI family. */
+export function isGlitchFamilyFilter(
+  kind: string,
+  algorithmId?: string | null,
+  mode?: unknown
+): boolean {
+  if (kind === 'Glitch') return true;
+  if (isGlitchFamilyAlgorithmId(algorithmId)) return true;
+  return (
+    mode === 'modulated_diffuse_y' ||
+    mode === 'modulated_diffuse_x' ||
+    mode === 'glitch_dither' ||
+    mode === 'contrast_aware_y' ||
+    mode === 'contrast_aware_x' ||
+    mode === 'smooth_diffuse' ||
+    mode === 'wave_modulation_y' ||
+    mode === 'wave_modulation_x'
+  );
 }
 
 /** Registry AlgorithmIds that are dither modes of the single Dithering effect. */
@@ -196,6 +245,50 @@ export function specForAlgorithm(
       return { kind: 'Glitch', params: { ...EFFECT_DEFAULTS.Glitching } };
     case 'ascii':
       return { kind: 'Ascii', params: { ...EFFECT_DEFAULTS.Ascii } };
+    case 'modulated_diffuse_y':
+    case 'modulated_diffuse_x':
+    case 'contrast_aware_y':
+    case 'contrast_aware_x':
+      // Glitch-category 1D ED: DitherV2 params + schema-driven Line Scale slider.
+      return {
+        kind: 'DitherV2',
+        params: {
+          ...EFFECT_DEFAULTS.Dithering,
+          mode: algorithmId,
+          line_scale: 5,
+        },
+      };
+    case 'smooth_diffuse':
+      return {
+        kind: 'DitherV2',
+        params: {
+          ...EFFECT_DEFAULTS.Dithering,
+          mode: 'smooth_diffuse',
+          line_scale: 5,
+          smoothness: 5,
+        },
+      };
+    case 'wave_modulation_y':
+    case 'wave_modulation_x':
+      return {
+        kind: 'DitherV2',
+        params: {
+          ...EFFECT_DEFAULTS.Dithering,
+          mode: algorithmId,
+          frequency: 8,
+          amplitude: 50,
+        },
+      };
+    case 'glitch_dither':
+      return {
+        kind: 'DitherV2',
+        params: {
+          ...EFFECT_DEFAULTS.Dithering,
+          mode: 'glitch_dither',
+          glitch_intensity: 1,
+          glitch_seed: 42,
+        },
+      };
     default:
       return null;
   }

@@ -110,9 +110,9 @@ describe('useEffectLayer', () => {
   it('derives Glitching effect type from Glitch filter kind', () => {
     const { wrapper } = wrapperFor([
       makeFilter('Glitch', {
-        glitch_type: 'RGBShift',
-        intensity: 0.5,
+        enabled: true,
         seed: 42,
+        channel_swap: { enabled: true, amount: 50 },
       }),
     ]);
 
@@ -121,9 +121,43 @@ describe('useEffectLayer', () => {
     expect(result.current.effectType).toBe('Glitching');
     expect(result.current.effectParams).toMatchObject({
       type: 'Glitch',
-      glitch_type: 'RGBShift',
-      intensity: 0.5,
+      seed: 42,
+      channel_swap: { enabled: true, amount: 50 },
     });
+  });
+
+  it('derives Glitching effect type for modulated_diffuse_y DitherV2', () => {
+    const { wrapper } = wrapperFor([
+      {
+        ...makeFilter('DitherV2', {
+          mode: 'modulated_diffuse_y',
+          levels: 4,
+          line_scale: 5,
+        }),
+        algorithm_id: 'modulated_diffuse_y',
+      },
+    ]);
+
+    const { result } = renderHook(() => useEffectLayer(2, null), { wrapper });
+
+    expect(result.current.effectType).toBe('Glitching');
+  });
+
+  it('derives Glitching effect type for modulated_diffuse_x DitherV2', () => {
+    const { wrapper } = wrapperFor([
+      {
+        ...makeFilter('DitherV2', {
+          mode: 'modulated_diffuse_x',
+          levels: 4,
+          line_scale: 5,
+        }),
+        algorithm_id: 'modulated_diffuse_x',
+      },
+    ]);
+
+    const { result } = renderHook(() => useEffectLayer(2, null), { wrapper });
+
+    expect(result.current.effectType).toBe('Glitching');
   });
 
   it('flattens externally tagged Curves params from the engine snapshot', () => {

@@ -56,7 +56,7 @@ function PaletteQuantizeParams({ paletteId, diffusion, onChange }: PaletteQuanti
       />
 
       {selectedPaletteId === 0 && (
-        <p style={{ color: '#666', fontSize: '10px', margin: '4px 0 0' }}>
+        <p style={{ color: '#666', fontSize: '12px', margin: '4px 0 0' }}>
           Add a palette first using the Palette panel below.
         </p>
       )}

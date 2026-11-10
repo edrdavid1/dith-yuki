@@ -13,6 +13,8 @@ export interface AlgorithmSettingsPanelProps {
   algorithmId: string;
   values: Record<string, unknown>;
   onChange: (patch: Record<string, unknown>) => void;
+  /** Schema keys to skip (caller renders a custom control instead). */
+  omitKeys?: readonly string[];
 }
 
 function sliderDecimals(step: number | null): number {
@@ -127,6 +129,7 @@ export default function AlgorithmSettingsPanel({
   algorithmId,
   values,
   onChange,
+  omitKeys,
 }: AlgorithmSettingsPanelProps) {
   const { schema, error } = useAlgorithmSchema(algorithmId);
 
@@ -142,9 +145,12 @@ export default function AlgorithmSettingsPanel({
     );
   }
 
+  const omit = omitKeys ?? [];
+  const fields = schema.filter((field) => !omit.includes(field.key));
+
   return (
     <div className={cn('effect-settings-content')}>
-      {schema.map((field) => (
+      {fields.map((field) => (
         <FieldControl key={field.key} field={field} values={values} onChange={onChange} />
       ))}
     </div>

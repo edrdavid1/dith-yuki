@@ -9,6 +9,7 @@ import ColorLabFooter from './ColorLabFooter';
 import SoftProofControls from '../soft-proof/SoftProofControls';
 import type { ColorEntry, ExtractMethod } from './types';
 import type { BuiltinPaletteDto, PaletteDto } from '../../shared/ipc';
+import type { UnboundPicker } from './paletteListOrder';
 import styles from './ColorLabWindow.module.css';
 import buttonStyles from './ColorLabButtons.module.css';
 import { bind } from '../../shared/ui/cn';
@@ -25,8 +26,11 @@ export interface ColorLabBodyProps {
   palettes: PaletteDto[];
   builtins: BuiltinPaletteDto[];
   selectedPaletteId: number | null;
+  unboundPicker: UnboundPicker;
+  boundPaletteId: number | null;
   onSelectPalette: (paletteId: number) => void;
   onSelectBuiltin: (id: string) => void;
+  onSelectToneSteps: () => void;
   onSelectNew: () => void;
   extractMethod: ExtractMethod;
   extractCount: number;
@@ -73,6 +77,9 @@ export default function ColorLabBody(props: ColorLabBodyProps) {
         builtins={props.builtins}
         saved={props.palettes}
         selectedPaletteId={props.selectedPaletteId}
+        unboundPicker={props.unboundPicker}
+        boundPaletteId={props.boundPaletteId}
+        onSelectToneSteps={props.onSelectToneSteps}
         onSelectNew={props.onSelectNew}
         onSelectSaved={props.onSelectPalette}
         onSelectBuiltin={props.onSelectBuiltin}

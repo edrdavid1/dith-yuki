@@ -233,13 +233,13 @@ export default function TileGenStressPanel({
         margin: '8px 0',
         padding: '8px',
         border: '1px solid #888',
-        fontSize: 12,
+        fontSize: 14,
         fontFamily: 'ui-monospace, monospace',
         maxHeight: 320,
         overflow: 'auto',
       }}
     >
-      <div style={{ fontWeight: 600, marginBottom: 6 }}>Стресс (DITHER_TRACE)</div>
+      <div style={{ fontWeight: 800, marginBottom: 6 }}>Стресс (DITHER_TRACE)</div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
         <label>
           path{' '}

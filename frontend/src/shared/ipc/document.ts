@@ -58,6 +58,11 @@ export async function exportImage(req: ExportImageRequest): Promise<void> {
   return invoke<void>('export_image', { req });
 }
 
+/** Copy the processed preview composite to the system clipboard as an image. */
+export async function copyPreviewToClipboard(docId: number): Promise<void> {
+  return invoke<void>('copy_preview_to_clipboard', { docId });
+}
+
 export async function getDocumentSnapshot(): Promise<DocumentSnapshotResponse> {
   return invoke<DocumentSnapshotResponse>('get_document_snapshot');
 }

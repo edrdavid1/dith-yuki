@@ -140,7 +140,7 @@ export default function BatchExportDialog({
       >
         <DialogTitlebar title="Batch Export" onClose={handleCancel} />
         <div className={cn('new-project-body')} style={{ padding: '14px 12px 12px' }}>
-          <p style={{ margin: 0, fontSize: 12, lineHeight: 1.4 }}>
+          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.4 }}>
             Apply this document’s filter stack and palettes to every image in a folder.
             Save or reuse a named recipe via Pattern Manager (export format stays here).
           </p>
@@ -207,7 +207,7 @@ export default function BatchExportDialog({
               onChange={(e) => setNameTemplate(e.target.value)}
               disabled={running}
             />
-            <span style={{ fontSize: 11, opacity: 0.7 }}>
+            <span style={{ fontSize: 13, opacity: 0.7 }}>
               Use {'{name}'} and {'{ext}'} from the source file.
             </span>
           </div>
@@ -247,7 +247,7 @@ export default function BatchExportDialog({
           </label>
 
           {progressLabel && (
-            <div style={{ fontSize: 12 }}>
+            <div style={{ fontSize: 14 }}>
               Progress: {progressLabel}
               {progress?.current_input
                 ? ` — ${progress.current_input.split(/[/\\]/).pop()}`
@@ -261,7 +261,7 @@ export default function BatchExportDialog({
           )}
 
           {error && (
-            <div style={{ fontSize: 12, color: 'var(--color-danger, #a00)' }}>{error}</div>
+            <div style={{ fontSize: 14, color: 'var(--color-danger, #a00)' }}>{error}</div>
           )}
 
           <div className={cn('new-project-footer')}>

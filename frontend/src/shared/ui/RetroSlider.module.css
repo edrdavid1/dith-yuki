@@ -5,20 +5,28 @@
 }
 
 .retro-slider-track {
-  width: 100%;
+  /* flex:1 — not width:100% — so the layout box matches the visible bar
+     (100% + value box was overflowing and the carriage overshot the ends). */
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
   height: 6px;
   background: var(--bg-slider-track);
   border: var(--border);
   position: relative;
   cursor: pointer;
+  /* Let the carriage straddle the track ends at min/max. */
+  overflow: visible;
 }
 
 .retro-slider-thumb {
   position: absolute;
-  width: 26px;
+  width: 16px;
   height: 35px;
   top: -11px;
-  margin-left: -8px;
+  margin-left: 0;
+  /* Center on the value so min/max straddle the track ends (overlap, not flush). */
+  transform: translateX(-50%);
   cursor: grab;
   background: none;
   border: none;

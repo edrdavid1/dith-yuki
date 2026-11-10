@@ -103,6 +103,37 @@ function zoomAboutCenter(prev: ViewportState, newZoom: number): ViewportState {
   return { ...prev, zoom: newZoom, panX: newPanX, panY: newPanY };
 }
 
+/**
+ * Keep the document point under the viewport center fixed when the canvas
+ * resizes (so a centered preview stays centered; a panned view keeps focus).
+ * First real size (0→N) only updates dimensions — `fitToView` centers after open.
+ */
+export function resizeCanvasKeepingCenter(
+  prev: ViewportState,
+  width: number,
+  height: number,
+): ViewportState {
+  if (prev.canvasWidth === width && prev.canvasHeight === height) return prev;
+  if (
+    prev.zoom <= 0 ||
+    prev.canvasWidth <= 0 ||
+    prev.canvasHeight <= 0 ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    return { ...prev, canvasWidth: width, canvasHeight: height };
+  }
+  const centerDocX = prev.panX + prev.canvasWidth / prev.zoom / 2;
+  const centerDocY = prev.panY + prev.canvasHeight / prev.zoom / 2;
+  return {
+    ...prev,
+    canvasWidth: width,
+    canvasHeight: height,
+    panX: centerDocX - width / prev.zoom / 2,
+    panY: centerDocY - height / prev.zoom / 2,
+  };
+}
+
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 const INTEGER_SNAP_IDLE_MS = 120;
@@ -490,7 +521,7 @@ export function useViewport(docWidth: number, docHeight: number): UseViewportRet
       setViewport((prev) => {
         if (prev.canvasWidth === w && prev.canvasHeight === h) return prev;
         return constrainPan(
-          { ...prev, canvasWidth: w, canvasHeight: h },
+          resizeCanvasKeepingCenter(prev, w, h),
           docWidth,
           docHeight,
         );

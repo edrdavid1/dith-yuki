@@ -194,7 +194,7 @@ function DitherV2Params({ mode, levels, thresholdScale, pixelSize, colorMode, pa
               value={customPath}
               readOnly
               placeholder="Select a grayscale PNG..."
-              style={{ flex: 1, fontSize: '10px', padding: '2px 4px' }}
+              style={{ flex: 1, fontSize: '12px', padding: '2px 4px' }}
             />
             <button className={cn("filter-add-btn")} onClick={handlePathBrowse} style={{ whiteSpace: 'nowrap' }}>
               Browse

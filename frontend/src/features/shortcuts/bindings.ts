@@ -16,7 +16,9 @@ export type ShortcutId =
   | 'zoomFit'
   | 'zoomActual'
   | 'preferences'
-  | 'focusMode';
+  | 'focusMode'
+  | 'swapSidebars'
+  | 'copyPreview';
 
 export type Chord = {
   key: string;
@@ -44,6 +46,8 @@ export const SHORTCUT_LABELS: Record<ShortcutId, string> = {
   zoomActual: 'Actual Pixels (100%)',
   preferences: 'Preferences',
   focusMode: 'Focus Mode',
+  swapSidebars: 'Swap Sidebars',
+  copyPreview: 'Copy Preview Image',
 };
 
 export const SHORTCUT_IDS: ShortcutId[] = [
@@ -63,6 +67,8 @@ export const SHORTCUT_IDS: ShortcutId[] = [
   'zoomActual',
   'preferences',
   'focusMode',
+  'swapSidebars',
+  'copyPreview',
 ];
 
 function chord(key: string, opts?: { mod?: boolean; alt?: boolean; shift?: boolean }): Chord {
@@ -93,6 +99,9 @@ export function defaultShortcutMap(): ShortcutMap {
     zoomActual: [chord('1', { mod: true })],
     preferences: [chord(',', { mod: true })],
     focusMode: [chord('Tab')],
+    swapSidebars: [chord('s', { mod: true, alt: true })],
+    // Shift+C — plain Cmd/Ctrl+C stays with the system clipboard.
+    copyPreview: [chord('c', { mod: true, shift: true })],
   };
 }
 
@@ -167,6 +176,17 @@ function formatKey(key: string, mac: boolean): string {
 
 export function formatChords(chords: Chord[], mac = isMacOS()): string {
   return chords.map((c) => formatChord(c, mac)).join(' / ');
+}
+
+/** Tooltip / aria label with optional shortcut suffix, e.g. `Focus mode (⇥)`. */
+export function labelWithShortcut(
+  label: string,
+  chords: Chord[] | undefined,
+  mac = isMacOS()
+): string {
+  if (!chords || chords.length === 0) return label;
+  const keys = formatChords(chords, mac);
+  return keys ? `${label} (${keys})` : label;
 }
 
 export function isEditableKeyboardTarget(target: EventTarget | null): boolean {

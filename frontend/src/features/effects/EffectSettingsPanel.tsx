@@ -1,6 +1,11 @@
 import type { DockSide } from '../../types/panels';
 import type { FilterInfo, FilterKind } from '../../types';
-import { EFFECT_TO_FILTER_KIND, isDitheringAlgorithmId, type EffectType } from '../../types/effects';
+import {
+  EFFECT_TO_FILTER_KIND,
+  isDitheringAlgorithmId,
+  isGlitchFamilyFilter,
+  type EffectType,
+} from '../../types/effects';
 import Icon from '../../icons/iconRegistry';
 import Tooltip from '../../shared/ui/Tooltip';
 import SimpleBar from 'simplebar-react';
@@ -47,6 +52,8 @@ export interface EffectSettingsPanelProps {
   onSelectEffect?: (effectType: EffectType) => void;
   onSelectAlgorithm?: (algorithmId: string) => void;
   onSelectPreset?: (presetId: string) => void;
+  /** Swap Glitch family algorithm on the current layer (same filter slot). */
+  onChangeGlitchType?: (algorithmId: string) => void;
   onTitleBarMouseDown?: (e: React.MouseEvent) => void;
   dockSide?: DockSide;
   onMoveToSide?: (side: DockSide) => void;
@@ -147,6 +154,7 @@ export default function EffectSettingsPanel({
   onSelectEffect,
   onSelectAlgorithm,
   onSelectPreset,
+  onChangeGlitchType,
   onTitleBarMouseDown,
   dockSide,
   onMoveToSide,
@@ -267,10 +275,29 @@ export default function EffectSettingsPanel({
                   </div>
                 </button>
               )}
+              {catalog != null && catalog.some((a) => a.category === 'glitch') && (
+                <button
+                  type="button"
+                  className={cn("effect-chooser-row")}
+                  role="option"
+                  aria-selected={false}
+                  onPointerDown={chooseOnPointerDown(() => onSelectEffect?.('Glitching'))}
+                  onClick={(e) => e.preventDefault()}
+                >
+                  <div className={cn("effect-chooser-row-icon")}>
+                    <EffectIcon type="Glitching" />
+                  </div>
+                  <div className={cn("effect-chooser-row-label")}>
+                    <span>Glitching</span>
+                  </div>
+                </button>
+              )}
               {catalog
                 ?.filter(
                   (algo: AlgorithmInfo) =>
-                    algo.category !== 'dithering' && algo.category !== 'ascii'
+                    algo.category !== 'dithering' &&
+                    algo.category !== 'ascii' &&
+                    algo.category !== 'glitch'
                 )
                 .map((algo) => {
                 const mapped = ALGO_TO_EFFECT[algo.id];
@@ -355,6 +382,30 @@ export default function EffectSettingsPanel({
 
   const renderSettings = () => {
     const params = unwrapFilterParams(filter.params as unknown as Record<string, unknown>);
+    const glitchFamily = isGlitchFamilyFilter(
+      filter.kind,
+      filter.algorithm_id,
+      params.mode
+    );
+    if (glitchFamily) {
+      const glitchAlgorithms = (catalog ?? []).filter((a) => a.category === 'glitch');
+      const algoId =
+        filter.algorithm_id ??
+        (params.mode === 'modulated_diffuse_y' ||
+        params.mode === 'modulated_diffuse_x' ||
+        params.mode === 'glitch_dither'
+          ? String(params.mode)
+          : 'glitch');
+      return (
+        <GlitchSettings
+          params={params}
+          algorithmId={algoId}
+          glitchAlgorithms={glitchAlgorithms}
+          onUpdate={handleUpdate}
+          onChangeType={onChangeGlitchType}
+        />
+      );
+    }
     const dithering =
       effectType === 'Dithering' ||
       filter.kind === 'DitherV2' ||
@@ -374,8 +425,6 @@ export default function EffectSettingsPanel({
     switch (dedicated) {
       case 'Ascii':
         return <AsciiSettings params={params} onUpdate={handleUpdate} />;
-      case 'Glitching':
-        return <GlitchSettings params={params} onUpdate={handleUpdate} />;
       case 'Curves':
         return <CurvesSettings params={params} onUpdate={handleUpdate} />;
       case 'RGBChannels':
@@ -412,14 +461,21 @@ export default function EffectSettingsPanel({
       {!hideChrome && (
         <WindowTitlebar
           title={
-            effectType === 'Dithering' ||
-            (filter.algorithm_id != null && isDitheringAlgorithmId(filter.algorithm_id))
-              ? 'Dithering'
-              : effectType === 'Ascii' ||
-                  filter.kind === 'Ascii' ||
-                  filter.algorithm_id === 'ascii'
-                ? 'ASCII'
-                : (filter.algorithm_id ?? effectType ?? 'Dithering')
+            isGlitchFamilyFilter(
+              filter.kind,
+              filter.algorithm_id,
+              unwrapFilterParams(filter.params as unknown as Record<string, unknown>).mode
+            )
+              ? 'Glitching'
+              : effectType === 'Dithering' ||
+                  (filter.algorithm_id != null &&
+                    isDitheringAlgorithmId(filter.algorithm_id))
+                ? 'Dithering'
+                : effectType === 'Ascii' ||
+                    filter.kind === 'Ascii' ||
+                    filter.algorithm_id === 'ascii'
+                  ? 'ASCII'
+                  : (filter.algorithm_id ?? effectType ?? 'Dithering')
           }
           onMouseDown={onTitleBarMouseDown}
           dockSide={dockSide}

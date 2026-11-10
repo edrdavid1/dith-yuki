@@ -12,9 +12,9 @@
   background: var(--bg-window);
   color: var(--text-color);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 15px;
   font-family: var(--font-family);
-  font-weight: 600;
+  font-weight: 800;
   box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
 }
 

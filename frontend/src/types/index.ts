@@ -79,6 +79,9 @@ export type DitherModeV2 =
   | 'stevenson_arce'
   | 'zhou_fang'
   | 'riemersma'
+  | 'modulated_diffuse_y'
+  | 'modulated_diffuse_x'
+  | 'glitch_dither'
   | 'void_and_cluster'
   | 'crosshatch_dither'
   | 'line_screen'
@@ -105,6 +108,12 @@ export interface DitherParamsV2 {
   mode: DitherModeV2;
   levels: number;             // 2–256
   threshold_scale: number;    // 0.1–4.0, default 1.0
+  /** 1D ED contrast scale (`modulated_diffuse_y` / `_x`): 1–20, default 5. */
+  line_scale?: number;
+  /** `glitch_dither` corruption strength: 1–20, default 1. */
+  glitch_intensity?: number;
+  /** `glitch_dither` PRNG seed, default 42. */
+  glitch_seed?: number;
   pixel_size: number;         // 1–32, default 1
   color_mode: DitherColorMode;
   palette_id: number | null;
@@ -158,11 +167,26 @@ export interface LevelsParams {
   channel_b?: boolean;
 }
 
+export interface GlitchSubOp {
+  enabled: boolean;
+  amount: number;
+}
+
 export interface GlitchParams {
   type: 'Glitch';
-  glitch_type: GlitchType;
-  intensity: number;
+  enabled?: boolean;
   seed: number;
+  block_size?: number;
+  group_size?: number;
+  scanline_segment?: number;
+  block_shift?: GlitchSubOp;
+  block_scramble?: GlitchSubOp;
+  channel_swap?: GlitchSubOp;
+  scanline?: GlitchSubOp;
+  interlace?: GlitchSubOp;
+  /** @deprecated legacy Moj Boy UI — migrated on load */
+  glitch_type?: GlitchType;
+  intensity?: number;
 }
 
 export interface PaletteQuantizeParams {

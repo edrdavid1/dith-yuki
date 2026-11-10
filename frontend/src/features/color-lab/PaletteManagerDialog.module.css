@@ -45,7 +45,7 @@
   background: transparent;
   color: var(--text-color);
   font-family: var(--font-family);
-  font-size: 12px;
+  font-size: 14px;
   text-align: left;
   cursor: pointer;
   box-sizing: border-box;
@@ -62,7 +62,7 @@
 
 .pm-row-selected {
   background: var(--bg-hover);
-  font-weight: bold;
+  font-weight: 800;
 }
 
 .pm-swatches {
@@ -104,7 +104,7 @@
   flex: 0 0 auto;
   margin-right: 6px;
   color: var(--color-dark-gray);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .pm-actions {
@@ -121,8 +121,8 @@
   background: var(--bg-window);
   color: var(--text-color);
   font-family: var(--font-family);
-  font-size: 12px;
-  font-weight: bold;
+  font-size: 14px;
+  font-weight: 800;
   cursor: pointer;
   box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
 }
@@ -138,7 +138,7 @@
 
 .pm-hint {
   margin: 0;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.4;
   color: var(--color-dark-gray);
 }

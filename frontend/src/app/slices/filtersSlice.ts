@@ -1,6 +1,7 @@
 import { createSlice, createAsyncThunk, createSelector, type PayloadAction } from '@reduxjs/toolkit';
 import type { FilterInfo } from '../../types';
 import {
+  addFilter as addFilterIPC,
   formatIpcError,
   getDocumentSnapshot,
   logIpcError,
@@ -9,11 +10,14 @@ import {
   updateFilter as updateFilterIPC,
 } from '../../shared/ipc';
 import { unwrapFilterParams } from '../../shared/unwrapFilterParams';
+import { EFFECT_DEFAULTS, specForAlgorithm } from '../../types/effects';
+import type { RootState } from '../store';
 import {
   createDocument,
   openImage,
   openProject,
 } from './documentSlice';
+import { listPalettes } from '../../shared/ipc/palettes';
 
 export type FiltersStatus = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -73,6 +77,68 @@ export const removeFilter = createAsyncThunk(
       return args.filterId;
     } catch (err) {
       logIpcError('filters.remove', err);
+      return rejectWithValue(formatIpcError(err));
+    }
+  }
+);
+
+/**
+ * Replace a filter in-place (same layer) with another algorithm — used by the
+ * unified Glitching type dropdown so types do not become separate layers.
+ */
+export const replaceFilterWithAlgorithm = createAsyncThunk(
+  'filters/replaceWithAlgorithm',
+  async (
+    args: {
+      docId: number;
+      layerId: number;
+      filterId: string;
+      algorithmId: string;
+      opacity?: number;
+      blend_mode?: string;
+      enabled?: boolean;
+    },
+    { dispatch, getState, rejectWithValue }
+  ) => {
+    try {
+      const lastCreatedId = (getState() as RootState).palettes.lastCreatedId;
+      let boundPaletteId = lastCreatedId;
+      if (lastCreatedId != null) {
+        const pals = await listPalettes().catch(() => [] as { id: number }[]);
+        if (!Array.isArray(pals) || !pals.some((p) => p.id === lastCreatedId)) {
+          boundPaletteId = null;
+        }
+      }
+      const spec =
+        args.algorithmId === 'glitch'
+          ? { kind: 'Glitch', params: { ...EFFECT_DEFAULTS.Glitching } }
+          : specForAlgorithm(args.algorithmId, boundPaletteId);
+      if (!spec) {
+        return rejectWithValue(`Unknown algorithm: ${args.algorithmId}`);
+      }
+      await removeFilterIPC(args.docId, args.layerId, args.filterId);
+      const { filter_id } = await addFilterIPC(
+        args.docId,
+        args.layerId,
+        spec.kind,
+        spec.params,
+        { algorithmId: args.algorithmId }
+      );
+      if (
+        args.opacity != null ||
+        args.blend_mode != null ||
+        args.enabled != null
+      ) {
+        await updateFilterIPC(args.docId, args.layerId, filter_id, {}, {
+          opacity: args.opacity,
+          blend_mode: args.blend_mode,
+          enabled: args.enabled,
+        });
+      }
+      await dispatch(refreshFilters());
+      return { filterId: filter_id, layerId: args.layerId };
+    } catch (err) {
+      logIpcError('filters.replaceWithAlgorithm', err);
       return rejectWithValue(formatIpcError(err));
     }
   }

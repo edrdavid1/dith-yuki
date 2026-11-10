@@ -1,10 +1,18 @@
 import type { BuiltinPaletteDto, PaletteDto } from '../../shared/ipc';
 
 export const PALETTE_NEW_VALUE = 'new';
+export const PALETTE_TONE_STEPS_VALUE = 'tone-steps';
 export const builtinKey = (id: string) => `builtin:${id}`;
 export const savedKey = (id: number) => `saved:${id}`;
 
+export type UnboundPicker = 'tone-steps' | 'new';
+
 export type PaletteListEntry =
+  | {
+      kind: 'tone-steps';
+      key: typeof PALETTE_TONE_STEPS_VALUE;
+      name: string;
+    }
   | { kind: 'new'; key: typeof PALETTE_NEW_VALUE; name: string }
   | {
       kind: 'builtin';
@@ -21,12 +29,17 @@ export type PaletteListEntry =
       colors: [number, number, number][];
     };
 
-/** Full dropdown / manager list: New → builtins → saved. */
+/** Full dropdown / manager list: Raw tone → New → builtins → saved. */
 export function buildPaletteList(
   builtins: BuiltinPaletteDto[],
   saved: PaletteDto[]
 ): PaletteListEntry[] {
   const list: PaletteListEntry[] = [
+    {
+      kind: 'tone-steps',
+      key: PALETTE_TONE_STEPS_VALUE,
+      name: 'Raw tone',
+    },
     { kind: 'new', key: PALETTE_NEW_VALUE, name: 'New palette' },
   ];
   for (const p of builtins) {
@@ -50,7 +63,7 @@ export function buildPaletteList(
   return list;
 }
 
-/** ◀▶ browse order — real palettes only (skips Draft / New). */
+/** ◀▶ browse order — real bindings only (Raw tone + palettes; skips Draft / New). */
 export function buildBrowsablePaletteList(
   builtins: BuiltinPaletteDto[],
   saved: PaletteDto[]
@@ -58,8 +71,20 @@ export function buildBrowsablePaletteList(
   return buildPaletteList(builtins, saved).filter((e) => e.kind !== 'new');
 }
 
-export function currentPaletteKey(selectedPaletteId: number | null): string {
-  return selectedPaletteId !== null ? savedKey(selectedPaletteId) : PALETTE_NEW_VALUE;
+/**
+ * Dropdown / manager selection key.
+ * Bound saved id wins; otherwise unbound picker is Raw tone (dither/glitch
+ * uniform levels) or New (draft).
+ */
+export function currentPaletteKey(
+  selectedPaletteId: number | null,
+  unboundPicker: UnboundPicker = 'tone-steps',
+  boundPaletteId: number | null = null
+): string {
+  if (selectedPaletteId !== null) return savedKey(selectedPaletteId);
+  if (unboundPicker === 'new') return PALETTE_NEW_VALUE;
+  if (boundPaletteId != null) return savedKey(boundPaletteId);
+  return PALETTE_TONE_STEPS_VALUE;
 }
 
 /**
@@ -71,7 +96,9 @@ export function browseIndexForSelection(
   browseList: PaletteListEntry[],
   selectedPaletteId: number | null,
   saved: PaletteDto[],
-  preferredIndex: number | null
+  preferredIndex: number | null,
+  unboundPicker: UnboundPicker = 'tone-steps',
+  boundPaletteId: number | null = null
 ): number {
   if (browseList.length === 0) return 0;
   if (
@@ -81,12 +108,18 @@ export function browseIndexForSelection(
   ) {
     return preferredIndex;
   }
-  if (selectedPaletteId == null) return 0;
-  const exact = browseList.findIndex(
-    (e) => e.kind === 'saved' && e.id === selectedPaletteId
-  );
+  const key = currentPaletteKey(selectedPaletteId, unboundPicker, boundPaletteId);
+  const byKey = browseList.findIndex((e) => e.key === key);
+  if (byKey >= 0) return byKey;
+  if (selectedPaletteId == null && boundPaletteId == null) {
+    const tone = browseList.findIndex((e) => e.kind === 'tone-steps');
+    return tone >= 0 ? tone : 0;
+  }
+  const id = selectedPaletteId ?? boundPaletteId;
+  if (id == null) return 0;
+  const exact = browseList.findIndex((e) => e.kind === 'saved' && e.id === id);
   if (exact >= 0) return exact;
-  const savedPal = saved.find((p) => p.id === selectedPaletteId);
+  const savedPal = saved.find((p) => p.id === id);
   if (savedPal) {
     const builtinMatch = browseList.findIndex(
       (e) =>

@@ -200,7 +200,7 @@ export default function ExportImageDialog({ isOpen, onExport, onClose }: ExportI
                 />
               </div>
               {!spriteOk && (
-                <p style={{ margin: 0, fontSize: 11, opacity: 0.8 }}>
+                <p style={{ margin: 0, fontSize: 13, opacity: 0.8 }}>
                   Cell export supports PNG and PNG8 only.
                 </p>
               )}

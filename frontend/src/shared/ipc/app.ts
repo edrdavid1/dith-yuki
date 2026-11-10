@@ -11,3 +11,8 @@ export async function confirmAppQuit(): Promise<void> {
 export async function stopDockBounce(): Promise<void> {
   return invoke('stop_dock_bounce');
 }
+
+/** macOS: AppKit `zoom:` (fit/restore). Other platforms: toggle maximize. */
+export async function zoomWindow(): Promise<void> {
+  return invoke('zoom_window');
+}

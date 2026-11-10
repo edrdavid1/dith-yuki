@@ -194,6 +194,8 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
   const lastCreatedId = useAppSelector((s) => s.palettes.lastCreatedId);
   const docWidth = useAppSelector((s) => s.document.width) ?? 0;
   const docHeight = useAppSelector((s) => s.document.height) ?? 0;
+  /** Color Lab “Raw tone” item — uniform levels; slider only makes sense then. */
+  const toneStepsSelected = lastCreatedId == null;
   const boundPaletteId =
     lastCreatedId ?? (typeof params.palette_id === 'number' ? params.palette_id : null);
   const mode = params.mode ?? 'floyd_steinberg';
@@ -357,8 +359,8 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
       <p className={cn('effect-palette-hint')}>
         Palette is controlled in Color Lab
         {boundPaletteId != null
-          ? ` (palette #${boundPaletteId}). Levels is ignored`
-          : ' — extract or apply a palette first'}
+          ? ` (palette #${boundPaletteId}). Output colours come from the palette`
+          : ' — Raw tone selected: channel shades use the Tone Steps slider below, or pick a palette to lock output to swatches'}
         .
       </p>
 
@@ -515,15 +517,24 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
         onChange={(v) => emit({ threshold_scale: clampParam(v, 0.1, 4.0) })}
       />
 
-      <Slider
-        label="Levels"
-        value={levels}
-        min={2}
-        max={256}
-        step={1}
-        decimals={0}
-        onChange={(v) => emit({ levels: clampParam(Math.round(v), 2, 256) })}
-      />
+      {toneStepsSelected && (
+        <>
+          <Slider
+            label="Tone Steps"
+            value={levels}
+            min={2}
+            max={256}
+            step={1}
+            decimals={0}
+            onChange={(v) => emit({ levels: clampParam(Math.round(v), 2, 256) })}
+          />
+          <p className={cn('effect-palette-hint')}>
+            Each RGB channel snaps to this many evenly spaced values before
+            dithering paints the in-betweens. 2 = high contrast; higher =
+            smoother greys.
+          </p>
+        </>
+      )}
 
       {isEdMode && (
         <label className={cn('param-checkbox-row')}>
