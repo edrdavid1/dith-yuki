@@ -25,6 +25,8 @@ Capture on a 6K frame and attach to the PR:
 - If with the levers drag on the visible area fits in roughly 16–33 ms, P4 is deferred: the gain won't justify the invasiveness.
 - If not, then P4 is justified, and the question below becomes the subject of measurement.
 
+**Status (2026-11-11):** Microbench + budget in `docs/post-lever-measurement.md`. Pointwise fused stack ≈ 1.16 ms/tile; fit viewport (9 tiles) ≈ 10 ms → **defer Rust/wgpu P4**. Composite remains CPU/`TileCanvas`; webview shader Post is the only light fork if dense-L0 scrub still feels slow.
+
 ## Step 3. P4 (if measurements confirm)
 
 **Scope:** pointwise operations only. Spatial ones (blur, glitch gather, bloom) stay on CPU or wait for a separate stage.
@@ -121,7 +123,7 @@ If most projects have one layer with dither and Post on top, this option may be 
 3. Lever 4 (`rayon` over tiles) — **done on `task/3-p3-pass-fusion`**: pointwise/fused Post legs in row/column strip apply use the pixel pool; ED strip legs stay serial; cancel still checked between tiles.
 4. Lever 1 with the rule above
 5. Lever 5 (pass fusion) — **done on `task/3-p3-pass-fusion`**: fuse consecutive opaque Normal Adjust (pointwise-only) / Curves / Levels into one pixel loop; kill-switch `DITHER_POST_FUSION=0`. Same branch: P3 Dithered-neighbor Adjust blur/sharp (direct Post only; Curves-before-Adjust still in-tile clamp).
-6. Measurement, then decision on P4 with both alternatives on the table
+6. Measurement, then decision on P4 with both alternatives on the table — **done:** see `docs/post-lever-measurement.md` (defer Rust/wgpu P4).
 
 **Composite path (answered):** CPU — `TileCanvas` IPC tile bytes → worker → `CanvasRenderingContext2D` / `drawImage`. Rust/wgpu Post implies GPU composite first; webview shader Post is the lighter fork for single-layer stacks.
 
