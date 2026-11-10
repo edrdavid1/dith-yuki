@@ -167,6 +167,14 @@ fn parse_adjust_params(
     blur: f32,
     sharpness: f32,
     noise: f32,
+    exposure: f32,
+    shadows: f32,
+    highlights: f32,
+    temperature: f32,
+    tint: f32,
+    vibrance: f32,
+    hue: f32,
+    clarity: f32,
 ) -> FilterParams {
     FilterParams::Adjust {
         contrast: json_f32_adjust(params, "contrast", contrast),
@@ -175,6 +183,14 @@ fn parse_adjust_params(
         blur: json_f32_adjust(params, "blur", blur),
         sharpness: json_f32_adjust(params, "sharpness", sharpness),
         noise: json_f32_adjust(params, "noise", noise),
+        exposure: json_f32_adjust(params, "exposure", exposure),
+        shadows: json_f32_adjust(params, "shadows", shadows),
+        highlights: json_f32_adjust(params, "highlights", highlights),
+        temperature: json_f32_adjust(params, "temperature", temperature),
+        tint: json_f32_adjust(params, "tint", tint),
+        vibrance: json_f32_adjust(params, "vibrance", vibrance),
+        hue: json_f32_adjust(params, "hue", hue),
+        clarity: json_f32_adjust(params, "clarity", clarity),
     }
 }
 
@@ -457,9 +473,23 @@ impl FilterService {
                         mask_strength,
                     }
                 }
-                FilterKind::Adjust => {
-                    parse_adjust_params(&req.params, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-                }
+                FilterKind::Adjust => parse_adjust_params(
+                    &req.params,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                ),
                 FilterKind::Exposure => {
                     let stops = req
                         .params
@@ -1256,7 +1286,22 @@ impl FilterService {
                     }
                 }
                 FilterKind::Adjust => {
-                    let (ec, eb, es, ebl, esh, en) = match existing_params {
+                    let (
+                        ec,
+                        eb,
+                        es,
+                        ebl,
+                        esh,
+                        en,
+                        eex,
+                        eshads,
+                        ehi,
+                        etemp,
+                        etint,
+                        evib,
+                        ehue,
+                        eclar,
+                    ) = match existing_params {
                         FilterParams::Adjust {
                             contrast,
                             brightness,
@@ -1264,10 +1309,51 @@ impl FilterService {
                             blur,
                             sharpness,
                             noise,
-                        } => (contrast, brightness, saturation, blur, sharpness, noise),
-                        _ => (0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                            exposure,
+                            shadows,
+                            highlights,
+                            temperature,
+                            tint,
+                            vibrance,
+                            hue,
+                            clarity,
+                        } => (
+                            contrast,
+                            brightness,
+                            saturation,
+                            blur,
+                            sharpness,
+                            noise,
+                            exposure,
+                            shadows,
+                            highlights,
+                            temperature,
+                            tint,
+                            vibrance,
+                            hue,
+                            clarity,
+                        ),
+                        _ => (
+                            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                        ),
                     };
-                    parse_adjust_params(&req.params, ec, eb, es, ebl, esh, en)
+                    parse_adjust_params(
+                        &req.params,
+                        ec,
+                        eb,
+                        es,
+                        ebl,
+                        esh,
+                        en,
+                        eex,
+                        eshads,
+                        ehi,
+                        etemp,
+                        etint,
+                        evib,
+                        ehue,
+                        eclar,
+                    )
                 }
                 FilterKind::Exposure => {
                     let existing = match existing_params {

@@ -297,7 +297,14 @@ export default function EffectSettingsPanel({
                   (algo: AlgorithmInfo) =>
                     algo.category !== 'dithering' &&
                     algo.category !== 'ascii' &&
-                    algo.category !== 'glitch'
+                    algo.category !== 'glitch' &&
+                    // Grade knobs are on Adjust — hide standalone P5 entries.
+                    algo.id !== 'exposure' &&
+                    algo.id !== 'highlights_shadows' &&
+                    algo.id !== 'temperature_tint' &&
+                    algo.id !== 'vibrance' &&
+                    algo.id !== 'hue' &&
+                    algo.id !== 'clarity'
                 )
                 .map((algo) => {
                 const mapped = ALGO_TO_EFFECT[algo.id];

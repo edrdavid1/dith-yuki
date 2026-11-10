@@ -1075,7 +1075,7 @@ pub enum FilterParams {
         #[serde(default)]
         mask_strength: f32,
     },
-    /// Contrast / brightness / saturation / blur / sharpness / noise.
+    /// Photo grade / detail (P5 knobs live here — one stack layer).
     Adjust {
         /// Contrast around mid-gray (−1 .. 1). 0 = identity.
         contrast: f32,
@@ -1089,6 +1089,30 @@ pub enum FilterParams {
         sharpness: f32,
         /// Deterministic RGB noise amount (0 .. 1). 0 = skip.
         noise: f32,
+        /// EV stops (−5 .. 5). 0 = identity. Missing in old files → 0.
+        #[serde(default)]
+        exposure: f32,
+        /// Shadow lift (−1 .. 1). 0 = identity.
+        #[serde(default)]
+        shadows: f32,
+        /// Highlight lift (−1 .. 1). 0 = identity.
+        #[serde(default)]
+        highlights: f32,
+        /// Temperature (−1 cool .. 1 warm). 0 = identity.
+        #[serde(default)]
+        temperature: f32,
+        /// Tint (−1 magenta .. 1 green). 0 = identity.
+        #[serde(default)]
+        tint: f32,
+        /// Vibrance (−1 .. 1). 0 = identity.
+        #[serde(default)]
+        vibrance: f32,
+        /// Hue rotate degrees (−180 .. 180). 0 = identity.
+        #[serde(default)]
+        hue: f32,
+        /// Midtone local contrast (−1 .. 1). 0 = identity.
+        #[serde(default)]
+        clarity: f32,
     },
     /// Exposure in EV stops. `out = in * 2^stops`. 0 = identity.
     Exposure {
@@ -1622,6 +1646,14 @@ impl FilterInstance {
                 blur,
                 sharpness,
                 noise,
+                exposure,
+                shadows,
+                highlights,
+                temperature,
+                tint,
+                vibrance,
+                hue,
+                clarity,
             } => {
                 if !(-1.0..=1.0).contains(contrast) {
                     return Err(EngineError::invalid_filter_params(
@@ -1651,6 +1683,46 @@ impl FilterInstance {
                 if !(0.0..=1.0).contains(noise) {
                     return Err(EngineError::invalid_filter_params(
                         "Adjust noise must be in range [0.0, 1.0]",
+                    ));
+                }
+                if !(-5.0..=5.0).contains(exposure) {
+                    return Err(EngineError::invalid_filter_params(
+                        "Adjust exposure must be in range [-5.0, 5.0]",
+                    ));
+                }
+                if !(-1.0..=1.0).contains(shadows) {
+                    return Err(EngineError::invalid_filter_params(
+                        "Adjust shadows must be in range [-1.0, 1.0]",
+                    ));
+                }
+                if !(-1.0..=1.0).contains(highlights) {
+                    return Err(EngineError::invalid_filter_params(
+                        "Adjust highlights must be in range [-1.0, 1.0]",
+                    ));
+                }
+                if !(-1.0..=1.0).contains(temperature) {
+                    return Err(EngineError::invalid_filter_params(
+                        "Adjust temperature must be in range [-1.0, 1.0]",
+                    ));
+                }
+                if !(-1.0..=1.0).contains(tint) {
+                    return Err(EngineError::invalid_filter_params(
+                        "Adjust tint must be in range [-1.0, 1.0]",
+                    ));
+                }
+                if !(-1.0..=1.0).contains(vibrance) {
+                    return Err(EngineError::invalid_filter_params(
+                        "Adjust vibrance must be in range [-1.0, 1.0]",
+                    ));
+                }
+                if !(-180.0..=180.0).contains(hue) {
+                    return Err(EngineError::invalid_filter_params(
+                        "Adjust hue must be in range [-180.0, 180.0]",
+                    ));
+                }
+                if !(-1.0..=1.0).contains(clarity) {
+                    return Err(EngineError::invalid_filter_params(
+                        "Adjust clarity must be in range [-1.0, 1.0]",
                     ));
                 }
                 Ok(())
@@ -1864,6 +1936,14 @@ pub fn filter_params_to_json(params: &FilterParams) -> Result<serde_json::Value,
             blur,
             sharpness,
             noise,
+            exposure,
+            shadows,
+            highlights,
+            temperature,
+            tint,
+            vibrance,
+            hue,
+            clarity,
         } => Ok(serde_json::json!({
             "contrast": contrast,
             "brightness": brightness,
@@ -1871,6 +1951,14 @@ pub fn filter_params_to_json(params: &FilterParams) -> Result<serde_json::Value,
             "blur": blur,
             "sharpness": sharpness,
             "noise": noise,
+            "exposure": exposure,
+            "shadows": shadows,
+            "highlights": highlights,
+            "temperature": temperature,
+            "tint": tint,
+            "vibrance": vibrance,
+            "hue": hue,
+            "clarity": clarity,
         })),
         FilterParams::Exposure { stops } => Ok(serde_json::json!({ "stops": stops })),
         FilterParams::HighlightsShadows {

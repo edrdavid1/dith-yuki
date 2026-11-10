@@ -223,12 +223,20 @@ export interface CrtParams {
 
 export interface AdjustParams {
   type: 'Adjust';
-  contrast: number;    // −1–1
-  brightness: number;  // −1–1
-  saturation: number;  // −1–1
-  blur: number;        // 0–2
-  sharpness: number;   // 0–2
-  noise: number;       // 0–1
+  exposure?: number;     // −5–5 EV
+  contrast: number;      // −1–1
+  brightness: number;    // −1–1
+  shadows?: number;      // −1–1
+  highlights?: number;   // −1–1
+  temperature?: number;  // −1–1
+  tint?: number;         // −1–1
+  saturation: number;    // −1–1
+  vibrance?: number;     // −1–1
+  hue?: number;          // −180–180
+  clarity?: number;      // −1–1
+  blur: number;          // 0–2
+  sharpness: number;     // 0–2
+  noise: number;         // 0–1
 }
 
 export interface ExposureParams {

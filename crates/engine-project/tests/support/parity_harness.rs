@@ -11,7 +11,7 @@ use engine_project::algorithms::register_all;
 use engine_project::filter::{
     DitherModeV2, DitherParamsV2, FilterInstance, FilterKind, FilterParams,
 };
-use engine_project::filters::adjust::apply_adjust_into;
+use engine_project::filters::adjust::{apply_adjust_into, AdjustApplyParams};
 use engine_project::filters::apply::apply_filter_to_tile;
 use engine_project::filters::crt::apply_crt_into;
 use engine_project::filters::curves::{CurveChannel, CurvesFilter};
@@ -297,12 +297,15 @@ impl Env {
         apply_adjust_into(
             &src,
             self.coord,
-            contrast,
-            brightness,
-            saturation,
-            blur,
-            sharpness,
-            noise,
+            AdjustApplyParams {
+                contrast: contrast,
+                brightness: brightness,
+                saturation: saturation,
+                blur: blur,
+                sharpness: sharpness,
+                noise: noise,
+                ..AdjustApplyParams::default()
+            },
             &mut expected,
         );
         let params = FilterParams::Adjust {
@@ -312,6 +315,14 @@ impl Env {
             blur,
             sharpness,
             noise,
+            exposure: 0.0,
+            shadows: 0.0,
+            highlights: 0.0,
+            temperature: 0.0,
+            tint: 0.0,
+            vibrance: 0.0,
+            hue: 0.0,
+            clarity: 0.0,
         };
         self.assert_registry("adjust", FilterKind::Adjust, params, &src, &expected);
     }

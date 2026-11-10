@@ -78,8 +78,9 @@ pub fn is_fusible_pointwise(filter: &FilterInstance) -> bool {
             blur,
             sharpness,
             noise,
+            clarity,
             ..
-        } => *blur == 0.0 && *sharpness == 0.0 && *noise == 0.0,
+        } => *blur == 0.0 && *sharpness == 0.0 && *noise == 0.0 && *clarity == 0.0,
         FilterParams::Curves { .. }
         | FilterParams::Levels { .. }
         | FilterParams::Exposure { .. }
@@ -112,6 +113,13 @@ enum FusibleOp {
         contrast_m: f32,
         brightness: f32,
         sat_m: f32,
+        exposure_gain: f32,
+        shadows: f32,
+        highlights: f32,
+        temperature: f32,
+        tint: f32,
+        vibrance: f32,
+        hue: f32,
     },
     Curves(CurvesFilter),
     Levels(LevelsFilter),
@@ -143,14 +151,30 @@ fn build_op(filter: &FilterInstance) -> Result<FusibleOp, EngineError> {
             blur,
             sharpness,
             noise,
+            clarity,
+            exposure,
+            shadows,
+            highlights,
+            temperature,
+            tint,
+            vibrance,
+            hue,
         } => {
             debug_assert_eq!(*blur, 0.0);
             debug_assert_eq!(*sharpness, 0.0);
             debug_assert_eq!(*noise, 0.0);
+            debug_assert_eq!(*clarity, 0.0);
             Ok(FusibleOp::Adjust {
                 contrast_m: 1.0 + *contrast,
                 brightness: *brightness,
                 sat_m: adjust_sat_m(*saturation),
+                exposure_gain: 2f32.powf(exposure.clamp(-5.0, 5.0)),
+                shadows: shadows.clamp(-1.0, 1.0),
+                highlights: highlights.clamp(-1.0, 1.0),
+                temperature: temperature.clamp(-1.0, 1.0),
+                tint: tint.clamp(-1.0, 1.0),
+                vibrance: vibrance.clamp(-1.0, 1.0),
+                hue: hue.clamp(-180.0, 180.0),
             })
         }
         FilterParams::Curves { curve, channel } => {
@@ -263,7 +287,42 @@ fn apply_op_rgba(op: &FusibleOp, r: f32, g: f32, b: f32, a: f32) -> (f32, f32, f
             contrast_m,
             brightness,
             sat_m,
-        } => apply_adjust_point_rgba(r, g, b, a, *contrast_m, *brightness, *sat_m),
+            exposure_gain,
+            shadows,
+            highlights,
+            temperature,
+            tint,
+            vibrance,
+            hue,
+        } => {
+            let (r, g, b, a) = if (*exposure_gain - 1.0).abs() > 1e-8 {
+                apply_exposure_point_rgba(r, g, b, a, *exposure_gain)
+            } else {
+                (r, g, b, a)
+            };
+            let (r, g, b, a) =
+                apply_adjust_point_rgba(r, g, b, a, *contrast_m, *brightness, *sat_m);
+            let (r, g, b, a) = if *shadows != 0.0 || *highlights != 0.0 {
+                apply_highlights_shadows_point_rgba(r, g, b, a, *shadows, *highlights)
+            } else {
+                (r, g, b, a)
+            };
+            let (r, g, b, a) = if *temperature != 0.0 || *tint != 0.0 {
+                apply_temperature_tint_point_rgba(r, g, b, a, *temperature, *tint)
+            } else {
+                (r, g, b, a)
+            };
+            let (r, g, b, a) = if *vibrance != 0.0 {
+                apply_vibrance_point_rgba(r, g, b, a, *vibrance)
+            } else {
+                (r, g, b, a)
+            };
+            if *hue != 0.0 {
+                apply_hue_point_rgba(r, g, b, a, *hue)
+            } else {
+                (r, g, b, a)
+            }
+        }
         FusibleOp::Curves(c) => apply_curves_rgba(c, r, g, b, a),
         FusibleOp::Levels(l) => apply_levels_rgba(l, r, g, b, a),
         FusibleOp::Exposure { gain } => apply_exposure_point_rgba(r, g, b, a, *gain),
@@ -334,6 +393,14 @@ mod tests {
                 blur: 0.0,
                 sharpness: 0.0,
                 noise: 0.0,
+                exposure: 0.0,
+                shadows: 0.0,
+                highlights: 0.0,
+                temperature: 0.0,
+                tint: 0.0,
+                vibrance: 0.0,
+                hue: 0.0,
+                clarity: 0.0,
             },
         )
     }
@@ -431,12 +498,12 @@ mod tests {
                             x: 0,
                             y: 0,
                         },
-                        *contrast,
-                        *brightness,
-                        *saturation,
-                        0.0,
-                        0.0,
-                        0.0,
+                        crate::filters::adjust::AdjustApplyParams {
+                            contrast: *contrast,
+                            brightness: *brightness,
+                            saturation: *saturation,
+                            ..crate::filters::adjust::AdjustApplyParams::default()
+                        },
                         &mut next,
                     );
                 }
