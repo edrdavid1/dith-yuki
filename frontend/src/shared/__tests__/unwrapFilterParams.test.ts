@@ -42,4 +42,21 @@ describe('unwrapFilterParams', () => {
     expect(flat.contrast).toBe(1.5);
     expect(flat.edge_overlay).toBe(true);
   });
+
+  it('flattens P5 Post filter tags (Exposure / Hue / Clarity)', () => {
+    expect(unwrapFilterParams({ Exposure: { stops: 1.25 } }).stops).toBe(1.25);
+    expect(unwrapFilterParams({ Hue: { degrees: -40 } }).degrees).toBe(-40);
+    expect(unwrapFilterParams({ Clarity: { amount: 0.4 } }).amount).toBe(0.4);
+    expect(
+      unwrapFilterParams({
+        HighlightsShadows: { shadows: 0.2, highlights: -0.1 },
+      })
+    ).toEqual({ shadows: 0.2, highlights: -0.1 });
+    expect(
+      unwrapFilterParams({
+        TemperatureTint: { temperature: 0.3, tint: -0.2 },
+      })
+    ).toEqual({ temperature: 0.3, tint: -0.2 });
+    expect(unwrapFilterParams({ Vibrance: { amount: 0.5 } }).amount).toBe(0.5);
+  });
 });
