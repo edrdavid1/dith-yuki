@@ -42,7 +42,8 @@ pub fn snapshot() -> PostBarrierCounters {
         neutral_apply_skipped: NEUTRAL_APPLY_SKIPPED.load(Ordering::Relaxed),
         ed_runs_started: ED_RUNS_STARTED.load(Ordering::Relaxed),
         post_tiles_cancelled: POST_TILES_CANCELLED.load(Ordering::Relaxed),
-        post_tiles_discarded_after_compute: POST_TILES_DISCARDED_AFTER_COMPUTE.load(Ordering::Relaxed),
+        post_tiles_discarded_after_compute: POST_TILES_DISCARDED_AFTER_COMPUTE
+            .load(Ordering::Relaxed),
     }
 }
 

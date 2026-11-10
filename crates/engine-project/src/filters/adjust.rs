@@ -279,8 +279,10 @@ mod tests {
         for y in 0..TILE_FULL_SIZE {
             for x in 0..TILE_FULL_SIZE {
                 let v = f32::from_bits(
-                    0x3f000000_u32 | ((x as u32).wrapping_mul(2654435761) ^ (y as u32).wrapping_mul(2246822519))
-                        & 0x007fffff,
+                    0x3f000000_u32
+                        | ((x as u32).wrapping_mul(2654435761)
+                            ^ (y as u32).wrapping_mul(2246822519))
+                            & 0x007fffff,
                 );
                 let a = if (x + y) % 5 == 0 {
                     0.0
@@ -296,7 +298,10 @@ mod tests {
             }
         }
         let out = apply_adjust(&tile, c, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
-        assert_eq!(out.data, tile.data, "all-zero Adjust must be bitwise identity (skip-safe)");
+        assert_eq!(
+            out.data, tile.data,
+            "all-zero Adjust must be bitwise identity (skip-safe)"
+        );
     }
 
     #[test]

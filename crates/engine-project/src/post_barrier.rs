@@ -102,9 +102,8 @@ pub fn cost_class_for_params(params: &FilterParams, algorithm_id: Option<&str>) 
                         | crate::filter::DitherModeV2::BlockedFs
                         | crate::filter::DitherModeV2::BlueNoise
                 )
+                || (p.wrap_padding && p.mode.diffusion_kernel().is_some())
             {
-                CostClass::Expensive
-            } else if p.wrap_padding && p.mode.diffusion_kernel().is_some() {
                 CostClass::Expensive
             } else {
                 CostClass::Cheap
@@ -251,10 +250,10 @@ pub fn classify_change(old: &[FilterInstance], new: &[FilterInstance]) -> Change
     // Adding/removing only enabled-neutral filters must not force ED (prefix
     // already ignores them). Barrier *index* may shift when neutrals are
     // inserted above the expensive filter — still Post (no ED).
-    if material_fingerprints(old) == material_fingerprints(new) {
-        if fingerprints(old) != fingerprints(new) || old.len() != new.len() {
-            return ChangeClass::Post;
-        }
+    if material_fingerprints(old) == material_fingerprints(new)
+        && (fingerprints(old) != fingerprints(new) || old.len() != new.len())
+    {
+        return ChangeClass::Post;
     }
 
     if old.len() != new.len() {

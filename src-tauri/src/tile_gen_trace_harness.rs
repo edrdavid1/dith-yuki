@@ -451,6 +451,9 @@ fn harness_worker_loop(state: Arc<AppState>, stop: Arc<AtomicBool>) {
                 CacheStage::Raw => state.tiles.tile_cache.get_entry(task.key).ok_or_else(|| {
                     engine_project::error::EngineError::invalid_state("raw missing")
                 }),
+                CacheStage::Dithered => Err(engine_project::error::EngineError::invalid_state(
+                    "Dithered is not a scheduled stage",
+                )),
                 CacheStage::Processed => tile_pipeline::compute_processed_tile(task.key, &state),
                 CacheStage::Composite => {
                     match tile_pipeline::compute_composite_tile(task.key, &state) {
@@ -2957,6 +2960,8 @@ fn apply_palette_color_pulse(state: &AppState, palette_id: u32, pulse: usize) {
         InvalidationEvent::LayerFilterChanged {
             doc: doc_id,
             layer: 1,
+            changed_index: None,
+            preserve_dithered: false,
         },
     );
     state.tiles.error_residuals.evict_document(doc_id);
@@ -3679,6 +3684,8 @@ fn apply_dither_param_pulse(state: &AppState, edit: impl FnOnce(&mut DitherParam
         InvalidationEvent::LayerFilterChanged {
             doc: doc_id,
             layer: 1,
+            changed_index: None,
+            preserve_dithered: false,
         },
     );
     state.tiles.error_residuals.evict_document(doc_id);

@@ -216,12 +216,14 @@ pub fn apply_blocked_fs_gpu_opts(
 
     let tiles_x = width.div_ceil(CORE);
     let tiles_y = height.div_ceil(CORE);
+    let total_strips = tiles_y.div_ceil(strip_cores).max(1);
     let mut out_u32 = input_u32.clone();
     let mut strips = 0u32;
     let upload_ms;
     let mut dispatch_ms = 0.0;
     let mut readback_ms = 0.0;
     let mut ts_diag = DispatchTimestampDiag::begin(device, "blocked_fs", width, height);
+    crate::apply_progress::report(0, total_strips);
 
     if use_full {
         // Single full-image binding; strip only for cancel checkpoints.
@@ -289,6 +291,7 @@ pub fn apply_blocked_fs_gpu_opts(
                 dispatch_strip(device, queue, &pipe.pipeline, &bind_group, tiles_x, rows);
             }
             strips += 1;
+            crate::apply_progress::report(strips, total_strips);
             ty += rows;
         }
         // Wait for GPU work before attributing time solely to readback.
@@ -384,6 +387,7 @@ pub fn apply_blocked_fs_gpu_opts(
             }
             dispatch_ms += t_d0.elapsed().as_secs_f64() * 1000.0;
             strips += 1;
+            crate::apply_progress::report(strips, total_strips);
             let t_r0 = Instant::now();
             let strip_out = readback_u32(device, queue, &output_buf, bind_bytes)?;
             readback_ms += t_r0.elapsed().as_secs_f64() * 1000.0;

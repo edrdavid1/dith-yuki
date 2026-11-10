@@ -408,6 +408,7 @@ fn to_luminance(r: f32, g: f32, b: f32) -> f32 {
 ///
 /// When `match_by_brightness` is set, neighbors are chosen by Oklab `L` only
 /// (via [`BrightnessSortedPalette`]); Bayer/mix logic is unchanged.
+#[derive(Clone)]
 pub(crate) struct OrderedPalettePicker<'a> {
     palette: &'a Palette,
     labs: Vec<Oklab>,
@@ -509,6 +510,7 @@ impl<'a> OrderedPalettePicker<'a> {
 /// Bayer/ordered: `clamp(srgb + (T - 0.5) * intensity * 64)` then nearest
 /// (`bayerDither` in simple-dith-old-version.ts). `threshold_scale` is intensity
 /// (1.0 = old 100%). Palettes are document linear colors encoded to sRGB u8.
+#[derive(Clone)]
 pub(crate) struct SimpleRgbPicker<'a> {
     palette: &'a Palette,
     srgb: Vec<[f32; 3]>,

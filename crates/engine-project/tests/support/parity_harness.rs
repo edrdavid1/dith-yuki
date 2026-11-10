@@ -18,7 +18,7 @@ use engine_project::filters::curves::{CurveChannel, CurvesFilter};
 use engine_project::filters::dither_diffusion::apply_error_diffusion_with_cache_into;
 use engine_project::filters::dither_ordered::apply_ordered_with_cache_into;
 use engine_project::filters::dither_residuals::ErrorResidualsStore;
-use engine_project::filters::glitch::{GlitchFilter, GlitchType};
+use engine_project::filters::glitch::{GlitchFilter, GlitchParams};
 use engine_project::filters::glow::apply_glow_into;
 use engine_project::types::{DocumentId, LayerId, LayerKind};
 use engine_project::{Document, FilterContext, Layer};
@@ -88,15 +88,7 @@ pub fn params_json(params: &FilterParams) -> serde_json::Value {
             "curve": curve,
             "channel": channel,
         }),
-        FilterParams::Glitch {
-            glitch_type,
-            intensity,
-            seed,
-        } => serde_json::json!({
-            "glitch_type": glitch_type,
-            "intensity": intensity,
-            "seed": seed,
-        }),
+        FilterParams::Glitch(p) => serde_json::to_value(p).unwrap(),
         other => serde_json::to_value(other).unwrap(),
     }
 }
@@ -338,18 +330,25 @@ impl Env {
         self.assert_registry("curves", FilterKind::Curves, params, &src, &expected);
     }
 
-    pub fn assert_glitch(&self, glitch_type: GlitchType, intensity: f32, seed: u64) {
+    pub fn assert_glitch(&self, params: GlitchParams) {
         let src = gradient_tile();
-        let filter = GlitchFilter::new(glitch_type, intensity, seed).expect("glitch");
+        let filter = GlitchFilter::new(params.clone()).expect("glitch");
         let mut expected = PixelTile::new();
         filter
-            .apply_to_tile_into(&src, self.coord, &mut expected)
+            .apply_to_tile_into(
+                &src,
+                self.coord,
+                self.doc.width,
+                self.doc.height,
+                &mut expected,
+            )
             .expect("glitch apply");
-        let params = FilterParams::Glitch {
-            glitch_type,
-            intensity,
-            seed,
-        };
-        self.assert_registry("glitch", FilterKind::Glitch, params, &src, &expected);
+        self.assert_registry(
+            "glitch",
+            FilterKind::Glitch,
+            FilterParams::Glitch(params),
+            &src,
+            &expected,
+        );
     }
 }

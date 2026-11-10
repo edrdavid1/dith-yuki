@@ -61,6 +61,7 @@ pub fn install_evict_hook_if_needed() {
             engine_tiles::CacheStage::Raw => "raw",
             engine_tiles::CacheStage::Processed => "processed",
             engine_tiles::CacheStage::Composite => "composite",
+            engine_tiles::CacheStage::Dithered => "dithered",
         };
         tile_gen_trace::emit(
             "cache_evict",

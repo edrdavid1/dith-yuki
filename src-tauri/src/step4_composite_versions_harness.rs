@@ -289,6 +289,9 @@ fn worker_loop(state: Arc<AppState>, stop: Arc<AtomicBool>) {
                 CacheStage::Raw => state.tiles.tile_cache.get_entry(task.key).ok_or_else(|| {
                     engine_project::error::EngineError::invalid_state("raw missing")
                 }),
+                CacheStage::Dithered => Err(engine_project::error::EngineError::invalid_state(
+                    "Dithered is not a scheduled stage",
+                )),
                 CacheStage::Processed => {
                     if task.key.coord.level > 0
                         && crate::tile_pipeline::layer_has_error_diffusion(
@@ -450,7 +453,12 @@ fn apply(state: &AppState, mode: DitherModeV2, ps: u8, lv: u16) -> bool {
     sync_epoch(state);
     engine_tiles::invalidation::invalidate(
         &state.tiles.tile_cache,
-        engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { doc: 1, layer: 1 },
+        engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
+            doc: 1,
+            layer: 1,
+            changed_index: None,
+            preserve_dithered: false,
+        },
     );
     state.tiles.error_residuals.evict_layer(1, LayerId::new(1));
     state.tiles.block_representatives.clear_dithered();
@@ -852,6 +860,8 @@ fn step4_rapid_updates_hash_match() {
                 engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
                     doc: 1,
                     layer: 1,
+                    changed_index: None,
+                    preserve_dithered: false,
                 },
             );
             state.tiles.error_residuals.evict_layer(1, LayerId::new(1));
@@ -921,7 +931,12 @@ fn step4_stale_midwave_no_publish() {
         sync_epoch(&state);
         engine_tiles::invalidation::invalidate(
             &state.tiles.tile_cache,
-            engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged { doc: 1, layer: 1 },
+            engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
+                doc: 1,
+                layer: 1,
+                changed_index: None,
+                preserve_dithered: false,
+            },
         );
         state.tiles.error_residuals.evict_layer(1, LayerId::new(1));
         state.tiles.block_representatives.clear_dithered();

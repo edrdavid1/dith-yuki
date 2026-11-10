@@ -53,9 +53,7 @@ fn try_processed_from_dithered_cache(
     if !engine_project::post_cache_enabled() {
         return None;
     }
-    let Some((through, post)) = engine_project::split_enabled_at_barrier(&layer.filters) else {
-        return None;
-    };
+    let (through, post) = engine_project::split_enabled_at_barrier(&layer.filters)?;
     if through.is_empty() || post.is_empty() {
         return None;
     }
@@ -111,8 +109,7 @@ fn try_processed_from_dithered_cache(
                     || engine_project::filters::layer_needs_ed_column_strip(layer)
                     || engine_project::filters::layer_needs_ed_wavefront(layer);
                 if !strip_topo {
-                    let scratch_residuals =
-                        engine_project::filters::ErrorResidualsStore::new();
+                    let scratch_residuals = engine_project::filters::ErrorResidualsStore::new();
                     let scratch_blocks = engine_tiles::block_cache::BlockRepresentativeCache::new();
                     let mut all = through.clone();
                     all.extend(post.iter().copied());
@@ -146,10 +143,7 @@ fn try_processed_from_dithered_cache(
                                     a,
                                     b
                                 );
-                                debug_assert!(
-                                    false,
-                                    "Post-from-Dithered diverged from full stack"
-                                );
+                                debug_assert!(false, "Post-from-Dithered diverged from full stack");
                             } else {
                                 log::debug!(
                                     target: "post_barrier",
@@ -209,12 +203,7 @@ fn try_processed_from_dithered_cache(
     })
 }
 
-fn insert_dithered_if_enabled(
-    state: &AppState,
-    key: TileKey,
-    tile: &PixelTile,
-    content_gen: u64,
-) {
+fn insert_dithered_if_enabled(state: &AppState, key: TileKey, tile: &PixelTile, content_gen: u64) {
     if !engine_project::post_cache_enabled() {
         return;
     }
@@ -1099,9 +1088,8 @@ pub fn compute_processed_tile(
                 .then(|| engine_project::barrier_index(&layer.filters))
                 .flatten()
                 .and_then(|b| layer.filters.get(b).map(|f| f.id.as_u128()));
-            let mut dithered_buf: Option<Vec<PixelTile>> = capture_dithered.map(|_| {
-                (0..strip.len()).map(|_| PixelTile::new()).collect()
-            });
+            let mut dithered_buf: Option<Vec<PixelTile>> =
+                capture_dithered.map(|_| (0..strip.len()).map(|_| PixelTile::new()).collect());
             // Task 2: cancel between Post tiles when post_gen moves mid-strip.
             let post_cancel = || {
                 snapshot_for_key(state, key)
@@ -1109,28 +1097,23 @@ pub fn compute_processed_tile(
                     .unwrap_or(true)
             };
             if let Some(bid) = capture_dithered {
-                let enabled: Vec<&engine_project::FilterInstance> = layer
-                    .filters
-                    .iter()
-                    .rev()
-                    .filter(|f| f.enabled)
-                    .collect();
-                let apply_result =
-                    engine_project::filters::apply::apply_enabled_filters_row_strip(
-                        &strip,
-                        &enabled,
-                        layer.id,
-                        &state.tiles.palette_cache,
-                        &state.tiles.palette_lut_cache,
-                        &state.tiles.threshold_cache,
-                        &snapshot,
-                        &state.tiles.error_residuals,
-                        &state.tiles.block_representatives,
-                        state.gpu.as_deref(),
-                        &mut outputs,
-                        dithered_buf.as_mut().map(|v| (v.as_mut_slice(), bid)),
-                        Some(&post_cancel),
-                    );
+                let enabled: Vec<&engine_project::FilterInstance> =
+                    layer.filters.iter().rev().filter(|f| f.enabled).collect();
+                let apply_result = engine_project::filters::apply::apply_enabled_filters_row_strip(
+                    &strip,
+                    &enabled,
+                    layer.id,
+                    &state.tiles.palette_cache,
+                    &state.tiles.palette_lut_cache,
+                    &state.tiles.threshold_cache,
+                    &snapshot,
+                    &state.tiles.error_residuals,
+                    &state.tiles.block_representatives,
+                    state.gpu.as_deref(),
+                    &mut outputs,
+                    dithered_buf.as_mut().map(|v| (v.as_mut_slice(), bid)),
+                    Some(&post_cancel),
+                );
                 if let Err(ref e) = apply_result {
                     if engine_project::is_post_cancelled(e) {
                         finish_strip_after_post_cancel(
@@ -1341,8 +1324,7 @@ pub fn compute_processed_tile(
         }
 
         if engine_project::post_cache_enabled() {
-            if let Some((through, post)) =
-                engine_project::split_enabled_at_barrier(&layer.filters)
+            if let Some((through, post)) = engine_project::split_enabled_at_barrier(&layer.filters)
             {
                 if !through.is_empty() && !post.is_empty() {
                     let compute_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
@@ -2223,9 +2205,10 @@ pub(crate) fn layer_has_error_diffusion(nodes: &[LayerNode], layer_id: u32) -> b
     for node in nodes {
         match node {
             LayerNode::Leaf(layer) if layer.id.0 == layer_id => {
-                return layer.filters.iter().any(|f| {
-                    f.enabled && (f.requires_full_row || f.requires_full_column)
-                });
+                return layer
+                    .filters
+                    .iter()
+                    .any(|f| f.enabled && (f.requires_full_row || f.requires_full_column));
             }
             LayerNode::Group(group) if layer_has_error_diffusion(&group.children, layer_id) => {
                 return true;
@@ -2310,8 +2293,8 @@ pub fn composite_ed_park_deps(
         (x1, y1)
     };
     collect_ed_layers(nodes, &mut |layer_id| {
-        let topo = layer_ed_topology(nodes, layer_id)
-            .unwrap_or(engine_tiles::EdTopology::Wavefront2D);
+        let topo =
+            layer_ed_topology(nodes, layer_id).unwrap_or(engine_tiles::EdTopology::Wavefront2D);
         let y_range = match topo {
             // 1D H: only the strip(s) covering this composite coord matter.
             engine_tiles::EdTopology::HorizontalOnly => {
@@ -2950,7 +2933,7 @@ mod tests {
                 layer: ED_LAYER,
                 changed_index: None,
                 preserve_dithered: false,
-},
+            },
         );
     }
 
@@ -4098,23 +4081,20 @@ mod tests {
 
         let state = make_ed_state();
         // Panel top = Post Curves above Floyd barrier.
-        state
-            .must_active()
-            .document_handle
-            .mutate(|doc| {
-                if let Some(LayerNode::Leaf(layer)) = doc.root.first_mut() {
-                    layer.filters.insert(
-                        0,
-                        FilterInstance::new(
-                            FilterKind::Curves,
-                            FilterParams::Curves {
-                                curve: vec![(0.0, 0.0), (1.0, 1.0)],
-                                channel: CurveChannel::All,
-                            },
-                        ),
-                    );
-                }
-            });
+        state.must_active().document_handle.mutate(|doc| {
+            if let Some(LayerNode::Leaf(layer)) = doc.root.first_mut() {
+                layer.filters.insert(
+                    0,
+                    FilterInstance::new(
+                        FilterKind::Curves,
+                        FilterParams::Curves {
+                            curve: vec![(0.0, 0.0), (1.0, 1.0)],
+                            channel: CurveChannel::All,
+                        },
+                    ),
+                );
+            }
+        });
 
         let key = TileKey {
             doc: 1,
@@ -4163,12 +4143,11 @@ mod tests {
         // so Post-from-Dithered is not rejected as stale.
         let content = snap.generations.current_content_gen();
         state.tiles.tile_cache.set_content_epoch(content);
-        let _ = state.tiles.tile_cache.restamp_clean_stage(
-            1,
-            ED_LAYER,
-            CacheStage::Dithered,
-            content,
-        );
+        let _ =
+            state
+                .tiles
+                .tile_cache
+                .restamp_clean_stage(1, ED_LAYER, CacheStage::Dithered, content);
         state.tiles.tile_cache.mark_dirty(key);
         let before_post = engine_project::post_barrier_counters();
         compute_processed_tile(key, &state).expect("Post-from-Dithered");
@@ -4255,12 +4234,11 @@ mod tests {
         let snap = state.must_active().document_handle.snapshot();
         let content = snap.generations.current_content_gen();
         state.tiles.tile_cache.set_content_epoch(content);
-        let _ = state.tiles.tile_cache.restamp_clean_stage(
-            1,
-            ED_LAYER,
-            CacheStage::Dithered,
-            content,
-        );
+        let _ =
+            state
+                .tiles
+                .tile_cache
+                .restamp_clean_stage(1, ED_LAYER, CacheStage::Dithered, content);
         state.tiles.tile_cache.mark_dirty(key);
         let before_post = engine_project::post_barrier_counters();
         compute_processed_tile(key, &state).expect("Post Adjust");

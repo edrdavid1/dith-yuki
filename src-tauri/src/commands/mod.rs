@@ -531,6 +531,7 @@ pub(crate) fn layer_needs_dither_cache_reset(
     false
 }
 
+#[allow(dead_code)] // Thin wrapper retained for call sites that ignore Post-cache args.
 pub(crate) fn request_preview_refresh(state: &AppState, layer_id: u32, clear_residuals: bool) {
     request_preview_refresh_at(state, layer_id, clear_residuals, None, false);
 }

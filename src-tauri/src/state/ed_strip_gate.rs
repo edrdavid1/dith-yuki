@@ -1,4 +1,7 @@
-//! B1 ED strip ownership gate: ≤1 compute per `(doc, layer, level, ty)`.
+//! B1 ED strip ownership gate: ≤1 compute per strip key.
+//!
+//! Horizontal strips: `(doc, layer, level, row=ty)`.
+//! Vertical column strips: `(doc, layer, level, column=tx)` with [`EdStripKey::column`].
 //!
 //! Waiters never block a worker permanently: they `try_claim`, briefly
 //! `wait_timeout` for the owner to finish, then either observe `tile_fresh`
@@ -9,13 +12,16 @@ use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-/// Key for one ED horizontal strip.
+/// Key for one ED strip (row or column).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct EdStripKey {
     pub doc: u32,
     pub layer: u32,
     pub level: u8,
+    /// `ty` for horizontal strips; `tx` when [`Self::column`] is true.
     pub ty: u32,
+    /// When true, this gate owns a full-height column at `ty` (as tx).
+    pub column: bool,
 }
 
 struct GateState {

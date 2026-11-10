@@ -284,7 +284,7 @@ mod tests {
             layer: 0,
             changed_index: None,
             preserve_dithered: false,
-};
+        };
         invalidate(&cache, event);
 
         // Processed tiles should be dirty

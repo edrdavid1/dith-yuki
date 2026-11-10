@@ -418,45 +418,29 @@ pub fn compute_full_document_rgba_ex(
     // Bottom-up: last vec entry first (same as tiled apply).
     // P2: when Post sits above an expensive barrier, stop at the barrier so the
     // FD cache can survive Post param edits (`needs_post` → apply Post later).
-    let (enabled, needs_post): (Vec<&FilterInstance>, bool) =
-        if crate::post_cache_enabled() {
-            if let Some((through, post)) = crate::post_barrier::split_enabled_at_barrier(&layer.filters)
-            {
-                if !post.is_empty() && !through.is_empty() {
-                    (through, true)
-                } else {
-                    (
-                        layer
-                            .filters
-                            .iter()
-                            .rev()
-                            .filter(|f| f.enabled)
-                            .collect(),
-                        false,
-                    )
-                }
+    let (enabled, needs_post): (Vec<&FilterInstance>, bool) = if crate::post_cache_enabled() {
+        if let Some((through, post)) = crate::post_barrier::split_enabled_at_barrier(&layer.filters)
+        {
+            if !post.is_empty() && !through.is_empty() {
+                (through, true)
             } else {
                 (
-                    layer
-                        .filters
-                        .iter()
-                        .rev()
-                        .filter(|f| f.enabled)
-                        .collect(),
+                    layer.filters.iter().rev().filter(|f| f.enabled).collect(),
                     false,
                 )
             }
         } else {
             (
-                layer
-                    .filters
-                    .iter()
-                    .rev()
-                    .filter(|f| f.enabled)
-                    .collect(),
+                layer.filters.iter().rev().filter(|f| f.enabled).collect(),
                 false,
             )
-        };
+        }
+    } else {
+        (
+            layer.filters.iter().rev().filter(|f| f.enabled).collect(),
+            false,
+        )
+    };
     let reg = builtin_registry();
 
     let mut palette_ms = 0.0;
@@ -815,8 +799,7 @@ fn apply_ed_strip_filter_on_buffer(
                     (coord, extract_tile_from_rgba(rgba, width, height, tx, ty))
                 })
                 .collect();
-            let inputs: Vec<(TileCoord, &PixelTile)> =
-                owned.iter().map(|(c, t)| (*c, t)).collect();
+            let inputs: Vec<(TileCoord, &PixelTile)> = owned.iter().map(|(c, t)| (*c, t)).collect();
             let mut outputs: Vec<PixelTile> = (0..owned.len()).map(|_| PixelTile::new()).collect();
             apply_filter_stack_tile_column_strip(
                 &inputs,
@@ -949,7 +932,11 @@ fn ensure_full_document_ex_inner(
     // Prefix-keyed FD ignores document_gen so Post-only edits (which bump gen
     // but keep the barrier prefix) hit the through-barrier buffer. Barrier/Pre
     // still call `invalidate_layer`.
-    let key_gen = if fd_prefix_keyed(layer) { 0 } else { document_gen };
+    let key_gen = if fd_prefix_keyed(layer) {
+        0
+    } else {
+        document_gen
+    };
     let key = FullDocumentKey {
         doc: doc.id.0,
         layer: layer.id.0,
@@ -1562,7 +1549,10 @@ mod tests {
             p.glitch_intensity = 12;
         }
         let h_i = hash_layer_filter_params(&layer);
-        assert_ne!(h0, h_i, "glitch_intensity must participate in the cache key");
+        assert_ne!(
+            h0, h_i,
+            "glitch_intensity must participate in the cache key"
+        );
         if let FilterParams::DitherV2(p) = &mut layer.filters[0].params {
             p.glitch_seed = 99;
         }
@@ -1665,10 +1655,8 @@ mod tests {
         let fd = FullDocumentCache::new();
 
         let mut t1 = EnsureTrace::default();
-        let first = ensure_full_document_ex_timed(
-            &fd, &cache, &layer, &doc, 1, true, &mut t1,
-        )
-        .expect("first ensure");
+        let first = ensure_full_document_ex_timed(&fd, &cache, &layer, &doc, 1, true, &mut t1)
+            .expect("first ensure");
         assert!(first.needs_post, "Post above Ascii → through-barrier only");
         assert!(t1.rendered, "cold path must compute");
 
@@ -1677,10 +1665,8 @@ mod tests {
             *curve = vec![(0.0, 0.0), (0.5, 0.6), (1.0, 1.0)];
         }
         let mut t2 = EnsureTrace::default();
-        let second = ensure_full_document_ex_timed(
-            &fd, &cache, &layer, &doc, 2, true, &mut t2,
-        )
-        .expect("post-edit ensure");
+        let second = ensure_full_document_ex_timed(&fd, &cache, &layer, &doc, 2, true, &mut t2)
+            .expect("post-edit ensure");
         assert!(second.needs_post);
         assert!(t2.hit, "prefix FD key must hit after Post-only edit");
         assert!(!t2.rendered, "must not re-run Ascii/FD compute");
@@ -1689,8 +1675,7 @@ mod tests {
             "through-barrier buffer must be reused"
         );
 
-        let processed =
-            apply_post_to_fd_result(&second, &layer, &doc, &cache).expect("apply Post");
+        let processed = apply_post_to_fd_result(&second, &layer, &doc, &cache).expect("apply Post");
         assert!(!processed.needs_post);
         assert_eq!(processed.rgba_f32.len(), second.rgba_f32.len());
 

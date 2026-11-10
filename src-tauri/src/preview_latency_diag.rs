@@ -205,6 +205,8 @@ fn simulate_invalidate_only(state: &AppState) {
         InvalidationEvent::LayerFilterChanged {
             doc: 1,
             layer: LAYER,
+            changed_index: None,
+            preserve_dithered: false,
         },
     );
 }
@@ -274,7 +276,7 @@ fn drain_until_visible(
                                     composite_retry.fetch_add(1, Ordering::Relaxed);
                                 }
                             },
-                            CacheStage::Raw => {}
+                            CacheStage::Raw | CacheStage::Dithered => {}
                         },
                         None => {
                             if count_fresh(&state, 0, CacheStage::Composite, &visible)

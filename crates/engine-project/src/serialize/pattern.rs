@@ -166,7 +166,15 @@ fn min_version_for_dither_mode(mode: &DitherModeV2) -> Option<&'static str> {
         | DitherModeV2::HalftoneScreenAngled
         | DitherModeV2::Wave
         | DitherModeV2::BlockedFs
-        | DitherModeV2::BlueNoise => Some("0.1.0"),
+        | DitherModeV2::BlueNoise
+        | DitherModeV2::ModulatedDiffuseY
+        | DitherModeV2::ModulatedDiffuseX
+        | DitherModeV2::GlitchDither
+        | DitherModeV2::ContrastAwareY
+        | DitherModeV2::ContrastAwareX
+        | DitherModeV2::SmoothDiffuse
+        | DitherModeV2::WaveModulationY
+        | DitherModeV2::WaveModulationX => Some("0.1.0"),
     }
 }
 

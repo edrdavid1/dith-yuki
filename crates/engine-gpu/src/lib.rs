@@ -8,6 +8,7 @@
 //! Warm resident Composite slots may download without opt-in (auto-dispatch A1).
 
 mod adapter_info;
+pub mod apply_progress;
 mod bayer;
 pub mod blocked_fs;
 pub mod blue_noise_gpu;
@@ -35,6 +36,9 @@ mod warmup;
 
 pub use adapter_info::{
     allow_software_adapter, gpu_family_shader_hash, wgpu_version_label, AdapterFingerprint,
+};
+pub use apply_progress::{
+    report as report_gpu_apply_progress, set_listener as set_gpu_apply_progress_listener,
 };
 pub use bayer::{apply_bayer_gpu, BayerGpuParams, BayerMatrixSize};
 pub use blocked_fs::{

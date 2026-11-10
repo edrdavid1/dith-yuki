@@ -1032,6 +1032,8 @@ impl DocumentService {
                 engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
                     doc,
                     layer: target_layer_id,
+                    changed_index: None,
+                    preserve_dithered: false,
                 },
             );
             schedule_dirty_viewport_tiles(&state);
@@ -1312,6 +1314,52 @@ impl DocumentService {
         })
         .await
         .map_err(|e| AppError::Generic(format!("ASCII export error: {e}")))?
+    }
+
+    /// Copy the processed preview composite to the system clipboard as an image.
+    ///
+    /// Same pixels as Export → PNG (`build_processed_composite_rgba8`). The OS
+    /// pasteboard stores a bitmap (PNG on macOS/Linux via arboard / NSImage).
+    pub async fn copy_preview_to_clipboard(
+        &self,
+        doc_id: u32,
+        app: AppHandle,
+    ) -> Result<(), AppError> {
+        use engine_project::serialize::{build_processed_composite_rgba8, ProjectError};
+        use tauri::image::Image;
+        use tauri_plugin_clipboard_manager::ClipboardExt;
+
+        let session = self.state.session(doc_id).map_err(|_| {
+            AppError::Generic(format!(
+                "Document was closed (id {doc_id}); cannot copy preview"
+            ))
+        })?;
+        let _io_guard = session.begin_io();
+        let snapshot = session.document_handle.snapshot();
+        let img_width = snapshot.width;
+        let img_height = snapshot.height;
+        let doc_snapshot = (*snapshot).clone();
+        drop(snapshot);
+
+        let state_clone = Arc::clone(&self.state);
+        let rgba_buffer = tauri::async_runtime::spawn_blocking(move || {
+            build_processed_composite_rgba8(&state_clone.tiles.tile_cache, &doc_snapshot).map_err(
+                |e| match e {
+                    ProjectError::IncompleteRaw { doc_id, layer_id } => AppError::Generic(format!(
+                        "Cannot copy preview: image tiles missing from memory for document {doc_id} layer {layer_id} — reopen the file"
+                    )),
+                    other => AppError::Generic(format!("Preview composite error: {other}")),
+                },
+            )
+        })
+        .await
+        .map_err(|e| AppError::Generic(format!("Preview clipboard error: {e}")))??;
+
+        let image = Image::new_owned(rgba_buffer, img_width, img_height);
+        app.clipboard()
+            .write_image(&image)
+            .map_err(|e| AppError::Generic(format!("Clipboard write failed: {e}")))?;
+        Ok(())
     }
 
     /// Render ASCII to a clipboard string (`txt` or `ansi`).

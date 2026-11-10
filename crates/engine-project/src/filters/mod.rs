@@ -60,11 +60,11 @@ pub use ascii_job::{
 pub use curves::{CurveChannel, CurvesFilter};
 pub use dither::{DitherAlgorithm, DitherFilter};
 pub use full_document::{
-    compute_ascii_job, ensure_full_document, ensure_full_document_ex,
+    apply_post_to_fd_result, compute_ascii_job, ensure_full_document, ensure_full_document_ex,
     ensure_full_document_ex_timed, filter_uses_ed_wrap_padding, last_fd_render_stages,
-    apply_post_to_fd_result, layer_has_full_document_filter, layer_has_full_document_filter_ex,
-    publish_fd_result_tiles, publish_processed_tiles, publish_stage_tiles, slice_processed_tile,
-    EnsureTrace, FdRenderStages, FullDocumentCache, FullDocumentResult,
+    layer_has_full_document_filter, layer_has_full_document_filter_ex, publish_fd_result_tiles,
+    publish_processed_tiles, publish_stage_tiles, slice_processed_tile, EnsureTrace,
+    FdRenderStages, FullDocumentCache, FullDocumentResult,
 };
 pub use glitch::{GlitchFilter, GlitchParams, GlitchSubOp};
 pub use levels::LevelsFilter;

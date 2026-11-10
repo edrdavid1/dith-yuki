@@ -204,6 +204,18 @@ pub async fn ascii_clipboard_text(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn copy_preview_to_clipboard(
+    doc_id: u32,
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    DocumentService::new(state.inner().clone())
+        .copy_preview_to_clipboard(doc_id, app)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Preview Image|ASCII switch. `true` = show ASCII raster; `false` = Image (skip Ascii filters).
 ///
 /// Does **not** drop full-document cache entries: Image and ASCII results coexist so

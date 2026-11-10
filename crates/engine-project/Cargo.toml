@@ -59,5 +59,17 @@ name = "fs_ed_stripe_bench"
 harness = false
 
 [[bench]]
+name = "ed1d_stripe_bench"
+harness = false
+
+[[bench]]
+name = "ed1d_xy_bench"
+harness = false
+
+[[bench]]
+name = "glitch_dither_bench"
+harness = false
+
+[[bench]]
 name = "wrap_padding_false_bench"
 harness = false

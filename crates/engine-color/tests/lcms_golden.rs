@@ -6,11 +6,9 @@
 //! chain shape. Relative+BPC compares moxcms (app Lab BPC) against lcms2 with
 //! native BLACKPOINT_COMPENSATION; budget starts looser because BPC is app-owned.
 
-use engine_color::preview_encode::delta_e2000_srgb8;
-use engine_color::soft_proof::{
-    ProofProfile, SoftProofIntent, SoftProofTransform,
-};
 use engine_color::load_fogra51_fixture;
+use engine_color::preview_encode::delta_e2000_srgb8;
+use engine_color::soft_proof::{ProofProfile, SoftProofIntent, SoftProofTransform};
 use lcms2::{Flags, Intent, PixelFormat, Profile, Transform};
 
 /// Plan start threshold for Relative FOGRA51 (no BPC) — hard engine-agreement gate.
