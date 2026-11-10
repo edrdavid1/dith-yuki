@@ -2829,8 +2829,13 @@ mod tests {
     use engine_project::types::{DocumentId, LayerId, LayerKind};
     use engine_project::{Document, FilterInstance, FilterKind, FilterParams};
     use engine_tiles::{CacheStage, Scheduler, TileCache, TileCoord, TileKey};
-    use std::sync::Mutex;
+    use std::sync::{Mutex, MutexGuard};
     use std::time::Duration;
+
+    /// Serializes ED strip / Post-barrier tests that share process-global counters
+    /// (`ed_runs_started`, `DITHER_POST_CACHE`).
+    static ED_TEST_GATE: Mutex<()> = Mutex::new(());
+    type EdTestGuard = MutexGuard<'static, ()>;
 
     fn make_app_state_with_layer(layer_id: u32, add_filters: bool) -> AppState {
         let mut doc = Document::new(DocumentId::new(1), 512, 512);
@@ -2856,8 +2861,10 @@ mod tests {
     const ED_LAYER: u32 = 1;
 
     /// 4x4 L0 grid with an enabled Floyd-Steinberg layer and every Raw tile filled.
-    fn make_ed_state() -> AppState {
+    /// Holds [`ED_TEST_GATE`] for the caller so parallel tests cannot race counters.
+    fn make_ed_state() -> (AppState, EdTestGuard) {
         use engine_project::filter::{DitherModeV2, DitherParamsV2};
+        let guard = ED_TEST_GATE.lock().unwrap_or_else(|e| e.into_inner());
 
         let mut doc = Document::new(DocumentId::new(1), ED_DOC, ED_DOC);
         let mut layer = Layer::new(LayerId::new(ED_LAYER), LayerKind::Raster, ED_DOC, ED_DOC);
@@ -2911,7 +2918,7 @@ mod tests {
                 );
             }
         }
-        state
+        (state, guard)
     }
 
     fn ed_key(x: u32, y: u32) -> TileKey {
@@ -3060,11 +3067,11 @@ mod tests {
         let target = ed_key(3, 3);
 
         let reference = {
-            let state = make_ed_state();
+            let (state, _guard) = make_ed_state();
             ed_reference_tile(&state, target)
         };
 
-        let state = make_ed_state();
+        let (state, _guard) = make_ed_state();
         reset_ed_processed(&state);
         engine_tiles::reset_ed_prefix_tiles_enqueued();
         let n = schedule_ed_prefix_closure(&state, 1, ED_LAYER, 0, 3, 3, Priority::Immediate, 0, 0);
@@ -3090,7 +3097,8 @@ mod tests {
     fn ed_strip_owner_one_calc_per_ty() {
         let _measure = engine_project::filters::fs_ed_prof::MeasureGuard::enter();
 
-        let state = Arc::new(make_ed_state());
+        let (state, _guard) = make_ed_state();
+        let state = Arc::new(state);
         reset_ed_processed(&state);
         schedule_ed_prefix_closure(&state, 1, ED_LAYER, 0, 3, 3, Priority::Immediate, 0, 0);
         drain_ed_scheduler_n_workers(&state, 4, 3, 3, Duration::from_secs(30));
@@ -3125,39 +3133,45 @@ mod tests {
     #[test]
     fn ed_strip_gate_workers_1_2_8_single_and_multi_row() {
         for n_workers in [1usize, 2, 8] {
-            // Multi-row 4×4
-            let state = Arc::new(make_ed_state());
-            reset_ed_processed(&state);
-            schedule_ed_prefix_closure(&state, 1, ED_LAYER, 0, 3, 3, Priority::Immediate, 0, 0);
-            drain_ed_scheduler_n_workers(&state, n_workers, 3, 3, Duration::from_secs(30));
-            for y in 0..4u32 {
-                for x in 0..4u32 {
-                    assert!(
-                        engine_tiles::tile_fresh(&state.tiles.tile_cache, ed_key(x, y)),
-                        "workers={n_workers} missing ({x},{y})"
-                    );
+            // Multi-row 4×4 — drop gate before the next make_ed_state (non-reentrant).
+            {
+                let (state, _guard) = make_ed_state();
+                let state = Arc::new(state);
+                reset_ed_processed(&state);
+                schedule_ed_prefix_closure(&state, 1, ED_LAYER, 0, 3, 3, Priority::Immediate, 0, 0);
+                drain_ed_scheduler_n_workers(&state, n_workers, 3, 3, Duration::from_secs(30));
+                for y in 0..4u32 {
+                    for x in 0..4u32 {
+                        assert!(
+                            engine_tiles::tile_fresh(&state.tiles.tile_cache, ed_key(x, y)),
+                            "workers={n_workers} missing ({x},{y})"
+                        );
+                    }
                 }
+                assert!(!state.tiles.ed_strip_gates.any_owned());
             }
-            assert!(!state.tiles.ed_strip_gates.any_owned());
 
             // Single-row: only y=0 (1×4)
-            let state = Arc::new(make_ed_state());
-            reset_ed_processed(&state);
-            schedule_ed_prefix_closure(&state, 1, ED_LAYER, 0, 3, 0, Priority::Immediate, 0, 0);
-            drain_ed_scheduler_n_workers(&state, n_workers, 3, 0, Duration::from_secs(15));
-            for x in 0..4u32 {
-                assert!(
-                    engine_tiles::tile_fresh(&state.tiles.tile_cache, ed_key(x, 0)),
-                    "single-row workers={n_workers} missing ({x},0)"
-                );
+            {
+                let (state, _guard) = make_ed_state();
+                let state = Arc::new(state);
+                reset_ed_processed(&state);
+                schedule_ed_prefix_closure(&state, 1, ED_LAYER, 0, 3, 0, Priority::Immediate, 0, 0);
+                drain_ed_scheduler_n_workers(&state, n_workers, 3, 0, Duration::from_secs(15));
+                for x in 0..4u32 {
+                    assert!(
+                        engine_tiles::tile_fresh(&state.tiles.tile_cache, ed_key(x, 0)),
+                        "single-row workers={n_workers} missing ({x},0)"
+                    );
+                }
+                assert!(!state.tiles.ed_strip_gates.any_owned());
             }
-            assert!(!state.tiles.ed_strip_gates.any_owned());
         }
     }
 
     #[test]
     fn ed_strip_discard_reschedule_enqueues_owner_row() {
-        let state = make_ed_state();
+        let (state, _guard) = make_ed_state();
         reset_ed_processed(&state);
         let coords: Vec<_> = (0..4u32)
             .map(|x| engine_tiles::TileCoord { level: 0, x, y: 1 })
@@ -3206,7 +3220,8 @@ mod tests {
         use crate::state::EdStripKey;
         use std::sync::Barrier;
 
-        let state = Arc::new(make_ed_state());
+        let (state, _guard) = make_ed_state();
+        let state = Arc::new(state);
         reset_ed_processed(&state);
         // Finish row 0 so ty=1's min_x is ed_ready.
         compute_processed_tile(ed_key(0, 0), &state).expect("row0");
@@ -3270,7 +3285,7 @@ mod tests {
 
     #[test]
     fn ed_priority_inheritance_bumps_prefix_to_immediate() {
-        let state = make_ed_state();
+        let (state, _guard) = make_ed_state();
         reset_ed_processed(&state);
         // Seed prefix as Prefetch first.
         schedule_ed_prefix_closure(&state, 1, ED_LAYER, 0, 3, 3, Priority::Prefetch, 0, 0);
@@ -4067,19 +4082,12 @@ mod tests {
         );
     }
 
-    /// Serializes Task 2 tests that toggle the global `DITHER_POST_CACHE` flag.
-    static POST_CACHE_TEST_GATE: Mutex<()> = Mutex::new(());
-
     /// Task 2: Post scrub bumps post_gen only; ED strip starts once; later
     /// Post-from-Dithered does not start another ED run.
     #[test]
     fn task2_post_edit_skips_ed_after_dithered_ready() {
-        let _gate = POST_CACHE_TEST_GATE
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let (state, _guard) = make_ed_state();
         engine_project::set_post_cache_enabled_for_test(true);
-
-        let state = make_ed_state();
         // Panel top = Post Curves above Floyd barrier.
         state.must_active().document_handle.mutate(|doc| {
             if let Some(LayerNode::Leaf(layer)) = doc.root.first_mut() {
@@ -4163,12 +4171,8 @@ mod tests {
     /// A3: Adjust below dither starts ED on param edit; Adjust above does not.
     #[test]
     fn a3_adjust_pre_triggers_ed_post_skips() {
-        let _gate = POST_CACHE_TEST_GATE
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let (state, _guard) = make_ed_state();
         engine_project::set_post_cache_enabled_for_test(true);
-
-        let state = make_ed_state();
         // Panel: [Adjust Post, Floyd] — Adjust above barrier.
         state.must_active().document_handle.mutate(|doc| {
             if let Some(LayerNode::Leaf(layer)) = doc.root.first_mut() {
@@ -4280,12 +4284,8 @@ mod tests {
     /// inserts Processed for the cancelled strip tiles.
     #[test]
     fn task2_finish_strip_after_post_cancel_keeps_dithered_skips_processed() {
-        let _gate = POST_CACHE_TEST_GATE
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let (state, _guard) = make_ed_state();
         engine_project::set_post_cache_enabled_for_test(true);
-
-        let state = make_ed_state();
         let key = TileKey {
             doc: 1,
             layer: ED_LAYER,
