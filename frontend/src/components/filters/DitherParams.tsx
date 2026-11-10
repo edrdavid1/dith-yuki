@@ -124,7 +124,7 @@ function DitherParams({ mode: modeProp, kernel: kernelProp, matrixSize: matrixSi
               value={thresholdPath}
               readOnly
               placeholder="Select a threshold map..."
-              style={{ flex: 1, fontSize: '10px', padding: '2px 4px' }}
+              style={{ flex: 1, fontSize: '12px', padding: '2px 4px' }}
             />
             <button className={cn("filter-add-btn")} onClick={handlePathBrowse} style={{ whiteSpace: 'nowrap' }}>
               Browse

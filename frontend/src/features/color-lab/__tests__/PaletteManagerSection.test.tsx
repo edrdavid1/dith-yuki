@@ -26,13 +26,14 @@ const saved: PaletteDto[] = [
 ];
 
 const extraProps = {
+  onSelectToneSteps: vi.fn(),
   onDeleteSaved: vi.fn(),
   onExportSaved: vi.fn(),
   onImport: vi.fn(),
 };
 
 describe('PaletteManagerSection', () => {
-  it('lists New, built-in, and saved palettes in one menu', async () => {
+  it('lists Raw tone, New, built-in, and saved palettes in one menu', async () => {
     render(
       <PaletteManagerSection
         builtins={builtins}
@@ -44,12 +45,34 @@ describe('PaletteManagerSection', () => {
         {...extraProps}
       />
     );
-    expect(screen.getByText('New palette')).toBeInTheDocument();
+    expect(screen.getByText('Raw tone')).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText('Open dropdown'));
+    expect(screen.getByText('Quantize')).toBeInTheDocument();
     expect(screen.getByText('Built-in')).toBeInTheDocument();
     expect(screen.getByText('Saved')).toBeInTheDocument();
     expect(screen.getByText('Game Boy')).toBeInTheDocument();
     expect(screen.getByText('Extracted')).toBeInTheDocument();
+  });
+
+  it('selects Raw tone to return to unbound quantize', () => {
+    const onTone = vi.fn();
+    render(
+      <PaletteManagerSection
+        builtins={builtins}
+        saved={saved}
+        selectedPaletteId={7}
+        onSelectToneSteps={onTone}
+        onSelectNew={vi.fn()}
+        onSelectSaved={vi.fn()}
+        onSelectBuiltin={vi.fn()}
+        onDeleteSaved={vi.fn()}
+        onExportSaved={vi.fn()}
+        onImport={vi.fn()}
+      />
+    );
+    fireEvent.click(screen.getByLabelText('Open dropdown'));
+    fireEvent.click(screen.getByRole('option', { name: /Raw tone/ }));
+    expect(onTone).toHaveBeenCalled();
   });
 
   it('selects a builtin template', () => {
@@ -120,6 +143,7 @@ describe('PaletteManagerSection', () => {
       />
     );
 
+    // Unbound = Raw tone (index 0) → next is first builtin
     fireEvent.click(screen.getByLabelText('Next palette'));
     expect(onBuiltin).toHaveBeenCalledWith('gameboy');
 
@@ -128,20 +152,23 @@ describe('PaletteManagerSection', () => {
   });
 
   it('steps from a saved palette to the next browsable entry', () => {
-    const onBuiltin = vi.fn();
+    const onTone = vi.fn();
     render(
       <PaletteManagerSection
         builtins={builtins}
         saved={saved}
         selectedPaletteId={7}
+        onSelectToneSteps={onTone}
         onSelectNew={vi.fn()}
         onSelectSaved={vi.fn()}
-        onSelectBuiltin={onBuiltin}
-        {...extraProps}
+        onSelectBuiltin={vi.fn()}
+        onDeleteSaved={vi.fn()}
+        onExportSaved={vi.fn()}
+        onImport={vi.fn()}
       />
     );
-    // saved Extracted is last → next wraps to first builtin
+    // saved Extracted is last → next wraps to Raw tone
     fireEvent.click(screen.getByLabelText('Next palette'));
-    expect(onBuiltin).toHaveBeenCalledWith('gameboy');
+    expect(onTone).toHaveBeenCalled();
   });
 });

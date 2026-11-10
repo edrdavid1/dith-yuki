@@ -56,19 +56,44 @@ vi.mock('../../shared/ipc/registry', () => ({
         },
       ];
     }
+    if (category === 'glitch') {
+      return [
+        {
+          id: 'glitch',
+          display_name: 'Glitch',
+          category: 'glitch',
+          deprecated: false,
+          execution_scope: 'tiled',
+          temporal_stability: 'unstable',
+        },
+        {
+          id: 'modulated_diffuse_y',
+          display_name: 'Modulated Diffuse Y',
+          category: 'glitch',
+          deprecated: false,
+          execution_scope: 'tiled',
+          temporal_stability: 'unstable',
+        },
+      ];
+    }
     return [];
   }),
   getAlgorithmSchema: vi.fn(async (id: string) => {
-    if (id === 'bayer_4x4' || id === 'floyd_steinberg' || id === 'palette_quantize') {
+    if (
+      id === 'bayer_4x4' ||
+      id === 'floyd_steinberg' ||
+      id === 'palette_quantize' ||
+      id === 'modulated_diffuse_y'
+    ) {
       return [
         {
           type: 'slider',
-          key: 'levels',
-          label: 'Levels',
-          min: 2,
-          max: 256,
-          default: 4,
-          step: null,
+          key: id === 'modulated_diffuse_y' ? 'line_scale' : 'levels',
+          label: id === 'modulated_diffuse_y' ? 'Line Scale' : 'Levels',
+          min: id === 'modulated_diffuse_y' ? 1 : 2,
+          max: id === 'modulated_diffuse_y' ? 20 : 256,
+          default: id === 'modulated_diffuse_y' ? 5 : 4,
+          step: id === 'modulated_diffuse_y' ? 1 : null,
         },
       ];
     }
@@ -122,9 +147,16 @@ function makeGlitchLayer(): LayerWithFilters {
       kind: 'Glitch',
       params: {
         type: 'Glitch',
-        glitch_type: 'RGBShift',
-        intensity: 0.5,
+        enabled: true,
         seed: 0,
+        block_size: 8,
+        group_size: 4,
+        scanline_segment: 64,
+        block_shift: { enabled: false, amount: 0 },
+        block_scramble: { enabled: false, amount: 0 },
+        channel_swap: { enabled: true, amount: 50 },
+        scanline: { enabled: false, amount: 0 },
+        interlace: { enabled: false, amount: 0 },
       },
       enabled: true,
       opacity: 1,
@@ -248,6 +280,23 @@ describe('EffectSettingsPanel', () => {
       expect(onSelectEffect).toHaveBeenCalledWith('Ascii');
     });
 
+    it('collapses all glitch algorithms into one Glitching chooser row', async () => {
+      const onSelectEffect = vi.fn();
+      render(
+        <EffectSettingsPanel
+          selectedLayer={null}
+          onUpdateParams={onUpdateParams}
+          onSelectEffect={onSelectEffect}
+        />
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Glitching')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Modulated Diffuse Y')).not.toBeInTheDocument();
+      fireEvent.pointerDown(screen.getByText('Glitching'), { button: 0 });
+      expect(onSelectEffect).toHaveBeenCalledWith('Glitching');
+    });
+
     it('calls onSelectEffect for the leftover RGB channels row', async () => {
       const onSelectEffect = vi.fn();
       render(<EffectSettingsPanel selectedLayer={null} onUpdateParams={onUpdateParams} onSelectEffect={onSelectEffect} />);
@@ -282,13 +331,13 @@ describe('EffectSettingsPanel', () => {
       expect(sliderValueInput('Threshold Scale').value).toBe('1.0');
     });
 
-    it('renders levels slider with range 2–256', () => {
+    it('renders Tone Steps slider with range 2–256 when Tone Steps is selected', () => {
       renderPanel(<EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />);
-      expect(screen.getByText('Levels')).toBeInTheDocument();
-      expect(sliderValueInput('Levels').value).toBe('4');
+      expect(screen.getByText('Tone Steps')).toBeInTheDocument();
+      expect(sliderValueInput('Tone Steps').value).toBe('4');
     });
 
-    it('notes that levels is ignored when a Color Lab palette is bound', () => {
+    it('hides Tone Steps when a Color Lab palette is bound', () => {
       const store = createTestStore({
         palettes: { version: 1, lastCreatedId: 12, error: null },
       });
@@ -297,8 +346,9 @@ describe('EffectSettingsPanel', () => {
           <EffectSettingsPanel selectedLayer={makeDitherLayer()} onUpdateParams={onUpdateParams} />
         </StoreProvider>,
       );
-      expect(screen.getByText(/Levels is ignored/)).toBeInTheDocument();
-      expect(sliderValueInput('Levels').value).toBe('4');
+      expect(screen.getByText(/palette #12/)).toBeInTheDocument();
+      expect(screen.queryByText('Tone Steps')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Tone Steps value')).not.toBeInTheDocument();
     });
 
     it('calls onUpdateParams with clamped pixel size', () => {
@@ -509,32 +559,124 @@ describe('EffectSettingsPanel', () => {
   });
 
   describe('Glitch settings', () => {
-    it('renders glitch type dropdown', () => {
-      render(<EffectSettingsPanel selectedLayer={makeGlitchLayer()} onUpdateParams={onUpdateParams} />);
-      expect(screen.getByText('Glitch Type')).toBeInTheDocument();
-      expect(screen.getByText('RGB Shift')).toBeInTheDocument();
+    it('renders block size and channel swap controls', async () => {
+      renderPanel(<EffectSettingsPanel selectedLayer={makeGlitchLayer()} onUpdateParams={onUpdateParams} />);
+      await waitFor(() => {
+        expect(screen.getByText('Glitch type')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Block Size')).toBeInTheDocument();
+      expect(screen.getByText('Channel Swap')).toBeInTheDocument();
     });
 
-    it('renders intensity slider with range 0–1', () => {
-      render(<EffectSettingsPanel selectedLayer={makeGlitchLayer()} onUpdateParams={onUpdateParams} />);
-      expect(screen.getByText('Intensity')).toBeInTheDocument();
-      expect(screen.getByDisplayValue('0.50')).toBeInTheDocument();
-    });
-
-    it('renders seed number input', () => {
-      render(<EffectSettingsPanel selectedLayer={makeGlitchLayer()} onUpdateParams={onUpdateParams} />);
-      expect(screen.getByText('Seed')).toBeInTheDocument();
-      const seedInput = screen.getByLabelText('Seed') as HTMLInputElement;
-      expect(seedInput).toBeTruthy();
+    it('renders seed input with a Random button', async () => {
+      renderPanel(<EffectSettingsPanel selectedLayer={makeGlitchLayer()} onUpdateParams={onUpdateParams} />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('Seed value')).toBeInTheDocument();
+      });
+      const seedInput = screen.getByLabelText('Seed value') as HTMLInputElement;
       expect(seedInput.value).toBe('0');
+      expect(screen.getByText('Seed')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Randomize seed' })).toBeInTheDocument();
     });
 
-    it('clamps seed to 0–99999 range', () => {
-      render(<EffectSettingsPanel selectedLayer={makeGlitchLayer()} onUpdateParams={onUpdateParams} />);
-      const seedInput = screen.getByLabelText('Seed') as HTMLInputElement;
+    it('clamps seed to 0–99999 range', async () => {
+      renderPanel(<EffectSettingsPanel selectedLayer={makeGlitchLayer()} onUpdateParams={onUpdateParams} />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('Seed value')).toBeInTheDocument();
+      });
+      const seedInput = screen.getByLabelText('Seed value') as HTMLInputElement;
       fireEvent.change(seedInput, { target: { value: '150000' } });
       fireEvent.blur(seedInput);
       expect(onUpdateParams).toHaveBeenCalledWith(2, 'filter-2', expect.objectContaining({ seed: 99999 }));
+    });
+
+    it('randomizes seed when Random is clicked', async () => {
+      const rand = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+      renderPanel(<EffectSettingsPanel selectedLayer={makeGlitchLayer()} onUpdateParams={onUpdateParams} />);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Randomize seed' })).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Randomize seed' }));
+      expect(onUpdateParams).toHaveBeenCalledWith(
+        2,
+        'filter-2',
+        expect.objectContaining({ seed: 50000 }),
+      );
+      rand.mockRestore();
+    });
+
+    it('shows schema controls for modulated_diffuse_y under Glitching', async () => {
+      const layer = makeGlitchLayer();
+      layer.filters[0] = {
+        ...layer.filters[0],
+        kind: 'DitherV2',
+        algorithm_id: 'modulated_diffuse_y',
+        params: {
+          type: 'DitherV2',
+          mode: 'modulated_diffuse_y',
+          levels: 4,
+          line_scale: 5,
+          threshold_scale: 1,
+          pixel_size: 1,
+          color_mode: 'rgb',
+          palette_id: null,
+        } as unknown as FilterInfo['params'],
+      };
+      renderPanel(<EffectSettingsPanel selectedLayer={layer} onUpdateParams={onUpdateParams} />);
+      await waitFor(() => {
+        expect(screen.getByText('Glitch type')).toBeInTheDocument();
+        expect(screen.getByText('Line Scale')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Block Size')).not.toBeInTheDocument();
+      expect(screen.getByText('Tone Steps')).toBeInTheDocument();
+    });
+
+    it('hides Tone Steps for glitch-dither styles when a palette is bound', async () => {
+      const layer = makeGlitchLayer();
+      layer.filters[0] = {
+        ...layer.filters[0],
+        kind: 'DitherV2',
+        algorithm_id: 'modulated_diffuse_y',
+        params: {
+          type: 'DitherV2',
+          mode: 'modulated_diffuse_y',
+          levels: 4,
+          line_scale: 5,
+          threshold_scale: 1,
+          pixel_size: 1,
+          color_mode: 'rgb',
+          palette_id: 12,
+        } as unknown as FilterInfo['params'],
+      };
+      const store = createTestStore({
+        palettes: { version: 1, lastCreatedId: 12, error: null },
+      });
+      render(
+        <StoreProvider store={store}>
+          <EffectSettingsPanel selectedLayer={layer} onUpdateParams={onUpdateParams} />
+        </StoreProvider>,
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Line Scale')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Tone Steps')).not.toBeInTheDocument();
+    });
+
+    it('calls onChangeGlitchType when switching type', async () => {
+      const onChangeGlitchType = vi.fn();
+      renderPanel(
+        <EffectSettingsPanel
+          selectedLayer={makeGlitchLayer()}
+          onUpdateParams={onUpdateParams}
+          onChangeGlitchType={onChangeGlitchType}
+        />
+      );
+      await waitFor(() => {
+        expect(screen.getByLabelText('Open Glitch type')).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByLabelText('Open Glitch type'));
+      fireEvent.click(screen.getByRole('option', { name: 'Modulated Diffuse Y' }));
+      expect(onChangeGlitchType).toHaveBeenCalledWith('modulated_diffuse_y');
     });
   });
 

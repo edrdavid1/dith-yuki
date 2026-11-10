@@ -30,6 +30,8 @@ import {
 import styles from '../features/preview/PreviewWindow.module.css';
 import previewStyles from '../features/preview/Preview.module.css';
 import { bind } from '../shared/ui/cn';
+import { labelWithShortcut } from '../features/shortcuts/bindings';
+import { useShortcutBindings } from '../features/shortcuts/ShortcutsContext';
 const cn = bind({ ...styles, ...previewStyles });
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -76,6 +78,7 @@ export default function PreviewWindow({
   hideTitleBar,
 }: PreviewWindowProps) {
   const { previewBackground } = useShell();
+  const shortcuts = useShortcutBindings();
   const filters = useAppSelector(selectFiltersList);
   const hasAscii = filters.some((f) => f.kind === 'Ascii' && f.enabled);
   const [asciiPreview, setAsciiPreviewState] = useState(true);
@@ -348,16 +351,26 @@ export default function PreviewWindow({
         )}
       </div>
 
-      {/* Footer: resolution | zoom | fit */}
+      {/* Footer: left meta | centered zoom | right progress + soft proof + icons */}
       <div className={cn('preview-footer')}>
-        <span className={cn('pv-footer-resolution')} aria-label="Canvas size">
-          <span className={cn('pv-footer-size')}>
-            {docWidth} × {docHeight}
+        <div className={cn('pv-footer-left')}>
+          <span className={cn('pv-footer-cell', 'pv-footer-size')} aria-label="Canvas size">
+            {docWidth} x {docHeight}
           </span>
-          {showGpuDitherIndicator && (
-            <span
-              className={cn('pv-gpu-dither')}
-              title={
+          {showGpuDitherIndicator &&
+            (() => {
+              const st = gpuSelftest?.state;
+              let pathLabel = 'CPU';
+              let msLabel: string | null = null;
+              if (st === 'unknown') pathLabel = 'GPU…';
+              else if (st === 'fail' || st === 'lost') pathLabel = 'CPU';
+              else if (gpuDitherStatus) {
+                pathLabel = gpuDitherStatus.path === 'CPU' ? 'CPU' : 'GPU';
+                msLabel = `${gpuDitherStatus.elapsed_ms} ms`;
+              } else if (st === 'pass') pathLabel = 'GPU';
+              else if (st === 'unavailable') pathLabel = 'CPU';
+
+              const gpuTitle =
                 gpuSelftest?.adapter
                   ? `adapter=${gpuSelftest.adapter}${gpuSelftest.reason ? ` · ${gpuSelftest.reason}` : ''}`
                   : gpuDitherStatus?.path === 'CPU'
@@ -368,32 +381,33 @@ export default function PreviewWindow({
                       }`
                     : gpuDitherStatus?.width && gpuDitherStatus?.height
                       ? `${gpuDitherStatus.width}×${gpuDitherStatus.height} · ps=${gpuDitherStatus.pixel_size ?? 1} · ${gpuDitherStatus.strips} strip(s)`
-                      : undefined
-              }
-              aria-label="Dither path timing"
-            >
-              {(() => {
-                const st = gpuSelftest?.state;
-                if (st === 'unknown') return 'проверка GPU…';
-                if (st === 'fail' || st === 'lost') {
-                  return 'CPU (проверка GPU не пройдена)';
-                }
-                if (gpuDitherStatus) {
-                  if (gpuDitherStatus.path === 'CPU') {
-                    return `CPU · ${gpuDitherStatus.elapsed_ms} ms`;
-                  }
-                  return `GPU (${gpuDitherStatus.backend}) · ${gpuDitherStatus.elapsed_ms} ms`;
-                }
-                if (st === 'pass') {
-                  return gpuSelftest?.backend
-                    ? `GPU (${gpuSelftest.backend})`
-                    : 'GPU';
-                }
-                if (st === 'unavailable') return 'CPU';
-                return 'CPU';
-              })()}
-            </span>
-          )}
+                      : gpuDitherStatus?.backend
+                        ? `backend=${gpuDitherStatus.backend}`
+                        : gpuSelftest?.backend
+                          ? `backend=${gpuSelftest.backend}`
+                          : undefined;
+
+              return (
+                <>
+                  <span
+                    className={cn('pv-footer-cell', 'pv-gpu-dither')}
+                    title={gpuTitle}
+                    aria-label="Dither path"
+                  >
+                    {pathLabel}
+                  </span>
+                  {msLabel != null && (
+                    <span
+                      className={cn('pv-footer-cell', 'pv-gpu-ms')}
+                      title={gpuTitle}
+                      aria-label="Dither timing"
+                    >
+                      {msLabel}
+                    </span>
+                  )}
+                </>
+              );
+            })()}
           {hasAscii && (
             <span className={cn('pv-ascii-mode')} role="group" aria-label="Preview mode">
               <Tooltip label="Show image without ASCII">
@@ -430,14 +444,14 @@ export default function PreviewWindow({
               </button>
             </Tooltip>
           )}
-        </span>
+        </div>
         <div className={cn('pv-footer-zoom')}>
-          <Tooltip label="Zoom out">
+          <Tooltip label={labelWithShortcut('Zoom out', shortcuts.zoomOut)}>
             <button
               className={cn('pv-zoom-btn')}
               onClick={onZoomOut}
               disabled={isMinZoom}
-              aria-label="Zoom out"
+              aria-label={labelWithShortcut('Zoom out', shortcuts.zoomOut)}
             >
               −
             </button>
@@ -467,57 +481,66 @@ export default function PreviewWindow({
               }}
             />
           </label>
-          <Tooltip label="Zoom in">
+          <Tooltip label={labelWithShortcut('Zoom in', shortcuts.zoomIn)}>
             <button
               className={cn('pv-zoom-btn')}
               onClick={onZoomIn}
               disabled={isMaxZoom}
-              aria-label="Zoom in"
+              aria-label={labelWithShortcut('Zoom in', shortcuts.zoomIn)}
             >
               +
             </button>
           </Tooltip>
         </div>
-        <div className={cn('pv-footer-actions')}>
-          <EdProgressIndicator docId={docId} />
+        <div className={cn('pv-footer-right')}>
+          <div className={cn('pv-footer-progress')}>
+            <EdProgressIndicator docId={docId} busy={fullDocumentBusy} />
+          </div>
           <SoftProofControls docId={docId} layout="footer" />
-          <Tooltip label="Actual size — 1 document pixel = 1 screen pixel (100%)">
-            <button
-              type="button"
-              className={cn('pv-zoom-mode-btn', Math.abs(zoom - 1) < 1e-6 && 'pv-zoom-mode-btn-active')}
-              aria-label="Actual size"
-              aria-pressed={Math.abs(zoom - 1) < 1e-6}
-              onClick={() => onSetZoom(1)}
+          <div className={cn('pv-footer-icons')} role="group" aria-label="Zoom tools">
+            <Tooltip
+              label={labelWithShortcut(
+                'Actual size — 1 document pixel = 1 screen pixel (100%)',
+                shortcuts.zoomActual
+              )}
             >
-              <Icon name="zoom-1x" width={14} height={14} />
-            </button>
-          </Tooltip>
-          <Tooltip
-            label={
-              zoomMode === 'integer'
-                ? 'Integer zoom on — snap to 1×, 2×, 50%, 25% so pixels stay sharp'
-                : 'Integer zoom — snap to 1×, 2×, 50%, 25% so pixels stay sharp'
-            }
-          >
-            <button
-              type="button"
-              className={cn('pv-zoom-mode-btn', zoomMode === 'integer' && 'pv-zoom-mode-btn-active')}
-              aria-label="Integer zoom"
-              aria-pressed={zoomMode === 'integer'}
-              onClick={() => onZoomModeChange(zoomMode === 'integer' ? 'free' : 'integer')}
+              <button
+                type="button"
+                className={cn('pv-zoom-mode-btn', Math.abs(zoom - 1) < 1e-6 && 'pv-zoom-mode-btn-active')}
+                aria-label={labelWithShortcut('Actual size', shortcuts.zoomActual)}
+                aria-pressed={Math.abs(zoom - 1) < 1e-6}
+                onClick={() => onSetZoom(1)}
+              >
+                <Icon name="zoom-1x" width={12} height={12} />
+              </button>
+            </Tooltip>
+            <Tooltip
+              label={
+                zoomMode === 'integer'
+                  ? 'Integer zoom on — snap to 1×, 2×, 50%, 25% so pixels stay sharp'
+                  : 'Integer zoom — snap to 1×, 2×, 50%, 25% so pixels stay sharp'
+              }
             >
-              <Icon name="zoom-integer" width={14} height={14} />
-            </button>
-          </Tooltip>
-          <Tooltip label="Fit to view">
-            <button
-              className={cn('pv-fit-btn')}
-              onClick={onFit}
-              aria-label="Fit to view"
-            >
-              <Icon name="zoom-fit" width={14} height={14} />
-            </button>
-          </Tooltip>
+              <button
+                type="button"
+                className={cn('pv-zoom-mode-btn', zoomMode === 'integer' && 'pv-zoom-mode-btn-active')}
+                aria-label="Integer zoom"
+                aria-pressed={zoomMode === 'integer'}
+                onClick={() => onZoomModeChange(zoomMode === 'integer' ? 'free' : 'integer')}
+              >
+                <Icon name="zoom-integer" width={12} height={12} />
+              </button>
+            </Tooltip>
+            <Tooltip label={labelWithShortcut('Fit to view', shortcuts.zoomFit)}>
+              <button
+                className={cn('pv-fit-btn')}
+                onClick={onFit}
+                aria-label={labelWithShortcut('Fit to view', shortcuts.zoomFit)}
+              >
+                <Icon name="zoom-fit" width={12} height={12} />
+              </button>
+            </Tooltip>
+          </div>
         </div>
       </div>
     </div>

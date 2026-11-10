@@ -24,14 +24,26 @@ const saved: PaletteDto[] = [
 ];
 
 describe('paletteListOrder', () => {
-  it('builds New → builtins → saved', () => {
+  it('builds Raw tone → New → builtins → saved', () => {
     const list = buildPaletteList(builtins, saved);
-    expect(list.map((e) => e.key)).toEqual(['new', 'builtin:a', 'builtin:b', 'saved:10']);
+    expect(list.map((e) => e.key)).toEqual([
+      'tone-steps',
+      'new',
+      'builtin:a',
+      'builtin:b',
+      'saved:10',
+    ]);
+    expect(list[0]).toMatchObject({ kind: 'tone-steps', name: 'Raw tone' });
   });
 
-  it('browse list skips New', () => {
+  it('browse list keeps Raw tone and skips New', () => {
     const list = buildBrowsablePaletteList(builtins, saved);
-    expect(list.map((e) => e.key)).toEqual(['builtin:a', 'builtin:b', 'saved:10']);
+    expect(list.map((e) => e.key)).toEqual([
+      'tone-steps',
+      'builtin:a',
+      'builtin:b',
+      'saved:10',
+    ]);
   });
 
   it('wraps browse indices', () => {
@@ -46,7 +58,15 @@ describe('paletteListOrder', () => {
   });
 
   it('maps selection to the dropdown key', () => {
-    expect(currentPaletteKey(null)).toBe('new');
+    expect(currentPaletteKey(null)).toBe('tone-steps');
+    expect(currentPaletteKey(null, 'new')).toBe('new');
     expect(currentPaletteKey(10)).toBe('saved:10');
+    expect(currentPaletteKey(null, 'tone-steps', 10)).toBe('saved:10');
+  });
+
+  it('browse index lands on Raw tone when unbound', () => {
+    const list = buildBrowsablePaletteList(builtins, saved);
+    expect(browseIndexForSelection(list, null, saved, null)).toBe(0);
+    expect(list[0]?.kind).toBe('tone-steps');
   });
 });

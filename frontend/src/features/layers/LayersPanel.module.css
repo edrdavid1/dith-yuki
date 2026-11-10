@@ -48,7 +48,7 @@
 
 .lp-opacity-label {
   font-family: var(--font-family);
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-color);
   margin-left: 4px;
   white-space: nowrap;
@@ -78,7 +78,7 @@
   background: transparent;
   color: var(--text-color);
   font-family: var(--font-family);
-  font-size: 12px;
+  font-size: 14px;
   text-align: center;
   outline: none;
 }
@@ -186,7 +186,7 @@
   position: relative;
   box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
   font-family: var(--font-family);
-  font-size: 16px;
+  font-size: 18px;
   color: var(--text-color);
   white-space: nowrap;
   overflow: hidden;
@@ -202,7 +202,7 @@
   background: var(--color-white);
   color: var(--color-black);
   font-family: var(--font-family);
-  font-size: 16px;
+  font-size: 18px;
   padding: 0 0 0 10px;
 }
 
@@ -236,7 +236,7 @@
   align-items: center;
   justify-content: center;
   font-family: var(--font-family);
-  font-size: 16px;
+  font-size: 18px;
   color: var(--bg-window);
   cursor: pointer;
 }
@@ -245,12 +245,55 @@
   color: var(--color-hover-inverted);
 }
 
+/* In-list add — light gray text + plus icon under image source */
+.lp-list-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  min-height: 28px;
+  flex-shrink: 0;
+  margin: 0;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  box-sizing: border-box;
+  font-family: var(--font-family);
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--color-gray);
+  cursor: pointer;
+  text-align: center;
+}
+
+.lp-list-add-label {
+  font-weight: 800;
+}
+
+.lp-list-add-icon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+  -webkit-mask: url(/icons/plus.svg) center / contain no-repeat;
+  mask: url(/icons/plus.svg) center / contain no-repeat;
+}
+
+.lp-list-add:hover {
+  color: var(--color-hover-inverted);
+}
+
 .lp-footer {
   flex-shrink: 0;
   display: flex;
   align-items: stretch;
   justify-content: flex-end;
-  height: 20px;
+  height: 22px;
+  min-height: 22px;
   padding: 0;
   background: var(--color-gray);
   border-top: var(--border);

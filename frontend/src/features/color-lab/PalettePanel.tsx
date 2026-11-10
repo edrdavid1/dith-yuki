@@ -292,7 +292,7 @@ function PalettePanel({ layerId }: PalettePanelProps) {
             aria-label="New palette name"
           />
           {createError && (
-            <div style={{ color: '#c00', fontSize: '10px', marginTop: '2px' }}>
+            <div style={{ color: '#c00', fontSize: '12px', marginTop: '2px' }}>
               {createError}
             </div>
           )}
@@ -320,7 +320,7 @@ function PalettePanel({ layerId }: PalettePanelProps) {
               min={2}
               max={256}
               onChange={(e) => setGenCount(Math.max(2, Math.min(256, Number(e.target.value))))}
-              style={{ width: '60px', fontSize: '11px', padding: '2px 4px' }}
+              style={{ width: '60px', fontSize: '13px', padding: '2px 4px' }}
             />
           </div>
           <button className={cn("filter-add-btn")} onClick={handleGenerate} style={{ marginTop: '4px' }}>
@@ -331,7 +331,7 @@ function PalettePanel({ layerId }: PalettePanelProps) {
 
       {/* Error display */}
       {error && (
-        <div style={{ color: '#c00', fontSize: '10px', padding: '2px 8px' }}>{error}</div>
+        <div style={{ color: '#c00', fontSize: '12px', padding: '2px 8px' }}>{error}</div>
       )}
 
       {/* Palette list */}
@@ -362,7 +362,7 @@ function PalettePanel({ layerId }: PalettePanelProps) {
                     />
                   ) : (
                     <span
-                      style={{ fontSize: '11px', fontWeight: 'bold' }}
+                      style={{ fontSize: '13px', fontWeight: 800 }}
                       onDoubleClick={(e) => {
                         e.stopPropagation();
                         handleStartRename(palette);
@@ -384,7 +384,7 @@ function PalettePanel({ layerId }: PalettePanelProps) {
                     />
                   ))}
                   {palette.color_count > 8 && (
-                    <span style={{ fontSize: '9px', color: isSelected ? '#ccc' : '#666', alignSelf: 'center', marginLeft: '4px' }}>
+                    <span style={{ fontSize: '11px', color: isSelected ? '#ccc' : '#666', alignSelf: 'center', marginLeft: '4px' }}>
                       +{palette.color_count - 8}
                     </span>
                   )}
@@ -396,7 +396,7 @@ function PalettePanel({ layerId }: PalettePanelProps) {
       )}
 
       {palettes.length === 0 && !error && (
-        <div style={{ color: '#666', fontSize: '10px', padding: '4px 8px' }}>
+        <div style={{ color: '#666', fontSize: '12px', padding: '4px 8px' }}>
           No palettes. Create, import, or generate one.
         </div>
       )}

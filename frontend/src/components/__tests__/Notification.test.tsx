@@ -3,6 +3,15 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import Notification, { BusyNotification } from '../common/Notification';
 import DiscardRestoreToast from '../DiscardRestoreToast';
 import type { SoftDiscardInfo } from '../../shared/ipc/recovery';
+import WorkspaceHintBanner from '../../features/workspace/WorkspaceHintBanner';
+
+vi.mock('../../features/workspace/WorkspaceContext', () => ({
+  useWorkspace: () => ({
+    hintVisible: true,
+    dismissHint: vi.fn(),
+    switchFromHint: vi.fn(),
+  }),
+}));
 
 const softDiscard: SoftDiscardInfo = {
   recovery_id: 'rec-1',
@@ -74,5 +83,14 @@ describe('Notification (shared shell)', () => {
     );
     fireEvent.click(screen.getByText('Restore'));
     expect(onRestore).toHaveBeenCalledWith(softDiscard);
+  });
+
+  it('WorkspaceHintBanner uses the shared shell (Gamedev recommend)', () => {
+    render(<WorkspaceHintBanner />);
+    const toast = screen.getByTestId('workspace-hint-banner');
+    expect(toast).toHaveTextContent(/Enable Gamedev workspace/);
+    expect(toast.className).toMatch(/notification/);
+    expect(screen.getByText('Switch')).toBeInTheDocument();
+    expect(screen.getByLabelText('Dismiss')).toBeInTheDocument();
   });
 });

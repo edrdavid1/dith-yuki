@@ -12,6 +12,7 @@ import {
   currentPaletteKey,
   stepBrowseIndex,
   type PaletteListEntry,
+  type UnboundPicker,
 } from './paletteListOrder';
 
 const cn = bind({ ...dialogStyles, ...styles });
@@ -22,6 +23,9 @@ export interface PaletteManagerDialogProps {
   builtins: BuiltinPaletteDto[];
   saved: PaletteDto[];
   selectedPaletteId: number | null;
+  unboundPicker?: UnboundPicker;
+  boundPaletteId?: number | null;
+  onSelectToneSteps: () => void;
   onSelectNew: () => void;
   onSelectSaved: (id: number) => void;
   onSelectBuiltin: (id: string) => void;
@@ -59,6 +63,9 @@ export default function PaletteManagerDialog({
   builtins,
   saved,
   selectedPaletteId,
+  unboundPicker = 'tone-steps',
+  boundPaletteId = null,
+  onSelectToneSteps,
   onSelectNew,
   onSelectSaved,
   onSelectBuiltin,
@@ -67,7 +74,7 @@ export default function PaletteManagerDialog({
   onImport,
 }: PaletteManagerDialogProps) {
   const entries = useMemo(() => buildPaletteList(builtins, saved), [builtins, saved]);
-  const activeKey = currentPaletteKey(selectedPaletteId);
+  const activeKey = currentPaletteKey(selectedPaletteId, unboundPicker, boundPaletteId);
   const [focusKey, setFocusKey] = useState(activeKey);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -110,12 +117,13 @@ export default function PaletteManagerDialog({
 
   const applyEntry = useCallback(
     (entry: PaletteListEntry) => {
-      if (entry.kind === 'new') onSelectNew();
+      if (entry.kind === 'tone-steps') onSelectToneSteps();
+      else if (entry.kind === 'new') onSelectNew();
       else if (entry.kind === 'builtin') onSelectBuiltin(entry.id);
       else onSelectSaved(entry.id);
       onClose();
     },
-    [onClose, onSelectBuiltin, onSelectNew, onSelectSaved]
+    [onClose, onSelectBuiltin, onSelectNew, onSelectSaved, onSelectToneSteps]
   );
 
   const handleKeyDown = useCallback(
@@ -188,16 +196,22 @@ export default function PaletteManagerDialog({
                     onDoubleClick={() => applyEntry(entry)}
                   >
                     <Swatches
-                      colors={entry.kind === 'new' ? [] : entry.colors}
+                      colors={
+                        entry.kind === 'builtin' || entry.kind === 'saved'
+                          ? entry.colors
+                          : []
+                      }
                       swatchId={entry.key}
                     />
                     <span className={cn('pm-row-name')}>{entry.name}</span>
                     <span className={cn('pm-row-meta')}>
-                      {entry.kind === 'builtin'
-                        ? 'Built-in'
-                        : entry.kind === 'saved'
-                          ? 'Saved'
-                          : 'Draft'}
+                      {entry.kind === 'tone-steps'
+                        ? 'Quantize'
+                        : entry.kind === 'builtin'
+                          ? 'Built-in'
+                          : entry.kind === 'saved'
+                            ? 'Saved'
+                            : 'Draft'}
                     </span>
                   </button>
                 );
@@ -239,8 +253,8 @@ export default function PaletteManagerDialog({
             </button>
           </div>
           <p className={cn('pm-hint')}>
-            Arrow keys move the selection. Built-in palettes cannot be deleted. Double-click or
-            Select to apply.
+            Raw tone is what dithering and glitching use with no palette bound. Arrow keys move the
+            selection. Built-in palettes cannot be deleted. Double-click or Select to apply.
           </p>
         </div>
       </div>

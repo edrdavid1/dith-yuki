@@ -274,9 +274,16 @@ describe('useLayers', () => {
 
       expect(mockAddLayer).not.toHaveBeenCalled();
       expect(mockAddFilter).toHaveBeenCalledWith(1, 1, 'Glitch', {
-        glitch_type: 'RGBShift',
-        intensity: 0.5,
-        seed: 0,
+        enabled: true,
+        seed: 42,
+        block_size: 8,
+        group_size: 4,
+        scanline_segment: 64,
+        block_shift: { enabled: false, amount: 0 },
+        block_scramble: { enabled: false, amount: 0 },
+        channel_swap: { enabled: true, amount: 50 },
+        scanline: { enabled: false, amount: 0 },
+        interlace: { enabled: false, amount: 0 },
       });
     });
 

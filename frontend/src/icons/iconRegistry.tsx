@@ -70,11 +70,21 @@ export type IconName =
   | 'layers'
   | 'sidebar-swap'
   | 'focus-mode'
+  | 'copy-x'
   | 'arrow-left'
   | 'arrow-right'
   ;
 
 type PixelIcon = React.ComponentType<React.SVGProps<SVGSVGElement>>;
+
+/** Pixel `copy-x-sharp` from /public/icons — inline so toolbar hover uses currentColor. */
+function CopyXSharp(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" {...props}>
+      <path d="M6 6h16v2H6zM2 2h16v2H2zm4 6h2v12H6zM2 4h2v12H2zm4 16h16v2H6zM20 8h2v12h-2zm-4-4h2v2h-2zM2 16h4v2H2zm9-5h2v2h-2zm4 4h2v2h-2zm0-4h2v2h-2zm-4 4h2v2h-2zm2-2h2v2h-2z" />
+    </svg>
+  );
+}
 
 const PIXEL_ICONS: Record<string, PixelIcon> = {
   'effect.dithering': Grid3x3,
@@ -112,6 +122,7 @@ const PIXEL_ICONS: Record<string, PixelIcon> = {
   layers: Files,
   'sidebar-swap': FlipHorizontal2,
   'focus-mode': Monitor,
+  'copy-x': CopyXSharp,
   'arrow-left': ArrowLeft,
   'arrow-right': ArrowRight,
 };

@@ -16,7 +16,7 @@
 
 .palette-panel-name-input {
   width: 100%;
-  font-size: 11px;
+  font-size: 13px;
   padding: 2px 4px;
   font-family: inherit;
   border: var(--border);
@@ -42,8 +42,8 @@
 }
 
 .palette-panel-rename-input {
-  font-size: 11px;
-  font-weight: bold;
+  font-size: 13px;
+  font-weight: 800;
   font-family: inherit;
   border: var(--border-width) solid #00aaff;
   padding: 0 2px;

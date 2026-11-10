@@ -37,7 +37,7 @@
   border-radius: 0;
   background: var(--bg-input);
   color: var(--text-color);
-  font-size: 12px;
+  font-size: 14px;
   font-family: var(--font-family);
   appearance: none;
   -webkit-appearance: none;
@@ -78,7 +78,7 @@
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
-  font-size: 12px;
+  font-size: 14px;
   font-family: var(--font-family);
   color: var(--text-color);
   cursor: pointer;

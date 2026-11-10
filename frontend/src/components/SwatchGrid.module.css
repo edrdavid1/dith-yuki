@@ -6,7 +6,7 @@
 
 .swatch-grid-error {
   color: #c00;
-  font-size: 10px;
+  font-size: 12px;
   padding: 2px 0 4px;
 }
 
@@ -48,8 +48,8 @@
   border: var(--border-dashed);
   background: var(--color-gray);
   cursor: pointer;
-  font-size: 16px;
-  font-weight: bold;
+  font-size: 18px;
+  font-weight: 800;
   color: var(--color-dark-gray);
 }
 
@@ -78,8 +78,8 @@
   border-radius: 2px;
   background: #e0e0e0;
   cursor: pointer;
-  font-size: 14px;
-  font-weight: bold;
+  font-size: 16px;
+  font-weight: 800;
   color: #555;
   display: flex;
   align-items: center;

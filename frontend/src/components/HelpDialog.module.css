@@ -21,8 +21,8 @@
 .help-app-name {
   margin: 4px 0 0;
   font-family: var(--font-family);
-  font-size: 18px;
-  font-weight: bold;
+  font-size: 20px;
+  font-weight: 800;
   color: var(--color-black);
   text-align: center;
 }
@@ -31,7 +31,7 @@
   margin: 0;
   max-width: 360px;
   font-family: var(--font-family);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.4;
   color: #555;
   text-align: center;
@@ -40,7 +40,7 @@
 .help-version {
   margin: 0;
   font-family: var(--font-family);
-  font-size: 12px;
+  font-size: 14px;
   color: #808080;
   text-align: center;
 }
@@ -52,7 +52,7 @@
   gap: 6px;
   margin: 2px 0 4px;
   font-family: var(--font-family);
-  font-size: 12px;
+  font-size: 14px;
   color: var(--color-black);
 }
 
@@ -81,13 +81,13 @@
 
 .help-license-title {
   margin: 0 0 4px;
-  font-size: 12px;
-  font-weight: bold;
+  font-size: 14px;
+  font-weight: 800;
 }
 
 .help-license-copy {
   margin: 0 0 10px;
-  font-size: 11px;
+  font-size: 13px;
   color: #555;
 }
 
@@ -98,7 +98,7 @@
   background: transparent;
   color: inherit;
   font-family: inherit;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
@@ -117,7 +117,7 @@
   height: 28px;
   padding: 0 16px;
   font-family: var(--font-family);
-  font-size: 12px;
+  font-size: 14px;
   color: var(--color-black);
   background: var(--bg-window);
   border: var(--border);

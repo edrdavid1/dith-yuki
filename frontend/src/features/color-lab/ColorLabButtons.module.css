@@ -5,8 +5,8 @@
   background: var(--bg-window);
   border: none !important;
   font-family: inherit;
-  font-size: 12px;
-  font-weight: bold;
+  font-size: 14px;
+  font-weight: 800;
   color: var(--text-color);
   display: flex;
   align-items: center;

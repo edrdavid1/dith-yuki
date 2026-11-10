@@ -26,7 +26,7 @@
   border: none;
   background: var(--bg-input);
   font-family: var(--font-family);
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-color);
   cursor: pointer;
   user-select: none;
@@ -85,8 +85,8 @@
 .lp-dropdown-group {
   padding: 6px 8px 2px;
   font-family: var(--font-family);
-  font-size: 10px;
-  font-weight: bold;
+  font-size: 12px;
+  font-weight: 800;
   color: var(--color-dark-gray);
   text-transform: lowercase;
   pointer-events: none;
@@ -95,7 +95,7 @@
 .lp-dropdown-menu-item {
   padding: 4px 8px;
   font-family: var(--font-family);
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-color);
   cursor: pointer;
 }

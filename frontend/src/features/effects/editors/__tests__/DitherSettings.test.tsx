@@ -74,7 +74,7 @@ describe('DitherSettings algorithm selector', () => {
     expect(screen.getByText('Pixel Size')).toBeInTheDocument();
     expect(screen.getByText('Pixelate Alpha')).toBeInTheDocument();
     expect(screen.getByText('Threshold Scale')).toBeInTheDocument();
-    expect(screen.getByText('Levels')).toBeInTheDocument();
+    expect(screen.getByText('Tone Steps')).toBeInTheDocument();
   });
 
   it('banner_text_unchanged', () => {

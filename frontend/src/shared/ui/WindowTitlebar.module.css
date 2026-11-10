@@ -127,8 +127,8 @@ button.window-titlebar-square {
 
 .window-title {
   font-family: var(--font-family);
-  font-size: 12px;
-  font-weight: normal;
+  font-size: 14px;
+  font-weight: 800;
   color: var(--text-color);
   padding: 0 6px;
   z-index: 1;
@@ -176,7 +176,7 @@ button.window-titlebar-square {
   background: transparent;
   text-align: left;
   font-family: var(--font-family);
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-color);
   cursor: pointer;
   white-space: nowrap;

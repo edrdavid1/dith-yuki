@@ -4,7 +4,7 @@ import { patchFilter, refreshFilters, selectFiltersList } from '../app/slices/fi
 import { formatIpcError, logIpcError, updateFilter } from '../shared/ipc';
 import { noteIpcDone, noteIpcSent, noteUserInput } from '../diagnostics/level1';
 import type { FilterParams } from '../types';
-import { EFFECT_TO_FILTER_KIND } from '../types/effects';
+import { EFFECT_TO_FILTER_KIND, isGlitchFamilyFilter } from '../types/effects';
 import type { EffectType } from '../types/effects';
 import { unwrapFilterParams } from '../shared/unwrapFilterParams';
 import {
@@ -32,7 +32,14 @@ export interface UseEffectLayerReturn {
   error: string | null;
 }
 
-function filterKindToEffectType(kind: string): EffectType | null {
+function filterKindToEffectType(
+  kind: string,
+  algorithmId?: string | null,
+  mode?: unknown
+): EffectType | null {
+  if (isGlitchFamilyFilter(kind, algorithmId, mode)) {
+    return 'Glitching';
+  }
   for (const [effectType, filterKind] of Object.entries(EFFECT_TO_FILTER_KIND)) {
     if (filterKind === kind) {
       return effectType as EffectType;
@@ -127,7 +134,13 @@ export function useEffectLayer(
     return toFilterParams(storeFilter.kind, storeFilter.params as unknown as Record<string, unknown>);
   }, [storeFilter]);
 
-  const effectType = storeFilter ? filterKindToEffectType(storeFilter.kind) : null;
+  const effectType = storeFilter
+    ? filterKindToEffectType(
+        storeFilter.kind,
+        storeFilter.algorithm_id,
+        (storeFilter.params as unknown as Record<string, unknown>)?.mode
+      )
+    : null;
   const filterId = storeFilter?.id ?? null;
   const effectParams = optimisticParams ?? storeParams;
   const opacity = optimisticOpacity ?? storeFilter?.opacity ?? 1;

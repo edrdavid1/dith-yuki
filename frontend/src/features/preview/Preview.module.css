@@ -8,6 +8,7 @@
   background: var(--color-dark-gray);
   overflow: hidden;
   position: relative;
+  min-width: 0;
   /* FlexLayout center tab owns the frame when Preview is docked.
      Placeholder (floated) gets its own edge via :has() below. */
   border: none;
@@ -68,7 +69,7 @@
 
 .pv-rendering-label {
   font-family: var(--font-family);
-  font-size: 12px;
+  font-size: 14px;
   color: var(--color-hover-inverted, #fff);
   background: var(--bg-hover-accent, #333);
   border: var(--border);

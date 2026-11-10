@@ -9,7 +9,7 @@
   background: var(--bg-window);
   color: var(--text-color);
   font-family: var(--font-family);
-  font-size: 12px;
+  font-size: 14px;
   box-sizing: border-box;
   position: relative;
   z-index: 0;
@@ -50,8 +50,8 @@
 
 .preferences-section-title {
   margin: 0;
-  font-size: 12px;
-  font-weight: normal;
+  font-size: 14px;
+  font-weight: 800;
   font-family: var(--font-family);
   border-bottom: var(--border);
   padding: 6px 0 8px;
@@ -121,7 +121,7 @@
   background: var(--bg-window);
   border: var(--border);
   font-family: inherit;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-color);
   cursor: pointer;
   box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
@@ -191,7 +191,7 @@
   background: var(--color-white);
   color: var(--text-color);
   font-family: inherit;
-  font-size: 11px;
+  font-size: 13px;
   cursor: pointer;
   text-align: center;
   white-space: nowrap;

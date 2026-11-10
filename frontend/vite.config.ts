@@ -1,8 +1,30 @@
-import { defineConfig } from 'vite'
+import { execFileSync } from 'node:child_process'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 
+const frontendRoot = path.dirname(fileURLToPath(import.meta.url))
+
+/** Keep FloatingWindow patch applied and Vite's flexlayout prebundle fresh. */
+function ensureFlexlayoutFloatPatch(): Plugin {
+  const run = () => {
+    execFileSync(process.execPath, ['scripts/patch-flexlayout.cjs'], {
+      cwd: frontendRoot,
+      stdio: 'inherit',
+    })
+  }
+  return {
+    name: 'ensure-flexlayout-float-patch',
+    buildStart: run,
+    configureServer() {
+      run()
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), ensureFlexlayoutFloatPatch()],
 
   // Не затирать вывод cargo при перезапуске dev-сервера
   clearScreen: false,

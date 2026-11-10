@@ -3,7 +3,7 @@ import EffectSettingsPanel from './EffectSettingsPanel';
 import type { LayerWithFilters } from './EffectSettingsPanel';
 import { useAppDispatch, useAppSelector } from '../../app/hooks';
 import { addLayerWithAlgorithm, addLayerWithEffect, addLayerWithPreset } from '../../app/slices/layersSlice';
-import { selectFiltersList } from '../../app/slices/filtersSlice';
+import { replaceFilterWithAlgorithm, selectFiltersList } from '../../app/slices/filtersSlice';
 import { setSelection } from '../../app/slices/selectionSlice';
 import { useEffectLayer } from '../../hooks/useEffectLayer';
 import { useDocument } from '../../hooks/useDocument';
@@ -113,18 +113,96 @@ export default function EffectsFeature({
     [effectLayer.updateParams]
   );
 
-  // Keep selected Dither filter's palette_id in sync with Color Lab.
-  // Send only DitherV2 fields (never the UI `type` tag) so serde accepts the payload.
-  // Do not write `palette_id: null` just because this window's store has not
-  // received lastCreatedId yet (floating Color Lab vs Effects).
+  // Keep selected DitherV2 filter's palette_id in sync with Color Lab binding.
+  // Tone Steps (`lastCreatedId == null`) clears the filter palette after a prior
+  // bind — but never on first hydrate (floating Color Lab vs Effects).
   // Skip ids that are not in the current document (stale localStorage binding).
   const lastSyncedKeyRef = useRef<string>('');
+  const prevBoundIdRef = useRef<number | null | undefined>(undefined);
   useEffect(() => {
-    if (effectLayer.effectType !== 'Dithering') return;
-    if (effectLayer.effectParams == null || effectLayer.filterId == null) return;
-    if (lastCreatedId == null) return;
-    const syncKey = `${effectLayer.filterId}:${lastCreatedId}`;
+    const params = effectLayer.effectParams as unknown as Record<string, unknown> | null;
+    const isDitherV2 =
+      effectLayer.effectType === 'Dithering' ||
+      (effectLayer.effectType === 'Glitching' &&
+        params != null &&
+        typeof params.mode === 'string');
+    if (!isDitherV2) return;
+    if (params == null || effectLayer.filterId == null) return;
+
+    const prevBound = prevBoundIdRef.current;
+    prevBoundIdRef.current = lastCreatedId;
+
+    const syncKey = `${effectLayer.filterId}:${lastCreatedId ?? 'tone-steps'}`;
     if (lastSyncedKeyRef.current === syncKey) return;
+
+    const current =
+      typeof params.palette_id === 'number' ? params.palette_id : null;
+
+    const pushDitherParams = (paletteId: number | null) => {
+      const {
+        mode,
+        levels,
+        threshold_scale,
+        pixel_size,
+        color_mode,
+        palette_dither_mode,
+        halftone_cell_size,
+        wave_wavelength,
+        wave_amplitude,
+        wave_phase,
+        wave_angle,
+        threshold_bias,
+        pattern_angle,
+        serpentine,
+        dither_alpha,
+        match_by_brightness,
+        line_scale,
+        glitch_intensity,
+        glitch_seed,
+        smoothness,
+        frequency,
+        amplitude,
+      } = params;
+      effectLayer.updateParams({
+        mode,
+        levels,
+        threshold_scale,
+        pixel_size,
+        color_mode: color_mode ?? 'rgb',
+        palette_id: paletteId,
+        // Keep mode (strict/simple/guided/mixed) — omitting it resets to strict.
+        palette_dither_mode: palette_dither_mode ?? 'strict',
+        halftone_cell_size: halftone_cell_size ?? 8,
+        wave_wavelength: wave_wavelength ?? 8,
+        wave_amplitude: wave_amplitude ?? 1,
+        wave_phase: wave_phase ?? 0,
+        wave_angle: wave_angle ?? 0,
+        threshold_bias: threshold_bias ?? 0,
+        pattern_angle: pattern_angle ?? 0,
+        serpentine: serpentine ?? false,
+        dither_alpha: dither_alpha !== false,
+        match_by_brightness: Boolean(match_by_brightness),
+        ...(line_scale != null ? { line_scale } : {}),
+        ...(glitch_intensity != null ? { glitch_intensity } : {}),
+        ...(glitch_seed != null ? { glitch_seed } : {}),
+        ...(smoothness != null ? { smoothness } : {}),
+        ...(frequency != null ? { frequency } : {}),
+        ...(amplitude != null ? { amplitude } : {}),
+      });
+    };
+
+    // Explicit return to Tone Steps after a real binding existed.
+    if (lastCreatedId == null) {
+      if (prevBound === undefined) return; // first hydrate — do not clear
+      if (typeof prevBound !== 'number') return;
+      if (current == null) {
+        lastSyncedKeyRef.current = syncKey;
+        return;
+      }
+      lastSyncedKeyRef.current = syncKey;
+      pushDitherParams(null);
+      return;
+    }
 
     let cancelled = false;
     void listPalettes()
@@ -132,53 +210,12 @@ export default function EffectsFeature({
         if (cancelled) return;
         if (!list.some((p) => p.id === lastCreatedId)) return;
 
-        const params = effectLayer.effectParams as unknown as Record<string, unknown>;
-        const current =
-          typeof params.palette_id === 'number' ? params.palette_id : null;
         if (current === lastCreatedId) {
           lastSyncedKeyRef.current = syncKey;
           return;
         }
         lastSyncedKeyRef.current = syncKey;
-
-        const {
-          mode,
-          levels,
-          threshold_scale,
-          pixel_size,
-          color_mode,
-          palette_dither_mode,
-          halftone_cell_size,
-          wave_wavelength,
-          wave_amplitude,
-          wave_phase,
-          wave_angle,
-          threshold_bias,
-          pattern_angle,
-          serpentine,
-          dither_alpha,
-          match_by_brightness,
-        } = params;
-        effectLayer.updateParams({
-          mode,
-          levels,
-          threshold_scale,
-          pixel_size,
-          color_mode: color_mode ?? 'rgb',
-          palette_id: lastCreatedId,
-          // Keep mode (strict/simple/guided/mixed) — omitting it resets to strict.
-          palette_dither_mode: palette_dither_mode ?? 'strict',
-          halftone_cell_size: halftone_cell_size ?? 8,
-          wave_wavelength: wave_wavelength ?? 8,
-          wave_amplitude: wave_amplitude ?? 1,
-          wave_phase: wave_phase ?? 0,
-          wave_angle: wave_angle ?? 0,
-          threshold_bias: threshold_bias ?? 0,
-          pattern_angle: pattern_angle ?? 0,
-          serpentine: serpentine ?? false,
-          dither_alpha: dither_alpha !== false,
-          match_by_brightness: Boolean(match_by_brightness),
-        });
+        pushDitherParams(lastCreatedId);
       })
       .catch(() => {
         /* Color Lab listPalettes failure — skip sync this tick */
@@ -261,6 +298,50 @@ export default function EffectsFeature({
     [dispatch, docId, layers]
   );
 
+  const handleChangeGlitchType = useCallback(
+    (algorithmId: string) => {
+      if (docId == null || currentLayerForEffect == null || selectedFilterId == null) return;
+      if (addingRef.current) return;
+      addingRef.current = true;
+      void dispatch(
+        replaceFilterWithAlgorithm({
+          docId,
+          layerId: currentLayerForEffect,
+          filterId: selectedFilterId,
+          algorithmId,
+          opacity: effectLayer.opacity,
+          blend_mode: effectLayer.blendMode,
+          enabled: selectedFilter?.enabled ?? true,
+        })
+      )
+        .then((result) => {
+          if (
+            replaceFilterWithAlgorithm.fulfilled.match(result) &&
+            result.payload != null
+          ) {
+            void dispatch(
+              setSelection({
+                layerId: result.payload.layerId,
+                filterId: result.payload.filterId,
+              })
+            );
+          }
+        })
+        .finally(() => {
+          addingRef.current = false;
+        });
+    },
+    [
+      dispatch,
+      docId,
+      currentLayerForEffect,
+      selectedFilterId,
+      effectLayer.opacity,
+      effectLayer.blendMode,
+      selectedFilter?.enabled,
+    ]
+  );
+
   const stressBaseParams =
     effectLayer.effectParams != null
       ? ({
@@ -288,6 +369,7 @@ export default function EffectsFeature({
           onSelectEffect={handleSelectEffect}
           onSelectAlgorithm={handleSelectAlgorithm}
           onSelectPreset={handleSelectPreset}
+          onChangeGlitchType={handleChangeGlitchType}
           onTitleBarMouseDown={onTitleBarMouseDown}
           dockSide={dockSide}
           onMoveToSide={onMoveToSide}
