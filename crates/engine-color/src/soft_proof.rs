@@ -20,14 +20,11 @@ use crate::preview_encode::{
     delta_e2000_srgb8, linear_to_srgb_f32, srgb_f32_to_linear, SrgbEncodeLut,
 };
 
-/// Builtin profile id for PSO Coated v3 / FOGRA51.
+/// Legacy id formerly used for a bundled PSO Coated v3 / FOGRA51 profile.
+/// No longer shipped; kept so old `.dyproj` values can be detected as missing.
 pub const BUILTIN_FOGRA51_ID: &str = "builtin:fogra51";
-/// Builtin profile id for PSO Uncoated v3 / FOGRA52.
+/// Legacy id formerly used for PSO Uncoated v3 / FOGRA52 (never distinct in-tree).
 pub const BUILTIN_FOGRA52_ID: &str = "builtin:fogra52";
-
-/// Embedded PSO Coated v3 (FOGRA51) ICC bytes.
-pub static BUILTIN_FOGRA51_ICC: &[u8] =
-    include_bytes!("../../../src-tauri/cmyk/pso-coated_v3/PSOcoated_v3.icc");
 
 /// Preferred 3D LUT grid. If the ΔE budget fails, build tries [`FALLBACK_PROOF_LUT_SIZE`].
 pub const DEFAULT_PROOF_LUT_SIZE: usize = 33;
@@ -100,7 +97,7 @@ fn lut_gray_axis_monotone(lut: &SoftProofLut3D, exact: &SoftProofTransform) -> b
 pub struct SoftProofConfig {
     #[serde(default)]
     pub enabled: bool,
-    /// `builtin:fogra51` / `builtin:fogra52` / `import:{sha256 hex}`.
+    /// `import:{sha256 hex}` (user ICC). Legacy `builtin:fogra*` ids are missing.
     #[serde(default = "default_profile_id")]
     pub profile_id: String,
     #[serde(default)]
@@ -114,7 +111,7 @@ pub struct SoftProofConfig {
 }
 
 fn default_profile_id() -> String {
-    BUILTIN_FOGRA51_ID.to_string()
+    String::new()
 }
 
 fn default_true() -> bool {
@@ -868,8 +865,7 @@ mod tests {
     use std::time::Instant;
 
     fn pso_coated_v3_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../src-tauri/cmyk/pso-coated_v3/PSOcoated_v3.icc")
+        crate::test_icc::fogra51_fixture_path()
     }
 
     #[test]

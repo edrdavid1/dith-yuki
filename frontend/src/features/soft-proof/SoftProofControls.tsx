@@ -22,7 +22,7 @@ const cn = bind({ ...styles, ...paramStyles, ...buttonStyles });
 
 const DEFAULT_SOFT_PROOF: SoftProofConfig = {
   enabled: false,
-  profile_id: 'builtin:fogra51',
+  profile_id: '',
   intent: 'relative',
   bpc: true,
 };
@@ -48,7 +48,6 @@ export default function SoftProofControls({
 }: SoftProofControlsProps) {
   const [softProof, setSoftProof] = useState<SoftProofConfig>(DEFAULT_SOFT_PROOF);
   const [proofProfiles, setProofProfiles] = useState<ProofProfileInfo[]>([]);
-  const [settingsOpen, setSettingsOpen] = useState(layout === 'panel');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [missingProfileToast, setMissingProfileToast] = useState<string | null>(null);
 
@@ -163,76 +162,6 @@ export default function SoftProofControls({
     }));
   }, [proofProfiles]);
 
-  const settings = (
-    <div
-      className={cn(layout === 'footer' ? 'sp-panel-popover' : 'sp-panel')}
-      role={layout === 'footer' ? 'dialog' : 'group'}
-      aria-label="Soft proof settings"
-    >
-      <DropdownMenu
-        label="Profile"
-        value={softProof.profile_id}
-        options={profileOptions}
-        disabled={disabled || proofProfiles.length === 0}
-        onSelect={(value) => {
-          if (!value) return;
-          void applySoftProof({ ...softProof, profile_id: value });
-        }}
-      />
-      <DropdownMenu
-        label="Intent"
-        value={softProof.intent}
-        options={INTENT_OPTIONS}
-        disabled={disabled}
-        onSelect={(value) =>
-          void applySoftProof({
-            ...softProof,
-            intent: value as SoftProofIntent,
-          })
-        }
-      />
-      <label
-        className={cn('param-checkbox-row', 'sp-bpc-row')}
-        title="Black-point compensation (Relative intent). App-owned until the CMS exposes a native flag."
-      >
-        <input
-          type="checkbox"
-          checked={softProof.bpc}
-          disabled={disabled || softProof.intent === 'absolute'}
-          onChange={(e) =>
-            void applySoftProof({ ...softProof, bpc: e.target.checked })
-          }
-        />
-        <span>BPC</span>
-      </label>
-      <p className={cn('sp-caveat')}>
-        Soft proof assumes an sRGB display. Wide-gamut WebViews may not match print
-        soft-proofing on calibrated hardware.
-      </p>
-      {missingProfileToast && <div className={cn('sp-warn')}>{missingProfileToast}</div>}
-      {loadError && <div className={cn('sp-error')}>{loadError}</div>}
-      <div className={cn('sp-actions')}>
-        <button
-          type="button"
-          className={cn('color-lab-button', 'sp-action-btn')}
-          disabled={disabled}
-          onClick={() => void importProofProfile()}
-        >
-          Import…
-        </button>
-        {layout === 'footer' && (
-          <button
-            type="button"
-            className={cn('color-lab-button', 'sp-action-btn')}
-            onClick={() => setSettingsOpen(false)}
-          >
-            Close
-          </button>
-        )}
-      </div>
-    </div>
-  );
-
   if (layout === 'panel') {
     return (
       <section className={cn('sp-section')} aria-label="Soft proof">
@@ -262,39 +191,77 @@ export default function SoftProofControls({
         {softProof.enabled && showStrictWarn && (
           <div className={cn('sp-warn')}>Screen ≠ palette</div>
         )}
-        {settings}
+        <div className={cn('sp-panel')} role="group" aria-label="Soft proof settings">
+          <DropdownMenu
+            label="Profile"
+            value={softProof.profile_id}
+            options={profileOptions}
+            disabled={disabled || proofProfiles.length === 0}
+            onSelect={(value) => {
+              if (!value) return;
+              void applySoftProof({ ...softProof, profile_id: value });
+            }}
+          />
+          <DropdownMenu
+            label="Intent"
+            value={softProof.intent}
+            options={INTENT_OPTIONS}
+            disabled={disabled}
+            onSelect={(value) =>
+              void applySoftProof({
+                ...softProof,
+                intent: value as SoftProofIntent,
+              })
+            }
+          />
+          <label
+            className={cn('param-checkbox-row', 'sp-bpc-row')}
+            title="Black-point compensation (Relative intent). App-owned until the CMS exposes a native flag."
+          >
+            <input
+              type="checkbox"
+              checked={softProof.bpc}
+              disabled={disabled || softProof.intent === 'absolute'}
+              onChange={(e) =>
+                void applySoftProof({ ...softProof, bpc: e.target.checked })
+              }
+            />
+            <span>BPC</span>
+          </label>
+          <p className={cn('sp-caveat')}>
+            Soft proof assumes an sRGB display. Wide-gamut WebViews may not match print
+            soft-proofing on calibrated hardware.
+          </p>
+          {missingProfileToast && <div className={cn('sp-warn')}>{missingProfileToast}</div>}
+          {loadError && <div className={cn('sp-error')}>{loadError}</div>}
+          <div className={cn('sp-actions')}>
+            <button
+              type="button"
+              className={cn('color-lab-button', 'sp-action-btn')}
+              disabled={disabled}
+              onClick={() => void importProofProfile()}
+            >
+              Import…
+            </button>
+          </div>
+        </div>
       </section>
     );
   }
 
   return (
-    <>
-      <span className={cn('sp-footer')} role="group" aria-label="Soft proof">
-        <Tooltip label="Simulate print CMYK appearance (display only)">
-          <button
-            type="button"
-            className={cn('sp-footer-btn', softProof.enabled && 'sp-footer-btn-active')}
-            aria-pressed={softProof.enabled}
-            disabled={disabled}
-            onClick={() => void applySoftProof({ ...softProof, enabled: !softProof.enabled })}
-          >
-            Soft proof
-          </button>
-        </Tooltip>
-        <Tooltip label="Soft proof settings">
-          <button
-            type="button"
-            className={cn('sp-footer-gear')}
-            aria-expanded={settingsOpen}
-            aria-label="Soft proof settings"
-            disabled={disabled}
-            onClick={() => setSettingsOpen((v) => !v)}
-          >
-            ▾
-          </button>
-        </Tooltip>
-      </span>
-      {settingsOpen && settings}
-    </>
+    <span className={cn('sp-footer')} role="group" aria-label="Soft proof">
+      <Tooltip label="Simulate print CMYK appearance (display only)">
+        <button
+          type="button"
+          className={cn('sp-footer-btn', softProof.enabled && 'sp-footer-btn-active')}
+          aria-pressed={softProof.enabled}
+          disabled={disabled}
+          onClick={() => void applySoftProof({ ...softProof, enabled: !softProof.enabled })}
+        >
+          Soft proof
+        </button>
+      </Tooltip>
+    </span>
   );
 }

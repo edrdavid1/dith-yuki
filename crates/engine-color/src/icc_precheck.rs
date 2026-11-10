@@ -107,11 +107,12 @@ pub fn precheck_icc_bytes(bytes: &[u8]) -> Result<(), SoftProofError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::soft_proof::BUILTIN_FOGRA51_ICC;
+    use crate::test_icc::load_fogra51_fixture;
 
     #[test]
     fn real_fogra51_passes_precheck() {
-        precheck_icc_bytes(BUILTIN_FOGRA51_ICC).expect("FOGRA51");
+        let icc = load_fogra51_fixture();
+        precheck_icc_bytes(&icc).expect("FOGRA51");
     }
 
     #[test]
@@ -122,14 +123,15 @@ mod tests {
 
     #[test]
     fn bogus_size_field_fails() {
-        let mut b = BUILTIN_FOGRA51_ICC.to_vec();
+        let mut b = load_fogra51_fixture();
         b[0..4].copy_from_slice(&u32::to_be_bytes(u32::MAX));
         assert!(precheck_icc_bytes(&b).is_err());
     }
 
     #[test]
     fn truncated_tag_table_fails() {
-        let mut b = BUILTIN_FOGRA51_ICC[..200].to_vec();
+        let icc = load_fogra51_fixture();
+        let mut b = icc[..200].to_vec();
         // Claim many tags.
         b.resize(132, 0);
         b[128..132].copy_from_slice(&u32::to_be_bytes(50));

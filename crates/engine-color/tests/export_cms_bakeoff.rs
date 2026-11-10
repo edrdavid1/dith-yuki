@@ -2,13 +2,13 @@
 //!
 //! Decision recorded in `docs/print-export-cmyk.md`: stay on moxcms for soft
 //! proof; use **lcms2 for print export** because app-owned forward BPC diverges.
-use engine_color::soft_proof::BUILTIN_FOGRA51_ICC;
+use engine_color::load_fogra51_fixture;
 use lcms2::{Flags, Intent, PixelFormat, Profile, Transform};
 use moxcms::{ColorProfile, Layout, RenderingIntent, TransformOptions};
 
 #[test]
 fn fogra51_forward_moxcms_vs_lcms2() {
-    let proof = ColorProfile::new_from_slice(BUILTIN_FOGRA51_ICC).expect("FOGRA51");
+    let proof = ColorProfile::new_from_slice(&load_fogra51_fixture()).expect("FOGRA51");
     let srgb = ColorProfile::new_srgb();
     let opts = TransformOptions {
         rendering_intent: RenderingIntent::RelativeColorimetric,
@@ -19,7 +19,7 @@ fn fogra51_forward_moxcms_vs_lcms2() {
         .expect("moxcms");
 
     let srgb_l = Profile::new_srgb();
-    let proof_l = Profile::new_icc(BUILTIN_FOGRA51_ICC).expect("lcms");
+    let proof_l = Profile::new_icc(&load_fogra51_fixture()).expect("lcms");
     let x_no = Transform::new_flags(
         &srgb_l,
         PixelFormat::RGB_8,
@@ -123,7 +123,7 @@ fn fogra51_forward_moxcms_vs_lcms2() {
 fn fogra51_app_forward_bpc_vs_lcms() {
     use engine_color::preview_encode::{linear_to_srgb_f32, srgb_f32_to_linear};
 
-    let proof = ColorProfile::new_from_slice(BUILTIN_FOGRA51_ICC).expect("FOGRA51");
+    let proof = ColorProfile::new_from_slice(&load_fogra51_fixture()).expect("FOGRA51");
     let srgb = ColorProfile::new_srgb();
     let opts = TransformOptions {
         rendering_intent: RenderingIntent::RelativeColorimetric,
@@ -158,7 +158,7 @@ fn fogra51_app_forward_bpc_vs_lcms() {
     let d50 = [0.9642f32, 1.0, 0.8249];
 
     let srgb_l = Profile::new_srgb();
-    let proof_l = Profile::new_icc(BUILTIN_FOGRA51_ICC).unwrap();
+    let proof_l = Profile::new_icc(&load_fogra51_fixture()).unwrap();
     let x_bpc = Transform::new_flags(
         &srgb_l,
         PixelFormat::RGB_8,

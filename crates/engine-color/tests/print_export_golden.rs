@@ -1,13 +1,14 @@
 //! Print-export goldens: lcms2 forward CMYK + pure-K rules + TIFF round identity.
 
 use engine_color::print_export::{rgba8_to_cmyk8, scale_cmyk8_nearest, PrintExportTransform};
-use engine_color::soft_proof::{SoftProofIntent, BUILTIN_FOGRA51_ICC};
+use engine_color::soft_proof::SoftProofIntent;
+use engine_color::load_fogra51_fixture;
 use engine_io::{write_cmyk_tiff, CmykTiffCompression};
 use std::io::Cursor;
 
 #[test]
 fn fogra51_black_white_pure_k() {
-    let x = PrintExportTransform::new(BUILTIN_FOGRA51_ICC, SoftProofIntent::Relative, true)
+    let x = PrintExportTransform::new(&load_fogra51_fixture(), SoftProofIntent::Relative, true)
         .expect("xform");
     let rgba = vec![0, 0, 0, 255, 255, 255, 255, 255];
     let (cmyk, _, _) = rgba8_to_cmyk8(&rgba, &x, true, None).unwrap();
@@ -28,7 +29,7 @@ fn scale_preserves_blocks() {
 #[test]
 fn tiff_bytes_deterministic() {
     let x =
-        PrintExportTransform::new(BUILTIN_FOGRA51_ICC, SoftProofIntent::Relative, false).unwrap();
+        PrintExportTransform::new(&load_fogra51_fixture(), SoftProofIntent::Relative, false).unwrap();
     let mut rgba = Vec::new();
     for y in 0..8u8 {
         for xch in 0..8u8 {
@@ -43,7 +44,7 @@ fn tiff_bytes_deterministic() {
         8,
         8,
         &cmyk,
-        BUILTIN_FOGRA51_ICC,
+        &load_fogra51_fixture(),
         300.0,
         CmykTiffCompression::None,
     )
@@ -53,7 +54,7 @@ fn tiff_bytes_deterministic() {
         8,
         8,
         &cmyk,
-        BUILTIN_FOGRA51_ICC,
+        &load_fogra51_fixture(),
         300.0,
         CmykTiffCompression::None,
     )

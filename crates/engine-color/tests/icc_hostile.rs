@@ -4,8 +4,9 @@
 //! to prove panics unwind into `SoftProofError` rather than aborting the process.
 
 use engine_color::soft_proof::{
-    ProofProfile, SoftProofIntent, SoftProofTransform, BUILTIN_FOGRA51_ICC,
+    ProofProfile, SoftProofIntent, SoftProofTransform,
 };
+use engine_color::load_fogra51_fixture;
 use engine_color::{precheck_icc_bytes, DisplayRgbF32};
 
 fn mutate(seed: u64, bytes: &[u8]) -> Vec<u8> {
@@ -35,7 +36,7 @@ fn corrupt_icc_never_panics_process() {
 
     // Mutated FOGRA51 corpus (seeded “fuzz”).
     for seed in 0..64u64 {
-        let hostile = mutate(seed, BUILTIN_FOGRA51_ICC);
+        let hostile = mutate(seed, &load_fogra51_fixture());
         let _ = precheck_icc_bytes(&hostile);
         if let Ok(proof) = ProofProfile::from_icc_bytes(&hostile) {
             if let Ok(xform) =
@@ -51,7 +52,7 @@ fn corrupt_icc_never_panics_process() {
 
 #[test]
 fn real_profile_parse_and_apply_ok() {
-    let proof = ProofProfile::from_icc_bytes(BUILTIN_FOGRA51_ICC).expect("FOGRA51");
+    let proof = ProofProfile::from_icc_bytes(&load_fogra51_fixture()).expect("FOGRA51");
     let xform = SoftProofTransform::new(&proof, SoftProofIntent::Relative, true).expect("xform");
     let src = [DisplayRgbF32::new(0.0, 0.0, 1.0)];
     let mut dst = [DisplayRgbF32::new(0.0, 0.0, 0.0)];

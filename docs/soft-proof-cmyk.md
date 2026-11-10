@@ -105,12 +105,12 @@ Tests: `crates/engine-color/tests/lcms_golden.rs`, LUT build in `soft_proof.rs`.
 
 | ID | Label | Source |
 |---|---|---|
-| `builtin:fogra51` | PSO Coated v3 (FOGRA51) | Embedded from `src-tauri/cmyk/pso-coated_v3/PSOcoated_v3.icc` |
-| `builtin:fogra52` | PSO Uncoated v3 (FOGRA52) | Loaded from `src-tauri/cmyk/pso-uncoated_v3_fogra52/` **only if** bytes ≠ FOGRA51 |
 | `import:{sha256}` | User import | App data `icc/{sha256}.icc` (+ optional `{sha256}.json` name) |
 
-**FOGRA52 status:** skip registering `builtin:fogra52` until a distinct
-`PSOuncoated_v3.icc` is present.
+**No bundled FOGRA/PSO ICC.** Soft proof and print export require a user-imported
+profile. Legacy `.dyproj` values `builtin:fogra51` / `builtin:fogra52` are treated
+as missing (proof disabled until import). CI keeps a FOGRA51 fixture under
+`crates/engine-color/tests/fixtures/` for tests only.
 
 ### Hostile ICC / DoS
 

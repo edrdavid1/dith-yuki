@@ -8,8 +8,9 @@
 
 use engine_color::preview_encode::delta_e2000_srgb8;
 use engine_color::soft_proof::{
-    ProofProfile, SoftProofIntent, SoftProofTransform, BUILTIN_FOGRA51_ICC,
+    ProofProfile, SoftProofIntent, SoftProofTransform,
 };
+use engine_color::load_fogra51_fixture;
 use lcms2::{Flags, Intent, PixelFormat, Profile, Transform};
 
 /// Plan start threshold for Relative FOGRA51 (no BPC) — hard engine-agreement gate.
@@ -19,14 +20,14 @@ const MAX_DELTA_E2000_WITH_BPC: f64 = 9.0;
 const MEAN_DELTA_E2000_WITH_BPC: f64 = 2.0;
 
 fn moxcms_proof(intent: SoftProofIntent, bpc: bool) -> SoftProofTransform {
-    let proof = ProofProfile::from_icc_bytes(BUILTIN_FOGRA51_ICC).expect("FOGRA51");
+    let proof = ProofProfile::from_icc_bytes(&load_fogra51_fixture()).expect("FOGRA51");
     SoftProofTransform::new_exact(&proof, intent, bpc).expect("moxcms transform")
 }
 
 /// Mirror product chain: sRGB8 → CMYK8 → sRGB8 with the same intent on both legs.
 fn lcms_two_step_rgb8(src: &[u8], intent: Intent, bpc: bool) -> Vec<u8> {
     let srgb = Profile::new_srgb();
-    let proof = Profile::new_icc(BUILTIN_FOGRA51_ICC).expect("lcms FOGRA51");
+    let proof = Profile::new_icc(&load_fogra51_fixture()).expect("lcms FOGRA51");
     let mut flags = Flags::default();
     if bpc {
         flags = flags | Flags::BLACKPOINT_COMPENSATION;
