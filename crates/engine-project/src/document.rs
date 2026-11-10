@@ -154,6 +154,49 @@ impl Document {
         self.generations.increment_content_gen()
     }
 
+    /// Post-only edit (Task 2): bump `post_gen` + `content_gen`, leave `document_gen`
+    /// alone so in-flight ED strips are not cancelled.
+    pub fn bump_post_edit(&mut self, layer_id: crate::types::LayerId) -> u64 {
+        self.revision += 1;
+        let _ = self.bump_content_gen();
+        self.generations.increment_post_gen(layer_id.0)
+    }
+
+    /// Barrier / Pre / Raw / palette (Task 2): bump dither + document gens.
+    pub fn bump_dither_edit(&mut self, layer_id: crate::types::LayerId) -> u64 {
+        self.increment_generation();
+        self.generations.increment_dither_gen(layer_id.0)
+    }
+
+    /// Apply Task 2 generation policy for a filter-stack edit on `layer_id`.
+    /// Neutral→neutral bumps neither. Post bumps `post_gen` only when the
+    /// Post/`Dithered` cache is enabled; otherwise Post shares the dither bump
+    /// (full stack still re-runs ED).
+    pub fn apply_stack_edit_gens(
+        &mut self,
+        layer_id: crate::types::LayerId,
+        old: &[crate::filter::FilterInstance],
+        new: &[crate::filter::FilterInstance],
+    ) -> crate::post_barrier::StackEditBump {
+        let bump = crate::post_barrier::stack_edit_bump(old, new);
+        match bump {
+            crate::post_barrier::StackEditBump::None => {
+                self.revision += 1;
+            }
+            crate::post_barrier::StackEditBump::Post => {
+                if crate::post_cache::post_cache_enabled() {
+                    let _ = self.bump_post_edit(layer_id);
+                } else {
+                    let _ = self.bump_dither_edit(layer_id);
+                }
+            }
+            crate::post_barrier::StackEditBump::Dither => {
+                let _ = self.bump_dither_edit(layer_id);
+            }
+        }
+        bump
+    }
+
     /// Bump [`Layer::raw_rev`] for a leaf layer after Raw pixels change.
     ///
     /// Also advances [`GenerationTracker::content_gen`] so preview freshness
@@ -312,7 +355,7 @@ impl Document {
             FilterParams::Curves { .. }
             | FilterParams::Levels { .. }
             | FilterParams::Dither { .. }
-            | FilterParams::Glitch { .. }
+            | FilterParams::Glitch(_)
             | FilterParams::Glow { .. }
             | FilterParams::Crt { .. }
             | FilterParams::Adjust { .. }
@@ -406,6 +449,29 @@ mod tests {
         let old_revision = doc.revision;
         doc.increment_generation();
         assert_eq!(doc.revision, old_revision + 1);
+    }
+
+    #[test]
+    fn bump_post_edit_leaves_document_gen() {
+        let mut doc = Document::new(DocumentId::new(1), 64, 64);
+        let layer = LayerId::new(7);
+        let doc_before = doc.generations.current_document_gen();
+        let content_before = doc.generations.current_content_gen();
+        let post = doc.bump_post_edit(layer);
+        assert_eq!(post, 1);
+        assert_eq!(doc.generations.current_document_gen(), doc_before);
+        assert_eq!(doc.generations.get_post_gen(layer.0), 1);
+        assert!(doc.generations.current_content_gen() > content_before);
+    }
+
+    #[test]
+    fn bump_dither_edit_advances_document_gen() {
+        let mut doc = Document::new(DocumentId::new(1), 64, 64);
+        let layer = LayerId::new(3);
+        let doc_before = doc.generations.current_document_gen();
+        let _ = doc.bump_dither_edit(layer);
+        assert!(doc.generations.current_document_gen() > doc_before);
+        assert_eq!(doc.generations.get_dither_gen(layer.0), 1);
     }
 
     #[test]

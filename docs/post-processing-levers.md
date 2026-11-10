@@ -86,6 +86,8 @@ The smallest PR, but it verifies an important invariant: “neutral equals bitwi
 
 It is tiny, and without it lever 1 does not pay off: scrubbing at a low level is useless if stale tiles keep finishing. Verify that cancellation via `content_gen` fires **between tiles inside Post**, not only between frames, and that a cancelled tile does not enter either `Processed` or the `Dithered` cache.
 
+**Status (2026-11-10):** Implemented on `task/2-latest-wins-post-gen` — `post_gen` bump on Post edits; pre-start + mid-strip `cancel_check` between Post tiles; insert gates skip stale `Processed`. Note: when `document_gen` still holds, barrier `Dithered` **may** publish after a Post cancel (barrier identity unchanged); cancelled Post must not write `Processed`.
+
 ## PR 3. Lever 1: pyramid scrub, with a caveat
 
 The document assumes that “L1/L2 during drag” costs a quarter of the work. But that is true only if **Dithered already has a cached L1 level**. Dither depends on resolution, so Dithered L1 is a separate ED computation (albeit four times cheaper), not just a downscale of L0. If on the first drag you start ED at L1, you pay exactly the tax that P2 removed.
@@ -188,3 +190,5 @@ If Adjust fails: **fix** `apply_adjust_into` at all-zero (fast copy path) **or**
 Levers 1–2, 4–5; webview/Rust P4; Curves/Levels skip until identity tests pass.
 
 **Status (2026-10-29):** Task 1 closeout **complete for acceptance** — Curves/Levels `copy_from` + exact neutral (1e-6 / gamma 1.0001 rejected); strip/FD bit-equality; P0 counter test (0 residual clears); reverse prefix restore; `DITHER_NEUTRAL_VERIFY` synthetic (4 tiles, 0 mismatches). Plans in `docs/post-processing-levers.md` + `docs/post-barrier-roadmap.md`.
+
+**Status (2026-11-10):** Lever 2 latest-wins closed; A3 Glitch↔Adjust barrier scenarios green (`a3_barrier_glitch_adjust_scenarios`, `a3_adjust_pre_triggers_ed_post_skips`); **A4 Post-cache default on** (`DITHER_POST_CACHE=0` kill-switch).

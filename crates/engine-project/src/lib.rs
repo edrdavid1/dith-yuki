@@ -62,13 +62,15 @@ pub use mask::{apply_mask, MaskRef, MaskStorage};
 pub use palette_gen::{generate_palette_from_layer, generate_palette_from_layer_weighted};
 pub use post_barrier::{
     barrier_index, classify_change, cost_class_for_instance, cost_class_for_params,
-    ensure_filter_ids, filter_fingerprint, post_region_indices, prefix_externals_for_layer,
-    prefix_hash_through_barrier, split_enabled_at_barrier, stack_hash, ChangeClass, CostClass,
-    PrefixExternals,
+    ensure_filter_ids, filter_fingerprint, material_stack_unchanged, post_region_indices,
+    prefix_externals_for_layer, prefix_hash_through_barrier, split_enabled_at_barrier, stack_edit_bump,
+    stack_hash, ChangeClass, CostClass, PrefixExternals, StackEditBump,
 };
 pub use post_barrier_metrics::{
-    filter_index as post_filter_index, note_stack_change, record_clear as record_post_clear,
-    snapshot as post_barrier_counters, PostBarrierCounters,
+    filter_index as post_filter_index, is_post_cancelled, note_stack_change,
+    post_cancelled, record_clear as record_post_clear, record_ed_run_started,
+    record_post_tile_cancelled, record_post_tile_discarded_after_compute,
+    snapshot as post_barrier_counters, PostBarrierCounters, POST_CANCELLED_REASON,
 };
 pub use post_cache::{
     init_from_env as init_post_cache_from_env, neutral_verify_enabled, post_cache_enabled,

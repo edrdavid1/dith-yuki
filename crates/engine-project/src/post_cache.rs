@@ -1,12 +1,12 @@
 //! P2 feature flags for the Dithered / Post cache (`.local-doc/post.md`).
 //!
-//! Off by default. `DITHER_POST_CACHE=1` enables Post-from-Dithered + skipping
-//! residual clears on Post-only edits. `DITHER_POST_VERIFY=1` enables
+//! On by default (A4). Set `DITHER_POST_CACHE=0` to disable Post-from-Dithered +
+//! skipping residual clears on Post-only edits. `DITHER_POST_VERIFY=1` enables
 //! cache-vs-full hash checks (dev).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-static CACHE_ENABLED: AtomicBool = AtomicBool::new(false);
+static CACHE_ENABLED: AtomicBool = AtomicBool::new(true);
 static VERIFY_ENABLED: AtomicBool = AtomicBool::new(false);
 static NEUTRAL_VERIFY_ENABLED: AtomicBool = AtomicBool::new(false);
 static INIT: AtomicBool = AtomicBool::new(false);
@@ -18,24 +18,35 @@ fn env_flag(name: &str) -> bool {
     )
 }
 
+/// `DITHER_POST_CACHE`: default **on**. Explicit `0`/`false`/`no` disables.
+fn post_cache_env_or_default() -> bool {
+    match std::env::var("DITHER_POST_CACHE") {
+        Ok(v) => match v.trim() {
+            "0" | "false" | "FALSE" | "no" | "NO" | "off" | "OFF" => false,
+            "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON" => true,
+            _ => true,
+        },
+        Err(_) => true,
+    }
+}
+
 /// Read env once (safe to call repeatedly). Call from app startup if desired.
 pub fn init_from_env() {
     if INIT.swap(true, Ordering::Relaxed) {
         return;
     }
-    let cache = env_flag("DITHER_POST_CACHE");
+    let cache = post_cache_env_or_default();
     let verify = env_flag("DITHER_POST_VERIFY");
     let neutral_verify = env_flag("DITHER_NEUTRAL_VERIFY");
     CACHE_ENABLED.store(cache, Ordering::Relaxed);
     VERIFY_ENABLED.store(verify, Ordering::Relaxed);
     NEUTRAL_VERIFY_ENABLED.store(neutral_verify, Ordering::Relaxed);
-    if cache {
-        log::info!(
-            target: "post_barrier",
-            "DITHER_POST_CACHE enabled (verify={})",
-            verify
-        );
-    }
+    log::info!(
+        target: "post_barrier",
+        "DITHER_POST_CACHE={} (verify={})",
+        if cache { "on" } else { "off" },
+        verify
+    );
 }
 
 /// Whether Post-from-Dithered + Post clear-skip is active.
@@ -99,9 +110,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_off_until_env() {
-        // May already be init'd by other tests — just ensure API is callable.
+    fn api_callable_after_default_on() {
+        // May already be init'd by other tests — ensure getters stay callable.
         let _ = post_cache_enabled();
         let _ = post_verify_enabled();
+        // Static default before init is on (A4).
+        assert!(CACHE_ENABLED.load(Ordering::Relaxed) || INIT.load(Ordering::Relaxed));
     }
 }

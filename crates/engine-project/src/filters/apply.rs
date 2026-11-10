@@ -30,6 +30,15 @@ use engine_gpu::GpuContext;
 use engine_tiles::block_cache::BlockRepresentativeCache;
 use engine_tiles::{with_tile_buffer_park, PixelTile, TileBufferPark, TileCoord};
 
+#[inline]
+fn abort_if_post_cancelled(cancel_check: Option<&dyn Fn() -> bool>) -> Result<(), EngineError> {
+    if cancel_check.is_some_and(|f| f()) {
+        crate::post_barrier_metrics::record_post_tile_cancelled();
+        return Err(crate::post_barrier_metrics::post_cancelled());
+    }
+    Ok(())
+}
+
 fn verify_neutral_passthrough_tile(
     front: &PixelTile,
     filter: &FilterInstance,
@@ -444,12 +453,17 @@ pub fn apply_filter_stack_tile_row_strip(
         gpu,
         outputs,
         None,
+        None,
     )
 }
 
 /// Row-strip apply for an ordered enabled list. When `dithered_out` is `Some` and
 /// `barrier_filter_id` matches a filter in the list, copies the post-barrier
 /// state into `dithered_out` (same length as `tiles`).
+///
+/// `cancel_check`: Task 2 latest-wins. When `Some` and it returns true, abort
+/// **between tiles** on per-tile (Post/cheap) filters. Full-row ED is not
+/// interrupted mid-strip — only `document_gen` cancels that work.
 pub fn apply_enabled_filters_row_strip(
     tiles: &[(TileCoord, &PixelTile)],
     enabled: &[&FilterInstance],
@@ -463,6 +477,7 @@ pub fn apply_enabled_filters_row_strip(
     gpu: Option<&GpuContext>,
     outputs: &mut [PixelTile],
     mut dithered_out: Option<(&mut [PixelTile], u128)>,
+    cancel_check: Option<&dyn Fn() -> bool>,
 ) -> Result<(), EngineError> {
     if tiles.is_empty() {
         return Ok(());
@@ -606,6 +621,7 @@ pub fn apply_enabled_filters_row_strip(
             }
         } else if opacity >= 1.0 && filter.blend_mode == BlendMode::Normal {
             for i in 0..n {
+                abort_if_post_cancelled(cancel_check)?;
                 let coord = tiles[i].0;
                 engine_tiles::with_raw_block_sampling(!applied_any, || {
                     apply_single_filter_into(
@@ -626,6 +642,7 @@ pub fn apply_enabled_filters_row_strip(
             }
         } else {
             for i in 0..n {
+                abort_if_post_cancelled(cancel_check)?;
                 let coord = tiles[i].0;
                 let mut scratch = PixelTile::new();
                 let apply_result = engine_tiles::with_raw_block_sampling(!applied_any, || {
@@ -701,6 +718,7 @@ pub fn apply_filter_stack_tile_column_strip(
         gpu,
         outputs,
         None,
+        None,
     )
 }
 
@@ -718,6 +736,7 @@ pub fn apply_enabled_filters_column_strip(
     gpu: Option<&GpuContext>,
     outputs: &mut [PixelTile],
     mut dithered_out: Option<(&mut [PixelTile], u128)>,
+    cancel_check: Option<&dyn Fn() -> bool>,
 ) -> Result<(), EngineError> {
     if tiles.is_empty() {
         return Ok(());
@@ -855,6 +874,7 @@ pub fn apply_enabled_filters_column_strip(
             ));
         } else if opacity >= 1.0 && filter.blend_mode == BlendMode::Normal {
             for i in 0..n {
+                abort_if_post_cancelled(cancel_check)?;
                 let coord = tiles[i].0;
                 engine_tiles::with_raw_block_sampling(!applied_any, || {
                     apply_single_filter_into(
@@ -875,6 +895,7 @@ pub fn apply_enabled_filters_column_strip(
             }
         } else {
             for i in 0..n {
+                abort_if_post_cancelled(cancel_check)?;
                 let coord = tiles[i].0;
                 let mut scratch = PixelTile::new();
                 engine_tiles::with_raw_block_sampling(!applied_any, || {
@@ -2761,6 +2782,90 @@ mod tests {
         assert!(
             msg.contains("mixed requires_full_row"),
             "unexpected error: {msg}"
+        );
+    }
+
+    /// Task 2: cancel_check aborts between Post tiles; barrier capture stays filled.
+    #[test]
+    fn row_strip_cancels_between_post_tiles_after_barrier() {
+        use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let mut t0 = PixelTile::new();
+        let mut t1 = PixelTile::new();
+        fill_gray(&mut t0, 0.35);
+        fill_gray(&mut t1, 0.55);
+        let c0 = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
+        let c1 = TileCoord {
+            level: 0,
+            x: 1,
+            y: 0,
+        };
+
+        let dither = FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::FloydSteinberg,
+                levels: 4,
+                color_mode: DitherColorMode::Rgb,
+                ..Default::default()
+            }),
+        );
+        let curves = FilterInstance::new(
+            FilterKind::Curves,
+            FilterParams::Curves {
+                curve: vec![(0.0, 0.0), (0.5, 0.7), (1.0, 1.0)],
+                channel: CurveChannel::All,
+            },
+        );
+        let barrier_id = dither.id.as_u128();
+        // Enabled order for apply is bottom→top (rev of panel): dither then curves.
+        let enabled = [&dither, &curves];
+
+        let (pc, lc, tc, doc, rs) = make_caches_and_doc();
+        let blocks = BlockRepresentativeCache::new();
+        let inputs = [(c0, &t0), (c1, &t1)];
+        let mut outputs = [PixelTile::new(), PixelTile::new()];
+        let mut dithered = [PixelTile::new(), PixelTile::new()];
+
+        let seen = AtomicUsize::new(0);
+        let cancel = || seen.fetch_add(1, Ordering::SeqCst) >= 1;
+        let before = crate::post_barrier_metrics::snapshot();
+        let err = apply_enabled_filters_row_strip(
+            &inputs,
+            &enabled,
+            LayerId::new(1),
+            &pc,
+            &lc,
+            &tc,
+            &doc,
+            &rs,
+            &blocks,
+            None,
+            &mut outputs,
+            Some((dithered.as_mut_slice(), barrier_id)),
+            Some(&cancel),
+        )
+        .expect_err("Post cancel must abort mid-strip");
+        assert!(crate::post_barrier_metrics::is_post_cancelled(&err));
+        let after = crate::post_barrier_metrics::snapshot();
+        assert!(
+            after.post_tiles_cancelled > before.post_tiles_cancelled,
+            "cancel counter must bump"
+        );
+        // Barrier capture completed before Post tiles — Dithered mids are non-trivial.
+        assert!(
+            dithered[0].data.iter().any(|&v| v > 0.0) || dithered[0].data != t0.data,
+            "barrier capture should fill dithered_out before Post cancel"
+        );
+        assert_eq!(
+            dithered[0].data.len(),
+            t0.data.len(),
+            "dithered mid keeps tile shape"
         );
     }
 }

@@ -52,6 +52,26 @@ fn post_cache_refresh_policy(
     }
 }
 
+/// Task 2: bump post_gen / dither_gen (or neither) after a stack mutate.
+/// Returns whether `layer_gen` should advance (dither-path edits).
+fn apply_stack_gens_after_mutate(
+    doc: &mut engine_project::Document,
+    layer_id: u32,
+    old: &[engine_project::FilterInstance],
+    new: &[engine_project::FilterInstance],
+) -> bool {
+    let bump = doc.apply_stack_edit_gens(
+        engine_project::types::LayerId::new(layer_id),
+        old,
+        new,
+    );
+    match bump {
+        engine_project::StackEditBump::None => false,
+        engine_project::StackEditBump::Post => !engine_project::post_cache_enabled(),
+        engine_project::StackEditBump::Dither => true,
+    }
+}
+
 fn layer_raw_rev(nodes: &[engine_project::LayerNode], layer_id: u32) -> Option<u64> {
     for node in nodes {
         match node {
@@ -543,21 +563,21 @@ impl FilterService {
 
                     found = find_and_add_filter(&mut doc.root, layer_id, filter);
                     if found {
-                        doc.increment_generation();
+                        let new_filters = layer_filters(&doc.root, layer_id).unwrap_or_default();
+                        let bump_layer = apply_stack_gens_after_mutate(
+                            doc,
+                            layer_id,
+                            &old_filters,
+                            &new_filters,
+                        );
+                        if bump_layer {
+                            doc.generations.increment_layer_gen(layer_id);
+                        }
                     }
                 });
 
             if !found {
                 return Err(format!("Layer {} not found", layer_id));
-            }
-
-            {
-                let snapshot = self
-                    .state
-                    .require_session(doc_id)?
-                    .document_handle
-                    .snapshot();
-                snapshot.generations.increment_layer_gen(layer_id);
             }
 
             let snapshot = self
@@ -570,12 +590,14 @@ impl FilterService {
             let changed_index = new_filters
                 .iter()
                 .position(|f| f.id.to_string() == filter_id);
+            let (clear, preserve_dithered) =
+                post_cache_refresh_policy(&old_filters, &new_filters, true);
             engine_project::note_stack_change(
                 layer_id,
                 &old_filters,
                 &new_filters,
                 changed_index,
-                true,
+                clear,
                 &note_prefix_externals(&snapshot, layer_id, &new_filters),
             );
             engine_tiles::invalidation::invalidate(
@@ -584,7 +606,7 @@ impl FilterService {
                     doc,
                     layer: layer_id,
                     changed_index,
-                    preserve_dithered: false,
+                    preserve_dithered,
                 },
             );
 
@@ -658,7 +680,17 @@ impl FilterService {
 
                     found = find_and_remove_filter(&mut doc.root, req.layer_id, &req.filter_id);
                     if found {
-                        doc.increment_generation();
+                        let new_filters =
+                            layer_filters(&doc.root, req.layer_id).unwrap_or_default();
+                        let bump_layer = apply_stack_gens_after_mutate(
+                            doc,
+                            req.layer_id,
+                            &old_filters,
+                            &new_filters,
+                        );
+                        if bump_layer {
+                            doc.generations.increment_layer_gen(req.layer_id);
+                        }
                     }
                 });
 
@@ -779,7 +811,17 @@ impl FilterService {
                         req.new_index,
                     );
                     if success {
-                        doc.increment_generation();
+                        let new_filters =
+                            layer_filters(&doc.root, req.layer_id).unwrap_or_default();
+                        let bump_layer = apply_stack_gens_after_mutate(
+                            doc,
+                            req.layer_id,
+                            &old_filters,
+                            &new_filters,
+                        );
+                        if bump_layer {
+                            doc.generations.increment_layer_gen(req.layer_id);
+                        }
                     }
                 });
 
@@ -1444,7 +1486,16 @@ impl FilterService {
                         req.enabled,
                     );
                     if found {
-                        doc.increment_generation();
+                        let new_filters = layer_filters(&doc.root, layer_id).unwrap_or_default();
+                        let bump_layer = apply_stack_gens_after_mutate(
+                            doc,
+                            layer_id,
+                            &old_filters,
+                            &new_filters,
+                        );
+                        if bump_layer {
+                            doc.generations.increment_layer_gen(layer_id);
+                        }
                     }
                 });
 
@@ -1453,15 +1504,6 @@ impl FilterService {
                     "Filter {} not found on layer {} during update",
                     req.filter_id, req.layer_id
                 ));
-            }
-
-            {
-                let snapshot = self
-                    .state
-                    .require_session(doc_id)?
-                    .document_handle
-                    .snapshot();
-                snapshot.generations.increment_layer_gen(layer_id);
             }
 
             if crate::tile_gen_trace::enabled() {
@@ -1484,6 +1526,8 @@ impl FilterService {
                     serde_json::json!({
                         "doc_gen_before": gen_before,
                         "doc_gen_after": gen_after,
+                        "post_gen": snapshot.generations.get_post_gen(layer_id),
+                        "dither_gen": snapshot.generations.get_dither_gen(layer_id),
                     }),
                 );
             }
@@ -1495,6 +1539,8 @@ impl FilterService {
                 .snapshot();
             let base_clear = layer_needs_dither_cache_reset(&snapshot.root, layer_id);
             let new_filters = layer_filters(&snapshot.root, layer_id).unwrap_or_default();
+            let material_unchanged =
+                engine_project::material_stack_unchanged(&old_filters, &new_filters);
             let (clear, preserve_dithered) =
                 post_cache_refresh_policy(&old_filters, &new_filters, base_clear);
             engine_project::note_stack_change(
@@ -1502,16 +1548,19 @@ impl FilterService {
                 &old_filters,
                 &new_filters,
                 changed_index,
-                clear,
+                clear && !material_unchanged,
                 &note_prefix_externals(&snapshot, layer_id, &new_filters),
             );
-            request_preview_refresh_at(
-                &self.state,
-                layer_id,
-                clear,
-                changed_index,
-                preserve_dithered,
-            );
+            // Task 2: neutral→neutral bumps neither gen and skips preview invalidate.
+            if !material_unchanged {
+                request_preview_refresh_at(
+                    &self.state,
+                    layer_id,
+                    clear,
+                    changed_index,
+                    preserve_dithered,
+                );
+            }
 
             let live_gen = snapshot
                 .generations

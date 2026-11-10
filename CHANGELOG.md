@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- **Latest-wins Post scrub (lever 2):** Post-only stack edits bump `post_gen` (not
+  `document_gen`). In-flight Post work cancels before start and **between tiles**
+  inside strip Post passes; cancelled tiles do not enter `Processed`. Valid
+  barrier `Dithered` may still publish when `document_gen` held.
+- **Post-cache default on (A4):** `DITHER_POST_CACHE` defaults to enabled so
+  Post-above-dither edits skip ED. Set `DITHER_POST_CACHE=0` to revert.
+
 ### Changed
 
 - **Neutral filter skip (Post levers):** default-state **Curves** (linear diagonal) and
@@ -12,6 +21,9 @@
   **≤ 1/255** on those defaults; non-default params are unchanged.
 - Dev: `DITHER_NEUTRAL_VERIFY=1` re-runs each skipped neutral filter and asserts
   bitwise passthrough (`DITHER_POST_CACHE` independent).
+- **No bundled FOGRA/PSO ICC:** soft proof / print export use user-imported ICC
+  only. Legacy `builtin:fogra*` ids are missing until import. UI font is
+  **GranaPadano** only (Ruda/ChicagoFLF removed from the ship tree).
 
 ## 2.0.6-beta
 

@@ -152,6 +152,19 @@ fn ascii() -> FilterInstance {
     f
 }
 
+fn glitch_spatial_active() -> FilterInstance {
+    FilterInstance::new(
+        FilterKind::Glitch,
+        FilterParams::Glitch(GlitchParams {
+            block_shift: GlitchSubOp {
+                enabled: true,
+                amount: 8.0,
+            },
+            ..GlitchParams::default()
+        }),
+    )
+}
+
 fn gradient_tile(coord: TileCoord) -> PixelTile {
     let mut tile = PixelTile::new();
     for y in 0..TILE_FULL {
@@ -368,6 +381,10 @@ fn post_cache_zero_ed_for_neutral_post_edits_and_add_remove() {
     assert_eq!(
         after.clear_residuals, before.clear_residuals,
         "neutral Post edits / add-remove must not clear residuals (ED)"
+    );
+    assert_eq!(
+        after.ed_runs_started, before.ed_runs_started,
+        "Task 2: neutral Post edits must not start ED (ed_runs_started)"
     );
     assert!(after.clear_skipped > before.clear_skipped);
     assert!(after.classify_post > before.classify_post);
@@ -813,4 +830,131 @@ fn prefix_hash_keeps_non_normal_zero_adjust() {
         without, with,
         "Multiply zero Adjust must remain in prefix hash"
     );
+}
+
+/// A3 barrier scenarios from `docs/post-processing-levers.md`:
+/// 1. `Dither → Adjust → Glitch` (both Post): Adjust/Glitch edits skip ED
+/// 2. `Adjust → Dither → Glitch`: Pre Adjust clears; Post Glitch does not
+/// 3. Moving Adjust across the barrier is Barrier once; then Post edits skip ED
+#[test]
+fn a3_barrier_glitch_adjust_scenarios() {
+    let _gate = POST_CACHE_GATE.lock().unwrap_or_else(|e| e.into_inner());
+    set_post_cache_enabled_for_test(true);
+    let ext = PrefixExternals::default();
+    let before = post_barrier_counters();
+
+    // Panel top-first. Processing via rev: Dither → Adjust → Glitch.
+    let d = floyd();
+    let a_post = adjust_active();
+    let g = glitch_spatial_active();
+    let stack_post = vec![g.clone(), a_post.clone(), d.clone()];
+    assert_eq!(barrier_index(&stack_post), Some(2));
+
+    let mut adjust_edit = stack_post.clone();
+    if let FilterParams::Adjust {
+        ref mut brightness, ..
+    } = adjust_edit[1].params
+    {
+        *brightness = 0.35;
+    }
+    assert_eq!(classify_change(&stack_post, &adjust_edit), ChangeClass::Post);
+    let (clear_a, preserve_a) = refresh_policy_for_change(&stack_post, &adjust_edit, true);
+    assert!(!clear_a && preserve_a, "Post Adjust must preserve Dithered");
+    note_stack_change(1, &stack_post, &adjust_edit, Some(1), clear_a, &ext);
+    record_post_clear(clear_a);
+
+    let mut glitch_edit = stack_post.clone();
+    if let FilterParams::Glitch(ref mut p) = glitch_edit[0].params {
+        p.block_shift.amount = 14.0;
+    }
+    assert_eq!(classify_change(&stack_post, &glitch_edit), ChangeClass::Post);
+    let (clear_g, preserve_g) = refresh_policy_for_change(&stack_post, &glitch_edit, true);
+    assert!(!clear_g && preserve_g, "Post Glitch must preserve Dithered");
+    note_stack_change(1, &stack_post, &glitch_edit, Some(0), clear_g, &ext);
+    record_post_clear(clear_g);
+
+    // Processing: Adjust → Dither → Glitch. Panel: [Glitch, Dither, Adjust].
+    let a_pre = adjust_active();
+    let stack_pre = vec![g.clone(), d.clone(), a_pre.clone()];
+    assert_eq!(barrier_index(&stack_pre), Some(1));
+
+    let mut pre_adjust_edit = stack_pre.clone();
+    if let FilterParams::Adjust {
+        ref mut contrast, ..
+    } = pre_adjust_edit[2].params
+    {
+        *contrast = 0.4;
+    }
+    assert_eq!(
+        classify_change(&stack_pre, &pre_adjust_edit),
+        ChangeClass::Pre
+    );
+    let (clear_pre, preserve_pre) = refresh_policy_for_change(&stack_pre, &pre_adjust_edit, true);
+    assert!(clear_pre && !preserve_pre, "Pre Adjust must clear residuals");
+    note_stack_change(1, &stack_pre, &pre_adjust_edit, Some(2), clear_pre, &ext);
+    record_post_clear(clear_pre);
+
+    let mut post_glitch_edit = stack_pre.clone();
+    if let FilterParams::Glitch(ref mut p) = post_glitch_edit[0].params {
+        p.block_scramble = GlitchSubOp {
+            enabled: true,
+            amount: 0.5,
+        };
+    }
+    assert_eq!(
+        classify_change(&stack_pre, &post_glitch_edit),
+        ChangeClass::Post
+    );
+    let (clear_pg, preserve_pg) = refresh_policy_for_change(&stack_pre, &post_glitch_edit, true);
+    assert!(!clear_pg && preserve_pg, "Glitch above dither stays Post");
+    note_stack_change(1, &stack_pre, &post_glitch_edit, Some(0), clear_pg, &ext);
+    record_post_clear(clear_pg);
+
+    // Move Adjust from Pre (below) to Post (above barrier): Barrier once.
+    // stack_pre = [Glitch, Dither, Adjust] → [Glitch, Adjust, Dither]
+    let crossed = vec![g.clone(), a_pre.clone(), d.clone()];
+    assert_eq!(classify_change(&stack_pre, &crossed), ChangeClass::Barrier);
+    let (clear_x, preserve_x) = refresh_policy_for_change(&stack_pre, &crossed, true);
+    assert!(clear_x && !preserve_x, "crossing barrier invalidates Dithered");
+    note_stack_change(1, &stack_pre, &crossed, Some(1), clear_x, &ext);
+    record_post_clear(clear_x);
+
+    // After the cross, Adjust param edits are Post (zero ED / no residual clear).
+    let mut after_cross_edit = crossed.clone();
+    if let FilterParams::Adjust {
+        ref mut brightness, ..
+    } = after_cross_edit[1].params
+    {
+        *brightness = 0.5;
+    }
+    assert_eq!(
+        classify_change(&crossed, &after_cross_edit),
+        ChangeClass::Post
+    );
+    let (clear_after, preserve_after) =
+        refresh_policy_for_change(&crossed, &after_cross_edit, true);
+    assert!(!clear_after && preserve_after);
+    note_stack_change(1, &crossed, &after_cross_edit, Some(1), clear_after, &ext);
+    record_post_clear(clear_after);
+
+    let after = post_barrier_counters();
+    // Only the Pre Adjust edit + barrier cross should have cleared residuals.
+    assert_eq!(
+        after.clear_residuals,
+        before.clear_residuals + 2,
+        "exactly Pre edit + barrier cross clear residuals"
+    );
+    assert!(
+        after.clear_skipped >= before.clear_skipped + 4,
+        "Post Adjust/Glitch edits and post-cross Adjust must skip clears"
+    );
+    assert_eq!(
+        after.ed_runs_started, before.ed_runs_started,
+        "classify/refresh path must not start ED runs"
+    );
+    assert!(after.classify_post > before.classify_post);
+    assert!(after.classify_pre > before.classify_pre);
+    assert!(after.classify_barrier > before.classify_barrier);
+
+    set_post_cache_enabled_for_test(false);
 }

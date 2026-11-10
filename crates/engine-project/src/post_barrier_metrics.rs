@@ -15,6 +15,9 @@ static CLASSIFY_PRE: AtomicU64 = AtomicU64::new(0);
 static CLEAR_RESIDUALS: AtomicU64 = AtomicU64::new(0);
 static CLEAR_SKIPPED: AtomicU64 = AtomicU64::new(0);
 static NEUTRAL_APPLY_SKIPPED: AtomicU64 = AtomicU64::new(0);
+static ED_RUNS_STARTED: AtomicU64 = AtomicU64::new(0);
+static POST_TILES_CANCELLED: AtomicU64 = AtomicU64::new(0);
+static POST_TILES_DISCARDED_AFTER_COMPUTE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy)]
 pub struct PostBarrierCounters {
@@ -24,6 +27,9 @@ pub struct PostBarrierCounters {
     pub clear_residuals: u64,
     pub clear_skipped: u64,
     pub neutral_apply_skipped: u64,
+    pub ed_runs_started: u64,
+    pub post_tiles_cancelled: u64,
+    pub post_tiles_discarded_after_compute: u64,
 }
 
 pub fn snapshot() -> PostBarrierCounters {
@@ -34,11 +40,40 @@ pub fn snapshot() -> PostBarrierCounters {
         clear_residuals: CLEAR_RESIDUALS.load(Ordering::Relaxed),
         clear_skipped: CLEAR_SKIPPED.load(Ordering::Relaxed),
         neutral_apply_skipped: NEUTRAL_APPLY_SKIPPED.load(Ordering::Relaxed),
+        ed_runs_started: ED_RUNS_STARTED.load(Ordering::Relaxed),
+        post_tiles_cancelled: POST_TILES_CANCELLED.load(Ordering::Relaxed),
+        post_tiles_discarded_after_compute: POST_TILES_DISCARDED_AFTER_COMPUTE.load(Ordering::Relaxed),
     }
 }
 
 pub fn record_neutral_apply_skip() {
     NEUTRAL_APPLY_SKIPPED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_ed_run_started() {
+    ED_RUNS_STARTED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_post_tile_cancelled() {
+    POST_TILES_CANCELLED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_post_tile_discarded_after_compute() {
+    POST_TILES_DISCARDED_AFTER_COMPUTE.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Stable `InvalidState` reason for Task 2 mid-Post abort (`post_gen` advanced).
+pub const POST_CANCELLED_REASON: &str = "Post cancelled: post_gen advanced";
+
+pub fn post_cancelled() -> crate::error::EngineError {
+    crate::error::EngineError::invalid_state(POST_CANCELLED_REASON)
+}
+
+pub fn is_post_cancelled(err: &crate::error::EngineError) -> bool {
+    matches!(
+        err,
+        crate::error::EngineError::InvalidState { reason } if reason == POST_CANCELLED_REASON
+    )
 }
 
 pub fn record_clear(did_clear: bool) {

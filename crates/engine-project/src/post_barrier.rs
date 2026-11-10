@@ -216,6 +216,33 @@ fn material_fingerprints(filters: &[FilterInstance]) -> Vec<u64> {
         .collect()
 }
 
+/// True when only neutrals/disabled differed (Task 2: bump neither post nor dither gen).
+pub fn material_stack_unchanged(old: &[FilterInstance], new: &[FilterInstance]) -> bool {
+    material_fingerprints(old) == material_fingerprints(new)
+}
+
+/// Which generation Task 2 should bump for a stack edit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StackEditBump {
+    /// Material fingerprints unchanged (neutral↔neutral / noop).
+    None,
+    /// Post-only material change — `post_gen` only.
+    Post,
+    /// Barrier / Pre / order — `dither_gen` + `document_gen`.
+    Dither,
+}
+
+/// Decide Task 2 gen bump from `classify_change`, with neutral→neutral → [`StackEditBump::None`].
+pub fn stack_edit_bump(old: &[FilterInstance], new: &[FilterInstance]) -> StackEditBump {
+    if material_stack_unchanged(old, new) {
+        return StackEditBump::None;
+    }
+    match classify_change(old, new) {
+        ChangeClass::Post => StackEditBump::Post,
+        ChangeClass::Barrier | ChangeClass::Pre => StackEditBump::Dither,
+    }
+}
+
 /// Classify a stack edit. Pure; used by P0 logs and (later) P2 invalidation.
 pub fn classify_change(old: &[FilterInstance], new: &[FilterInstance]) -> ChangeClass {
     let b_old = barrier_index(old);
@@ -549,5 +576,36 @@ mod tests {
         f.id = FilterInstanceId(uuid::Uuid::nil());
         ensure_filter_ids(std::slice::from_mut(&mut f));
         assert_ne!(f.id.as_u128(), 0);
+    }
+
+    #[test]
+    fn stack_edit_bump_post_pre_and_neutral() {
+        let base = vec![curves(), floyd(), adjust()];
+        let mut post = base.clone();
+        if let FilterParams::Curves { ref mut curve, .. } = post[0].params {
+            *curve = vec![(0.0, 0.0), (0.5, 0.6), (1.0, 1.0)];
+        }
+        assert_eq!(stack_edit_bump(&base, &post), StackEditBump::Post);
+
+        let mut pre = base.clone();
+        if let FilterParams::Adjust {
+            ref mut brightness, ..
+        } = pre[2].params
+        {
+            *brightness = 0.2;
+        }
+        assert_eq!(stack_edit_bump(&base, &pre), StackEditBump::Dither);
+
+        // Neutral Adjust → still-neutral Adjust (opacity only, still identity).
+        let c = curves();
+        let d = floyd();
+        let mut n0 = adjust();
+        n0.opacity = 1.0;
+        let mut n1 = n0.clone();
+        n1.opacity = 0.0; // opacity 0 is also neutral
+        let with0 = vec![c.clone(), d.clone(), n0];
+        let with1 = vec![c, d, n1];
+        assert!(material_stack_unchanged(&with0, &with1));
+        assert_eq!(stack_edit_bump(&with0, &with1), StackEditBump::None);
     }
 }

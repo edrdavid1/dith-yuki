@@ -1,6 +1,6 @@
 # Spec: Post-editor and cache after dither / glitch
 
-**Status:** P0+P1 landed; P2 behind `DITHER_POST_CACHE=1` (row/column/per-tile + Dithered restamp on Post; FD Ascii/Riemersma through-barrier + Post publish; verify via `DITHER_POST_VERIFY=1`).  
+**Status:** P0+P1 landed; **P2 on by default** (A4, 2026-11-10) — row/column/per-tile + Dithered restamp on Post; FD Ascii/Riemersma through-barrier + Post publish; kill-switch `DITHER_POST_CACHE=0`; verify via `DITHER_POST_VERIFY=1`.  
 **Priority constraint:** dithering speed must not regress; Post edits above the barrier must stop re-running ED (from P2 onward).
 
 The problem is not the speed of Curves/Adjust. The layer has no intermediate result after dither, and invalidation is too coarse: any filter change on a layer that has dither clears residuals and recomputes the whole stack. This spec adds a **barrier**, a **`Dithered` tile cache**, and a **Post** path above that cache.
