@@ -25,6 +25,7 @@ import { Monitor } from 'pixelarticons/react/Monitor';
 import { Moon } from 'pixelarticons/react/Moon';
 import { Pipette } from 'pixelarticons/react/Pipette';
 import { Plus } from 'pixelarticons/react/Plus';
+import { Reload } from 'pixelarticons/react/Reload';
 import { Save } from 'pixelarticons/react/Save';
 import { Settings2 } from 'pixelarticons/react/Settings2';
 import { SettingsCog } from 'pixelarticons/react/SettingsCog';
@@ -50,6 +51,7 @@ export type IconName =
   | 'effect.highlights_shadows'
   | 'effect.temperature_tint'
   | 'effect.vibrance'
+  | 'effect.hue'
   | 'effect.ascii'
   | 'effect.nearest_color'
   | 'effect.palette_quantize'
@@ -106,6 +108,7 @@ const PIXEL_ICONS: Record<string, PixelIcon> = {
   'effect.highlights_shadows': Moon,
   'effect.temperature_tint': Thermometer,
   'effect.vibrance': Sparkles,
+  'effect.hue': Reload,
   'effect.ascii': LetterA,
   'effect.nearest_color': Pipette,
   'effect.palette_quantize': ColorsSwatch,

@@ -134,7 +134,8 @@ fn min_version_for_kind(kind: FilterKind) -> Option<&'static str> {
         FilterKind::Exposure
         | FilterKind::HighlightsShadows
         | FilterKind::TemperatureTint
-        | FilterKind::Vibrance => Some("2.0.6"),
+        | FilterKind::Vibrance
+        | FilterKind::Hue => Some("2.0.6"),
     }
 }
 

@@ -31,6 +31,7 @@ pub mod gpu_bridge;
 pub mod gpu_graph;
 pub mod highlights_shadows;
 pub mod hilbert;
+pub mod hue;
 pub mod levels;
 pub mod line_screen;
 pub mod neighbors;

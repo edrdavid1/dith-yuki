@@ -30,6 +30,7 @@ export type FilterKind =
   | 'HighlightsShadows'
   | 'TemperatureTint'
   | 'Vibrance'
+  | 'Hue'
   | 'Ascii';
 
 export type FilterParams =
@@ -46,6 +47,7 @@ export type FilterParams =
   | HighlightsShadowsParams
   | TemperatureTintParams
   | VibranceParams
+  | HueParams
   | AsciiParams;
 
 export interface DitherParams {
@@ -253,6 +255,12 @@ export interface VibranceParams {
   type: 'Vibrance';
   /** Vibrance (−1 … 1). 0 = identity. */
   amount: number;
+}
+
+export interface HueParams {
+  type: 'Hue';
+  /** Hue rotate in degrees (−180 … 180). 0 = identity. */
+  degrees: number;
 }
 
 /** Text-art / ASCII — not a dither mode. */
