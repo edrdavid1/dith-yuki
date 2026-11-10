@@ -12,6 +12,7 @@
 
 pub mod adjust;
 pub mod ascii_job;
+pub mod blur_noise;
 pub mod clarity;
 pub mod context;
 pub mod crosshatch;

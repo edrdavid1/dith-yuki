@@ -40,6 +40,8 @@ pub enum FilterKind {
     Hue,
     /// Midtone local contrast / clarity (spatial Post).
     Clarity,
+    /// Blur + grain noise (spatial; split out of Adjust).
+    BlurNoise,
     /// Text-art / ASCII (not a dither mode).
     Ascii,
     Placeholder,
@@ -62,6 +64,7 @@ impl std::fmt::Display for FilterKind {
             FilterKind::Vibrance => write!(f, "Vibrance"),
             FilterKind::Hue => write!(f, "Hue"),
             FilterKind::Clarity => write!(f, "Clarity"),
+            FilterKind::BlurNoise => write!(f, "BlurNoise"),
             FilterKind::Ascii => write!(f, "Ascii"),
             FilterKind::Placeholder => write!(f, "Placeholder"),
         }
@@ -82,6 +85,7 @@ impl FilterKind {
                 | Self::TemperatureTint
                 | Self::Vibrance
                 | Self::Hue
+                | Self::BlurNoise
         )
     }
 }
@@ -1139,6 +1143,13 @@ pub enum FilterParams {
     Hue { degrees: f32 },
     /// Midtone local contrast (−1 .. 1). 0 = identity.
     Clarity { amount: f32 },
+    /// Blur (0 .. 2) + grain noise (0 .. 1).
+    BlurNoise {
+        /// Blur amount (0 .. 2).
+        blur: f32,
+        /// Deterministic RGB noise (0 .. 1).
+        noise: f32,
+    },
     /// Text-art / ASCII output stage (`engine-ascii`). Not a dither mode.
     Ascii(AsciiParams),
     /// Placeholder for unknown or future filters.
@@ -1788,6 +1799,19 @@ impl FilterInstance {
                 }
                 Ok(())
             }
+            FilterParams::BlurNoise { blur, noise } => {
+                if !(0.0..=2.0).contains(blur) {
+                    return Err(EngineError::invalid_filter_params(
+                        "BlurNoise blur must be in range [0.0, 2.0]",
+                    ));
+                }
+                if !(0.0..=1.0).contains(noise) {
+                    return Err(EngineError::invalid_filter_params(
+                        "BlurNoise noise must be in range [0.0, 1.0]",
+                    ));
+                }
+                Ok(())
+            }
             FilterParams::Ascii(p) => p.validate(),
             FilterParams::Placeholder(_) => Ok(()),
         }
@@ -1813,6 +1837,7 @@ pub fn algorithm_id_for_params(params: &FilterParams) -> Option<&'static str> {
         FilterParams::Vibrance { .. } => Some("vibrance"),
         FilterParams::Hue { .. } => Some("hue"),
         FilterParams::Clarity { .. } => Some("clarity"),
+        FilterParams::BlurNoise { .. } => Some("blur_noise"),
         FilterParams::Curves { .. } => Some("curves"),
         FilterParams::Glitch(_) => Some("glitch"),
         FilterParams::Ascii(_) => Some("ascii"),
@@ -1871,6 +1896,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         "vibrance" => Some(FilterKind::Vibrance),
         "hue" => Some(FilterKind::Hue),
         "clarity" => Some(FilterKind::Clarity),
+        "blur_noise" => Some(FilterKind::BlurNoise),
         "curves" => Some(FilterKind::Curves),
         "glitch" => Some(FilterKind::Glitch),
         "ascii" => Some(FilterKind::Ascii),
@@ -1975,6 +2001,10 @@ pub fn filter_params_to_json(params: &FilterParams) -> Result<serde_json::Value,
         FilterParams::Vibrance { amount } => Ok(serde_json::json!({ "amount": amount })),
         FilterParams::Hue { degrees } => Ok(serde_json::json!({ "degrees": degrees })),
         FilterParams::Clarity { amount } => Ok(serde_json::json!({ "amount": amount })),
+        FilterParams::BlurNoise { blur, noise } => Ok(serde_json::json!({
+            "blur": blur,
+            "noise": noise,
+        })),
         FilterParams::Curves { curve, channel } => Ok(serde_json::json!({
             "curve": curve,
             "channel": channel,

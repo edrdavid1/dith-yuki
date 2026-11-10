@@ -11,6 +11,7 @@ mod adjust;
 mod ascii;
 mod bayer;
 pub mod blue_noise_texture;
+mod blur_noise;
 mod clarity;
 mod clustered_dot_ordered;
 mod cmyk_halftone;
@@ -102,6 +103,7 @@ pub fn register_all(registry: &mut AlgorithmRegistry) {
     registry.register(Box::new(vibrance::Vibrance));
     registry.register(Box::new(hue::Hue));
     registry.register(Box::new(clarity::Clarity));
+    registry.register(Box::new(blur_noise::BlurNoise));
     registry.register(Box::new(glitch::Glitch));
     registry.register(Box::new(error_diffusion::ZhouFang));
     registry.register(Box::new(error_diffusion::ModulatedDiffuseY));

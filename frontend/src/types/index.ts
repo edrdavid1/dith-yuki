@@ -32,6 +32,7 @@ export type FilterKind =
   | 'Vibrance'
   | 'Hue'
   | 'Clarity'
+  | 'BlurNoise'
   | 'Ascii';
 
 export type FilterParams =
@@ -50,6 +51,7 @@ export type FilterParams =
   | VibranceParams
   | HueParams
   | ClarityParams
+  | BlurNoiseParams
   | AsciiParams;
 
 export interface DitherParams {
@@ -277,6 +279,14 @@ export interface ClarityParams {
   type: 'Clarity';
   /** Midtone local contrast (−1 … 1). 0 = identity. */
   amount: number;
+}
+
+export interface BlurNoiseParams {
+  type: 'BlurNoise';
+  /** Blur amount (0 … 2). */
+  blur: number;
+  /** Grain noise (0 … 1). */
+  noise: number;
 }
 
 /** Text-art / ASCII — not a dither mode. */
