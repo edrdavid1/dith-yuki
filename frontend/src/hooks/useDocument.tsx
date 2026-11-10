@@ -20,7 +20,7 @@ import { maybeAutoExtractPalette } from '../app/autoExtract';
 import { useShell } from '../app/shell/ShellContext';
 import { formatIpcError, openDialog, saveDialog } from '../shared/ipc';
 import { shareProjectCopy as shareProjectCopyIPC } from '../shared/ipc/project';
-import { listOpenDocuments } from '../shared/ipc/document';
+import { copyPreviewToClipboard, listOpenDocuments } from '../shared/ipc/document';
 import type { BlankBackground } from '../shared/ipc/document';
 import {
   OPEN_DOC_MEMORY_WARNING,
@@ -302,6 +302,20 @@ export function useDocument() {
     [dispatch, selectedLayerId, state.docId]
   );
 
+  const copyPreviewImageFn = useCallback(async () => {
+    if (!state.docId) return;
+    try {
+      await copyPreviewToClipboard(state.docId);
+      dispatch(setDocumentMeta({ notification: 'Copied to clipboard' }));
+    } catch (err) {
+      dispatch(
+        setDocumentMeta({
+          notification: err instanceof Error ? err.message : String(err),
+        })
+      );
+    }
+  }, [dispatch, state.docId]);
+
   const openProjectAtFn = useCallback(
     async (filePath: string) => {
       const result = await dispatch(openProject(filePath));
@@ -553,6 +567,7 @@ export function useDocument() {
     exportPrint: exportPrintFn,
     exportBatch: exportBatchFn,
     copyAsciiText: copyAsciiTextFn,
+    copyPreviewImage: copyPreviewImageFn,
     clearNotification: clearNotificationFn,
     svgDialog: (
       <>

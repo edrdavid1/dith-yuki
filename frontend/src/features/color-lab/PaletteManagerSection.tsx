@@ -9,6 +9,7 @@ import { bind } from '../../shared/ui/cn';
 import PaletteManagerDialog from './PaletteManagerDialog';
 import {
   PALETTE_NEW_VALUE,
+  PALETTE_TONE_STEPS_VALUE,
   buildBrowsablePaletteList,
   browseIndexForSelection,
   builtinKey,
@@ -16,16 +17,22 @@ import {
   savedKey,
   stepBrowseIndex,
   type PaletteListEntry,
+  type UnboundPicker,
 } from './paletteListOrder';
 
 const cn = bind({ ...styles, ...buttonStyles });
 
-export { PALETTE_NEW_VALUE, builtinKey, savedKey };
+export { PALETTE_NEW_VALUE, PALETTE_TONE_STEPS_VALUE, builtinKey, savedKey };
 
 export interface PaletteManagerSectionProps {
   builtins: BuiltinPaletteDto[];
   saved: PaletteDto[];
   selectedPaletteId: number | null;
+  /** What dither/glitch use when no saved palette is selected. */
+  unboundPicker?: UnboundPicker;
+  /** Color Lab binding id (`lastCreatedId`); used when draft selection is empty. */
+  boundPaletteId?: number | null;
+  onSelectToneSteps: () => void;
   onSelectNew: () => void;
   onSelectSaved: (id: number) => void;
   onSelectBuiltin: (id: string) => void;
@@ -82,6 +89,9 @@ export default function PaletteManagerSection({
   builtins,
   saved,
   selectedPaletteId,
+  unboundPicker = 'tone-steps',
+  boundPaletteId = null,
+  onSelectToneSteps,
   onSelectNew,
   onSelectSaved,
   onSelectBuiltin,
@@ -91,8 +101,11 @@ export default function PaletteManagerSection({
   previewColors,
 }: PaletteManagerSectionProps) {
   const [managerOpen, setManagerOpen] = useState(false);
-  const value = currentPaletteKey(selectedPaletteId);
-  const selectedSaved = saved.find((p) => p.id === selectedPaletteId) ?? null;
+  const value = currentPaletteKey(selectedPaletteId, unboundPicker, boundPaletteId);
+  const selectedSaved =
+    saved.find((p) => p.id === selectedPaletteId) ??
+    (boundPaletteId != null ? saved.find((p) => p.id === boundPaletteId) : null) ??
+    null;
   const browseList = useMemo(
     () => buildBrowsablePaletteList(builtins, saved),
     [builtins, saved]
@@ -107,13 +120,16 @@ export default function PaletteManagerSection({
       browseList,
       selectedPaletteId,
       saved,
-      browseIndexRef.current
+      browseIndexRef.current,
+      unboundPicker,
+      boundPaletteId
     );
     setBrowseIndex(idx);
-  }, [browseList, selectedPaletteId, saved]);
+  }, [browseList, selectedPaletteId, saved, unboundPicker, boundPaletteId]);
 
   const options = useMemo<DropdownOption[]>(() => {
     const list: DropdownOption[] = [
+      { value: PALETTE_TONE_STEPS_VALUE, label: 'Raw tone', group: 'Quantize' },
       { value: PALETTE_NEW_VALUE, label: 'New palette', group: 'Draft' },
     ];
     for (const p of builtins) {
@@ -128,33 +144,40 @@ export default function PaletteManagerSection({
   const applyEntry = useCallback(
     (entry: PaletteListEntry | null | undefined) => {
       if (!entry) return;
-      if (entry.kind === 'new') onSelectNew();
+      if (entry.kind === 'tone-steps') onSelectToneSteps();
+      else if (entry.kind === 'new') onSelectNew();
       else if (entry.kind === 'builtin') onSelectBuiltin(entry.id);
       else onSelectSaved(entry.id);
     },
-    [onSelectBuiltin, onSelectNew, onSelectSaved]
+    [onSelectBuiltin, onSelectNew, onSelectSaved, onSelectToneSteps]
   );
 
   const handleStep = useCallback(
     (delta: -1 | 1) => {
       if (browseList.length === 0) return;
-      // From draft (New): first ◀/▶ lands on an end of the browsable list.
-      const next =
-        selectedPaletteId == null
-          ? delta === 1
-            ? 0
-            : browseList.length - 1
-          : stepBrowseIndex(browseList.length, browseIndex, delta);
+      // From New draft: first ◀/▶ lands on an end of the browsable list.
+      const onBrowsable = browseList.some((e) => e.key === value);
+      const next = !onBrowsable
+        ? delta === 1
+          ? 0
+          : browseList.length - 1
+        : stepBrowseIndex(browseList.length, browseIndex, delta);
       browseIndexRef.current = next;
       setBrowseIndex(next);
       applyEntry(browseList[next]);
     },
-    [applyEntry, browseIndex, browseList, selectedPaletteId]
+    [applyEntry, browseIndex, browseList, value]
   );
 
   const handleDropdownSelect = useCallback(
     (v: string) => {
       browseIndexRef.current = null;
+      if (v === PALETTE_TONE_STEPS_VALUE) {
+        const idx = browseList.findIndex((e) => e.kind === 'tone-steps');
+        if (idx >= 0) browseIndexRef.current = idx;
+        onSelectToneSteps();
+        return;
+      }
       if (v === PALETTE_NEW_VALUE) {
         onSelectNew();
         return;
@@ -174,13 +197,29 @@ export default function PaletteManagerSection({
         onSelectSaved(id);
       }
     },
-    [browseList, onSelectBuiltin, onSelectNew, onSelectSaved]
+    [browseList, onSelectBuiltin, onSelectNew, onSelectSaved, onSelectToneSteps]
   );
 
   const fieldColors =
-    previewColors && previewColors.length > 0
-      ? previewColors
-      : selectedSaved?.colors ?? [];
+    value === PALETTE_TONE_STEPS_VALUE || value === PALETTE_NEW_VALUE
+      ? []
+      : previewColors && previewColors.length > 0
+        ? previewColors
+        : selectedSaved?.colors ?? [];
+
+  const fieldName =
+    value === PALETTE_TONE_STEPS_VALUE
+      ? 'Raw tone'
+      : value === PALETTE_NEW_VALUE
+        ? 'New palette'
+        : selectedSaved?.name ?? 'New palette';
+
+  const fieldId =
+    value === PALETTE_TONE_STEPS_VALUE
+      ? 'tone-steps'
+      : selectedSaved
+        ? `saved-${selectedSaved.id}`
+        : 'new';
 
   return (
     <div className={cn('color-lab-column', 'builtin-presets')}>
@@ -190,14 +229,14 @@ export default function PaletteManagerSection({
         options={options}
         onSelect={handleDropdownSelect}
         selectedContent={
-          selectedSaved ? (
-            <Row colors={fieldColors} name={selectedSaved.name} id={`saved-${selectedSaved.id}`} />
+          value === PALETTE_TONE_STEPS_VALUE || value === PALETTE_NEW_VALUE ? (
+            fieldName
           ) : (
-            <Row colors={fieldColors} name="New palette" id="new" />
+            <Row colors={fieldColors} name={fieldName} id={fieldId} />
           )
         }
         renderOption={(option) => {
-          if (option.value === PALETTE_NEW_VALUE) {
+          if (option.value === PALETTE_TONE_STEPS_VALUE || option.value === PALETTE_NEW_VALUE) {
             return option.label;
           }
           if (option.value.startsWith('builtin:')) {
@@ -248,6 +287,9 @@ export default function PaletteManagerSection({
         builtins={builtins}
         saved={saved}
         selectedPaletteId={selectedPaletteId}
+        unboundPicker={unboundPicker}
+        boundPaletteId={boundPaletteId}
+        onSelectToneSteps={onSelectToneSteps}
         onSelectNew={onSelectNew}
         onSelectSaved={onSelectSaved}
         onSelectBuiltin={onSelectBuiltin}

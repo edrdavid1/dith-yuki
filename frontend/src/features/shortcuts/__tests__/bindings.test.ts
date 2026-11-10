@@ -5,6 +5,7 @@ import {
   findMatchingShortcut,
   formatChord,
   isEditableKeyboardTarget,
+  labelWithShortcut,
   matchChord,
   parseStoredShortcutMap,
 } from '../bindings';
@@ -17,12 +18,20 @@ describe('shortcut bindings', () => {
     const zoomFit = new KeyboardEvent('keydown', { key: '0', ctrlKey: true });
     const del = new KeyboardEvent('keydown', { key: 'Backspace' });
     const focus = new KeyboardEvent('keydown', { key: 'Tab' });
+    const swap = new KeyboardEvent('keydown', { key: 's', metaKey: true, altKey: true });
+    const copyPreview = new KeyboardEvent('keydown', {
+      key: 'c',
+      metaKey: true,
+      shiftKey: true,
+    });
 
     expect(findMatchingShortcut(newLayer, map)).toBe('newLayer');
     expect(findMatchingShortcut(zoomIn, map)).toBe('zoomIn');
     expect(findMatchingShortcut(zoomFit, map)).toBe('zoomFit');
     expect(findMatchingShortcut(del, map)).toBe('deleteLayer');
     expect(findMatchingShortcut(focus, map)).toBe('focusMode');
+    expect(findMatchingShortcut(swap, map)).toBe('swapSidebars');
+    expect(findMatchingShortcut(copyPreview, map)).toBe('copyPreview');
   });
 
   it('does not claim Cmd/Ctrl+C/V/X (system clipboard)', () => {
@@ -35,6 +44,13 @@ describe('shortcut bindings', () => {
         findMatchingShortcut(new KeyboardEvent('keydown', { key, ctrlKey: true }), map)
       ).toBeNull();
     }
+  });
+
+  it('labelWithShortcut appends formatted chords', () => {
+    expect(
+      labelWithShortcut('Focus mode', [{ key: 'Tab', mod: false, alt: false, shift: false }], false)
+    ).toBe('Focus mode (Tab)');
+    expect(labelWithShortcut('Swap', [], false)).toBe('Swap');
   });
 
   it('isEditableKeyboardTarget covers inputs and nested fields', () => {

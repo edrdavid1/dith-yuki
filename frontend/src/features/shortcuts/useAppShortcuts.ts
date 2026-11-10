@@ -162,6 +162,15 @@ export function useAppShortcuts() {
           steal();
           layout?.toggleFocusMode();
           return;
+        case 'swapSidebars':
+          steal();
+          layout?.swapSidebars();
+          return;
+        case 'copyPreview':
+          if (!hasDocument) return;
+          steal();
+          layout?.copyPreviewImage();
+          return;
       }
     };
 

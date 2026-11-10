@@ -96,6 +96,7 @@ export default function ColorLabFeature({
   const [pickerAnchorRect, setPickerAnchorRect] = useState<DOMRect | null>(null);
   const [pickerPortalRoot, setPickerPortalRoot] = useState<Element | null>(null);
   const [canAutoInterpolate, setCanAutoInterpolate] = useState(false);
+  const [unboundPicker, setUnboundPicker] = useState<'tone-steps' | 'new'>('tone-steps');
   const lastLivePushRef = useRef('');
 
   const lastCreatedId = useAppSelector((s) => s.palettes.lastCreatedId);
@@ -153,6 +154,7 @@ export default function ColorLabFeature({
             dispatch(clearLastCreatedId());
             publishPaletteBinding(null);
           }
+          setUnboundPicker('tone-steps');
           return;
         }
 
@@ -160,7 +162,13 @@ export default function ColorLabFeature({
           lastCreatedId != null && list.some((p) => p.id === lastCreatedId);
         if (boundOk) return;
 
-        // Prefer the filter's remapped palette_id after open; else first swatch.
+        // lastCreatedId == null → Tone Steps is intentional; do not auto-adopt.
+        if (lastCreatedId == null) {
+          setUnboundPicker('tone-steps');
+          return;
+        }
+
+        // Stale binding id: prefer the filter's remapped palette_id after open; else first swatch.
         const adopt =
           filterPaletteId != null && list.some((p) => p.id === filterPaletteId)
             ? filterPaletteId
@@ -236,6 +244,7 @@ export default function ColorLabFeature({
     (paletteId: number) => {
       const palette = palettes.find((p) => p.id === paletteId);
       if (!palette) return;
+      setUnboundPicker('tone-steps');
       dispatch(setSelectedPaletteId(paletteId));
       dispatch(bumpVersion({ lastCreatedId: paletteId }));
       publishPaletteBinding(paletteId);
@@ -294,6 +303,7 @@ export default function ColorLabFeature({
       try {
         if (docId == null) return;
         const dto = await importBuiltinPalette(docId, id);
+        setUnboundPicker('tone-steps');
         dispatch(setColors(dto.colors.map(([r, g, b]) => createColorEntry(toHex(r, g, b)))));
         if (dto.name) dispatch(setName(dto.name));
         dispatch(setSelectedPaletteId(dto.id ?? null));
@@ -309,7 +319,15 @@ export default function ColorLabFeature({
     [builtins, dispatch, handleSelectPalette, palettes]
   );
 
+  const handleSelectToneSteps = useCallback(() => {
+    setUnboundPicker('tone-steps');
+    dispatch(resetDraft());
+    dispatch(clearLastCreatedId());
+    publishPaletteBinding(null);
+  }, [dispatch]);
+
   const handleSelectNew = useCallback(() => {
+    setUnboundPicker('new');
     dispatch(resetDraft());
     dispatch(clearLastCreatedId());
     publishPaletteBinding(null);
@@ -321,6 +339,7 @@ export default function ColorLabFeature({
       try {
         await deletePalette(docId, paletteId);
         if (selectedPaletteId === paletteId) {
+          setUnboundPicker('tone-steps');
           dispatch(resetDraft());
           dispatch(clearLastCreatedId());
           publishPaletteBinding(null);
@@ -529,8 +548,11 @@ export default function ColorLabFeature({
       palettes={palettes}
       builtins={builtins}
       selectedPaletteId={selectedPaletteId}
+      unboundPicker={unboundPicker}
+      boundPaletteId={lastCreatedId}
       onSelectPalette={handleSelectPalette}
       onSelectBuiltin={handleSelectBuiltin}
+      onSelectToneSteps={handleSelectToneSteps}
       onSelectNew={handleSelectNew}
       extractMethod={extractMethod}
       extractCount={extractCount}

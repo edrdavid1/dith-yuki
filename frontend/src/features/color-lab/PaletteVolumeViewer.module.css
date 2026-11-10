@@ -6,9 +6,9 @@
 }
 
 .volume-summary {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--color-dark-gray);
-  font-weight: bold;
+  font-weight: 800;
   cursor: pointer;
   list-style: none;
 }
@@ -50,6 +50,6 @@
 }
 
 .volume-hint {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--color-dark-gray);
 }

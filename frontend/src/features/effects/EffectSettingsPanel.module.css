@@ -68,7 +68,7 @@
   position: relative;
   box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
   font-family: var(--font-family);
-  font-size: 16px;
+  font-size: 18px;
   color: var(--text-color);
 }
 
@@ -121,7 +121,7 @@
 
 .effect-palette-hint {
   margin: 0;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.35;
   color: var(--color-dark-gray);
 }
@@ -133,7 +133,7 @@
 }
 
 .threshold-map-label {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-color);
 }
 
@@ -146,7 +146,17 @@
 .threshold-map-controls .param-input {
   flex: 1;
   min-width: 0;
-  font-size: 10px;
+  font-size: 12px;
+}
+
+.threshold-map-controls .param-input-compact {
+  flex: 1;
+  min-width: 0;
+}
+
+.threshold-map-controls .param-input-compact-field {
+  width: 100%;
+  text-align: left;
 }
 
 /* Same 10px side inset as .effect-settings-body / chooser rows. */

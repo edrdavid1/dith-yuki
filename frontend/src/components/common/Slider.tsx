@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import styles from '../../shared/ui/Slider.module.css';
 import retro from '../../shared/ui/RetroSlider.module.css';
 import { bind } from '../../shared/ui/cn';
@@ -10,6 +10,11 @@ import {
 } from '../../hooks/sliderHaptics';
 import { nudgeByDisplayPrecision } from '../../hooks/arrowNudge';
 import { notePointerUp } from '../../diagnostics/ditherProfile';
+import {
+  sliderEndPadRatio,
+  sliderRatioFromClientX,
+  sliderThumbLeftCss,
+} from '../../shared/ui/retroSliderGeometry';
 const cn = bind({ ...styles, ...retro });
 
 // Immediate onChange for local/parent state. IPC debounce (100ms default;
@@ -61,6 +66,18 @@ function Slider({
   const draggingRef = useRef(false);
   const hapticMotionRef = useRef<HapticMotionState>(createHapticMotionState(value));
   const { triggerHaptic } = useHapticFeedback();
+  const [trackWidth, setTrackWidth] = useState(0);
+
+  useLayoutEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    const measure = () => setTrackWidth(el.getBoundingClientRect().width);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Sync from props — only when value prop changes from outside (not from our own onChange)
   const lastEmittedRef = useRef(value);
@@ -116,12 +133,13 @@ function Slider({
     }
   }, []);
 
-  // Compute value from mouse X position relative to track
+  // Compute value from mouse X — end inset set by RETRO_SLIDER_END_INSET_PX.
   const valueFromMouseX = useCallback((clientX: number): number => {
     const track = trackRef.current;
     if (!track) return localValue;
     const rect = track.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const pad = sliderEndPadRatio(rect.width);
+    const ratio = sliderRatioFromClientX(clientX, rect.left, rect.width, pad);
     return clampAndSnap(
       minRef.current + ratio * (maxRef.current - minRef.current),
       minRef.current,
@@ -158,8 +176,8 @@ function Slider({
     document.addEventListener('mouseup', handleMouseUp);
   }, [applyUserValue, valueFromMouseX]);
 
-  // Thumb position as percentage
-  const percent = max > min ? ((localValue - min) / (max - min)) * 100 : 0;
+  const ratio01 = max > min ? (localValue - min) / (max - min) : 0;
+  const endPad = sliderEndPadRatio(trackWidth);
 
   function commitText() {
     const raw = text.trim().replace('%', '');
@@ -224,7 +242,7 @@ function Slider({
         >
           <div
             className={cn("retro-slider-thumb")}
-            style={{ left: `${percent}%` }}
+            style={{ left: sliderThumbLeftCss(ratio01, endPad) }}
           >
             <img src="/icons/slider-carrete-icon.svg" width="16" height="35" alt="" draggable={false} />
           </div>

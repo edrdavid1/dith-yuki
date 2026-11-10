@@ -18,9 +18,18 @@ import {
   stackIndexAfterDisplayReorder,
 } from '../features/layers/filterDisplayOrder';
 import { ditherFilterLocksOpacity } from '../features/layers/filterOpacityLock';
-import { formatChords } from '../features/shortcuts/bindings';
+import { labelWithShortcut } from '../features/shortcuts/bindings';
 import { useShortcutBindings } from '../features/shortcuts/ShortcutsContext';
+import {
+  sliderEndPadRatio,
+  sliderRatioFromClientX,
+  sliderThumbLeftCss,
+} from '../shared/ui/retroSliderGeometry';
+import { isGlitchFamilyFilter } from '../types/effects';
 const cn = bind({ ...styles, ...retroSlider, ...layerControls });
+
+/** Same end inset as effect Sliders (see RETRO_SLIDER_END_INSET_PX). */
+const OPACITY_SLIDER_PAD = sliderEndPadRatio(160);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -73,9 +82,27 @@ export interface LayersPanelProps {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function filterKindToName(kind: string, algorithmId?: string | null): string {
+function filterModeFromParams(params: unknown): unknown {
+  if (!params || typeof params !== 'object') return undefined;
+  const p = params as Record<string, unknown>;
+  // Engine may send `{ DitherV2: { mode } }` or a flat params object.
+  const inner =
+    p.DitherV2 && typeof p.DitherV2 === 'object'
+      ? (p.DitherV2 as Record<string, unknown>)
+      : p;
+  return inner.mode;
+}
+
+function filterKindToName(
+  kind: string,
+  algorithmId?: string | null,
+  params?: unknown
+): string {
   if (algorithmId === 'nearest_color') return 'Nearest Color';
   if (algorithmId === 'palette_quantize') return 'Palette Quantize';
+  if (isGlitchFamilyFilter(kind, algorithmId, filterModeFromParams(params))) {
+    return 'Glitching';
+  }
   switch (kind) {
     case 'DitherV2': case 'Dither': return 'Dithering';
     case 'Glitch': return 'Glitching';
@@ -90,9 +117,16 @@ function filterKindToName(kind: string, algorithmId?: string | null): string {
   }
 }
 
-function filterKindToIconType(kind: string, algorithmId?: string | null): string {
+function filterKindToIconType(
+  kind: string,
+  algorithmId?: string | null,
+  params?: unknown
+): string {
   if (algorithmId === 'nearest_color') return 'nearest_color';
   if (algorithmId === 'palette_quantize') return 'palette_quantize';
+  if (isGlitchFamilyFilter(kind, algorithmId, filterModeFromParams(params))) {
+    return 'glitching';
+  }
   switch (kind) {
     case 'DitherV2': case 'Dither': return 'dithering';
     case 'Glitch': return 'glitching';
@@ -503,7 +537,13 @@ export default function LayersPanel({
                     const track = e.currentTarget;
                     const updateFromMouse = (clientX: number) => {
                       const rect = track.getBoundingClientRect();
-                      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+                      const pad = sliderEndPadRatio(rect.width);
+                      const ratio = sliderRatioFromClientX(
+                        clientX,
+                        rect.left,
+                        rect.width,
+                        pad,
+                      );
                       const val = Math.round(ratio * 100);
                       if (selectedFilterId !== null) {
                         onFilterBlendChange({ opacity: val / 100 });
@@ -524,7 +564,9 @@ export default function LayersPanel({
                 >
                   <div
                     className={cn("retro-slider-thumb")}
-                    style={{ left: `${currentOpacityPercent}%` }}
+                    style={{
+                      left: sliderThumbLeftCss(currentOpacityPercent / 100, OPACITY_SLIDER_PAD),
+                    }}
                   >
                     <img src="/icons/slider-carrete-icon.svg" width="16" height="35" alt="" draggable={false} />
                   </div>
@@ -545,7 +587,7 @@ export default function LayersPanel({
             const stableNumber = filterNumbers[filter.id] ?? '?';
             const displayName =
               filterNames[filter.id] ??
-              filterKindToName(filter.kind, filter.algorithm_id);
+              filterKindToName(filter.kind, filter.algorithm_id, filter.params);
             const isEditing = editingFilterId === filter.id;
             const isBeingDragged = dragFilterId === filter.id && isDragging.current;
             const showDropBefore = dropTargetIndex === idx && dragFilterId !== null && isDragging.current;
@@ -611,7 +653,11 @@ export default function LayersPanel({
 
                   <div className={cn("lp-layer-icon")}>
                     <EffectIconSvg
-                      type={filterKindToIconType(filter.kind, filter.algorithm_id)}
+                      type={filterKindToIconType(
+                        filter.kind,
+                        filter.algorithm_id,
+                        filter.params
+                      )}
                     />
                   </div>
                 </div>
@@ -623,7 +669,7 @@ export default function LayersPanel({
             <div className={cn("lp-drop-indicator")} />
           )}
 
-          {/* Image Source Layer (always at bottom) */}
+          {/* Image Source Layer (always at bottom of stack) */}
           {imageSourceLayer && (
             <div
               className={cn(
@@ -652,6 +698,26 @@ export default function LayersPanel({
             </div>
           )}
 
+          {/* Add layer — light gray text under image source */}
+          {imageSourceLayer && (
+            <button
+              type="button"
+              className={cn('lp-list-add')}
+              onPointerDown={(e) => {
+                if (e.button !== 0) return;
+                e.preventDefault();
+                e.stopPropagation();
+                onAddLayer();
+              }}
+              onClick={(e) => e.preventDefault()}
+              aria-label={labelWithShortcut('Add effect', shortcuts.newLayer)}
+              title={labelWithShortcut('Add effect', shortcuts.newLayer)}
+            >
+              <span className={cn('lp-list-add-label')}>add layer</span>
+              <span className={cn('lp-list-add-icon')} aria-hidden />
+            </button>
+          )}
+
           {/* Empty state */}
           {filters.length === 0 && !imageSourceLayer && (
             <div
@@ -673,7 +739,7 @@ export default function LayersPanel({
 
       {/* Footer */}
       <div className={cn("lp-footer")}>
-        <Tooltip label={`Add effect (${formatChords(shortcuts.newLayer)})`}>
+        <Tooltip label={labelWithShortcut('Add effect', shortcuts.newLayer)}>
           <button
             className={cn("lp-footer-btn")}
             onPointerDown={(e) => {
@@ -683,13 +749,18 @@ export default function LayersPanel({
               onAddLayer();
             }}
             onClick={(e) => e.preventDefault()}
-            aria-label="Add effect"
+            aria-label={labelWithShortcut('Add effect', shortcuts.newLayer)}
           >
             <Icon name="plus" width={14} height={14} />
           </button>
         </Tooltip>
-        <Tooltip label={`Delete effect (${formatChords(shortcuts.deleteLayer)})`}>
-          <button className={cn("lp-footer-btn")} onClick={handleTrashClick} disabled={trashDisabled} aria-label="Delete effect">
+        <Tooltip label={labelWithShortcut('Delete effect', shortcuts.deleteLayer)}>
+          <button
+            className={cn("lp-footer-btn")}
+            onClick={handleTrashClick}
+            disabled={trashDisabled}
+            aria-label={labelWithShortcut('Delete effect', shortcuts.deleteLayer)}
+          >
             <Icon name="trash" width={14} height={14} />
           </button>
         </Tooltip>

@@ -83,13 +83,13 @@
 /* Legacy point-row layout (CurvesParams leftover) */
 .curve-points { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
 .curve-point-row, .curve-add-row { display: flex; align-items: center; gap: 4px; }
-.curve-arrow { color: var(--text-color); font-size: 11px; }
+.curve-arrow { color: var(--text-color); font-size: 13px; }
 .curve-remove-btn {
   background: none;
   border: none;
   color: var(--text-color);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 16px;
   padding: 0 4px;
 }
 .curve-remove-btn:hover { color: var(--color-hover-accent); }
