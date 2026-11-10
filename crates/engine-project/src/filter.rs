@@ -32,6 +32,8 @@ pub enum FilterKind {
     Exposure,
     /// Soft luminance shadows / highlights lift (pointwise Post).
     HighlightsShadows,
+    /// Warm/cool temperature and green/magenta tint (pointwise Post).
+    TemperatureTint,
     /// Text-art / ASCII (not a dither mode).
     Ascii,
     Placeholder,
@@ -50,6 +52,7 @@ impl std::fmt::Display for FilterKind {
             FilterKind::Adjust => write!(f, "Adjust"),
             FilterKind::Exposure => write!(f, "Exposure"),
             FilterKind::HighlightsShadows => write!(f, "HighlightsShadows"),
+            FilterKind::TemperatureTint => write!(f, "TemperatureTint"),
             FilterKind::Ascii => write!(f, "Ascii"),
             FilterKind::Placeholder => write!(f, "Placeholder"),
         }
@@ -62,7 +65,12 @@ impl FilterKind {
     pub fn inserts_under_stylize(self) -> bool {
         matches!(
             self,
-            Self::Adjust | Self::Curves | Self::Levels | Self::Exposure | Self::HighlightsShadows
+            Self::Adjust
+                | Self::Curves
+                | Self::Levels
+                | Self::Exposure
+                | Self::HighlightsShadows
+                | Self::TemperatureTint
         )
     }
 }
@@ -1083,6 +1091,13 @@ pub enum FilterParams {
         /// Highlight region amount (−1 .. 1). 0 = identity.
         highlights: f32,
     },
+    /// Warm/cool + green/magenta (−1 .. 1 each).
+    TemperatureTint {
+        /// Temperature (−1 cool .. 1 warm). 0 = identity.
+        temperature: f32,
+        /// Tint (−1 magenta .. 1 green). 0 = identity.
+        tint: f32,
+    },
     /// Text-art / ASCII output stage (`engine-ascii`). Not a dither mode.
     Ascii(AsciiParams),
     /// Placeholder for unknown or future filters.
@@ -1647,6 +1662,19 @@ impl FilterInstance {
                 }
                 Ok(())
             }
+            FilterParams::TemperatureTint { temperature, tint } => {
+                if !(-1.0..=1.0).contains(temperature) {
+                    return Err(EngineError::invalid_filter_params(
+                        "TemperatureTint temperature must be in range [-1.0, 1.0]",
+                    ));
+                }
+                if !(-1.0..=1.0).contains(tint) {
+                    return Err(EngineError::invalid_filter_params(
+                        "TemperatureTint tint must be in range [-1.0, 1.0]",
+                    ));
+                }
+                Ok(())
+            }
             FilterParams::Ascii(p) => p.validate(),
             FilterParams::Placeholder(_) => Ok(()),
         }
@@ -1668,6 +1696,7 @@ pub fn algorithm_id_for_params(params: &FilterParams) -> Option<&'static str> {
         FilterParams::Adjust { .. } => Some("adjust"),
         FilterParams::Exposure { .. } => Some("exposure"),
         FilterParams::HighlightsShadows { .. } => Some("highlights_shadows"),
+        FilterParams::TemperatureTint { .. } => Some("temperature_tint"),
         FilterParams::Curves { .. } => Some("curves"),
         FilterParams::Glitch(_) => Some("glitch"),
         FilterParams::Ascii(_) => Some("ascii"),
@@ -1722,6 +1751,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         "adjust" => Some(FilterKind::Adjust),
         "exposure" => Some(FilterKind::Exposure),
         "highlights_shadows" => Some(FilterKind::HighlightsShadows),
+        "temperature_tint" => Some(FilterKind::TemperatureTint),
         "curves" => Some(FilterKind::Curves),
         "glitch" => Some(FilterKind::Glitch),
         "ascii" => Some(FilterKind::Ascii),
@@ -1802,6 +1832,10 @@ pub fn filter_params_to_json(params: &FilterParams) -> Result<serde_json::Value,
         } => Ok(serde_json::json!({
             "shadows": shadows,
             "highlights": highlights,
+        })),
+        FilterParams::TemperatureTint { temperature, tint } => Ok(serde_json::json!({
+            "temperature": temperature,
+            "tint": tint,
         })),
         FilterParams::Curves { curve, channel } => Ok(serde_json::json!({
             "curve": curve,

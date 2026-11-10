@@ -16,6 +16,7 @@ use crate::filters::exposure::apply_exposure_point_rgba;
 use crate::filters::highlights_shadows::apply_highlights_shadows_point_rgba;
 use crate::filters::levels::LevelsFilter;
 use crate::filters::neutral::filter_is_neutral_for_apply;
+use crate::filters::temperature_tint::apply_temperature_tint_point_rgba;
 use crate::types::BlendMode;
 
 const TILE_FULL_SIZE: u32 = TILE_SIZE + 2 * HALO;
@@ -80,7 +81,8 @@ pub fn is_fusible_pointwise(filter: &FilterInstance) -> bool {
         FilterParams::Curves { .. }
         | FilterParams::Levels { .. }
         | FilterParams::Exposure { .. }
-        | FilterParams::HighlightsShadows { .. } => true,
+        | FilterParams::HighlightsShadows { .. }
+        | FilterParams::TemperatureTint { .. } => true,
         _ => false,
     }
 }
@@ -115,6 +117,10 @@ enum FusibleOp {
     HighlightsShadows {
         shadows: f32,
         highlights: f32,
+    },
+    TemperatureTint {
+        temperature: f32,
+        tint: f32,
     },
 }
 
@@ -174,6 +180,10 @@ fn build_op(filter: &FilterInstance) -> Result<FusibleOp, EngineError> {
         } => Ok(FusibleOp::HighlightsShadows {
             shadows: shadows.clamp(-1.0, 1.0),
             highlights: highlights.clamp(-1.0, 1.0),
+        }),
+        FilterParams::TemperatureTint { temperature, tint } => Ok(FusibleOp::TemperatureTint {
+            temperature: temperature.clamp(-1.0, 1.0),
+            tint: tint.clamp(-1.0, 1.0),
         }),
         _ => Err(EngineError::invalid_filter_params(
             "filter is not fusible pointwise",
@@ -245,6 +255,9 @@ fn apply_op_rgba(op: &FusibleOp, r: f32, g: f32, b: f32, a: f32) -> (f32, f32, f
             shadows,
             highlights,
         } => apply_highlights_shadows_point_rgba(r, g, b, a, *shadows, *highlights),
+        FusibleOp::TemperatureTint { temperature, tint } => {
+            apply_temperature_tint_point_rgba(r, g, b, a, *temperature, *tint)
+        }
     }
 }
 

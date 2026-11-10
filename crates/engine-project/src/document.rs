@@ -361,6 +361,7 @@ impl Document {
             | FilterParams::Adjust { .. }
             | FilterParams::Exposure { .. }
             | FilterParams::HighlightsShadows { .. }
+            | FilterParams::TemperatureTint { .. }
             | FilterParams::Ascii(_)
             | FilterParams::Placeholder(_) => false,
         }
