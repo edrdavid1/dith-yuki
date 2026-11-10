@@ -117,11 +117,14 @@ impl SpatialNeighborhood {
     }
 }
 
-/// Blur/sharpness radius in px for a single Adjust instance (0 if none).
+/// Blur/sharpness/clarity radius in px for a single Adjust instance (0 if none).
 pub fn adjust_spatial_radius_px(filter: &FilterInstance) -> i32 {
     match &filter.params {
         FilterParams::Adjust {
-            blur, sharpness, ..
+            blur,
+            sharpness,
+            clarity,
+            ..
         } => {
             let blur_r = if *blur <= 1e-4 {
                 0
@@ -130,12 +133,17 @@ pub fn adjust_spatial_radius_px(filter: &FilterInstance) -> i32 {
                     .round()
                     .clamp(1.0, MAX_BLUR_RADIUS as f32) as i32
             };
-            if blur_r > 0 {
-                blur_r
-            } else if *sharpness > 1e-6 {
-                SHARP_RADIUS
+            let clarity_r = if clarity.abs() > 1e-6 {
+                CLARITY_RADIUS
             } else {
                 0
+            };
+            if blur_r > 0 {
+                blur_r.max(clarity_r)
+            } else if *sharpness > 1e-6 {
+                SHARP_RADIUS.max(clarity_r)
+            } else {
+                clarity_r
             }
         }
         _ => 0,
@@ -304,6 +312,14 @@ mod tests {
                 blur: 0.0,
                 sharpness: 0.0,
                 noise: 0.0,
+                exposure: 0.0,
+                shadows: 0.0,
+                highlights: 0.0,
+                temperature: 0.0,
+                tint: 0.0,
+                vibrance: 0.0,
+                hue: 0.0,
+                clarity: 0.0,
             },
         );
         let blurred = FilterInstance::new(
@@ -315,6 +331,14 @@ mod tests {
                 blur: 1.0,
                 sharpness: 0.0,
                 noise: 0.0,
+                exposure: 0.0,
+                shadows: 0.0,
+                highlights: 0.0,
+                temperature: 0.0,
+                tint: 0.0,
+                vibrance: 0.0,
+                hue: 0.0,
+                clarity: 0.0,
             },
         );
         assert_eq!(post_direct_spatial_radius(&[&neutral, &blurred]), 12);
@@ -338,6 +362,14 @@ mod tests {
                 blur: 2.0,
                 sharpness: 0.0,
                 noise: 0.0,
+                exposure: 0.0,
+                shadows: 0.0,
+                highlights: 0.0,
+                temperature: 0.0,
+                tint: 0.0,
+                vibrance: 0.0,
+                hue: 0.0,
+                clarity: 0.0,
             },
         );
         // First non-neutral is Curves ⇒ radius 0 (neighbor path not used).
@@ -426,12 +458,15 @@ mod tests {
             crate::filters::adjust::apply_adjust_into(
                 &tile,
                 coord,
-                0.0,
-                0.0,
-                0.0,
-                1.0,
-                0.0,
-                0.0,
+                crate::filters::adjust::AdjustApplyParams {
+                    contrast: 0.0,
+                    brightness: 0.0,
+                    saturation: 0.0,
+                    blur: 1.0,
+                    sharpness: 0.0,
+                    noise: 0.0,
+                    ..crate::filters::adjust::AdjustApplyParams::default()
+                },
                 &mut via_incomplete,
             );
         });
@@ -439,12 +474,15 @@ mod tests {
         crate::filters::adjust::apply_adjust_into(
             &tile,
             coord,
-            0.0,
-            0.0,
-            0.0,
-            1.0,
-            0.0,
-            0.0,
+            crate::filters::adjust::AdjustApplyParams {
+                contrast: 0.0,
+                brightness: 0.0,
+                saturation: 0.0,
+                blur: 1.0,
+                sharpness: 0.0,
+                noise: 0.0,
+                ..crate::filters::adjust::AdjustApplyParams::default()
+            },
             &mut clamped,
         );
         assert_eq!(
@@ -537,12 +575,15 @@ mod tests {
         crate::filters::adjust::apply_adjust_into(
             &left,
             coord,
-            0.0,
-            0.0,
-            0.0,
-            1.0,
-            0.0,
-            0.0,
+            crate::filters::adjust::AdjustApplyParams {
+                contrast: 0.0,
+                brightness: 0.0,
+                saturation: 0.0,
+                blur: 1.0,
+                sharpness: 0.0,
+                noise: 0.0,
+                ..crate::filters::adjust::AdjustApplyParams::default()
+            },
             &mut clamped,
         );
         let mut crossed = PixelTile::new();
@@ -550,12 +591,15 @@ mod tests {
             crate::filters::adjust::apply_adjust_into(
                 &left,
                 coord,
-                0.0,
-                0.0,
-                0.0,
-                1.0,
-                0.0,
-                0.0,
+                crate::filters::adjust::AdjustApplyParams {
+                    contrast: 0.0,
+                    brightness: 0.0,
+                    saturation: 0.0,
+                    blur: 1.0,
+                    sharpness: 0.0,
+                    noise: 0.0,
+                    ..crate::filters::adjust::AdjustApplyParams::default()
+                },
                 &mut crossed,
             );
         });

@@ -88,9 +88,17 @@ export const EFFECT_DEFAULTS: Record<EffectType, Record<string, unknown>> = {
     mask_strength: 0.0,
   },
   Adjust: {
+    exposure: 0,
     contrast: 0,
     brightness: 0,
+    shadows: 0,
+    highlights: 0,
+    temperature: 0,
+    tint: 0,
     saturation: 0,
+    vibrance: 0,
+    hue: 0,
+    clarity: 0,
     blur: 0,
     sharpness: 0,
     noise: 0,
@@ -240,23 +248,13 @@ export function specForAlgorithm(
     case 'adjust':
       return { kind: 'Adjust', params: { ...EFFECT_DEFAULTS.Adjust } };
     case 'exposure':
-      return { kind: 'Exposure', params: { stops: 0 } };
     case 'highlights_shadows':
-      return {
-        kind: 'HighlightsShadows',
-        params: { shadows: 0, highlights: 0 },
-      };
     case 'temperature_tint':
-      return {
-        kind: 'TemperatureTint',
-        params: { temperature: 0, tint: 0 },
-      };
     case 'vibrance':
-      return { kind: 'Vibrance', params: { amount: 0 } };
     case 'hue':
-      return { kind: 'Hue', params: { degrees: 0 } };
     case 'clarity':
-      return { kind: 'Clarity', params: { amount: 0 } };
+      // P5 grade knobs live on Adjust — one stack layer.
+      return { kind: 'Adjust', params: { ...EFFECT_DEFAULTS.Adjust } };
     case 'curves':
       return { kind: 'Curves', params: { ...EFFECT_DEFAULTS.Curves } };
     case 'glitch':

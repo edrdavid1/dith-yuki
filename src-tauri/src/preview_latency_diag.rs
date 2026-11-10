@@ -77,6 +77,14 @@ fn make_realistic_stack_state(gpu: Option<Arc<engine_gpu::GpuContext>>) -> Arc<A
             blur: 0.0,
             sharpness: 0.0,
             noise: 0.0,
+            exposure: 0.0,
+            shadows: 0.0,
+            highlights: 0.0,
+            temperature: 0.0,
+            tint: 0.0,
+            vibrance: 0.0,
+            hue: 0.0,
+            clarity: 0.0,
         },
     ));
     layer.filters.push(FilterInstance::new(

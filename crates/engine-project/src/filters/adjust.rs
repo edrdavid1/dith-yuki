@@ -1,13 +1,21 @@
-//! Photo-style adjustments: contrast, brightness, saturation, blur, sharpness, noise.
+//! Photo-style adjustments (single Post grade layer).
 //!
-//! Order: point ops (contrast → brightness → saturation) → blur → unsharp → noise.
+//! Order: exposure → contrast/brightness/saturation → shadows/highlights →
+//! temperature/tint → vibrance → hue → blur → unsharp → clarity → noise.
 //! Alpha is copied from the source.
 //!
-//! Blur/sharpness use an in-tile radius larger than [`HALO`] so the sliders are
-//! visible (tile-edge clamp; seams possible at very high blur). Noise is coarse
-//! so it still reads after a dither filter on top.
+//! Blur/sharpness/clarity use an in-tile radius larger than [`HALO`] so the
+//! sliders are visible (tile-edge clamp; seams possible at very high blur).
+//! Noise is coarse so it still reads after a dither filter on top.
 
 use engine_tiles::{PixelTile, TileCoord, HALO, TILE_SIZE};
+
+use super::clarity::apply_clarity_into;
+use super::exposure::apply_exposure_point_rgba;
+use super::highlights_shadows::apply_highlights_shadows_point_rgba;
+use super::hue::apply_hue_point_rgba;
+use super::temperature_tint::apply_temperature_tint_point_rgba;
+use super::vibrance::apply_vibrance_point_rgba;
 
 const TILE_FULL_SIZE: u32 = TILE_SIZE + 2 * HALO;
 /// Slider `blur` 0..=2 maps to this many pixels (in-tile clamp).
@@ -247,6 +255,44 @@ pub(crate) fn unpremultiply_rgb(tile: &mut PixelTile) {
     }
 }
 
+/// All Adjust knobs for one apply. Defaults are identity (0).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AdjustApplyParams {
+    pub contrast: f32,
+    pub brightness: f32,
+    pub saturation: f32,
+    pub blur: f32,
+    pub sharpness: f32,
+    pub noise: f32,
+    pub exposure: f32,
+    pub shadows: f32,
+    pub highlights: f32,
+    pub temperature: f32,
+    pub tint: f32,
+    pub vibrance: f32,
+    pub hue: f32,
+    pub clarity: f32,
+}
+
+impl AdjustApplyParams {
+    pub fn is_identity(self) -> bool {
+        self.contrast == 0.0
+            && self.brightness == 0.0
+            && self.saturation == 0.0
+            && self.blur == 0.0
+            && self.sharpness == 0.0
+            && self.noise == 0.0
+            && self.exposure == 0.0
+            && self.shadows == 0.0
+            && self.highlights == 0.0
+            && self.temperature == 0.0
+            && self.tint == 0.0
+            && self.vibrance == 0.0
+            && self.hue == 0.0
+            && self.clarity == 0.0
+    }
+}
+
 /// Apply adjustments. Identity when all params are 0.
 pub fn apply_adjust(
     tile: &PixelTile,
@@ -260,7 +306,18 @@ pub fn apply_adjust(
 ) -> PixelTile {
     let mut out = PixelTile::new();
     apply_adjust_into(
-        tile, coord, contrast, brightness, saturation, blur, sharpness, noise, &mut out,
+        tile,
+        coord,
+        AdjustApplyParams {
+            contrast,
+            brightness,
+            saturation,
+            blur,
+            sharpness,
+            noise,
+            ..AdjustApplyParams::default()
+        },
+        &mut out,
     );
     out
 }
@@ -272,38 +329,64 @@ pub fn apply_adjust(
 pub fn apply_adjust_into(
     tile: &PixelTile,
     coord: TileCoord,
-    contrast: f32,
-    brightness: f32,
-    saturation: f32,
-    blur: f32,
-    sharpness: f32,
-    noise: f32,
+    p: AdjustApplyParams,
     dst: &mut PixelTile,
 ) {
-    if contrast == 0.0
-        && brightness == 0.0
-        && saturation == 0.0
-        && blur == 0.0
-        && sharpness == 0.0
-        && noise == 0.0
-    {
+    if p.is_identity() {
         dst.copy_from(tile);
         return;
     }
-    let contrast_m = 1.0 + contrast;
-    let sat_m = adjust_sat_m(saturation);
+    let contrast_m = 1.0 + p.contrast;
+    let sat_m = adjust_sat_m(p.saturation);
+    let exposure_gain = 2f32.powf(p.exposure.clamp(-5.0, 5.0));
+    let shadows = p.shadows.clamp(-1.0, 1.0);
+    let highlights = p.highlights.clamp(-1.0, 1.0);
+    let temperature = p.temperature.clamp(-1.0, 1.0);
+    let tint = p.tint.clamp(-1.0, 1.0);
+    let vibrance = p.vibrance.clamp(-1.0, 1.0);
+    let hue = p.hue.clamp(-180.0, 180.0);
 
     for y in 0..TILE_FULL_SIZE {
         for x in 0..TILE_FULL_SIZE {
-            let (r, g, b, a) = apply_adjust_point_rgba(
-                tile.at(x, y, 0),
-                tile.at(x, y, 1),
-                tile.at(x, y, 2),
-                tile.at(x, y, 3),
-                contrast_m,
-                brightness,
-                sat_m,
-            );
+            let mut r = tile.at(x, y, 0);
+            let mut g = tile.at(x, y, 1);
+            let mut b = tile.at(x, y, 2);
+            let a = tile.at(x, y, 3);
+            if (exposure_gain - 1.0).abs() > 1e-8 {
+                let out = apply_exposure_point_rgba(r, g, b, a, exposure_gain);
+                r = out.0;
+                g = out.1;
+                b = out.2;
+            }
+            let out = apply_adjust_point_rgba(r, g, b, a, contrast_m, p.brightness, sat_m);
+            r = out.0;
+            g = out.1;
+            b = out.2;
+            let a = out.3;
+            if shadows != 0.0 || highlights != 0.0 {
+                let out = apply_highlights_shadows_point_rgba(r, g, b, a, shadows, highlights);
+                r = out.0;
+                g = out.1;
+                b = out.2;
+            }
+            if temperature != 0.0 || tint != 0.0 {
+                let out = apply_temperature_tint_point_rgba(r, g, b, a, temperature, tint);
+                r = out.0;
+                g = out.1;
+                b = out.2;
+            }
+            if vibrance != 0.0 {
+                let out = apply_vibrance_point_rgba(r, g, b, a, vibrance);
+                r = out.0;
+                g = out.1;
+                b = out.2;
+            }
+            if hue != 0.0 {
+                let out = apply_hue_point_rgba(r, g, b, a, hue);
+                r = out.0;
+                g = out.1;
+                b = out.2;
+            }
             dst.set(x, y, 0, r);
             dst.set(x, y, 1, g);
             dst.set(x, y, 2, b);
@@ -311,13 +394,13 @@ pub fn apply_adjust_into(
         }
     }
 
-    let blur_r = blur_radius_px(blur);
+    let blur_r = blur_radius_px(p.blur);
     let neighbors = crate::filters::neighbors::current_spatial_neighbors();
     // Complete neighborhood → cross-tile blur. Incomplete / absent → in-tile clamp
     // (never skip spatial — edge tiles must still blur).
     let cross = neighbors.filter(|n| n.complete);
 
-    if blur_r > 0 || sharpness > 1e-6 {
+    if blur_r > 0 || p.sharpness > 1e-6 {
         premultiply_rgb(dst);
     }
     if blur_r > 0 {
@@ -329,14 +412,14 @@ pub fn apply_adjust_into(
         dst.copy_from(&blurred);
     }
 
-    if sharpness > 1e-6 {
+    if p.sharpness > 1e-6 {
         let sharp_r = blur_r.max(SHARP_RADIUS);
         let blurred = if let Some(n) = cross {
             box_blur_rgb_with_neighbors(dst, coord, sharp_r, n)
         } else {
             box_blur_rgb(dst, sharp_r)
         };
-        let amount = sharpness * 1.5;
+        let amount = p.sharpness * 1.5;
         let mut sharpened = PixelTile::new();
         for y in 0..TILE_FULL_SIZE {
             for x in 0..TILE_FULL_SIZE {
@@ -350,11 +433,17 @@ pub fn apply_adjust_into(
         }
         dst.copy_from(&sharpened);
     }
-    if blur_r > 0 || sharpness > 1e-6 {
+    if blur_r > 0 || p.sharpness > 1e-6 {
         unpremultiply_rgb(dst);
     }
 
-    if noise > 1e-6 {
+    if p.clarity.abs() > 1e-6 {
+        let mut src_clarity = PixelTile::new();
+        src_clarity.copy_from(dst);
+        apply_clarity_into(&src_clarity, coord, p.clarity, dst);
+    }
+
+    if p.noise > 1e-6 {
         let origin_x = coord.x * TILE_SIZE;
         let origin_y = coord.y * TILE_SIZE;
         for y in 0..TILE_FULL_SIZE {
@@ -365,7 +454,7 @@ pub fn apply_adjust_into(
                 let cy = gy / NOISE_CELL;
                 let n = hash01(cx, cy, 0) * 2.0 - 1.0;
                 for c in 0..3u32 {
-                    let v = dst.at(x, y, c) + n * noise;
+                    let v = dst.at(x, y, c) + n * p.noise;
                     dst.set(x, y, c, v.clamp(0.0, 1.0));
                 }
             }

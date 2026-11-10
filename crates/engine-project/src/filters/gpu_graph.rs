@@ -124,7 +124,13 @@ fn build_gpu_layer_filter(
             strength: *strength,
             mask_strength: *mask_strength,
         }),
-        FilterParams::Adjust { blur, .. } if *blur > 0.0 => {
+        FilterParams::Adjust {
+            blur,
+            sharpness,
+            noise,
+            clarity,
+            ..
+        } if *blur > 0.0 || *sharpness > 0.0 || *noise > 0.0 || clarity.abs() > 0.0 => {
             GraphLayerFilter::CpuCheckpoint(CpuCheckpointKind::AdjustBlur)
         }
         _ => GraphLayerFilter::CpuCheckpoint(CpuCheckpointKind::UnsupportedFilter),

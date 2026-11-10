@@ -35,6 +35,14 @@ fn params_are_identity(filter: &FilterInstance) -> bool {
             blur,
             sharpness,
             noise,
+            exposure,
+            shadows,
+            highlights,
+            temperature,
+            tint,
+            vibrance,
+            hue,
+            clarity,
         } => {
             *contrast == 0.0
                 && *brightness == 0.0
@@ -42,6 +50,14 @@ fn params_are_identity(filter: &FilterInstance) -> bool {
                 && *blur == 0.0
                 && *sharpness == 0.0
                 && *noise == 0.0
+                && *exposure == 0.0
+                && *shadows == 0.0
+                && *highlights == 0.0
+                && *temperature == 0.0
+                && *tint == 0.0
+                && *vibrance == 0.0
+                && *hue == 0.0
+                && *clarity == 0.0
         }
         FilterParams::Glitch(p) => glitch_params_neutral(p),
         FilterParams::Curves { curve, channel } => {
@@ -113,6 +129,14 @@ mod tests {
                 blur: 0.0,
                 sharpness: 0.0,
                 noise: 0.0,
+                exposure: 0.0,
+                shadows: 0.0,
+                highlights: 0.0,
+                temperature: 0.0,
+                tint: 0.0,
+                vibrance: 0.0,
+                hue: 0.0,
+                clarity: 0.0,
             },
         );
         assert!(filter_is_neutral_for_apply(&f));
@@ -130,6 +154,14 @@ mod tests {
                 blur: 0.0,
                 sharpness: 0.0,
                 noise: 0.0,
+                exposure: 0.0,
+                shadows: 0.0,
+                highlights: 0.0,
+                temperature: 0.0,
+                tint: 0.0,
+                vibrance: 0.0,
+                hue: 0.0,
+                clarity: 0.0,
             },
         );
         f.blend_mode = BlendMode::Multiply;
@@ -148,6 +180,14 @@ mod tests {
                 blur: 0.0,
                 sharpness: 0.0,
                 noise: 0.0,
+                exposure: 0.0,
+                shadows: 0.0,
+                highlights: 0.0,
+                temperature: 0.0,
+                tint: 0.0,
+                vibrance: 0.0,
+                hue: 0.0,
+                clarity: 0.0,
             },
         );
         f.blend_mode = BlendMode::Multiply;
