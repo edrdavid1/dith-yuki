@@ -22,6 +22,7 @@ import styles from './PanelWindow.module.css';
 import { bind } from '../../shared/ui/cn';
 import WindowTitlebar from '../../shared/ui/WindowTitlebar';
 import { useFlexPopoutJsDrag } from './useFlexPopoutJsDrag';
+import { closeFlexPopoutShell } from './closeFlexPopoutShell';
 
 const cn = bind(styles);
 
@@ -36,22 +37,6 @@ async function focusedFlexPopout(): Promise<WebviewWindow | null> {
     }
   }
   return flex[flex.length - 1] ?? null;
-}
-
-/** Close every flex-popout OS window (dock-back cleanup). */
-async function closeAllFlexPopouts(): Promise<void> {
-  const wins = await getAllWebviewWindows();
-  await Promise.all(
-    wins
-      .filter((w) => w.label.startsWith('flex-popout-'))
-      .map(async (w) => {
-        try {
-          await w.close();
-        } catch (err) {
-          console.error('[FlexPopoutChrome] close failed:', err);
-        }
-      }),
-  );
 }
 
 export default function FlexPopoutChrome({
@@ -75,8 +60,12 @@ export default function FlexPopoutChrome({
   const handleClose = useCallback(() => {
     cancelActiveDrag();
     void cancelFloatDrag();
+    // Capture this popout's browsing context before unfloat unmounts the portal.
+    const view = rootRef.current?.ownerDocument.defaultView ?? null;
     onDockBack();
-    void closeAllFlexPopouts();
+    // dockPanel also closes via tab.getWindow(); this covers the chrome path
+    // when the user clicks close on this shell (siblings stay open).
+    void closeFlexPopoutShell(view);
   }, [onDockBack, cancelActiveDrag]);
 
   const handleTitlebarMouseDown = useCallback(

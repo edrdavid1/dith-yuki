@@ -8,8 +8,11 @@
     "menubar menubar menubar"
     "left    canvas  right";
   height: 100%;
-  min-width: 800px;
+  width: 100%;
+  /* No hard min-width — sidebars clamp to leave preview room (no H-scroll). */
+  min-width: 0;
   min-height: 600px;
+  overflow: hidden;
   background: var(--color-dark-gray);
 }
 
@@ -22,7 +25,8 @@
 .app-sidebar {
   background: var(--color-dark-gray);
   color: var(--text-color);
-  overflow-y: auto;
+  /* Clip — never introduce column H/V scroll from side-by-side docks. */
+  overflow: hidden;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -106,14 +110,17 @@
 }
 
 :global(body[data-panel-dock-drag]) .sidebar-empty-drop-edge {
-  background: color-mix(in srgb, var(--color-primary) 16%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+  box-shadow: inset 0 0 0 var(--border-width) var(--border-color);
 }
 
 :global(body[data-dock-drop-side='left']) .sidebar-empty-drop-edge-left,
 :global(body[data-dock-drop-side='right']) .sidebar-empty-drop-edge-right,
 .sidebar-empty-drop-edge-armed {
-  background: color-mix(in srgb, var(--color-primary) 40%, transparent);
-  box-shadow: inset 0 0 0 2px var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 34%, transparent);
+  box-shadow:
+    inset 0 0 0 var(--border-width) var(--border-color),
+    inset 0 0 0 calc(var(--border-width) * 2) var(--color-primary);
 }
 
 /* ─── Collapsed Sidebar (Icon Strip) ──────────────────────────────────────── */
@@ -186,8 +193,8 @@
 
 .sidebar-collapsed-btn-collapse {
   margin-top: auto;
-  font-size: 16px;
-  font-weight: bold;
+  font-size: 18px;
+  font-weight: 800;
   color: var(--text-color);
   border: none;
 }
@@ -205,8 +212,8 @@
   background: var(--bg-window);
   border: none;
   cursor: pointer;
-  font-size: 12px;
-  font-weight: bold;
+  font-size: 14px;
+  font-weight: 800;
   color: var(--text-color);
   z-index: 10;
 }

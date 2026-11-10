@@ -26,7 +26,17 @@ import {
   useSideLayout,
 } from '../contexts/LayoutContext';
 import { layoutPanelFactory } from '../factories/layoutPanelFactory';
-import type { FlexSide } from '../defaults/DefaultLayouts';
+import {
+  SIDEBAR_EXPANDED_MAX_WIDTH,
+  type FlexSide,
+} from '../defaults/DefaultLayouts';
+import { classifyDropOutlineAxis } from '../features/panels/dropOutlineAxis';
+import { shouldBlockFloatingTabMove } from '../features/panels/flexFloatDragGuard';
+import {
+  canAcceptHorizontalDrop,
+  maxDockedHorizontalSpan,
+  sidebarWidthForHorizontalSpan,
+} from '../features/panels/horizontalDock';
 import { useShell } from '../app/shell/ShellContext';
 import WindowTitlebar from '../shared/ui/WindowTitlebar';
 import { useFlexTitlebarUndock } from '../features/panels/useFlexTitlebarUndock';
@@ -67,12 +77,28 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
 }) => {
   const { model, setModel, isLoading } = useSideLayout(side);
   const { movePanelBetweenSides, floatPanel, dockPanel } = useLayoutContext();
-  const { leftSidebar, rightSidebar, setSidebarCollapsed } = useShell();
+  const {
+    leftSidebar,
+    rightSidebar,
+    setSidebarCollapsed,
+    setSidebarWidth,
+  } = useShell();
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const columnRef = useRef<HTMLDivElement>(null);
   const isCenter = side === 'center';
   const sidebarPrefs = side === 'left' ? leftSidebar : rightSidebar;
+  const otherSidebarPrefs = side === 'left' ? rightSidebar : leftSidebar;
   const dockedCount = listDockedFlexComponents(model).length;
+  const dropBudgetRef = useRef({
+    sidebarWidth: sidebarPrefs.width,
+    otherSidebarWidth: otherSidebarPrefs.collapsed ? 40 : otherSidebarPrefs.width,
+    viewportWidth: typeof window !== 'undefined' ? window.innerWidth : 1280,
+  });
+  dropBudgetRef.current = {
+    sidebarWidth: sidebarPrefs.width,
+    otherSidebarWidth: otherSidebarPrefs.collapsed ? 40 : otherSidebarPrefs.width,
+    viewportWidth: typeof window !== 'undefined' ? window.innerWidth : 1280,
+  };
 
   useDockZoneReporter({
     sidebarRef: columnRef,
@@ -146,8 +172,9 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
     };
   }, [appEdges, model, dockedCount]);
 
-  // Hide left/right drop outlines. Only watch outline nodes — observing every
-  // `style` change on the layout tree makes splitter resize hitch (reflow).
+  // Classify drop outlines as stack (top/bottom) vs side (left/right) and mark
+  // side targets that would violate the 240px floor. Only watch outline nodes —
+  // observing every `style` change on the layout tree makes splitter resize hitch.
   useEffect(() => {
     const root = columnRef.current;
     if (!root) return;
@@ -161,13 +188,21 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
       const layout = el.closest('.flexlayout__layout') as HTMLElement | null;
       const pw = layout?.clientWidth ?? 0;
       const ph = layout?.clientHeight ?? 0;
-      const w = el.offsetWidth;
-      const h = el.offsetHeight;
-      const stack =
-        pw > 0 && ph > 0 ? w >= pw * 0.8 && h <= ph * 0.65 : w > h;
-      const next = stack ? 'stack' : 'side';
+      const next = classifyDropOutlineAxis(el.offsetWidth, el.offsetHeight, pw, ph);
       if (el.getAttribute('data-drop-axis') !== next) {
         el.setAttribute('data-drop-axis', next);
+      }
+      // Only left/right strips can be denied; center is remapped to stack in onAction.
+      if (next === 'side' && model && !isCenter) {
+        const allowed = canAcceptHorizontalDrop(model, undefined, undefined, {
+          ...dropBudgetRef.current,
+        });
+        const denied = allowed ? 'false' : 'true';
+        if (el.getAttribute('data-drop-denied') !== denied) {
+          el.setAttribute('data-drop-denied', denied);
+        }
+      } else if (el.hasAttribute('data-drop-denied')) {
+        el.removeAttribute('data-drop-denied');
       }
     };
 
@@ -207,7 +242,7 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
       for (const oo of outlineObservers.values()) oo.disconnect();
       outlineObservers.clear();
     };
-  }, [model]);
+  }, [model, isCenter]);
 
   useEffect(() => {
     const root = columnRef.current;
@@ -279,6 +314,29 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
 
   const normalizingRef = useRef(false);
 
+  const ensureSidebarFitsSpan = useCallback(
+    (m: Model) => {
+      if (isCenter) return;
+      const span = maxDockedHorizontalSpan(m);
+      const needed = sidebarWidthForHorizontalSpan(span, sidebarPrefs.width);
+      const next = Math.min(SIDEBAR_EXPANDED_MAX_WIDTH, needed);
+      // Always raise to span×240 after a horizontal split (never leave columns <240).
+      if (next !== sidebarPrefs.width) {
+        setSidebarWidth(side as 'left' | 'right', next);
+      }
+      if (span > 0) {
+        setSidebarCollapsed(side as 'left' | 'right', false);
+      }
+    },
+    [
+      isCenter,
+      side,
+      sidebarPrefs.width,
+      setSidebarWidth,
+      setSidebarCollapsed,
+    ],
+  );
+
   const handleModelChange = useCallback(
     (newModel: Model, action: Action) => {
       // Live splitter drag mutates the model in place; a React setState here
@@ -293,7 +351,7 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
       if (!normalizingRef.current) {
         normalizingRef.current = true;
         try {
-          // Keep Color Lab–style vertical stack if a drop somehow created peer tabs.
+          // Peer tabs in one strip → vertical stack; left/right rows stay.
           normalizeSideToVerticalStack(newModel);
           // Float/unfloat from any path (menu, drag, FL) must park ghost hosts.
           if (
@@ -303,6 +361,13 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
           ) {
             rebalanceFloatingTabsets(newModel);
           }
+          if (
+            action.type === Actions.MOVE_NODE ||
+            action.type === Actions.ADD_NODE ||
+            action.type === Actions.UNFLOAT_TAB
+          ) {
+            ensureSidebarFitsSpan(newModel);
+          }
         } finally {
           normalizingRef.current = false;
         }
@@ -310,22 +375,46 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
       setModel(newModel);
       scheduleSave(newModel);
     },
-    [setModel, scheduleSave],
+    [setModel, scheduleSave, ensureSidebarFitsSpan],
   );
 
-  /** Sidebar is narrow — never form peer tabs / side-by-side splits inside a column. */
-  const onAction = useCallback((action: Action) => {
-    if (
-      action.type === Actions.MOVE_NODE ||
-      action.type === Actions.ADD_NODE
-    ) {
+  /**
+   * Allow left/right drops for side-by-side tabsets when they fit ≥240px each.
+   * Remap center → bottom so WindowTitlebar never shares a strip with a peer tab.
+   * Block MOVE_NODE of already-floating tabs (residual titlebar-undock drag-end).
+   */
+  const onAction = useCallback(
+    (action: Action) => {
+      if (
+        action.type !== Actions.MOVE_NODE &&
+        action.type !== Actions.ADD_NODE
+      ) {
+        return action;
+      }
+      if (model && shouldBlockFloatingTabMove(model, action)) {
+        return undefined;
+      }
       const loc = action.data?.location as string | undefined;
-      if (loc === 'center' || loc === 'left' || loc === 'right') {
+      if (loc === 'center') {
         return new Action(action.type, { ...action.data, location: 'bottom' });
       }
-    }
-    return action;
-  }, []);
+      if (
+        (loc === 'left' || loc === 'right') &&
+        model &&
+        !isCenter
+      ) {
+        const allowed = canAcceptHorizontalDrop(
+          model,
+          action.data?.fromNode as string | undefined,
+          action.data?.toNode as string | undefined,
+          dropBudgetRef.current,
+        );
+        if (!allowed) return undefined;
+      }
+      return action;
+    },
+    [model, isCenter],
+  );
 
   const factory = useCallback(
     (node: TabNode): React.ReactNode => {
@@ -436,7 +525,7 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
           justifyContent: 'center',
           height: '100%',
           color: 'var(--color-text-secondary, #999)',
-          fontSize: 13,
+          fontSize: 15,
           overflow: 'hidden',
           ...style,
         }}

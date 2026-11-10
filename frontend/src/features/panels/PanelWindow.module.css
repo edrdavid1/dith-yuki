@@ -10,8 +10,10 @@
 }
 
 .panel-window-affinity {
-  outline: 2px solid var(--color-primary);
-  outline-offset: -2px;
+  /* Match dock drop outlines: black frame + primary inset. */
+  box-shadow:
+    inset 0 0 0 var(--border-width) var(--border-color),
+    inset 0 0 0 calc(var(--border-width) * 2) var(--color-primary);
 }
 
 .panel-window-titlebar-affinity {
@@ -78,7 +80,7 @@
 
 .panel-window-title {
   font-family: var(--font-family);
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-color);
   white-space: nowrap;
   flex-shrink: 0;
@@ -105,7 +107,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 8px;
+  font-size: 10px;
   font-family: var(--font-family);
   padding: 0;
   line-height: 1;
@@ -138,7 +140,7 @@
   justify-content: center;
   height: 100%;
   font-family: var(--font-family);
-  font-size: 12px;
+  font-size: 14px;
   color: var(--color-dark-gray);
 }
 
@@ -160,7 +162,7 @@
 
 .docked-panel-header-title {
   font-family: var(--font-family);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-color);
   flex: 1;
   white-space: nowrap;
@@ -176,7 +178,7 @@
   background: var(--bg-window);
   color: var(--text-color);
   cursor: pointer;
-  font-size: 11px;
+  font-size: 13px;
   font-family: var(--font-family);
   line-height: 1;
   display: flex;

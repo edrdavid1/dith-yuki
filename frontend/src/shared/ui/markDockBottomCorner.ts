@@ -3,7 +3,11 @@
  * round that border (not inner panel widgets).
  *
  * `.flexlayout__tab` is often an absolute overlay — not always a child of its
- * tabset — so we match tabs by geometry against the bottom-most tabset.
+ * tabset — so we match tabs by geometry against the chosen tabset.
+ *
+ * With side-by-side columns, only the tabset that actually meets the app
+ * window corner is rounded (rightmost for a right edge, leftmost for left).
+ * A neighbor that only touches another panel stays square.
  */
 export function markDockBottomCorner(
   root: HTMLElement,
@@ -17,18 +21,31 @@ export function markDockBottomCorner(
   const tabsets = Array.from(root.querySelectorAll<HTMLElement>('.flexlayout__tabset'));
   if (tabsets.length === 0) return;
 
-  let bottomMost = tabsets[0];
-  let maxBottom = bottomMost.getBoundingClientRect().bottom;
-  for (let i = 1; i < tabsets.length; i++) {
-    const bottom = tabsets[i].getBoundingClientRect().bottom;
-    if (bottom > maxBottom) {
-      maxBottom = bottom;
-      bottomMost = tabsets[i];
+  let maxBottom = -Infinity;
+  for (const ts of tabsets) {
+    maxBottom = Math.max(maxBottom, ts.getBoundingClientRect().bottom);
+  }
+
+  // Candidates flush with the bottom of the column (side-by-side share this).
+  const bottomFlush = tabsets.filter((ts) => {
+    const r = ts.getBoundingClientRect();
+    return r.height >= 2 && Math.abs(r.bottom - maxBottom) <= 3;
+  });
+  if (bottomFlush.length === 0) return;
+
+  // Outer app corner: rightmost for right edge, leftmost for left.
+  let chosen = bottomFlush[0]!;
+  for (let i = 1; i < bottomFlush.length; i++) {
+    const ts = bottomFlush[i]!;
+    const a = chosen.getBoundingClientRect();
+    const b = ts.getBoundingClientRect();
+    if (corner === 'right' ? b.right > a.right : b.left < a.left) {
+      chosen = ts;
     }
   }
 
-  const setRect = bottomMost.getBoundingClientRect();
-  bottomMost.setAttribute('data-dock-bottom-corner', corner);
+  const setRect = chosen.getBoundingClientRect();
+  chosen.setAttribute('data-dock-bottom-corner', corner);
 
   // Frame pieces: tabbar (top/sides) + tab (sides/bottom). Round only the tab
   // for the bottom-outer corner — that element owns the bottom border stroke.

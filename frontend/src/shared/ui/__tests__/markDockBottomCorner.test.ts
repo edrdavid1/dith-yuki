@@ -51,4 +51,37 @@ describe('markDockBottomCorner', () => {
     expect(tab.getAttribute('data-dock-bottom-corner')).toBe('right');
     expect(strayTab.getAttribute('data-dock-bottom-corner')).toBeNull();
   });
+
+  it('rounds only the outer side-by-side column (not the neighbor)', () => {
+    const root = document.createElement('div');
+
+    const inner = document.createElement('div');
+    inner.className = 'flexlayout__tabset';
+    inner.getBoundingClientRect = () =>
+      ({ top: 100, bottom: 220, left: 0, right: 160, width: 160, height: 120 }) as DOMRect;
+
+    const outer = document.createElement('div');
+    outer.className = 'flexlayout__tabset';
+    outer.getBoundingClientRect = () =>
+      ({ top: 100, bottom: 220, left: 160, right: 320, width: 160, height: 120 }) as DOMRect;
+
+    const innerTab = document.createElement('div');
+    innerTab.className = 'flexlayout__tab';
+    innerTab.getBoundingClientRect = () =>
+      ({ top: 120, bottom: 220, left: 0, right: 160, width: 160, height: 100 }) as DOMRect;
+
+    const outerTab = document.createElement('div');
+    outerTab.className = 'flexlayout__tab';
+    outerTab.getBoundingClientRect = () =>
+      ({ top: 120, bottom: 220, left: 160, right: 320, width: 160, height: 100 }) as DOMRect;
+
+    root.append(inner, outer, innerTab, outerTab);
+
+    markDockBottomCorner(root, 'right');
+
+    expect(inner.getAttribute('data-dock-bottom-corner')).toBeNull();
+    expect(innerTab.getAttribute('data-dock-bottom-corner')).toBeNull();
+    expect(outer.getAttribute('data-dock-bottom-corner')).toBe('right');
+    expect(outerTab.getAttribute('data-dock-bottom-corner')).toBe('right');
+  });
 });

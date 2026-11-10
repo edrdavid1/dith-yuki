@@ -7,7 +7,6 @@
  */
 
 import { useCallback, useEffect, useRef } from 'react';
-import { getAllWebviewWindows } from '@tauri-apps/api/webviewWindow';
 import type { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { LogicalPosition } from '@tauri-apps/api/dpi';
 import {
@@ -15,6 +14,7 @@ import {
   cancelFloatDrag,
   completeFloatDrag,
 } from '../../shared/ipc';
+import { findFlexPopoutWebviewForDomWindow } from './closeFlexPopoutShell';
 import { jsDragWindowPosition, type JsDragOrigin } from './jsPopoutDrag';
 
 type DragSession = {
@@ -27,20 +27,6 @@ type DragSession = {
   moving: boolean;
   raf: number | null;
 };
-
-async function resolveFlexPopoutWebview(): Promise<WebviewWindow | null> {
-  const wins = await getAllWebviewWindows();
-  const flex = wins.filter((w) => w.label.startsWith('flex-popout-'));
-  if (flex.length === 0) return null;
-  for (const w of flex) {
-    try {
-      if (await w.isFocused()) return w;
-    } catch {
-      /* ignore */
-    }
-  }
-  return flex[flex.length - 1] ?? null;
-}
 
 export function useFlexPopoutJsDrag(panelId: string) {
   const sessionRef = useRef<DragSession | null>(null);
@@ -164,7 +150,9 @@ export function useFlexPopoutJsDrag(panelId: string) {
 
         if (sessionRef.current !== session) return;
 
-        const tauriWin = await resolveFlexPopoutWebview();
+        // Match THIS popout's shell by screen position — focused/last is wrong
+        // when several flex-popout windows are open.
+        const tauriWin = await findFlexPopoutWebviewForDomWindow(view);
         if (sessionRef.current !== session) return;
         if (!tauriWin) {
           console.error('[useFlexPopoutJsDrag] no flex-popout WebviewWindow');
