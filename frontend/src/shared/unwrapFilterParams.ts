@@ -10,6 +10,12 @@ const TAGGED_KEYS = [
   'Dither',
   'PaletteQuantize',
   'Ascii',
+  'Exposure',
+  'HighlightsShadows',
+  'TemperatureTint',
+  'Vibrance',
+  'Hue',
+  'Clarity',
 ] as const;
 
 /**
