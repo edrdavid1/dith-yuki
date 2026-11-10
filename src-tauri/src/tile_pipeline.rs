@@ -83,21 +83,42 @@ fn try_processed_from_dithered_cache(
             )));
         }
     }
-    let result = engine_tiles::with_tile_buffer_park(|park| {
-        apply_enabled_filters_to_tile(
-            dithered.as_ref(),
-            &post,
-            layer.id,
+    let spatial_r = engine_project::filters::post_direct_spatial_radius(&post);
+    let neighborhood = if spatial_r > 0 {
+        let b = layer.bounds_l0;
+        Some(engine_project::filters::gather_dithered_neighborhood(
+            &state.tiles.tile_cache,
+            key.doc,
+            key.layer,
             key.coord,
-            &state.tiles.palette_cache,
-            &state.tiles.palette_lut_cache,
-            &state.tiles.threshold_cache,
-            snapshot,
-            &state.tiles.error_residuals,
-            &state.tiles.block_representatives,
-            state.gpu.as_deref(),
-            park,
-        )
+            spatial_r,
+            engine_project::filters::NeighborTileBounds {
+                min_x: b.min_x,
+                min_y: b.min_y,
+                max_x: b.max_x,
+                max_y: b.max_y,
+            },
+        ))
+    } else {
+        None
+    };
+    let result = engine_tiles::with_tile_buffer_park(|park| {
+        engine_project::filters::with_spatial_neighbors(neighborhood.as_ref(), || {
+            apply_enabled_filters_to_tile(
+                dithered.as_ref(),
+                &post,
+                layer.id,
+                key.coord,
+                &state.tiles.palette_cache,
+                &state.tiles.palette_lut_cache,
+                &state.tiles.threshold_cache,
+                snapshot,
+                &state.tiles.error_residuals,
+                &state.tiles.block_representatives,
+                state.gpu.as_deref(),
+                park,
+            )
+        })
     });
     Some(match result {
         Ok(processed) => {
@@ -218,10 +239,66 @@ fn insert_dithered_if_enabled(state: &AppState, key: TileKey, tile: &PixelTile, 
         t.copy_from(tile);
         t
     });
-    let _ = state
+    let inserted = state
         .tiles
         .tile_cache
         .insert_fresh_gen(dithered_key, arc, content_gen);
+    if inserted {
+        wake_spatial_post_after_dithered(state, dithered_key, content_gen);
+    }
+}
+
+/// P3: when a Dithered neighbor arrives, dirty + re-enqueue nearby Processed so
+/// incomplete spatial Post (pointwise preview) can upgrade with cross-tile blur.
+fn wake_spatial_post_after_dithered(state: &AppState, dithered: TileKey, content_gen: u64) {
+    let Ok(snapshot) = snapshot_for_key(state, dithered) else {
+        return;
+    };
+    let Some(layer) = find_layer_by_id(&snapshot.root, dithered.layer) else {
+        return;
+    };
+    let Some((_, post)) = engine_project::split_enabled_at_barrier(&layer.filters) else {
+        return;
+    };
+    let radius = engine_project::filters::post_direct_spatial_radius(&post);
+    if radius <= 0 {
+        return;
+    }
+    let b = layer.bounds_l0;
+    let bounds = engine_project::filters::NeighborTileBounds {
+        min_x: b.min_x,
+        min_y: b.min_y,
+        max_x: b.max_x,
+        max_y: b.max_y,
+    };
+    let layer_gen = snapshot.generations.get_layer_gen(dithered.layer);
+    for coord in engine_project::filters::processed_coords_needing_spatial_upgrade(
+        dithered.coord,
+        radius,
+        bounds,
+    ) {
+        if coord == dithered.coord {
+            continue;
+        }
+        let pkey = TileKey {
+            doc: dithered.doc,
+            layer: dithered.layer,
+            coord,
+            stage: CacheStage::Processed,
+        };
+        // Only upgrade tiles that already published a Processed (clamp preview).
+        if state.tiles.tile_cache.get_entry(pkey).is_none() {
+            continue;
+        }
+        state.tiles.tile_cache.mark_dirty(pkey);
+        state.tiles.scheduler.enqueue_or_bump(RecomputeTask {
+            key: pkey,
+            generation: content_gen,
+            layer_generation: layer_gen,
+            priority: Priority::ViewportCenter,
+        });
+        state.worker_wake.notify_one();
+    }
 }
 
 /// Task 2: after a mid-Post strip abort, keep valid `Dithered` (document_gen held)
@@ -1364,21 +1441,42 @@ pub fn compute_processed_tile(
                         reschedule_if_insert_rejected(state, processed_key, false);
                         return Err(engine_project::post_cancelled());
                     }
-                    let processed = engine_tiles::with_tile_buffer_park(|park| {
-                        apply_enabled_filters_to_tile(
-                            &dithered,
-                            &post,
-                            layer.id,
+                    let spatial_r = engine_project::filters::post_direct_spatial_radius(&post);
+                    let neighborhood = if spatial_r > 0 {
+                        let b = layer.bounds_l0;
+                        Some(engine_project::filters::gather_dithered_neighborhood(
+                            &state.tiles.tile_cache,
+                            key.doc,
+                            key.layer,
                             key.coord,
-                            &state.tiles.palette_cache,
-                            &state.tiles.palette_lut_cache,
-                            &state.tiles.threshold_cache,
-                            &snapshot,
-                            &state.tiles.error_residuals,
-                            &state.tiles.block_representatives,
-                            state.gpu.as_deref(),
-                            park,
-                        )
+                            spatial_r,
+                            engine_project::filters::NeighborTileBounds {
+                                min_x: b.min_x,
+                                min_y: b.min_y,
+                                max_x: b.max_x,
+                                max_y: b.max_y,
+                            },
+                        ))
+                    } else {
+                        None
+                    };
+                    let processed = engine_tiles::with_tile_buffer_park(|park| {
+                        engine_project::filters::with_spatial_neighbors(neighborhood.as_ref(), || {
+                            apply_enabled_filters_to_tile(
+                                &dithered,
+                                &post,
+                                layer.id,
+                                key.coord,
+                                &state.tiles.palette_cache,
+                                &state.tiles.palette_lut_cache,
+                                &state.tiles.threshold_cache,
+                                &snapshot,
+                                &state.tiles.error_residuals,
+                                &state.tiles.block_representatives,
+                                state.gpu.as_deref(),
+                                park,
+                            )
+                        })
                     })?;
                     let now_snap = snapshot_for_key(state, key)?;
                     let now_gen = now_snap.generations.document_gen.load(Ordering::Acquire);

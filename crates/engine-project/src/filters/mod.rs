@@ -22,7 +22,9 @@ pub mod ed1d;
 pub mod ed1d_styles;
 pub mod ed_wrap_padding;
 pub mod full_document;
+pub mod fusion;
 pub mod glitch;
+pub mod neighbors;
 pub mod glow;
 pub mod gpu_bridge;
 pub mod gpu_graph;
@@ -66,7 +68,16 @@ pub use full_document::{
     publish_processed_tiles, publish_stage_tiles, slice_processed_tile, EnsureTrace,
     FdRenderStages, FullDocumentCache, FullDocumentResult,
 };
+pub use fusion::{
+    apply_fused_pointwise_into, fusible_run_len, is_fusible_pointwise, post_fusion_enabled,
+    set_post_fusion_enabled_for_test,
+};
 pub use glitch::{GlitchFilter, GlitchParams, GlitchSubOp};
+pub use neighbors::{
+    gather_dithered_neighborhood, post_direct_spatial_radius,
+    processed_coords_needing_spatial_upgrade, with_spatial_neighbors, NeighborTileBounds,
+    SpatialNeighborhood,
+};
 pub use levels::LevelsFilter;
 pub use palette_quantize::PaletteQuantizeFilter;
 
