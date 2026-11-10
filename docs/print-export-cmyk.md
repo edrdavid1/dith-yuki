@@ -80,5 +80,5 @@ shifted palette colors, CMYK collisions, and max ink coverage %. Does not block 
 
 - PDF + OutputIntent is phase 2 (do not claim PDF/X).
 - Neutral grays → K-only deferred.
-- Confirm ECI embed-in-file license text for bundled PSO profiles.
+- No bundled PSO/FOGRA ICC; user-imported profiles are embedded in the TIFF as provided.
 - Manual open in Photoshop / Affinity / GIMP / `tiffinfo` before calling the feature done.

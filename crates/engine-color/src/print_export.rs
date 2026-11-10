@@ -76,7 +76,7 @@ impl Default for PrintExportConfig {
     fn default() -> Self {
         Self {
             format: PrintExportFormat::Tiff,
-            profile_id: crate::soft_proof::BUILTIN_FOGRA51_ID.to_string(),
+            profile_id: String::new(),
             intent: SoftProofIntent::Relative,
             bpc: true,
             ppi: 300.0,
@@ -534,10 +534,11 @@ pub fn gamut_report(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::soft_proof::BUILTIN_FOGRA51_ICC;
+    use crate::test_icc::load_fogra51_fixture;
 
     fn xform(bpc: bool) -> PrintExportTransform {
-        PrintExportTransform::new(BUILTIN_FOGRA51_ICC, SoftProofIntent::Relative, bpc).unwrap()
+        let icc = load_fogra51_fixture();
+        PrintExportTransform::new(&icc, SoftProofIntent::Relative, bpc).unwrap()
     }
 
     #[test]

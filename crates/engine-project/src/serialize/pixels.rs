@@ -399,19 +399,85 @@ fn assemble_layer_processed_rgba8(
                 doc_id,
                 layer_id: layer.id.0,
             })?;
-            let processed = apply_filter_to_tile_with_caches(
-                tile.as_ref(),
-                layer,
-                coord,
-                palette_cache,
-                lut_cache,
-                threshold_cache,
-                doc,
-                &residuals_store,
-                &block_cache,
-                None,
-            )
-            .map_err(|e| ProjectError::Codec(format!("preview filter apply: {e}")))?;
+            let processed = if crate::post_cache_enabled() {
+                if let Some((through, post)) = crate::split_enabled_at_barrier(&layer.filters) {
+                    if !through.is_empty() && !post.is_empty() {
+                        engine_tiles::with_tile_buffer_park(|park| {
+                            let dithered = crate::filters::apply::apply_enabled_filters_to_tile(
+                                tile.as_ref(),
+                                &through,
+                                layer.id,
+                                coord,
+                                palette_cache,
+                                lut_cache,
+                                threshold_cache,
+                                doc,
+                                &residuals_store,
+                                &block_cache,
+                                None,
+                                park,
+                            )?;
+                            crate::filters::apply::apply_enabled_filters_to_tile(
+                                &dithered,
+                                &post,
+                                layer.id,
+                                coord,
+                                palette_cache,
+                                lut_cache,
+                                threshold_cache,
+                                doc,
+                                &residuals_store,
+                                &block_cache,
+                                None,
+                                park,
+                            )
+                        })
+                        .map_err(|e| ProjectError::Codec(format!("preview filter apply: {e}")))?
+                    } else {
+                        apply_filter_to_tile_with_caches(
+                            tile.as_ref(),
+                            layer,
+                            coord,
+                            palette_cache,
+                            lut_cache,
+                            threshold_cache,
+                            doc,
+                            &residuals_store,
+                            &block_cache,
+                            None,
+                        )
+                        .map_err(|e| ProjectError::Codec(format!("preview filter apply: {e}")))?
+                    }
+                } else {
+                    apply_filter_to_tile_with_caches(
+                        tile.as_ref(),
+                        layer,
+                        coord,
+                        palette_cache,
+                        lut_cache,
+                        threshold_cache,
+                        doc,
+                        &residuals_store,
+                        &block_cache,
+                        None,
+                    )
+                    .map_err(|e| ProjectError::Codec(format!("preview filter apply: {e}")))?
+                }
+            } else {
+                apply_filter_to_tile_with_caches(
+                    tile.as_ref(),
+                    layer,
+                    coord,
+                    palette_cache,
+                    lut_cache,
+                    threshold_cache,
+                    doc,
+                    &residuals_store,
+                    &block_cache,
+                    None,
+                )
+                .map_err(|e| ProjectError::Codec(format!("preview filter apply: {e}")))?
+            };
 
             for ly in 0..TILE_SIZE {
                 for lx in 0..TILE_SIZE {
@@ -1239,7 +1305,7 @@ mod tests {
             DitherColorMode, DitherModeV2, DitherParamsV2, FilterInstance, FilterKind, FilterParams,
         };
         use crate::filters::apply::apply_filter_to_tile;
-        use crate::filters::glitch::GlitchType;
+        use crate::filters::glitch::{GlitchParams, GlitchSubOp};
         use crate::types::DocumentId;
         use engine_color::palette_cache::PaletteKdCache;
         use engine_color::palette_lut::PaletteLutCache;
@@ -1255,11 +1321,14 @@ mod tests {
         // Panel top → bottom: Glitch then FS. Apply order is reverse: FS then Glitch.
         layer.filters.push(FilterInstance::new(
             FilterKind::Glitch,
-            FilterParams::Glitch {
-                glitch_type: GlitchType::RGBShift,
-                intensity: 0.35,
+            FilterParams::Glitch(GlitchParams {
                 seed: 7,
-            },
+                channel_swap: GlitchSubOp {
+                    enabled: true,
+                    amount: 35.0,
+                },
+                ..GlitchParams::default()
+            }),
         ));
         layer.filters.push(FilterInstance::new(
             FilterKind::Dither,
@@ -1360,10 +1429,10 @@ mod tests {
 
         doc.soft_proof = SoftProofConfig {
             enabled: true,
-            profile_id: "builtin:fogra51".into(),
+            profile_id: "import:test-only-not-applied-on-export".into(),
             intent: SoftProofIntent::Relative,
             bpc: true,
-            profile_display_name: Some("PSO Coated v3".into()),
+            profile_display_name: Some("Imported ICC".into()),
         };
         let on = build_processed_composite_rgba8(&cache, &doc).unwrap();
 

@@ -1,4 +1,6 @@
-//! Soft-proof profile catalog (builtin + imported) and transform cache.
+//! Soft-proof profile catalog (user-imported ICC) and transform cache.
+//!
+//! Builtin FOGRA/PSO profiles are no longer shipped. Import an ICC via the UI.
 
 use std::collections::HashMap;
 use std::fs;
@@ -7,7 +9,6 @@ use std::sync::{Arc, Mutex};
 
 use engine_color::soft_proof::{
     ProofProfile, SoftProofConfig, SoftProofError, SoftProofIntent, SoftProofTransform,
-    BUILTIN_FOGRA51_ICC, BUILTIN_FOGRA51_ID, BUILTIN_FOGRA52_ID,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -69,24 +70,6 @@ impl ProofService {
 
     pub fn reload_catalog(&self) -> Result<(), ProofServiceError> {
         let mut map = HashMap::new();
-        insert_builtin(
-            &mut map,
-            BUILTIN_FOGRA51_ID,
-            "PSO Coated v3 (FOGRA51)",
-            BUILTIN_FOGRA51_ICC,
-        )?;
-
-        if let Some((name, bytes)) = load_fogra52_icc() {
-            let fogra51_hash = sha256_hex(BUILTIN_FOGRA51_ICC);
-            let hash = sha256_hex(&bytes);
-            if hash == fogra51_hash {
-                log::warn!(
-                    "FOGRA52 path resolved to the same bytes as FOGRA51; skipping builtin:fogra52 until a distinct Uncoated ICC is provided"
-                );
-            } else {
-                insert_builtin(&mut map, BUILTIN_FOGRA52_ID, &name, &bytes)?;
-            }
-        }
 
         // Imported profiles: `{sha256}.icc` + sibling `{sha256}.json` metadata optional.
         if let Ok(entries) = fs::read_dir(&self.import_dir) {
@@ -139,11 +122,7 @@ impl ProofService {
     pub fn list_profiles(&self) -> Vec<ProfileInfoDto> {
         let map = self.profiles.lock().expect("proof profiles");
         let mut list: Vec<_> = map.values().map(|p| p.info.clone()).collect();
-        list.sort_by(|a, b| match (a.builtin, b.builtin) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.cmp(&b.name),
-        });
+        list.sort_by(|a, b| a.name.cmp(&b.name));
         list
     }
 
@@ -220,7 +199,7 @@ impl ProofService {
 
     /// If the configured profile is missing, disable proof (user re-enables after import).
     pub fn sanitize_config(&self, cfg: &mut SoftProofConfig) -> bool {
-        if self.has_profile(&cfg.profile_id) {
+        if cfg.profile_id.is_empty() || self.has_profile(&cfg.profile_id) {
             return false;
         }
         if cfg.profile_display_name.is_none() {
@@ -323,88 +302,6 @@ impl ProofService {
             }
         });
     }
-}
-
-fn insert_builtin(
-    map: &mut HashMap<String, StoredProfile>,
-    id: &str,
-    fallback_name: &str,
-    bytes: &[u8],
-) -> Result<(), ProofServiceError> {
-    let proof = ProofProfile::from_icc_bytes(bytes)?;
-    map.insert(
-        id.to_string(),
-        StoredProfile {
-            info: ProfileInfoDto {
-                id: id.to_string(),
-                // Compact UI label (includes FOGRA tag); ICC desc kept for import path.
-                name: fallback_name.to_string(),
-                builtin: true,
-                has_perceptual: proof.info.has_perceptual,
-                has_relative: proof.info.has_relative,
-                has_absolute: proof.info.has_absolute,
-            },
-            bytes: Arc::from(bytes.to_vec()),
-        },
-    );
-    Ok(())
-}
-
-fn load_fogra52_icc() -> Option<(String, Vec<u8>)> {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cmyk/pso-uncoated_v3_fogra52");
-    if !dir.is_dir() {
-        log::warn!("soft-proof: missing {}", dir.display());
-        return None;
-    }
-    let preferred = [
-        "PSOuncoated_v3.icc",
-        "PSOuncoated_v3_fogra52.icc",
-        "PSO_Uncoated_v3.icc",
-        "PSOuncoated_v3_FOGRA52.icc",
-    ];
-    for name in preferred {
-        let path = dir.join(name);
-        if let Ok(bytes) = fs::read(&path) {
-            if ProofProfile::from_icc_bytes(&bytes).is_ok() {
-                return Some(("PSO Uncoated v3 (FOGRA52)".into(), bytes));
-            }
-        }
-    }
-    // Any CMYK ICC in the folder whose content is not identical to FOGRA51.
-    let fogra51_hash = sha256_hex(BUILTIN_FOGRA51_ICC);
-    let mut entries: Vec<_> = fs::read_dir(&dir)
-        .ok()?
-        .flatten()
-        .map(|e| e.path())
-        .collect();
-    entries.sort();
-    for path in entries {
-        if path.extension().and_then(|e| e.to_str()) != Some("icc") {
-            continue;
-        }
-        let Ok(bytes) = fs::read(&path) else { continue };
-        if sha256_hex(&bytes) == fogra51_hash {
-            log::warn!(
-                "soft-proof: {} is identical to PSO Coated v3 (FOGRA51); place the real PSOuncoated_v3.icc here for FOGRA52",
-                path.display()
-            );
-            continue;
-        }
-        if let Ok(proof) = ProofProfile::from_icc_bytes(&bytes) {
-            let name = if proof
-                .info
-                .description
-                .to_ascii_lowercase()
-                .contains("uncoated")
-            {
-                proof.info.description
-            } else {
-                format!("{} (FOGRA52)", proof.info.description)
-            };
-            return Some((name, bytes));
-        }
-    }
-    None
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {

@@ -36,6 +36,11 @@ pub enum InvalidationEvent {
     LayerFilterChanged {
         doc: u32,
         layer: LayerId,
+        /// Minimum affected filter index in panel order (`filters[0]` = top).
+        changed_index: Option<usize>,
+        /// When true (P2 Post-only + `DITHER_POST_CACHE`), leave `Dithered` tiles
+        /// intact so Post can recompute without re-running the barrier.
+        preserve_dithered: bool,
     },
     LayerPropsChanged {
         doc: u32,
@@ -93,8 +98,16 @@ pub fn invalidate(cache: &TileCache, event: InvalidationEvent) {
             }
         }
 
-        InvalidationEvent::LayerFilterChanged { doc, layer } => {
+        InvalidationEvent::LayerFilterChanged {
+            doc,
+            layer,
+            changed_index: _,
+            preserve_dithered,
+        } => {
             mark_all_processed_for_layer(cache, doc, layer);
+            if !preserve_dithered {
+                mark_all_dithered_for_layer(cache, doc, layer);
+            }
             cascade_composite_invalidation_all_coords(cache, doc, layer);
         }
 
@@ -126,10 +139,18 @@ pub fn invalidate(cache: &TileCache, event: InvalidationEvent) {
 /// - `cache`: The TileCache
 /// - `layer`: The layer whose Processed tiles should be marked dirty
 fn mark_all_processed_for_layer(cache: &TileCache, doc: u32, layer: LayerId) {
+    mark_all_stage_for_layer(cache, doc, layer, CacheStage::Processed);
+}
+
+fn mark_all_dithered_for_layer(cache: &TileCache, doc: u32, layer: LayerId) {
+    mark_all_stage_for_layer(cache, doc, layer, CacheStage::Dithered);
+}
+
+fn mark_all_stage_for_layer(cache: &TileCache, doc: u32, layer: LayerId, stage: CacheStage) {
     let mut keys_to_mark = Vec::new();
     for entry in cache.entries.iter() {
         let key = *entry.key();
-        if key.doc == doc && key.layer == layer && key.stage == CacheStage::Processed {
+        if key.doc == doc && key.layer == layer && key.stage == stage {
             keys_to_mark.push(key);
         }
     }
@@ -258,7 +279,12 @@ mod tests {
         cache.get_or_insert(key_processed_2, tile.clone());
         cache.get_or_insert(key_raw, tile);
 
-        let event = InvalidationEvent::LayerFilterChanged { doc: 1, layer: 0 };
+        let event = InvalidationEvent::LayerFilterChanged {
+            doc: 1,
+            layer: 0,
+            changed_index: None,
+            preserve_dithered: false,
+};
         invalidate(&cache, event);
 
         // Processed tiles should be dirty

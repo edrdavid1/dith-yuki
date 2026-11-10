@@ -65,18 +65,18 @@ html[data-platform='macos'] .app-titlebar {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
-  font-family: var(--font-family, 'ChicagoFLF', monospace);
+  font-size: 15px;
+  font-family: var(--font-family, 'GranaPadano', 'Geneva', sans-serif);
   pointer-events: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* macOS: native drag hint (applied inline via style prop for platform specificity) */
-/* -webkit-app-region: drag is set inline on macOS only */
+/* macOS: no -webkit-app-region — AppTitlebar uses startDragging + zoom_window
+   so titlebar double-click is a single AppKit `zoom:` (same as the green ●). */
 
-/* No-drag zones inside the titlebar */
+/* No-drag zones inside the titlebar (Windows/Linux drag-region children) */
 .app-titlebar > [data-tauri-drag-region="false"] {
   height: 100%;
   display: flex;
@@ -91,8 +91,8 @@ html[data-platform='macos'] .app-titlebar {
 }
 
 .app-titlebar-title {
-  font-size: 13px;
-  font-family: var(--font-family, 'ChicagoFLF', monospace);
+  font-size: 15px;
+  font-family: var(--font-family, 'GranaPadano', 'Geneva', sans-serif);
   flex: 1;
   text-align: center;
   pointer-events: none;

@@ -85,6 +85,7 @@ fn main() {
     file_log::init();
     dither_profile_host::init();
     tile_gen_trace_host::init();
+    engine_project::init_post_cache_from_env();
 
     // B4c: affinity enabled on all platforms — Flex popout completes via JS mouseup,
     // not global_mouseup (which was unavailable on Linux).
@@ -166,9 +167,10 @@ fn main() {
                     #[cfg(target_os = "macos")]
                     {
                         // Photoshop-style: never stay in Mission Control fullscreen.
+                        // Do not maximize() here — that fought titlebar `zoom:` and
+                        // made double-click only jump without a lasting size change.
                         if window.is_fullscreen().unwrap_or(false) {
                             let _ = window.set_fullscreen(false);
-                            let _ = window.maximize();
                         }
                         // Do NOT refresh traffic lights here — NSWindowDidResize
                         // already re-pins every frame. A delayed second layout
@@ -466,6 +468,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             // Document commands
             stop_dock_bounce,
+            zoom_window,
             commands::allow_app_exit,
             commands::confirm_app_quit,
             crate::journal::commands::scan_recovery_journals,
@@ -497,6 +500,7 @@ fn main() {
             commands::export_image,
             commands::export_ascii,
             commands::ascii_clipboard_text,
+            commands::copy_preview_to_clipboard,
             commands::set_ascii_preview,
             commands::get_ascii_preview,
             commands::proof_list_profiles,
@@ -632,6 +636,22 @@ fn stop_dock_bounce(app: tauri::AppHandle) {
     macos_dock_bounce::stop(&app);
     #[cfg(not(target_os = "macos"))]
     let _ = app;
+}
+
+/// macOS titlebar double-click / green-button equivalent: AppKit `zoom:` (fit/restore).
+#[tauri::command]
+fn zoom_window(window: tauri::WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    macos_title::perform_zoom(&window);
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Windows/Linux: toggle maximize.
+        if window.is_maximized().unwrap_or(false) {
+            let _ = window.unmaximize();
+        } else {
+            let _ = window.maximize();
+        }
+    }
 }
 
 /// Build an HTTP response with CORS headers allowing any origin.

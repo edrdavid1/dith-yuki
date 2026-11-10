@@ -7,7 +7,8 @@
 //! the resulting `FilterParams` per tile.
 
 use super::dither_diffusion::{
-    apply_error_diffusion_tile_row_strip, apply_error_diffusion_with_cache_into,
+    apply_ed1d_tile_column_strip, apply_error_diffusion_tile_row_strip,
+    apply_error_diffusion_with_cache_into,
 };
 use super::dither_ordered::apply_ordered_with_cache_into;
 use super::dither_residuals::ErrorResidualsStore;
@@ -28,6 +29,63 @@ use engine_color::threshold_map::ThresholdMapCache;
 use engine_gpu::GpuContext;
 use engine_tiles::block_cache::BlockRepresentativeCache;
 use engine_tiles::{with_tile_buffer_park, PixelTile, TileBufferPark, TileCoord};
+
+#[inline]
+fn abort_if_post_cancelled(cancel_check: Option<&dyn Fn() -> bool>) -> Result<(), EngineError> {
+    if cancel_check.is_some_and(|f| f()) {
+        crate::post_barrier_metrics::record_post_tile_cancelled();
+        return Err(crate::post_barrier_metrics::post_cancelled());
+    }
+    Ok(())
+}
+
+fn verify_neutral_passthrough_tile(
+    front: &PixelTile,
+    filter: &FilterInstance,
+    coord: TileCoord,
+    palette_cache: &PaletteKdCache,
+    lut_cache: &PaletteLutCache,
+    threshold_cache: &ThresholdMapCache,
+    document: &Document,
+    residuals_store: &ErrorResidualsStore,
+    block_cache: &BlockRepresentativeCache,
+    layer_id: LayerId,
+    gpu: Option<&GpuContext>,
+    park: &mut TileBufferPark,
+) -> Result<(), EngineError> {
+    if !crate::post_cache::neutral_verify_enabled() {
+        return Ok(());
+    }
+    let mut ran = park.take();
+    apply_single_filter_into(
+        front,
+        &mut ran,
+        filter,
+        coord,
+        palette_cache,
+        lut_cache,
+        threshold_cache,
+        document,
+        residuals_store,
+        block_cache,
+        layer_id,
+        gpu,
+    )?;
+    if ran.data != front.data {
+        log::error!(
+            target: "post_barrier",
+            "DITHER_NEUTRAL_VERIFY mismatch kind={:?} filter={}",
+            filter.kind,
+            filter.id
+        );
+        debug_assert!(
+            false,
+            "neutral filter apply must be bitwise passthrough"
+        );
+    }
+    park.give(ran);
+    Ok(())
+}
 
 /// Apply all filters in a layer to a tile.
 ///
@@ -147,12 +205,42 @@ pub fn apply_filter_to_tile_with_park(
     gpu: Option<&GpuContext>,
     park: &mut TileBufferPark,
 ) -> Result<PixelTile, EngineError> {
-    park.ensure(2);
-
     // Layers panel is top-to-bottom = `filters[0]` … `filters[n-1]` (Image Source
     // under the last row). Apply bottom-up: last vec entry first, so the top row
     // is the final look and sees the output of everything below — not Raw.
     let enabled: Vec<&FilterInstance> = layer.filters.iter().rev().filter(|f| f.enabled).collect();
+    apply_enabled_filters_to_tile(
+        tile,
+        &enabled,
+        layer.id,
+        coord,
+        palette_cache,
+        lut_cache,
+        threshold_cache,
+        document,
+        residuals_store,
+        block_cache,
+        gpu,
+        park,
+    )
+}
+
+/// Apply an already-ordered enabled filter list (apply order: first = closest to Raw).
+pub fn apply_enabled_filters_to_tile(
+    tile: &PixelTile,
+    enabled: &[&FilterInstance],
+    layer_id: LayerId,
+    coord: TileCoord,
+    palette_cache: &PaletteKdCache,
+    lut_cache: &PaletteLutCache,
+    threshold_cache: &ThresholdMapCache,
+    document: &Document,
+    residuals_store: &ErrorResidualsStore,
+    block_cache: &BlockRepresentativeCache,
+    gpu: Option<&GpuContext>,
+    park: &mut TileBufferPark,
+) -> Result<PixelTile, EngineError> {
+    park.ensure(2);
 
     if enabled.is_empty() {
         let mut out = park.take();
@@ -179,6 +267,24 @@ pub fn apply_filter_to_tile_with_park(
 
     let mut applied_any = false;
     for filter in enabled {
+        if crate::filters::neutral::filter_is_neutral_for_apply(filter) {
+            verify_neutral_passthrough_tile(
+                &front,
+                filter,
+                coord,
+                palette_cache,
+                lut_cache,
+                threshold_cache,
+                document,
+                residuals_store,
+                block_cache,
+                layer_id,
+                gpu,
+                park,
+            )?;
+            crate::post_barrier_metrics::record_neutral_apply_skip();
+            continue;
+        }
         let opacity = filter.effective_opacity();
         if opacity >= 1.0 && filter.blend_mode == BlendMode::Normal {
             engine_tiles::with_raw_block_sampling(!applied_any, || {
@@ -193,7 +299,7 @@ pub fn apply_filter_to_tile_with_park(
                     document,
                     residuals_store,
                     block_cache,
-                    layer.id,
+                    layer_id,
                     gpu,
                 )
             })?;
@@ -212,7 +318,7 @@ pub fn apply_filter_to_tile_with_park(
                     document,
                     residuals_store,
                     block_cache,
-                    layer.id,
+                    layer_id,
                     gpu,
                 )
             });
@@ -235,11 +341,62 @@ pub fn apply_filter_to_tile_with_park(
 }
 
 /// Whether any enabled filter on the layer needs row-interleaved ED strips.
+///
+/// When a layer also has [`layer_needs_ed_column_strip`], prefer the column
+/// path for strip ownership (unsupported to mix topologies — one ED family
+/// filter per layer is the supported case).
 pub fn layer_needs_ed_strip(layer: &Layer) -> bool {
     layer
         .filters
         .iter()
         .any(|f| f.enabled && f.requires_full_row)
+}
+
+/// Whether any enabled filter needs full-height column strips (1D V ed1d).
+pub fn layer_needs_ed_column_strip(layer: &Layer) -> bool {
+    layer
+        .filters
+        .iter()
+        .any(|f| f.enabled && f.requires_full_column)
+}
+
+/// True when the layer stack mixes horizontal-strip and column-strip ED.
+///
+/// Tile scheduling cannot own both topologies at once; preview/export route
+/// these stacks through the full-document path instead of rejecting them.
+pub fn layer_has_mixed_ed_topology(layer: &Layer) -> bool {
+    layer_needs_ed_strip(layer) && layer_needs_ed_column_strip(layer)
+}
+
+/// True when any enabled filter needs the 2D ED wavefront (top/diag residuals).
+///
+/// Horizontal ed1d modes are strip-only and vertically independent — they must
+/// **not** force wavefront scheduling.
+pub fn layer_needs_ed_wavefront(layer: &Layer) -> bool {
+    layer.filters.iter().any(|f| {
+        if !f.enabled {
+            return false;
+        }
+        match &f.params {
+            FilterParams::DitherV2(p) => p.mode.is_error_diffusion(),
+            FilterParams::Dither { mode, .. } => {
+                matches!(mode, crate::filter::DitherMode::ErrorDiffusion { .. })
+            }
+            _ => false,
+        }
+    })
+}
+
+/// Horizontal strip path without 2D wavefront (`modulated_diffuse_y`).
+pub fn layer_is_ed1d_strip_only(layer: &Layer) -> bool {
+    layer_needs_ed_strip(layer)
+        && !layer_needs_ed_wavefront(layer)
+        && !layer_needs_ed_column_strip(layer)
+}
+
+/// Column strip path (`modulated_diffuse_x`) without row/wavefront ED.
+pub fn layer_is_ed1d_column_only(layer: &Layer) -> bool {
+    layer_needs_ed_column_strip(layer) && !layer_needs_ed_wavefront(layer)
 }
 
 fn dither_params_for_ed(filter: &FilterInstance) -> Result<DitherParamsV2, EngineError> {
@@ -283,12 +440,74 @@ pub fn apply_filter_stack_tile_row_strip(
     }
 
     let enabled: Vec<&FilterInstance> = layer.filters.iter().rev().filter(|f| f.enabled).collect();
+    apply_enabled_filters_row_strip(
+        tiles,
+        &enabled,
+        layer.id,
+        palette_cache,
+        lut_cache,
+        threshold_cache,
+        document,
+        residuals_store,
+        block_cache,
+        gpu,
+        outputs,
+        None,
+        None,
+    )
+}
+
+/// Row-strip apply for an ordered enabled list. When `dithered_out` is `Some` and
+/// `barrier_filter_id` matches a filter in the list, copies the post-barrier
+/// state into `dithered_out` (same length as `tiles`).
+///
+/// `cancel_check`: Task 2 latest-wins. When `Some` and it returns true, abort
+/// **between tiles** on per-tile (Post/cheap) filters. Full-row ED is not
+/// interrupted mid-strip — only `document_gen` cancels that work.
+pub fn apply_enabled_filters_row_strip(
+    tiles: &[(TileCoord, &PixelTile)],
+    enabled: &[&FilterInstance],
+    layer_id: LayerId,
+    palette_cache: &PaletteKdCache,
+    lut_cache: &PaletteLutCache,
+    threshold_cache: &ThresholdMapCache,
+    document: &Document,
+    residuals_store: &ErrorResidualsStore,
+    block_cache: &BlockRepresentativeCache,
+    gpu: Option<&GpuContext>,
+    outputs: &mut [PixelTile],
+    mut dithered_out: Option<(&mut [PixelTile], u128)>,
+    cancel_check: Option<&dyn Fn() -> bool>,
+) -> Result<(), EngineError> {
+    if tiles.is_empty() {
+        return Ok(());
+    }
+    if outputs.len() != tiles.len() {
+        return Err(EngineError::invalid_filter_params(
+            "filter strip: outputs length must match tiles",
+        ));
+    }
+    if let Some((mid, _)) = dithered_out.as_ref() {
+        if mid.len() != tiles.len() {
+            return Err(EngineError::invalid_filter_params(
+                "filter strip: dithered_out length must match tiles",
+            ));
+        }
+    }
+
     if enabled.is_empty() {
         for (i, (_, src)) in tiles.iter().enumerate() {
             outputs[i].copy_from(src);
         }
+        if let Some((mid, _)) = dithered_out {
+            for (i, (_, src)) in tiles.iter().enumerate() {
+                mid[i].copy_from(src);
+            }
+        }
         return Ok(());
     }
+
+    let barrier_id = dithered_out.as_ref().map(|(_, id)| *id);
 
     // Fast path: only one ED filter and nothing else — strip ED directly.
     if enabled.len() == 1 && enabled[0].requires_full_row {
@@ -298,7 +517,7 @@ pub fn apply_filter_stack_tile_row_strip(
             tiles,
             &params,
             residuals_store,
-            layer.id,
+            layer_id,
             filter.id.as_u128(),
             palette_cache,
             lut_cache,
@@ -313,6 +532,13 @@ pub fn apply_filter_stack_tile_row_strip(
                 let full = std::mem::replace(&mut outputs[i], PixelTile::new());
                 outputs[i].copy_from(pre);
                 blend_tile(&mut outputs[i], &full, filter.blend_mode, opacity);
+            }
+        }
+        if let Some((mid, bid)) = dithered_out {
+            if filter.id.as_u128() == bid {
+                for i in 0..tiles.len() {
+                    mid[i].copy_from(&outputs[i]);
+                }
             }
         }
         return Ok(());
@@ -331,7 +557,39 @@ pub fn apply_filter_stack_tile_row_strip(
     let mut back: Vec<PixelTile> = (0..n).map(|_| PixelTile::new()).collect();
 
     let mut applied_any = false;
-    for filter in &enabled {
+    let mut captured_barrier = false;
+    for filter in enabled {
+        if crate::filters::neutral::filter_is_neutral_for_apply(filter) {
+            if crate::post_cache::neutral_verify_enabled() {
+                for i in 0..n {
+                    let mut scratch = PixelTile::new();
+                    apply_single_filter_into(
+                        &front[i],
+                        &mut scratch,
+                        filter,
+                        tiles[i].0,
+                        palette_cache,
+                        lut_cache,
+                        threshold_cache,
+                        document,
+                        residuals_store,
+                        block_cache,
+                        layer_id,
+                        gpu,
+                    )?;
+                    if scratch.data != front[i].data {
+                        log::error!(
+                            target: "post_barrier",
+                            "DITHER_NEUTRAL_VERIFY strip row mismatch kind={:?}",
+                            filter.kind
+                        );
+                        debug_assert!(false, "neutral strip row passthrough");
+                    }
+                }
+            }
+            crate::post_barrier_metrics::record_neutral_apply_skip();
+            continue;
+        }
         let opacity = filter.effective_opacity();
         if filter.requires_full_row {
             let params = dither_params_for_ed(filter)?;
@@ -345,7 +603,7 @@ pub fn apply_filter_stack_tile_row_strip(
                     &strip,
                     &params,
                     residuals_store,
-                    layer.id,
+                    layer_id,
                     filter.id.as_u128(),
                     palette_cache,
                     lut_cache,
@@ -363,6 +621,7 @@ pub fn apply_filter_stack_tile_row_strip(
             }
         } else if opacity >= 1.0 && filter.blend_mode == BlendMode::Normal {
             for i in 0..n {
+                abort_if_post_cancelled(cancel_check)?;
                 let coord = tiles[i].0;
                 engine_tiles::with_raw_block_sampling(!applied_any, || {
                     apply_single_filter_into(
@@ -376,13 +635,14 @@ pub fn apply_filter_stack_tile_row_strip(
                         document,
                         residuals_store,
                         block_cache,
-                        layer.id,
+                        layer_id,
                         gpu,
                     )
                 })?;
             }
         } else {
             for i in 0..n {
+                abort_if_post_cancelled(cancel_check)?;
                 let coord = tiles[i].0;
                 let mut scratch = PixelTile::new();
                 let apply_result = engine_tiles::with_raw_block_sampling(!applied_any, || {
@@ -397,7 +657,7 @@ pub fn apply_filter_stack_tile_row_strip(
                         document,
                         residuals_store,
                         block_cache,
-                        layer.id,
+                        layer_id,
                         gpu,
                     )
                 });
@@ -408,6 +668,270 @@ pub fn apply_filter_stack_tile_row_strip(
         }
         std::mem::swap(&mut front, &mut back);
         applied_any = true;
+        if !captured_barrier {
+            if let Some(bid) = barrier_id {
+                if filter.id.as_u128() == bid {
+                    if let Some((mid, _)) = dithered_out.as_mut() {
+                        for i in 0..n {
+                            mid[i].copy_from(&front[i]);
+                        }
+                    }
+                    captured_barrier = true;
+                }
+            }
+        }
+    }
+
+    for i in 0..n {
+        outputs[i].copy_from(&front[i]);
+    }
+    Ok(())
+}
+
+/// Apply a layer's filter stack across one vertical tile column (full height).
+///
+/// `tiles` must be contiguous ascending `ty` at one `tx`. Used for
+/// `requires_full_column` (1D V ed1d). Non-column filters run per-tile.
+pub fn apply_filter_stack_tile_column_strip(
+    tiles: &[(TileCoord, &PixelTile)],
+    layer: &Layer,
+    palette_cache: &PaletteKdCache,
+    lut_cache: &PaletteLutCache,
+    threshold_cache: &ThresholdMapCache,
+    document: &Document,
+    residuals_store: &ErrorResidualsStore,
+    block_cache: &BlockRepresentativeCache,
+    gpu: Option<&GpuContext>,
+    outputs: &mut [PixelTile],
+) -> Result<(), EngineError> {
+    let enabled: Vec<&FilterInstance> = layer.filters.iter().rev().filter(|f| f.enabled).collect();
+    apply_enabled_filters_column_strip(
+        tiles,
+        &enabled,
+        layer.id,
+        palette_cache,
+        lut_cache,
+        threshold_cache,
+        document,
+        residuals_store,
+        block_cache,
+        gpu,
+        outputs,
+        None,
+        None,
+    )
+}
+
+/// Column-strip apply for an ordered enabled list. See [`apply_enabled_filters_row_strip`].
+pub fn apply_enabled_filters_column_strip(
+    tiles: &[(TileCoord, &PixelTile)],
+    enabled: &[&FilterInstance],
+    layer_id: LayerId,
+    palette_cache: &PaletteKdCache,
+    lut_cache: &PaletteLutCache,
+    threshold_cache: &ThresholdMapCache,
+    document: &Document,
+    residuals_store: &ErrorResidualsStore,
+    block_cache: &BlockRepresentativeCache,
+    gpu: Option<&GpuContext>,
+    outputs: &mut [PixelTile],
+    mut dithered_out: Option<(&mut [PixelTile], u128)>,
+    cancel_check: Option<&dyn Fn() -> bool>,
+) -> Result<(), EngineError> {
+    if tiles.is_empty() {
+        return Ok(());
+    }
+    if outputs.len() != tiles.len() {
+        return Err(EngineError::invalid_filter_params(
+            "filter column strip: outputs length must match tiles",
+        ));
+    }
+    if let Some((mid, _)) = dithered_out.as_ref() {
+        if mid.len() != tiles.len() {
+            return Err(EngineError::invalid_filter_params(
+                "filter column strip: dithered_out length must match tiles",
+            ));
+        }
+    }
+
+    if enabled.is_empty() {
+        for (i, (_, src)) in tiles.iter().enumerate() {
+            outputs[i].copy_from(src);
+        }
+        if let Some((mid, _)) = dithered_out {
+            for (i, (_, src)) in tiles.iter().enumerate() {
+                mid[i].copy_from(src);
+            }
+        }
+        return Ok(());
+    }
+
+    let barrier_id = dithered_out.as_ref().map(|(_, id)| *id);
+
+    if enabled.len() == 1 && enabled[0].requires_full_column {
+        let filter = enabled[0];
+        let params = dither_params_for_ed(filter)?;
+        apply_ed1d_tile_column_strip(
+            tiles,
+            &params,
+            palette_cache,
+            lut_cache,
+            document,
+            outputs,
+        )?;
+        let opacity = filter.effective_opacity();
+        if opacity < 1.0 || filter.blend_mode != BlendMode::Normal {
+            for (i, (_, pre)) in tiles.iter().enumerate() {
+                let full = std::mem::replace(&mut outputs[i], PixelTile::new());
+                outputs[i].copy_from(pre);
+                blend_tile(&mut outputs[i], &full, filter.blend_mode, opacity);
+            }
+        }
+        if let Some((mid, bid)) = dithered_out {
+            if filter.id.as_u128() == bid {
+                for i in 0..tiles.len() {
+                    mid[i].copy_from(&outputs[i]);
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    let n = tiles.len();
+    let mut front: Vec<PixelTile> = tiles
+        .iter()
+        .map(|(_, src)| {
+            let mut t = PixelTile::new();
+            t.copy_from(src);
+            t
+        })
+        .collect();
+    let mut back: Vec<PixelTile> = (0..n).map(|_| PixelTile::new()).collect();
+    let mut applied_any = false;
+    let mut captured_barrier = false;
+
+    for filter in enabled {
+        if crate::filters::neutral::filter_is_neutral_for_apply(filter) {
+            if crate::post_cache::neutral_verify_enabled() {
+                for i in 0..n {
+                    let mut scratch = PixelTile::new();
+                    apply_single_filter_into(
+                        &front[i],
+                        &mut scratch,
+                        filter,
+                        tiles[i].0,
+                        palette_cache,
+                        lut_cache,
+                        threshold_cache,
+                        document,
+                        residuals_store,
+                        block_cache,
+                        layer_id,
+                        gpu,
+                    )?;
+                    if scratch.data != front[i].data {
+                        log::error!(
+                            target: "post_barrier",
+                            "DITHER_NEUTRAL_VERIFY strip column mismatch kind={:?}",
+                            filter.kind
+                        );
+                        debug_assert!(false, "neutral strip column passthrough");
+                    }
+                }
+            }
+            crate::post_barrier_metrics::record_neutral_apply_skip();
+            continue;
+        }
+        let opacity = filter.effective_opacity();
+        if filter.requires_full_column {
+            let params = dither_params_for_ed(filter)?;
+            let strip: Vec<(TileCoord, &PixelTile)> = tiles
+                .iter()
+                .zip(front.iter())
+                .map(|((c, _), src)| (*c, src))
+                .collect();
+            engine_tiles::with_raw_block_sampling(!applied_any, || {
+                apply_ed1d_tile_column_strip(
+                    &strip,
+                    &params,
+                    palette_cache,
+                    lut_cache,
+                    document,
+                    &mut back,
+                )
+            })?;
+            if opacity < 1.0 || filter.blend_mode != BlendMode::Normal {
+                for i in 0..n {
+                    let full = std::mem::replace(&mut back[i], PixelTile::new());
+                    back[i].copy_from(&front[i]);
+                    blend_tile(&mut back[i], &full, filter.blend_mode, opacity);
+                }
+            }
+        } else if filter.requires_full_row {
+            return Err(EngineError::invalid_filter_params(
+                "mixed requires_full_row + requires_full_column on one layer is unsupported; \
+                 use a single ED-family filter per layer",
+            ));
+        } else if opacity >= 1.0 && filter.blend_mode == BlendMode::Normal {
+            for i in 0..n {
+                abort_if_post_cancelled(cancel_check)?;
+                let coord = tiles[i].0;
+                engine_tiles::with_raw_block_sampling(!applied_any, || {
+                    apply_single_filter_into(
+                        &front[i],
+                        &mut back[i],
+                        filter,
+                        coord,
+                        palette_cache,
+                        lut_cache,
+                        threshold_cache,
+                        document,
+                        residuals_store,
+                        block_cache,
+                        layer_id,
+                        gpu,
+                    )
+                })?;
+            }
+        } else {
+            for i in 0..n {
+                abort_if_post_cancelled(cancel_check)?;
+                let coord = tiles[i].0;
+                let mut scratch = PixelTile::new();
+                engine_tiles::with_raw_block_sampling(!applied_any, || {
+                    apply_single_filter_into(
+                        &front[i],
+                        &mut scratch,
+                        filter,
+                        coord,
+                        palette_cache,
+                        lut_cache,
+                        threshold_cache,
+                        document,
+                        residuals_store,
+                        block_cache,
+                        layer_id,
+                        gpu,
+                    )
+                })?;
+                back[i].copy_from(&front[i]);
+                blend_tile(&mut back[i], &scratch, filter.blend_mode, opacity);
+            }
+        }
+        std::mem::swap(&mut front, &mut back);
+        applied_any = true;
+        if !captured_barrier {
+            if let Some(bid) = barrier_id {
+                if filter.id.as_u128() == bid {
+                    if let Some((mid, _)) = dithered_out.as_mut() {
+                        for i in 0..n {
+                            mid[i].copy_from(&front[i]);
+                        }
+                    }
+                    captured_barrier = true;
+                }
+            }
+        }
     }
 
     for i in 0..n {
@@ -767,6 +1291,18 @@ fn dispatch_dither_v2_inner_into(
             block_cache,
             dst,
         ),
+        mode if mode.is_ed1d() => {
+            use super::dither_diffusion::apply_ed1d_with_cache_into;
+            apply_ed1d_with_cache_into(
+                tile,
+                coord,
+                params,
+                palette_cache,
+                lut_cache,
+                document,
+                dst,
+            )
+        }
         _ => unreachable!("unhandled dither mode in dispatch"),
     }
 }
@@ -817,8 +1353,207 @@ mod tests {
     }
 
     #[test]
+    fn through_barrier_then_post_matches_full_stack() {
+        use crate::filter::{DitherModeV2, DitherParamsV2};
+        use crate::layer::Layer;
+        use crate::post_barrier::split_enabled_at_barrier;
+        use crate::types::LayerKind;
+        use engine_tiles::with_tile_buffer_park;
+
+        let mut tile = PixelTile::new();
+        for y in 0..260 {
+            for x in 0..260 {
+                for c in 0..3 {
+                    tile.set(x, y, c, ((x + y + c) % 256) as f32 / 255.0);
+                }
+                tile.set(x, y, 3, 1.0);
+            }
+        }
+
+        let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, 256, 256);
+        layer.filters = vec![
+            FilterInstance::new(
+                FilterKind::Curves,
+                FilterParams::Curves {
+                    curve: vec![(0.0, 0.0), (0.5, 0.6), (1.0, 1.0)],
+                    channel: CurveChannel::All,
+                },
+            ),
+            {
+                let mut p = DitherParamsV2::default();
+                p.mode = DitherModeV2::FloydSteinberg;
+                p.levels = 4;
+                FilterInstance::new(FilterKind::Dither, FilterParams::DitherV2(p))
+            },
+            FilterInstance::new(
+                FilterKind::Adjust,
+                FilterParams::Adjust {
+                    contrast: 0.1,
+                    brightness: 0.0,
+                    saturation: 0.0,
+                    blur: 0.0,
+                    sharpness: 0.0,
+                    noise: 0.0,
+                },
+            ),
+        ];
+
+        let (through, post) = split_enabled_at_barrier(&layer.filters).expect("barrier");
+        assert!(!through.is_empty() && !post.is_empty());
+
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
+        let (pc, lc, tc, doc, rs) = make_caches_and_doc();
+        let blocks = BlockRepresentativeCache::new();
+
+        let full = with_tile_buffer_park(|park| {
+            apply_filter_to_tile_with_park(
+                &tile, &layer, coord, &pc, &lc, &tc, &doc, &rs, &blocks, None, park,
+            )
+        })
+        .unwrap();
+
+        let rs2 = ErrorResidualsStore::new();
+        let split = with_tile_buffer_park(|park| {
+            let mid = apply_enabled_filters_to_tile(
+                &tile,
+                &through,
+                layer.id,
+                coord,
+                &pc,
+                &lc,
+                &tc,
+                &doc,
+                &rs2,
+                &blocks,
+                None,
+                park,
+            )?;
+            apply_enabled_filters_to_tile(
+                &mid,
+                &post,
+                layer.id,
+                coord,
+                &pc,
+                &lc,
+                &tc,
+                &doc,
+                &rs2,
+                &blocks,
+                None,
+                park,
+            )
+        })
+        .unwrap();
+
+        for y in 4..260 {
+            for x in 4..260 {
+                for c in 0..4 {
+                    assert_eq!(
+                        full.at(x, y, c).to_bits(),
+                        split.at(x, y, c).to_bits(),
+                        "mismatch at ({x},{y},ch{c})"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn neutral_adjust_in_post_chain_is_invisible() {
+        use engine_tiles::with_tile_buffer_park;
+
+        let mut tile = PixelTile::new();
+        for y in 4..260 {
+            for x in 4..260 {
+                tile.set(x, y, 0, 0.2);
+                tile.set(x, y, 1, 0.5);
+                tile.set(x, y, 2, 0.8);
+                tile.set(x, y, 3, 1.0);
+            }
+        }
+        let neutral = FilterInstance::new(
+            FilterKind::Adjust,
+            FilterParams::Adjust {
+                contrast: 0.0,
+                brightness: 0.0,
+                saturation: 0.0,
+                blur: 0.0,
+                sharpness: 0.0,
+                noise: 0.0,
+            },
+        );
+        let active = FilterInstance::new(
+            FilterKind::Adjust,
+            FilterParams::Adjust {
+                contrast: 0.0,
+                brightness: 0.15,
+                saturation: 0.0,
+                blur: 0.0,
+                sharpness: 0.0,
+                noise: 0.0,
+            },
+        );
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
+        let (pc, lc, tc, doc, rs) = make_caches_and_doc();
+        let blocks = BlockRepresentativeCache::new();
+        let layer_id = LayerId::new(1);
+
+        let with_neutral = with_tile_buffer_park(|park| {
+            apply_enabled_filters_to_tile(
+                &tile,
+                &[&neutral, &active],
+                layer_id,
+                coord,
+                &pc,
+                &lc,
+                &tc,
+                &doc,
+                &rs,
+                &blocks,
+                None,
+                park,
+            )
+        })
+        .unwrap();
+        let active_only = with_tile_buffer_park(|park| {
+            apply_enabled_filters_to_tile(
+                &tile,
+                &[&active],
+                layer_id,
+                coord,
+                &pc,
+                &lc,
+                &tc,
+                &doc,
+                &rs,
+                &blocks,
+                None,
+                park,
+            )
+        })
+        .unwrap();
+        assert_eq!(with_neutral.data, active_only.data);
+    }
+
+    #[test]
     fn apply_curves_from_filter() {
-        let tile = PixelTile::new();
+        let mut tile = PixelTile::new();
+        for y in 8..248 {
+            for x in 8..248 {
+                tile.set(x, y, 0, ((x + y) % 100) as f32 / 99.0);
+                tile.set(x, y, 1, 0.4);
+                tile.set(x, y, 2, 0.6);
+                tile.set(x, y, 3, 1.0);
+            }
+        }
         let filter = FilterInstance::new(
             FilterKind::Curves,
             FilterParams::Curves {
@@ -847,12 +1582,24 @@ mod tests {
             layer_id,
             None,
         );
-        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap().data,
+            tile.data,
+            "default linear Curves must be skip-safe"
+        );
     }
 
     #[test]
     fn apply_levels_from_filter() {
-        let tile = PixelTile::new();
+        let mut tile = PixelTile::new();
+        for y in 8..248 {
+            for x in 8..248 {
+                tile.set(x, y, 0, ((x * y) % 100) as f32 / 99.0);
+                tile.set(x, y, 1, 0.2);
+                tile.set(x, y, 2, 0.8);
+                tile.set(x, y, 3, 1.0);
+            }
+        }
         let filter = FilterInstance::new(
             FilterKind::Levels,
             FilterParams::Levels {
@@ -886,8 +1633,9 @@ mod tests {
             &BlockRepresentativeCache::new(),
             layer_id,
             None,
-        );
-        assert!(result.is_ok());
+        )
+        .expect("levels apply");
+        assert_eq!(result.data, tile.data, "default Levels must be skip-safe");
     }
 
     #[test]
@@ -1003,16 +1751,19 @@ mod tests {
 
     #[test]
     fn apply_glitch_from_filter() {
-        use crate::filters::glitch::GlitchType;
+        use crate::filters::glitch::{GlitchParams, GlitchSubOp};
 
         let tile = PixelTile::new();
         let filter = FilterInstance::new(
             FilterKind::Glitch,
-            FilterParams::Glitch {
-                glitch_type: GlitchType::RGBShift,
-                intensity: 0.5,
+            FilterParams::Glitch(GlitchParams {
                 seed: 12345,
-            },
+                channel_swap: GlitchSubOp {
+                    enabled: true,
+                    amount: 50.0,
+                },
+                ..GlitchParams::default()
+            }),
         );
         let coord = TileCoord {
             level: 0,
@@ -1949,5 +2700,172 @@ mod tests {
         drop(out);
         drop(park);
         drop(tile);
+    }
+
+    #[test]
+    fn mixed_ed_topology_detected_for_fs_plus_modulated_x() {
+        use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
+        use crate::layer::Layer;
+        use crate::types::LayerKind;
+
+        let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, 256, 256);
+        layer.filters.push(FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::ModulatedDiffuseX,
+                levels: 4,
+                color_mode: DitherColorMode::Rgb,
+                line_scale: 5,
+                ..Default::default()
+            }),
+        ));
+        layer.filters.push(FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::FloydSteinberg,
+                levels: 4,
+                color_mode: DitherColorMode::Rgb,
+                ..Default::default()
+            }),
+        ));
+        assert!(layer_needs_ed_strip(&layer));
+        assert!(layer_needs_ed_column_strip(&layer));
+        assert!(layer_has_mixed_ed_topology(&layer));
+        assert!(!layer_is_ed1d_strip_only(&layer));
+        assert!(!layer_is_ed1d_column_only(&layer));
+    }
+
+    #[test]
+    fn column_strip_still_rejects_inline_mixed_topology() {
+        use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
+        use crate::layer::Layer;
+        use crate::types::LayerKind;
+
+        let mut tile = PixelTile::new();
+        fill_gray(&mut tile, 0.4);
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
+
+        let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, 256, 256);
+        layer.filters.push(FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::FloydSteinberg,
+                levels: 4,
+                color_mode: DitherColorMode::Rgb,
+                ..Default::default()
+            }),
+        ));
+        layer.filters.push(FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::ModulatedDiffuseX,
+                levels: 4,
+                color_mode: DitherColorMode::Rgb,
+                line_scale: 5,
+                ..Default::default()
+            }),
+        ));
+
+        let (pc, lc, tc, doc, rs) = make_caches_and_doc();
+        let blocks = BlockRepresentativeCache::new();
+        let inputs = [(coord, &tile)];
+        let mut outputs = [PixelTile::new()];
+        let err = apply_filter_stack_tile_column_strip(
+            &inputs, &layer, &pc, &lc, &tc, &doc, &rs, &blocks, None, &mut outputs,
+        )
+        .expect_err("direct column strip must still reject mixed topology");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("mixed requires_full_row"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    /// Task 2: cancel_check aborts between Post tiles; barrier capture stays filled.
+    #[test]
+    fn row_strip_cancels_between_post_tiles_after_barrier() {
+        use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let mut t0 = PixelTile::new();
+        let mut t1 = PixelTile::new();
+        fill_gray(&mut t0, 0.35);
+        fill_gray(&mut t1, 0.55);
+        let c0 = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
+        let c1 = TileCoord {
+            level: 0,
+            x: 1,
+            y: 0,
+        };
+
+        let dither = FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::FloydSteinberg,
+                levels: 4,
+                color_mode: DitherColorMode::Rgb,
+                ..Default::default()
+            }),
+        );
+        let curves = FilterInstance::new(
+            FilterKind::Curves,
+            FilterParams::Curves {
+                curve: vec![(0.0, 0.0), (0.5, 0.7), (1.0, 1.0)],
+                channel: CurveChannel::All,
+            },
+        );
+        let barrier_id = dither.id.as_u128();
+        // Enabled order for apply is bottom→top (rev of panel): dither then curves.
+        let enabled = [&dither, &curves];
+
+        let (pc, lc, tc, doc, rs) = make_caches_and_doc();
+        let blocks = BlockRepresentativeCache::new();
+        let inputs = [(c0, &t0), (c1, &t1)];
+        let mut outputs = [PixelTile::new(), PixelTile::new()];
+        let mut dithered = [PixelTile::new(), PixelTile::new()];
+
+        let seen = AtomicUsize::new(0);
+        let cancel = || seen.fetch_add(1, Ordering::SeqCst) >= 1;
+        let before = crate::post_barrier_metrics::snapshot();
+        let err = apply_enabled_filters_row_strip(
+            &inputs,
+            &enabled,
+            LayerId::new(1),
+            &pc,
+            &lc,
+            &tc,
+            &doc,
+            &rs,
+            &blocks,
+            None,
+            &mut outputs,
+            Some((dithered.as_mut_slice(), barrier_id)),
+            Some(&cancel),
+        )
+        .expect_err("Post cancel must abort mid-strip");
+        assert!(crate::post_barrier_metrics::is_post_cancelled(&err));
+        let after = crate::post_barrier_metrics::snapshot();
+        assert!(
+            after.post_tiles_cancelled > before.post_tiles_cancelled,
+            "cancel counter must bump"
+        );
+        // Barrier capture completed before Post tiles — Dithered mids are non-trivial.
+        assert!(
+            dithered[0].data.iter().any(|&v| v > 0.0) || dithered[0].data != t0.data,
+            "barrier capture should fill dithered_out before Post cancel"
+        );
+        assert_eq!(
+            dithered[0].data.len(),
+            t0.data.len(),
+            "dithered mid keeps tile shape"
+        );
     }
 }

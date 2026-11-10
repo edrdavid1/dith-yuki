@@ -68,6 +68,10 @@ pub use crate::services::palette_service::{hex_to_linear, linear_to_hex};
 pub(crate) struct PendingPreviewRefresh {
     pub layer_id: u32,
     pub clear_residuals: bool,
+    /// Filter index for `LayerFilterChanged` (P0/P1 metrics; P2 Post path).
+    pub changed_index: Option<usize>,
+    /// P2: leave `CacheStage::Dithered` intact on Post-only edits.
+    pub preserve_dithered: bool,
 }
 
 pub struct AppState {
@@ -285,6 +289,7 @@ pub(crate) fn begin_full_document_busy(state: &AppState, doc_id: u32) {
 pub(crate) fn end_full_document_busy(state: &AppState, doc_id: u32) {
     let prev = state.full_document_busy.fetch_sub(1, Ordering::AcqRel);
     if prev == 1 {
+        crate::ed_progress::clear_preview_progress_wave(doc_id);
         emit_full_document_busy(state, false, doc_id);
     }
 }
@@ -293,6 +298,7 @@ pub(crate) fn end_full_document_busy(state: &AppState, doc_id: u32) {
 fn clear_full_document_busy(state: &AppState, doc_id: u32) {
     let prev = state.full_document_busy.swap(0, Ordering::AcqRel);
     if prev > 0 {
+        crate::ed_progress::clear_preview_progress_wave(doc_id);
         emit_full_document_busy(state, false, doc_id);
     }
 }
@@ -526,12 +532,31 @@ pub(crate) fn layer_needs_dither_cache_reset(
 }
 
 pub(crate) fn request_preview_refresh(state: &AppState, layer_id: u32, clear_residuals: bool) {
+    request_preview_refresh_at(state, layer_id, clear_residuals, None, false);
+}
+
+pub(crate) fn request_preview_refresh_at(
+    state: &AppState,
+    layer_id: u32,
+    clear_residuals: bool,
+    changed_index: Option<usize>,
+    preserve_dithered: bool,
+) {
     if preview_pass_busy(state) {
         let mut pending = state.pending_preview_refresh.lock().unwrap();
         let clear = clear_residuals || pending.as_ref().map(|p| p.clear_residuals).unwrap_or(false);
+        let idx = changed_index.or_else(|| pending.as_ref().and_then(|p| p.changed_index));
+        // Preserve only if every coalesced request agreed (any Barrier/Pre wins).
+        let preserve = preserve_dithered
+            && pending
+                .as_ref()
+                .map(|p| p.preserve_dithered)
+                .unwrap_or(true);
         *pending = Some(PendingPreviewRefresh {
             layer_id,
             clear_residuals: clear,
+            changed_index: idx,
+            preserve_dithered: preserve,
         });
         if crate::tile_gen_trace::enabled() {
             crate::tile_gen_trace::emit(
@@ -546,6 +571,8 @@ pub(crate) fn request_preview_refresh(state: &AppState, layer_id: u32, clear_res
                     "pending_preview_refresh": {
                         "layer_id": layer_id,
                         "clear_residuals": clear,
+                        "changed_index": idx,
+                        "preserve_dithered": preserve,
                     },
                     "queued": state.tiles.scheduler.queued_len(),
                     "inflight": state.preview_pass_inflight.load(Ordering::Acquire),
@@ -568,19 +595,32 @@ pub(crate) fn request_preview_refresh(state: &AppState, layer_id: u32, clear_res
             }),
         );
     }
-    run_preview_refresh(state, layer_id, clear_residuals, "param_change");
+    run_preview_refresh(
+        state,
+        layer_id,
+        clear_residuals,
+        changed_index,
+        preserve_dithered,
+        "param_change",
+    );
 }
 
 fn run_preview_refresh(
     state: &AppState,
     layer_id: u32,
     clear_residuals: bool,
+    changed_index: Option<usize>,
+    preserve_dithered: bool,
     reason: &'static str,
 ) {
     let Ok(session) = state.active_session() else {
         return;
     };
-    let doc_id = session.document_handle.snapshot().id.0;
+    let snapshot = session.document_handle.snapshot();
+    let doc_id = snapshot.id.0;
+    let content_gen = snapshot.generations.current_content_gen();
+    // Keep tile_fresh epoch in sync before any restamp / invalidate.
+    state.tiles.tile_cache.set_content_epoch(content_gen);
     if clear_residuals {
         state
             .tiles
@@ -591,6 +631,9 @@ fn run_preview_refresh(
             .block_representatives
             .evict_layer(doc_id, layer_id);
         state.tiles.full_document.invalidate_layer(doc_id, layer_id);
+        engine_project::record_post_clear(true);
+    } else {
+        engine_project::record_post_clear(false);
     }
     let dirty_before = state.tiles.tile_cache.entries.len();
     engine_tiles::invalidation::invalidate(
@@ -598,8 +641,26 @@ fn run_preview_refresh(
         engine_tiles::invalidation::InvalidationEvent::LayerFilterChanged {
             doc: doc_id,
             layer: layer_id,
+            changed_index,
+            preserve_dithered,
         },
     );
+    // Post-only: Dithered pixels are still valid but stamped at the previous
+    // content_gen. Restamp so Post-from-cache is not rejected as stale.
+    if preserve_dithered {
+        let n = state.tiles.tile_cache.restamp_clean_stage(
+            doc_id,
+            layer_id,
+            engine_tiles::CacheStage::Dithered,
+            content_gen,
+        );
+        if n > 0 {
+            log::debug!(
+                target: "post_barrier",
+                "restamped {n} Dithered tile(s) layer={layer_id} content_gen={content_gen}"
+            );
+        }
+    }
     // Hold the corner spinner for the whole filter refresh wave (CPU tiled ED
     // included). Nested full-document begin/end inside workers nest on top.
     begin_full_document_busy(state, doc_id);
@@ -616,6 +677,12 @@ fn run_preview_refresh(
     let queued_before = state.tiles.scheduler.queued_len();
     schedule_dirty_viewport_tiles_with_reason(state, reason);
     crate::ed_progress::note_ed_pass_start(state, doc_id);
+    // Seed footer % immediately (0/N) so ordered/GPU-tiled waves have a denominator.
+    if let Ok(guard) = state.app_handle.lock() {
+        if let Some(ref app) = *guard {
+            crate::ed_progress::maybe_emit(state, app, doc_id, true);
+        }
+    }
     let queued_after = state.tiles.scheduler.queued_len();
     if crate::tile_gen_trace::enabled() {
         let snap = session.document_handle.snapshot();
@@ -687,12 +754,21 @@ pub(crate) fn on_preview_task_finished(state: &AppState) {
                 "pending": pending.as_ref().map(|p| serde_json::json!({
                     "layer_id": p.layer_id,
                     "clear_residuals": p.clear_residuals,
+                    "changed_index": p.changed_index,
+                    "preserve_dithered": p.preserve_dithered,
                 })),
             }),
         );
     }
     if let Some(p) = pending {
-        run_preview_refresh(state, p.layer_id, p.clear_residuals, "deferred_refresh");
+        run_preview_refresh(
+            state,
+            p.layer_id,
+            p.clear_residuals,
+            p.changed_index,
+            p.preserve_dithered,
+            "deferred_refresh",
+        );
     }
 }
 

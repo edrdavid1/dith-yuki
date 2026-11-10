@@ -3,8 +3,9 @@
 
 use engine_color::preview_encode::{delta_e2000_srgb8, encode_preview_rgb};
 use engine_color::soft_proof::{
-    ProofProfile, SoftProofIntent, SoftProofTransform, BUILTIN_FOGRA51_ICC,
+    ProofProfile, SoftProofIntent, SoftProofTransform,
 };
+use engine_color::load_fogra51_fixture;
 
 /// Distance from equal-luma gray — correlates with perceived chroma.
 fn chroma_vs_gray(rgb: [u8; 3]) -> f64 {
@@ -18,7 +19,7 @@ fn chroma_vs_gray(rgb: [u8; 3]) -> f64 {
 
 #[test]
 fn fogra51_relative_reduces_average_chroma() {
-    let proof = ProofProfile::from_icc_bytes(BUILTIN_FOGRA51_ICC).unwrap();
+    let proof = ProofProfile::from_icc_bytes(&load_fogra51_fixture()).unwrap();
     let xform = SoftProofTransform::new_exact(&proof, SoftProofIntent::Relative, true).unwrap();
 
     let mut up = 0usize;

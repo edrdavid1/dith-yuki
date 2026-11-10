@@ -44,7 +44,7 @@ export default function ExportPrintDialog({
   onClose,
 }: ExportPrintDialogProps) {
   const [profiles, setProfiles] = useState<ProofProfileInfo[]>([]);
-  const [profileId, setProfileId] = useState('builtin:fogra51');
+  const [profileId, setProfileId] = useState('');
   const [intent, setIntent] = useState<SoftProofIntent>('relative');
   const [bpc, setBpc] = useState(true);
   const [ppi, setPpi] = useState(300);
@@ -78,7 +78,7 @@ export default function ExportPrintDialog({
         const [list, soft] = await Promise.all([proofListProfiles(), proofGetConfig(docId)]);
         if (cancelled) return;
         setProfiles(list);
-        setProfileId(soft.profile_id || 'builtin:fogra51');
+        setProfileId(soft.profile_id || list[0]?.id || '');
         setIntent(soft.intent);
         setBpc(soft.bpc);
       } catch (e) {
@@ -254,7 +254,7 @@ export default function ExportPrintDialog({
             </label>
           </fieldset>
 
-          <div className={cn('new-project-field')} style={{ fontSize: 12, opacity: 0.9 }}>
+          <div className={cn('new-project-field')} style={{ fontSize: 14, opacity: 0.9 }}>
             <div>
               Output: {outW} × {outH} px
               {estimate

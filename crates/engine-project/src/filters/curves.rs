@@ -156,12 +156,29 @@ impl CurvesFilter {
         Ok(result)
     }
 
+    /// Default linear diagonal — LUT path can differ by ≤1/255; use exact copy for skip-safe identity.
+    pub fn is_linear_identity(&self) -> bool {
+        self.curve.len() == 2
+            && self.curve[0].0 == 0.0
+            && self.curve[0].1 == 0.0
+            && self.curve[1].0 == 1.0
+            && self.curve[1].1 == 1.0
+            && matches!(
+                self.channel,
+                CurveChannel::All | CurveChannel::Red | CurveChannel::Green | CurveChannel::Blue
+            )
+    }
+
     /// Apply curves into an existing buffer (full 260² write, no alloc).
     pub fn apply_to_tile_into(
         &self,
         tile: &PixelTile,
         dst: &mut PixelTile,
     ) -> Result<(), EngineError> {
+        if self.is_linear_identity() {
+            dst.copy_from(tile);
+            return Ok(());
+        }
         for y in 0u32..260 {
             for x in 0u32..260 {
                 dst.set(x, y, 3, tile.at(x, y, 3));

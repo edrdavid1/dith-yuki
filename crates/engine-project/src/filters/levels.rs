@@ -108,12 +108,28 @@ impl LevelsFilter {
         Ok(result)
     }
 
+    /// Default in/out/gamma — SIMD LUT can differ slightly; copy for skip-safe identity.
+    pub fn is_identity(&self) -> bool {
+        self.input_black == 0.0
+            && self.input_white == 1.0
+            && self.gamma == 1.0
+            && self.output_black == 0.0
+            && self.output_white == 1.0
+            && self.channel_r
+            && self.channel_g
+            && self.channel_b
+    }
+
     /// Apply levels into an existing buffer (full 260² write, no alloc).
     pub fn apply_to_tile_into(
         &self,
         tile: &PixelTile,
         dst: &mut PixelTile,
     ) -> Result<(), EngineError> {
+        if self.is_identity() {
+            dst.copy_from(tile);
+            return Ok(());
+        }
         use crate::simd::levels_row_simd;
         use engine_tiles::{HALO, TILE_SIZE};
 

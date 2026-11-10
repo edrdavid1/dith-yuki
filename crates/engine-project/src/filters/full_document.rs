@@ -102,6 +102,9 @@ pub struct FullDocumentResult {
     pub rgba_f32: Arc<Vec<f32>>,
     pub width: u32,
     pub height: u32,
+    /// When true (P2 + Post above barrier), `rgba_f32` is through-barrier only.
+    /// Callers must apply Post filters for Processed and may publish `Dithered`.
+    pub needs_post: bool,
 }
 
 struct CacheSlot {
@@ -241,6 +244,30 @@ impl Default for FullDocumentCache {
     }
 }
 
+/// True when the FD ready buffer is keyed by the through-barrier prefix only
+/// (Post edits must not force an ASCII/Riemersma recompute).
+fn fd_prefix_keyed(layer: &Layer) -> bool {
+    crate::post_cache_enabled()
+        && crate::post_barrier::barrier_index(&layer.filters).is_some_and(|b| b > 0)
+}
+
+/// FD cache params hash: prefix through barrier when Post-cache is on and the
+/// stack has Post above an expensive filter; otherwise the full enabled stack.
+fn fd_cache_params_hash(layer: &Layer, doc: &Document, include_ascii: bool) -> u64 {
+    if fd_prefix_keyed(layer) {
+        let ext = crate::post_barrier::prefix_externals_for_layer(
+            &layer.filters,
+            &doc.palettes,
+            layer.raw_rev,
+        );
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        include_ascii.hash(&mut hasher);
+        crate::post_barrier::prefix_hash_through_barrier(&layer.filters, &ext).hash(&mut hasher);
+        return hasher.finish();
+    }
+    hash_layer_filter_params_ex(layer, include_ascii)
+}
+
 /// Hash enabled filter params for cache keying.
 pub fn hash_layer_filter_params(layer: &Layer) -> u64 {
     hash_layer_filter_params_ex(layer, true)
@@ -287,7 +314,15 @@ pub fn layer_has_full_document_filter(layer: &Layer) -> bool {
 ///
 /// Also true when any enabled ED filter has [`DitherParamsV2::wrap_padding`] —
 /// that path pads the whole document, runs ED, and crops (approximate seamless).
+///
+/// Also true for mixed `requires_full_row` + `requires_full_column` stacks —
+/// tile strip ownership cannot schedule both topologies, so preview/export
+/// fall back to a monolithic pass that runs each ED filter via its strip
+/// driver over an assembled buffer.
 pub fn layer_has_full_document_filter_ex(layer: &Layer, include_ascii: bool) -> bool {
+    if crate::filters::layer_has_mixed_ed_topology(layer) {
+        return true;
+    }
     let reg = builtin_registry();
     layer.filters.iter().any(|f| {
         if !f.enabled {
@@ -381,7 +416,47 @@ pub fn compute_full_document_rgba_ex(
     let h = doc.height;
 
     // Bottom-up: last vec entry first (same as tiled apply).
-    let enabled: Vec<&FilterInstance> = layer.filters.iter().rev().filter(|f| f.enabled).collect();
+    // P2: when Post sits above an expensive barrier, stop at the barrier so the
+    // FD cache can survive Post param edits (`needs_post` → apply Post later).
+    let (enabled, needs_post): (Vec<&FilterInstance>, bool) =
+        if crate::post_cache_enabled() {
+            if let Some((through, post)) = crate::post_barrier::split_enabled_at_barrier(&layer.filters)
+            {
+                if !post.is_empty() && !through.is_empty() {
+                    (through, true)
+                } else {
+                    (
+                        layer
+                            .filters
+                            .iter()
+                            .rev()
+                            .filter(|f| f.enabled)
+                            .collect(),
+                        false,
+                    )
+                }
+            } else {
+                (
+                    layer
+                        .filters
+                        .iter()
+                        .rev()
+                        .filter(|f| f.enabled)
+                        .collect(),
+                    false,
+                )
+            }
+        } else {
+            (
+                layer
+                    .filters
+                    .iter()
+                    .rev()
+                    .filter(|f| f.enabled)
+                    .collect(),
+                false,
+            )
+        };
     let reg = builtin_registry();
 
     let mut palette_ms = 0.0;
@@ -428,7 +503,15 @@ pub fn compute_full_document_rgba_ex(
                 apply_ms += a;
             }
             ExecutionScope::Tiled => {
-                apply_tiled_filters_on_buffer(&mut rgba, w, h, layer, filter, doc, cache)?;
+                // Strip ED must stay seam-safe on the assembled buffer. Per-tile
+                // roundtrip would break FS / ed1d when mixed topologies force FD.
+                if filter.requires_full_row || filter.requires_full_column {
+                    let t = Instant::now();
+                    apply_ed_strip_filter_on_buffer(&mut rgba, w, h, layer, filter, doc)?;
+                    apply_ms += t.elapsed().as_secs_f64() * 1000.0;
+                } else {
+                    apply_tiled_filters_on_buffer(&mut rgba, w, h, layer, filter, doc, cache)?;
+                }
             }
         }
     }
@@ -438,6 +521,7 @@ pub fn compute_full_document_rgba_ex(
         rgba_f32: Arc::new(rgba),
         width: w,
         height: h,
+        needs_post,
     };
     let arc_ms = t_arc.elapsed().as_secs_f64() * 1000.0;
     let total_ms = t_all.elapsed().as_secs_f64() * 1000.0;
@@ -685,6 +769,109 @@ fn apply_tiled_filters_on_buffer(
     Ok(())
 }
 
+/// Apply one strip-topology ED filter over an assembled RGBA buffer.
+///
+/// Reuses the production row/column strip drivers so mixed-topology stacks
+/// (FS + `modulated_diffuse_x`, etc.) stay seam-safe when forced onto the
+/// full-document path.
+fn apply_ed_strip_filter_on_buffer(
+    rgba: &mut [f32],
+    width: u32,
+    height: u32,
+    layer: &Layer,
+    filter: &FilterInstance,
+    doc: &Document,
+) -> Result<(), EngineError> {
+    use crate::filters::apply::{
+        apply_filter_stack_tile_column_strip, apply_filter_stack_tile_row_strip,
+    };
+    use crate::filters::dither_residuals::ErrorResidualsStore;
+    use engine_color::palette_cache::PaletteKdCache;
+    use engine_color::palette_lut::PaletteLutCache;
+    use engine_color::threshold_map::ThresholdMapCache;
+    use engine_tiles::block_cache::BlockRepresentativeCache;
+
+    let mut layer_one = layer.clone();
+    layer_one.filters = vec![filter.clone()];
+
+    let palette_cache = PaletteKdCache::new();
+    let lut_cache = PaletteLutCache::new();
+    let threshold_cache = ThresholdMapCache::new();
+    let residuals_store = ErrorResidualsStore::new();
+    let block_cache = BlockRepresentativeCache::new();
+
+    let cols = width.div_ceil(TILE_SIZE);
+    let rows = height.div_ceil(TILE_SIZE);
+
+    if filter.requires_full_column {
+        for tx in 0..cols {
+            let owned: Vec<(TileCoord, PixelTile)> = (0..rows)
+                .map(|ty| {
+                    let coord = TileCoord {
+                        level: 0,
+                        x: tx,
+                        y: ty,
+                    };
+                    (coord, extract_tile_from_rgba(rgba, width, height, tx, ty))
+                })
+                .collect();
+            let inputs: Vec<(TileCoord, &PixelTile)> =
+                owned.iter().map(|(c, t)| (*c, t)).collect();
+            let mut outputs: Vec<PixelTile> = (0..owned.len()).map(|_| PixelTile::new()).collect();
+            apply_filter_stack_tile_column_strip(
+                &inputs,
+                &layer_one,
+                &palette_cache,
+                &lut_cache,
+                &threshold_cache,
+                doc,
+                &residuals_store,
+                &block_cache,
+                None,
+                &mut outputs,
+            )?;
+            for (i, out) in outputs.iter().enumerate() {
+                let ty = owned[i].0.y;
+                blit_tile_into_rgba(rgba, width, height, tx, ty, out);
+            }
+        }
+        return Ok(());
+    }
+
+    // requires_full_row (and mixed callers always set one of the two flags).
+    for ty in 0..rows {
+        let owned: Vec<(TileCoord, PixelTile)> = (0..cols)
+            .map(|tx| {
+                let coord = TileCoord {
+                    level: 0,
+                    x: tx,
+                    y: ty,
+                };
+                (coord, extract_tile_from_rgba(rgba, width, height, tx, ty))
+            })
+            .collect();
+        let inputs: Vec<(TileCoord, &PixelTile)> = owned.iter().map(|(c, t)| (*c, t)).collect();
+        let mut outputs: Vec<PixelTile> = (0..owned.len()).map(|_| PixelTile::new()).collect();
+        apply_filter_stack_tile_row_strip(
+            &inputs,
+            &layer_one,
+            &palette_cache,
+            &lut_cache,
+            &threshold_cache,
+            doc,
+            &residuals_store,
+            &block_cache,
+            None,
+            &mut outputs,
+        )?;
+        for (i, out) in outputs.iter().enumerate() {
+            let tx = owned[i].0.x;
+            blit_tile_into_rgba(rgba, width, height, tx, ty, out);
+        }
+    }
+    Ok(())
+}
+
 /// Ensure a fresh full-document result for `layer`, computing if needed.
 ///
 /// Single-flight: concurrent callers for the **same** key wait for one job.
@@ -758,11 +945,16 @@ fn ensure_full_document_ex_inner(
 ) -> Result<FullDocumentResult, EngineError> {
     crate::dither_profile::set_generation(document_gen);
     crate::dither_profile::mark("ensure_full_doc_start");
+    let params_hash = fd_cache_params_hash(layer, doc, include_ascii);
+    // Prefix-keyed FD ignores document_gen so Post-only edits (which bump gen
+    // but keep the barrier prefix) hit the through-barrier buffer. Barrier/Pre
+    // still call `invalidate_layer`.
+    let key_gen = if fd_prefix_keyed(layer) { 0 } else { document_gen };
     let key = FullDocumentKey {
         doc: doc.id.0,
         layer: layer.id.0,
-        params_hash: hash_layer_filter_params_ex(layer, include_ascii),
-        document_gen,
+        params_hash,
+        document_gen: key_gen,
         include_ascii,
     };
 
@@ -885,17 +1077,18 @@ pub fn slice_processed_tile(result: &FullDocumentResult, coord: TileCoord) -> Pi
     )
 }
 
-/// Insert all level-0 Processed tiles for a full-document result into the cache.
+/// Insert all level-0 tiles for a full-document result at `stage`.
 ///
 /// Extract + insert runs on the dedicated [`crate::pixel_pool`] so the leader
 /// does not serialize tile cuts on one core. Byte-identical to the serial loop
 /// (same `extract_tile_from_rgba` + `insert_fresh_gen`).
-pub fn publish_processed_tiles(
+pub fn publish_stage_tiles(
     tile_cache: &TileCache,
     result: &FullDocumentResult,
     doc_id: u32,
     layer_id: u32,
     generation: u64,
+    stage: CacheStage,
 ) {
     use rayon::prelude::*;
 
@@ -919,11 +1112,120 @@ pub fn publish_processed_tiles(
                     x: tx,
                     y: ty,
                 },
-                stage: CacheStage::Processed,
+                stage,
             };
             let _ = tile_cache.insert_fresh_gen(key, Arc::new(tile), generation);
         });
     });
+}
+
+/// Insert all level-0 Processed tiles for a full-document result into the cache.
+pub fn publish_processed_tiles(
+    tile_cache: &TileCache,
+    result: &FullDocumentResult,
+    doc_id: u32,
+    layer_id: u32,
+    generation: u64,
+) {
+    publish_stage_tiles(
+        tile_cache,
+        result,
+        doc_id,
+        layer_id,
+        generation,
+        CacheStage::Processed,
+    );
+}
+
+/// Apply Post filters above the barrier onto a through-barrier FD buffer.
+///
+/// Returns a new result with `needs_post = false`. No-op copy when there is no
+/// Post region (caller should normally check `needs_post` first).
+pub fn apply_post_to_fd_result(
+    through: &FullDocumentResult,
+    layer: &Layer,
+    doc: &Document,
+    tile_cache: &TileCache,
+) -> Result<FullDocumentResult, EngineError> {
+    let post = match crate::post_barrier::split_enabled_at_barrier(&layer.filters) {
+        Some((_, post)) if !post.is_empty() => post,
+        _ => {
+            return Ok(FullDocumentResult {
+                rgba_f32: Arc::clone(&through.rgba_f32),
+                width: through.width,
+                height: through.height,
+                needs_post: false,
+            });
+        }
+    };
+    let mut rgba = (*through.rgba_f32).clone();
+    let w = through.width;
+    let h = through.height;
+    let cancel = AtomicBool::new(false);
+    let reg = builtin_registry();
+    for filter in post {
+        if crate::filters::neutral::filter_is_neutral_for_apply(filter) {
+            crate::post_barrier_metrics::record_neutral_apply_skip();
+            continue;
+        }
+        if filter_uses_ed_wrap_padding(filter) {
+            apply_ed_wrap_padding_filter(&mut rgba, w, h, filter, &cancel, layer, doc, tile_cache)?;
+            continue;
+        }
+        let Some(id) = resolve_algorithm_id(filter) else {
+            continue;
+        };
+        let Some(algo) = reg.get_by_str(&id) else {
+            return Err(EngineError::unknown_algorithm(id));
+        };
+        match algo.execution_scope() {
+            ExecutionScope::FullDocument => {
+                apply_full_document_algorithm(&mut rgba, w, h, filter, doc, &cancel)?;
+            }
+            ExecutionScope::Tiled => {
+                if filter.requires_full_row || filter.requires_full_column {
+                    apply_ed_strip_filter_on_buffer(&mut rgba, w, h, layer, filter, doc)?;
+                } else {
+                    apply_tiled_filters_on_buffer(&mut rgba, w, h, layer, filter, doc, tile_cache)?;
+                }
+            }
+        }
+    }
+    Ok(FullDocumentResult {
+        rgba_f32: Arc::new(rgba),
+        width: w,
+        height: h,
+        needs_post: false,
+    })
+}
+
+/// Publish Dithered (through-barrier) and Processed (with Post) for an FD result.
+///
+/// When `needs_post` is false, only Processed is published (legacy path).
+pub fn publish_fd_result_tiles(
+    tile_cache: &TileCache,
+    result: &FullDocumentResult,
+    layer: &Layer,
+    doc: &Document,
+    doc_id: u32,
+    layer_id: u32,
+    generation: u64,
+) -> Result<(), EngineError> {
+    if result.needs_post {
+        publish_stage_tiles(
+            tile_cache,
+            result,
+            doc_id,
+            layer_id,
+            generation,
+            CacheStage::Dithered,
+        );
+        let processed = apply_post_to_fd_result(result, layer, doc, tile_cache)?;
+        publish_processed_tiles(tile_cache, &processed, doc_id, layer_id, generation);
+    } else {
+        publish_processed_tiles(tile_cache, result, doc_id, layer_id, generation);
+    }
+    Ok(())
 }
 
 fn extract_tile_from_rgba(
@@ -1215,5 +1517,183 @@ mod tests {
             "retry hung after leader panic"
         );
         assert!(retry.is_ok(), "retry after panic must succeed");
+    }
+
+    #[test]
+    fn line_scale_changes_filter_params_hash() {
+        use crate::filter::{DitherModeV2, DitherParamsV2, FilterInstance};
+
+        let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, 64, 64);
+        layer.filters.push(FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::ModulatedDiffuseY,
+                line_scale: 5,
+                ..DitherParamsV2::default()
+            }),
+        ));
+        let h5 = hash_layer_filter_params(&layer);
+        if let FilterParams::DitherV2(p) = &mut layer.filters[0].params {
+            p.line_scale = 12;
+        }
+        let h12 = hash_layer_filter_params(&layer);
+        assert_ne!(
+            h5, h12,
+            "line_scale must participate in the preview cache key"
+        );
+    }
+
+    #[test]
+    fn glitch_dither_params_change_filter_params_hash() {
+        use crate::filter::{DitherModeV2, DitherParamsV2, FilterInstance};
+
+        let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, 64, 64);
+        layer.filters.push(FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::GlitchDither,
+                glitch_intensity: 1,
+                glitch_seed: 42,
+                ..DitherParamsV2::default()
+            }),
+        ));
+        let h0 = hash_layer_filter_params(&layer);
+        if let FilterParams::DitherV2(p) = &mut layer.filters[0].params {
+            p.glitch_intensity = 12;
+        }
+        let h_i = hash_layer_filter_params(&layer);
+        assert_ne!(h0, h_i, "glitch_intensity must participate in the cache key");
+        if let FilterParams::DitherV2(p) = &mut layer.filters[0].params {
+            p.glitch_seed = 99;
+        }
+        let h_s = hash_layer_filter_params(&layer);
+        assert_ne!(h_i, h_s, "glitch_seed must participate in the cache key");
+    }
+
+    #[test]
+    fn mixed_row_column_ed_stack_uses_full_document_path() {
+        use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
+        use crate::filters::layer_has_mixed_ed_topology;
+
+        let w = 64u32;
+        let h = 64u32;
+        let mut doc = Document::new(DocumentId::new(1), w, h);
+        let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, w, h);
+        // UI top-first: vertical glitch above Floyd–Steinberg → apply FS then -x.
+        layer.filters.push(FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::ModulatedDiffuseX,
+                levels: 4,
+                threshold_scale: 1.0,
+                pixel_size: 1,
+                color_mode: DitherColorMode::Rgb,
+                palette_id: None,
+                line_scale: 5,
+                ..DitherParamsV2::default()
+            }),
+        ));
+        layer.filters.push(FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::FloydSteinberg,
+                levels: 4,
+                threshold_scale: 1.0,
+                pixel_size: 1,
+                color_mode: DitherColorMode::Rgb,
+                palette_id: None,
+                ..DitherParamsV2::default()
+            }),
+        ));
+        assert!(layer_has_mixed_ed_topology(&layer));
+        assert!(layer_has_full_document_filter(&layer));
+
+        doc.root.push(LayerNode::Leaf(layer.clone()));
+        let cache = TileCache::new(50_000_000);
+        let buf = solid_white(w, h);
+        decompose_image_to_tiles(&buf, w, h, doc.id.0, layer.id.0, &cache).unwrap();
+
+        let cancel = AtomicBool::new(false);
+        let result = compute_full_document_rgba(&cache, &layer, &doc, &cancel)
+            .expect("mixed row+column ED stack must render via full-document");
+        assert_eq!(result.width, w);
+        assert_eq!(result.height, h);
+        assert_eq!(result.rgba_f32.len(), (w * h * 4) as usize);
+    }
+
+    fn doc_with_curves_above_ascii(w: u32, h: u32) -> (Document, Layer, TileCache) {
+        let mut doc = Document::new(DocumentId::new(1), w, h);
+        let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, w, h);
+        // Panel top → bottom: Curves (Post), Ascii (barrier).
+        layer.filters.push(FilterInstance::new(
+            FilterKind::Curves,
+            FilterParams::Curves {
+                curve: vec![(0.0, 0.0), (1.0, 1.0)],
+                channel: crate::filters::curves::CurveChannel::All,
+            },
+        ));
+        let mut ascii = FilterInstance::new(
+            FilterKind::Ascii,
+            FilterParams::Ascii(AsciiParams {
+                font: "departure_mono".into(),
+                size_mode: "px".into(),
+                font_px: 11.0,
+                symbol_set: "bourke_10".into(),
+                match_mode: "tone".into(),
+                ..AsciiParams::default()
+            }),
+        );
+        ascii.algorithm_id = Some("ascii".into());
+        layer.filters.push(ascii);
+        doc.root.push(LayerNode::Leaf(layer.clone()));
+        let cache = TileCache::new(50_000_000);
+        let buf = solid_white(w, h);
+        decompose_image_to_tiles(&buf, w, h, doc.id.0, layer.id.0, &cache).unwrap();
+        (doc, layer, cache)
+    }
+
+    /// P2: Post above ASCII must not re-run the FD job when only Post params /
+    /// document_gen change (prefix key + `needs_post`).
+    #[test]
+    fn post_above_ascii_skips_fd_recompute_on_gen_bump() {
+        let _gate = FD_TEST_GATE.lock().unwrap_or_else(|e| e.into_inner());
+        FD_TEST_PANIC.store(false, Ordering::Relaxed);
+        FD_TEST_COMPUTE_DELAY_MS.store(0, Ordering::Relaxed);
+        crate::set_post_cache_enabled_for_test(true);
+
+        let (doc, mut layer, cache) = doc_with_curves_above_ascii(28, 28);
+        let fd = FullDocumentCache::new();
+
+        let mut t1 = EnsureTrace::default();
+        let first = ensure_full_document_ex_timed(
+            &fd, &cache, &layer, &doc, 1, true, &mut t1,
+        )
+        .expect("first ensure");
+        assert!(first.needs_post, "Post above Ascii → through-barrier only");
+        assert!(t1.rendered, "cold path must compute");
+
+        // Post-only param edit (Curves) + bumped document_gen — same prefix.
+        if let FilterParams::Curves { ref mut curve, .. } = layer.filters[0].params {
+            *curve = vec![(0.0, 0.0), (0.5, 0.6), (1.0, 1.0)];
+        }
+        let mut t2 = EnsureTrace::default();
+        let second = ensure_full_document_ex_timed(
+            &fd, &cache, &layer, &doc, 2, true, &mut t2,
+        )
+        .expect("post-edit ensure");
+        assert!(second.needs_post);
+        assert!(t2.hit, "prefix FD key must hit after Post-only edit");
+        assert!(!t2.rendered, "must not re-run Ascii/FD compute");
+        assert!(
+            Arc::ptr_eq(&first.rgba_f32, &second.rgba_f32),
+            "through-barrier buffer must be reused"
+        );
+
+        let processed =
+            apply_post_to_fd_result(&second, &layer, &doc, &cache).expect("apply Post");
+        assert!(!processed.needs_post);
+        assert_eq!(processed.rgba_f32.len(), second.rgba_f32.len());
+
+        crate::set_post_cache_enabled_for_test(false);
     }
 }

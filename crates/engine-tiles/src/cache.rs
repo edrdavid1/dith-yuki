@@ -300,6 +300,34 @@ impl TileCache {
         }
     }
 
+    /// Raise `generation` on clean tiles of `stage` for a layer to `generation`.
+    ///
+    /// Used when Post-only edits bump `content_gen` but leave `Dithered` pixels
+    /// valid — without a restamp, [`crate::tile_fresh`] would reject them as
+    /// behind the new content epoch and force a full ED recompute.
+    /// Dirty tiles are left alone (they must recompute).
+    ///
+    /// Returns how many entries were restamped.
+    pub fn restamp_clean_stage(
+        &self,
+        doc: u32,
+        layer: crate::LayerId,
+        stage: CacheStage,
+        generation: u64,
+    ) -> usize {
+        let mut n = 0usize;
+        for mut entry in self.entries.iter_mut() {
+            let key = *entry.key();
+            if key.doc == doc && key.layer == layer && key.stage == stage {
+                if !entry.dirty.load(Ordering::Acquire) {
+                    entry.generation = generation;
+                    n += 1;
+                }
+            }
+        }
+        n
+    }
+
     /// Drop every cache entry. LRU leftovers are ignored on later pop, as with `evict_layer`.
     pub fn clear(&self) {
         let n = self.entries.len();
@@ -1443,5 +1471,42 @@ mod tests {
         });
         assert!(cache.entries.contains_key(&child));
         assert!(!cache.entries.contains_key(&victim));
+    }
+
+    #[test]
+    fn restamp_clean_stage_raises_generation_keeps_dirty() {
+        use crate::ed::tile_fresh;
+
+        let cache = TileCache::new(10_000_000);
+        let clean = TileKey {
+            doc: 1,
+            layer: 0,
+            coord: TileCoord {
+                level: 0,
+                x: 0,
+                y: 0,
+            },
+            stage: CacheStage::Dithered,
+        };
+        let dirty = TileKey {
+            doc: 1,
+            layer: 0,
+            coord: TileCoord {
+                level: 0,
+                x: 1,
+                y: 0,
+            },
+            stage: CacheStage::Dithered,
+        };
+        assert!(cache.insert_fresh_gen(clean, Arc::new(PixelTile::new()), 1));
+        assert!(cache.insert_fresh_gen(dirty, Arc::new(PixelTile::new()), 1));
+        cache.mark_dirty(dirty);
+        cache.set_content_epoch(2);
+        assert!(!tile_fresh(&cache, clean));
+        let n = cache.restamp_clean_stage(1, 0, CacheStage::Dithered, 2);
+        assert_eq!(n, 1);
+        assert!(tile_fresh(&cache, clean));
+        assert!(!tile_fresh(&cache, dirty));
+        assert_eq!(cache.entries.get(&dirty).unwrap().generation, 1);
     }
 }

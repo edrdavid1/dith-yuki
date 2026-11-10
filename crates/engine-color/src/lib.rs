@@ -25,6 +25,7 @@ pub mod preview_encode;
 pub mod print_export;
 pub mod ramps;
 pub mod soft_proof;
+pub mod test_icc;
 pub mod threshold_map;
 
 pub use display_rgb::{DisplayRgbF32, LinearRgbF32};
@@ -41,9 +42,10 @@ pub use print_export::{
 };
 pub use soft_proof::{
     soft_proof_config_hash, SoftProofConfig, SoftProofError, SoftProofIntent, SoftProofLut3D,
-    SoftProofTransform, BUILTIN_FOGRA51_ICC, BUILTIN_FOGRA51_ID, BUILTIN_FOGRA52_ID,
-    DEFAULT_PROOF_LUT_SIZE, FALLBACK_PROOF_LUT_SIZE, LUT_MAX_DELTA_E2000, LUT_SIZE_CANDIDATES,
+    SoftProofTransform, BUILTIN_FOGRA51_ID, BUILTIN_FOGRA52_ID, DEFAULT_PROOF_LUT_SIZE,
+    FALLBACK_PROOF_LUT_SIZE, LUT_MAX_DELTA_E2000, LUT_SIZE_CANDIDATES,
 };
+pub use test_icc::{fogra51_fixture_path, load_fogra51_fixture};
 
 pub use auto_interpolate::{auto_interpolate, would_auto_interpolate, AutoInterpolateResult};
 pub use brightness_sorted::BrightnessSortedPalette;

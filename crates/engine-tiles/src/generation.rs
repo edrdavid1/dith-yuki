@@ -39,6 +39,14 @@ pub struct GenerationTracker {
     /// Per-layer generation counters, incremented on layer-specific changes.
     /// Enables selective invalidation: unchanged layers keep using cached data.
     pub layer_gen: DashMap<LayerId, u64>,
+
+    /// Per-layer Post generation (Task 2). Bumped on Post-only stack edits.
+    /// Latest-wins for Post tiles; must not cancel ED strips.
+    pub post_gen: DashMap<LayerId, u64>,
+
+    /// Per-layer dither / barrier generation (Task 2). Bumped on Barrier/Pre /
+    /// palette / Raw. ED cancellation keys off `document_gen` (still bumped with this).
+    pub dither_gen: DashMap<LayerId, u64>,
 }
 
 impl Clone for GenerationTracker {
@@ -47,6 +55,8 @@ impl Clone for GenerationTracker {
             document_gen: AtomicU64::new(self.document_gen.load(Ordering::SeqCst)),
             content_gen: AtomicU64::new(self.content_gen.load(Ordering::SeqCst)),
             layer_gen: self.layer_gen.clone(),
+            post_gen: self.post_gen.clone(),
+            dither_gen: self.dither_gen.clone(),
         }
     }
 }
@@ -57,6 +67,8 @@ impl std::fmt::Debug for GenerationTracker {
             .field("document_gen", &self.document_gen.load(Ordering::SeqCst))
             .field("content_gen", &self.content_gen.load(Ordering::SeqCst))
             .field("layer_gen_count", &self.layer_gen.len())
+            .field("post_gen_count", &self.post_gen.len())
+            .field("dither_gen_count", &self.dither_gen.len())
             .finish()
     }
 }
@@ -68,6 +80,8 @@ impl GenerationTracker {
             document_gen: AtomicU64::new(0),
             content_gen: AtomicU64::new(0),
             layer_gen: DashMap::new(),
+            post_gen: DashMap::new(),
+            dither_gen: DashMap::new(),
         }
     }
 
@@ -150,6 +164,28 @@ impl GenerationTracker {
     /// ```
     pub fn get_layer_gen(&self, layer: LayerId) -> u64 {
         self.layer_gen.get(&layer).map(|e| *e).unwrap_or(0)
+    }
+
+    /// Bump Post generation for a layer. Returns the new value.
+    pub fn increment_post_gen(&self, layer: LayerId) -> u64 {
+        let mut entry = self.post_gen.entry(layer).or_insert(0);
+        *entry += 1;
+        *entry
+    }
+
+    pub fn get_post_gen(&self, layer: LayerId) -> u64 {
+        self.post_gen.get(&layer).map(|e| *e).unwrap_or(0)
+    }
+
+    /// Bump dither/barrier generation for a layer. Returns the new value.
+    pub fn increment_dither_gen(&self, layer: LayerId) -> u64 {
+        let mut entry = self.dither_gen.entry(layer).or_insert(0);
+        *entry += 1;
+        *entry
+    }
+
+    pub fn get_dither_gen(&self, layer: LayerId) -> u64 {
+        self.dither_gen.get(&layer).map(|e| *e).unwrap_or(0)
     }
 }
 

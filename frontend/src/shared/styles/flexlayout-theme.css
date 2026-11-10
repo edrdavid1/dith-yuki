@@ -4,8 +4,9 @@
  */
 
 .flexlayout__layout {
-  --font-family: 'ChicagoFLF', 'Geneva', 'Chicago', monospace;
-  --font-size: 12px;
+  --font-family: 'GranaPadano', 'Geneva', sans-serif;
+  --font-size: 14px;
+  font-weight: 800;
   --color-text: var(--text-color, #000);
   --color-background: var(--bg-window, #CDCDCD);
   --color-base: var(--bg-window, #CDCDCD);
@@ -30,11 +31,13 @@
   --color-splitter-drag: var(--color-primary, #8181FF);
   --color-drag1: var(--color-primary, #8181FF);
   --color-drag2: var(--color-primary, #8181FF);
-  --color-drag1-background: color-mix(in srgb, var(--color-primary, #8181FF) 18%, transparent);
-  --color-drag2-background: color-mix(in srgb, var(--color-primary, #8181FF) 28%, transparent);
-  --color-drag-rect-border: var(--color-primary, #8181FF);
+  --color-drag1-background: color-mix(in srgb, var(--color-primary, #8181FF) 22%, transparent);
+  --color-drag2-background: color-mix(in srgb, var(--color-primary, #8181FF) 32%, transparent);
+  --color-drag-rect-border: var(--border-color, #000);
   --color-drag-rect-background: var(--bg-window);
   --color-drag-rect: var(--text-color);
+  --color-edge-marker: var(--bg-window, #CDCDCD);
+  --color-edge-icon: var(--color-black, #000);
   --color-icon: var(--text-color);
   --color-overflow: var(--text-color);
   --color-popup-border: var(--border-color, #000);
@@ -54,7 +57,7 @@
   margin: 0 !important;
   line-height: 20px !important;
   overflow: hidden !important;
-  font-size: 12px !important;
+  font-size: 14px !important;
 }
 
 /* ── Window frame (Color Lab / Figma) ─────────────────────────────────────────
@@ -280,7 +283,7 @@
   box-sizing: content-box !important;
 }
 
-/* Vertical splitter (side-by-side — rare; we prefer vertical stacks) */
+/* Vertical splitter (side-by-side docks — same invisible overlap hit as horz) */
 .flexlayout__splitter_vert {
   width: 0 !important;
   min-width: 0 !important;
@@ -303,11 +306,28 @@
   -webkit-user-select: none !important;
 }
 
+/* Splitter cursors: vertical stack vs side-by-side columns. */
+.flexlayout__splitter_horz,
+.flexlayout__splitter_horz .flexlayout__splitter_extra {
+  cursor: row-resize;
+}
+
+.flexlayout__splitter_vert,
+.flexlayout__splitter_vert .flexlayout__splitter_extra {
+  cursor: col-resize;
+}
+
 /* While the splitter is dragged, do not select panel text. */
-.flexlayout__layout:has(.flexlayout__splitter_drag) {
+.flexlayout__layout:has(.flexlayout__splitter_horz.flexlayout__splitter_drag) {
   user-select: none !important;
   -webkit-user-select: none !important;
   cursor: row-resize;
+}
+
+.flexlayout__layout:has(.flexlayout__splitter_vert.flexlayout__splitter_drag) {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  cursor: col-resize;
 }
 
 .flexlayout__splitter_drag {
@@ -316,36 +336,94 @@
   background: transparent !important;
 }
 
-/* ── Drag / dock outlines ──────────────────────────────────────────────────── */
+/* ── Drag / dock outlines (Chicago chrome) ─────────────────────────────────── */
 
 .flexlayout__outline_rect,
 .flexlayout__outline_rect_edge {
-  /* Hidden until marked as a vertical-stack (top/bottom) drop. */
+  /* Hidden until classified as stack or side drop. */
   visibility: hidden !important;
   opacity: 0 !important;
   border: none !important;
   background: transparent !important;
   pointer-events: none !important;
   border-radius: 0 !important;
+  box-sizing: border-box !important;
+  z-index: 1000 !important;
 }
 
+/* center → remapped to bottom (stack); still show so the gesture feels live */
+.flexlayout__outline_rect[data-drop-axis='center'],
+.flexlayout__outline_rect_edge[data-drop-axis='center'],
 .flexlayout__outline_rect[data-drop-axis='stack'],
 .flexlayout__outline_rect_edge[data-drop-axis='stack'] {
   visibility: visible !important;
   opacity: 1 !important;
   pointer-events: none !important;
-  border: 2px solid var(--color-primary, #8181FF) !important;
-  background: color-mix(in srgb, var(--color-primary, #8181FF) 16%, transparent) !important;
+  border: var(--border) !important;
+  background: color-mix(in srgb, var(--color-primary, #8181FF) 18%, transparent) !important;
+  box-shadow: inset 0 0 0 var(--border-width) var(--color-primary, #8181FF) !important;
+}
+
+/* Side-by-side: stronger primary wash so the column split reads clearly. */
+.flexlayout__outline_rect[data-drop-axis='side'],
+.flexlayout__outline_rect_edge[data-drop-axis='side'] {
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: none !important;
+  border: var(--border) !important;
+  background: color-mix(in srgb, var(--color-primary, #8181FF) 34%, transparent) !important;
+  box-shadow: inset 0 0 0 var(--border-width) var(--color-primary, #8181FF) !important;
+}
+
+/* Side drop that would crush a column below 240px — visible but unavailable. */
+.flexlayout__outline_rect[data-drop-denied='true'],
+.flexlayout__outline_rect_edge[data-drop-denied='true'] {
+  border-color: var(--color-dark-gray, #999) !important;
+  background: color-mix(in srgb, var(--color-dark-gray, #999) 22%, transparent) !important;
+  box-shadow: inset 0 0 0 var(--border-width) var(--color-dark-gray, #999) !important;
+  opacity: 0.6 !important;
+}
+
+.flexlayout__layout:has([data-drop-denied='true']) {
+  cursor: not-allowed !important;
+}
+
+/* Edge-dock chips (N/E/S/W) — mini window frames, not soft gray pills. */
+.flexlayout__edge_rect {
+  background: var(--bg-window) !important;
+  border: var(--border) !important;
+  border-radius: 0 !important;
+  box-sizing: border-box !important;
+  box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light) !important;
+  color: var(--color-black) !important;
+}
+
+.flexlayout__edge_rect svg {
+  width: 12px !important;
+  height: 12px !important;
+}
+
+.flexlayout__edge_rect_top svg {
+  transform: rotate(180deg);
+}
+
+.flexlayout__edge_rect_left svg {
+  transform: rotate(90deg);
+}
+
+.flexlayout__edge_rect_right svg {
+  transform: rotate(-90deg);
 }
 
 .flexlayout__drag_rect {
   font-family: var(--font-family) !important;
-  font-size: 12px !important;
+  font-size: 14px !important;
   color: var(--text-color) !important;
   background: var(--bg-window) !important;
   border: var(--border) !important;
   border-radius: 0 !important;
   box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light) !important;
+  opacity: 1 !important;
 }
 
 /* ── Floated-away: never reserve dock space ───────────────────────────────── */
@@ -412,14 +490,14 @@
   border-radius: 0 !important;
   box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light) !important;
   font-family: var(--font-family) !important;
-  font-size: 12px !important;
+  font-size: 14px !important;
   max-height: none !important;
   z-index: 10000 !important;
 }
 
 .flexlayout__popup_menu {
   font-family: var(--font-family) !important;
-  font-size: 12px !important;
+  font-size: 14px !important;
   color: var(--text-color) !important;
 }
 
@@ -435,7 +513,7 @@
   background: transparent !important;
   color: var(--text-color) !important;
   font-family: var(--font-family) !important;
-  font-size: 12px !important;
+  font-size: 14px !important;
   line-height: 22px !important;
   text-align: left !important;
   white-space: nowrap !important;

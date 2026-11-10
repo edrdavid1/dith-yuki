@@ -57,6 +57,10 @@ pub enum CacheStage {
     Processed,
     /// After blending with all layers below and applying opacity/blend mode.
     Composite,
+    /// Through the expensive barrier only (Pre + barrier). Not scheduled as a
+    /// worker task — filled as a side effect of Processed compute when
+    /// `DITHER_POST_CACHE` is on. See `.local-doc/post.md`.
+    Dithered,
 }
 
 /// Complete stable address of a tile in the cache.
