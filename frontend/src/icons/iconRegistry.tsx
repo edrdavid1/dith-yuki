@@ -52,6 +52,7 @@ export type IconName =
   | 'effect.temperature_tint'
   | 'effect.vibrance'
   | 'effect.hue'
+  | 'effect.clarity'
   | 'effect.ascii'
   | 'effect.nearest_color'
   | 'effect.palette_quantize'
@@ -109,6 +110,7 @@ const PIXEL_ICONS: Record<string, PixelIcon> = {
   'effect.temperature_tint': Thermometer,
   'effect.vibrance': Sparkles,
   'effect.hue': Reload,
+  'effect.clarity': Frame,
   'effect.ascii': LetterA,
   'effect.nearest_color': Pipette,
   'effect.palette_quantize': ColorsSwatch,

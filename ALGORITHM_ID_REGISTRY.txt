@@ -8,6 +8,7 @@ bayer_8x8
 blocked_fs
 blue_noise
 burkes
+clarity
 clustered_dot_ordered
 cmyk_halftone
 contrast_aware_x

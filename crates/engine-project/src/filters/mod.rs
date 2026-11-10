@@ -8,9 +8,11 @@
 //! - Glitch: JPEG-style gather corruption (block / interlace / channel swap)
 //! - Adjust: Contrast / brightness / saturation / blur / sharpness / noise
 //! - Exposure: EV stops (pointwise Post)
+//! - Clarity: midtone local contrast (spatial Post)
 
 pub mod adjust;
 pub mod ascii_job;
+pub mod clarity;
 pub mod context;
 pub mod crosshatch;
 pub mod crt;

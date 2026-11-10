@@ -255,6 +255,8 @@ export function specForAlgorithm(
       return { kind: 'Vibrance', params: { amount: 0 } };
     case 'hue':
       return { kind: 'Hue', params: { degrees: 0 } };
+    case 'clarity':
+      return { kind: 'Clarity', params: { amount: 0 } };
     case 'curves':
       return { kind: 'Curves', params: { ...EFFECT_DEFAULTS.Curves } };
     case 'glitch':

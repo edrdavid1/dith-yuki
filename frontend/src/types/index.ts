@@ -31,6 +31,7 @@ export type FilterKind =
   | 'TemperatureTint'
   | 'Vibrance'
   | 'Hue'
+  | 'Clarity'
   | 'Ascii';
 
 export type FilterParams =
@@ -48,6 +49,7 @@ export type FilterParams =
   | TemperatureTintParams
   | VibranceParams
   | HueParams
+  | ClarityParams
   | AsciiParams;
 
 export interface DitherParams {
@@ -261,6 +263,12 @@ export interface HueParams {
   type: 'Hue';
   /** Hue rotate in degrees (−180 … 180). 0 = identity. */
   degrees: number;
+}
+
+export interface ClarityParams {
+  type: 'Clarity';
+  /** Midtone local contrast (−1 … 1). 0 = identity. */
+  amount: number;
 }
 
 /** Text-art / ASCII — not a dither mode. */
