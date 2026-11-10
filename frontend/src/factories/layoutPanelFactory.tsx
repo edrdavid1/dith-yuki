@@ -105,12 +105,12 @@ const ErrorPanel: React.FC<ErrorPanelProps> = ({ componentId }) => (
       justifyContent: 'center',
       height: '100%',
       color: '#c00',
-      fontSize: 13,
+      fontSize: 15,
       padding: 16,
     }}
   >
-    <div style={{ fontWeight: 600, marginBottom: 4 }}>Unknown panel</div>
-    <code style={{ fontSize: 11 }}>{componentId}</code>
+    <div style={{ fontWeight: 800, marginBottom: 4 }}>Unknown panel</div>
+    <code style={{ fontSize: 13 }}>{componentId}</code>
   </div>
 );
 

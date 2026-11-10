@@ -35,7 +35,10 @@ import {
   type DockAffinityEvent,
 } from '../shared/ipc';
 import SidebarCollapseStrip from '../features/panels/SidebarCollapseStrip';
-import { sidebarColumnWidth } from '../features/panels/panelDragMode';
+import {
+  clampSidebarsToViewport,
+  sidebarColumnWidth,
+} from '../features/panels/panelDragMode';
 import FlexLayoutContainer from '../components/FlexLayoutContainer';
 import ResizeHandle from '../components/common/ResizeHandle';
 import { isPanelOnFlexLayout } from '../factories/layoutPanelFactory';
@@ -45,6 +48,14 @@ import {
   listFlexComponents,
   useLayoutContext,
 } from '../contexts/LayoutContext';
+import {
+  CENTER_COLUMN_MIN_WIDTH,
+  DOCK_TABSET_MIN_WIDTH,
+  SIDEBAR_COLLAPSE_WIDTH,
+  SIDEBAR_EXPANDED_MAX_WIDTH,
+  SIDEBAR_EXPANDED_MIN_WIDTH,
+} from '../defaults/DefaultLayouts';
+import { maxDockedHorizontalSpan } from '../features/panels/horizontalDock';
 import type { DockSide, PanelId } from '../types/panels';
 import { appEdgesAttr } from '../shared/ui/appEdges';
 import { isMacOS } from '../lib/platform';
@@ -56,7 +67,10 @@ import resizeStyles from '../shared/ui/ResizeHandle.module.css';
 import { windowChromeTitle } from '../shared/windowTitle';
 import { isTooNewFileError } from '../shared/appUpdates';
 import { bind } from '../shared/ui/cn';
+import Tooltip from '../shared/ui/Tooltip';
 import Icon from '../icons/iconRegistry';
+import { labelWithShortcut } from '../features/shortcuts/bindings';
+import { useShortcutBindings } from '../features/shortcuts/ShortcutsContext';
 
 const cn = bind({ ...styles, ...menuStyles, ...previewStyles, ...previewWindowStyles, ...resizeStyles });
 
@@ -293,12 +307,47 @@ export default function AppLayout() {
   const leftFloatHostOnly  = leftHasFlex  && !leftHasDockedFlex;
   const rightFloatHostOnly = rightHasFlex && !rightHasDockedFlex;
 
-  const leftW = focusMode
+  const [viewportW, setViewportW] = useState(
+    () => (typeof window !== 'undefined' ? window.innerWidth : 1280),
+  );
+  useEffect(() => {
+    const onResize = () => setViewportW(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  // Side-by-side tabsets each need ≥240px — floor the outer column accordingly.
+  const leftSpan = maxDockedHorizontalSpan(leftLayout.model);
+  const rightSpan = maxDockedHorizontalSpan(rightLayout.model);
+  const leftFloor =
+    leftHasDockedFlex && !leftSidebar.collapsed
+      ? leftSpan * DOCK_TABSET_MIN_WIDTH
+      : 0;
+  const rightFloor =
+    rightHasDockedFlex && !rightSidebar.collapsed
+      ? rightSpan * DOCK_TABSET_MIN_WIDTH
+      : 0;
+
+  const leftPreferred = leftSidebar.collapsed
+    ? leftSidebar.width
+    : Math.max(leftSidebar.width, SIDEBAR_EXPANDED_MIN_WIDTH, leftFloor);
+  const rightPreferred = rightSidebar.collapsed
+    ? rightSidebar.width
+    : Math.max(rightSidebar.width, SIDEBAR_EXPANDED_MIN_WIDTH, rightFloor);
+  const leftRaw = focusMode
     ? 0
-    : sidebarColumnWidth(leftHasDockedFlex, leftSidebar.collapsed, leftSidebar.width);
-  const rightW = focusMode
+    : sidebarColumnWidth(leftHasDockedFlex, leftSidebar.collapsed, leftPreferred);
+  const rightRaw = focusMode
     ? 0
-    : sidebarColumnWidth(rightHasDockedFlex, rightSidebar.collapsed, rightSidebar.width);
+    : sidebarColumnWidth(rightHasDockedFlex, rightSidebar.collapsed, rightPreferred);
+  const [leftW, rightW] = clampSidebarsToViewport(
+    leftRaw,
+    rightRaw,
+    viewportW,
+    CENTER_COLUMN_MIN_WIDTH,
+    focusMode ? 0 : leftFloor,
+    focusMode ? 0 : rightFloor,
+  );
 
   // macOS only — Windows OS chrome differs by version; we don't version-gate.
   const leftAppEdges = isMacOS() ? appEdgesAttr('bottom', 'left') : undefined;
@@ -363,11 +412,14 @@ export default function AppLayout() {
       setSidebarWidth(side, (w) => {
         const signedDelta = side === 'right' ? -delta : delta;
         const newW = w + signedDelta;
-        if (allowCollapse && newW < 220) {
+        if (allowCollapse && newW < SIDEBAR_COLLAPSE_WIDTH) {
           requestAnimationFrame(() => setSidebarCollapsed(side, true));
           return w;
         }
-        return Math.min(600, Math.max(240, newW));
+        return Math.min(
+          SIDEBAR_EXPANDED_MAX_WIDTH,
+          Math.max(SIDEBAR_EXPANDED_MIN_WIDTH, newW),
+        );
       });
     },
     [setSidebarWidth, setSidebarCollapsed]
@@ -502,12 +554,6 @@ export default function AppLayout() {
     handleOpenPreferences,
   ]);
 
-  useEffect(() => {
-    return registerLayoutCommands({
-      toggleFocusMode: () => setFocusMode((on) => !on),
-    });
-  }, []);
-
   const handleSwapSidebars = useCallback(() => {
     try {
       swapSidebars();
@@ -516,6 +562,18 @@ export default function AppLayout() {
       console.error('Swap sidebars failed:', err);
     }
   }, [swapSidebars, swapFlexSides]);
+
+  useEffect(() => {
+    return registerLayoutCommands({
+      toggleFocusMode: () => setFocusMode((on) => !on),
+      swapSidebars: () => void handleSwapSidebars(),
+      copyPreviewImage: () => {
+        if (doc.hasDocument) void doc.copyPreviewImage();
+      },
+    });
+  }, [doc.copyPreviewImage, doc.hasDocument, handleSwapSidebars]);
+
+  const shortcuts = useShortcutBindings();
 
   const currentError = doc.error || layersError || filtersError;
   const toastError =
@@ -573,28 +631,67 @@ export default function AppLayout() {
             workspace,
           })}</div>
           <div className={cn('toolbar-icon-group')} data-tauri-drag-region="false">
-            <button
-              type="button"
-              className={cn('sidebar-changer-icon-btn')}
-              onClick={() => void handleSwapSidebars()}
-              title="Swap left and right sidebars"
-              aria-label="Swap left and right sidebars"
-            >
-              <Icon name="sidebar-swap" width={16} height={16} />
-            </button>
-            <button
-              type="button"
-              className={cn(
-                'sidebar-changer-icon-btn',
-                focusMode && 'sidebar-changer-icon-btn-active'
+            <Tooltip
+              label={labelWithShortcut(
+                'Swap left and right sidebars',
+                shortcuts.swapSidebars
               )}
-              onClick={() => setFocusMode((on) => !on)}
-              title={focusMode ? 'Exit focus mode' : 'Focus mode — hide sidebars'}
-              aria-label={focusMode ? 'Exit focus mode' : 'Focus mode'}
-              aria-pressed={focusMode}
             >
-              <Icon name="focus-mode" width={16} height={16} />
-            </button>
+              <button
+                type="button"
+                className={cn('sidebar-changer-icon-btn')}
+                onClick={() => void handleSwapSidebars()}
+                aria-label={labelWithShortcut(
+                  'Swap left and right sidebars',
+                  shortcuts.swapSidebars
+                )}
+              >
+                <Icon name="sidebar-swap" width={16} height={16} />
+              </button>
+            </Tooltip>
+            <Tooltip
+              label={labelWithShortcut(
+                focusMode ? 'Exit focus mode' : 'Focus mode — hide sidebars',
+                shortcuts.focusMode
+              )}
+            >
+              <button
+                type="button"
+                className={cn(
+                  'sidebar-changer-icon-btn',
+                  focusMode && 'sidebar-changer-icon-btn-active'
+                )}
+                onClick={() => setFocusMode((on) => !on)}
+                aria-label={labelWithShortcut(
+                  focusMode ? 'Exit focus mode' : 'Focus mode',
+                  shortcuts.focusMode
+                )}
+                aria-pressed={focusMode}
+              >
+                <Icon name="focus-mode" width={16} height={16} />
+              </button>
+            </Tooltip>
+            <Tooltip
+              label={labelWithShortcut(
+                'Copy preview image as PNG',
+                shortcuts.copyPreview
+              )}
+            >
+              <button
+                type="button"
+                className={cn('sidebar-changer-icon-btn')}
+                onClick={() => {
+                  if (doc.hasDocument) void doc.copyPreviewImage();
+                }}
+                disabled={!doc.hasDocument}
+                aria-label={labelWithShortcut(
+                  'Copy preview image as PNG',
+                  shortcuts.copyPreview
+                )}
+              >
+                <Icon name="copy-x" width={16} height={16} />
+              </button>
+            </Tooltip>
           </div>
         </>
       }
@@ -656,7 +753,7 @@ export default function AppLayout() {
                 }
                 style={
                   leftFlexOnly && !leftSidebar.collapsed
-                    ? { minWidth: 0, minHeight: 0, height: '100%' }
+                    ? { minWidth: leftFloor, minHeight: 0, height: '100%' }
                     : {
                         position: 'fixed',
                         width: 0,
@@ -671,7 +768,7 @@ export default function AppLayout() {
                 <FlexLayoutContainer
                   side="left"
                   appEdges={leftFlexOnly && !leftSidebar.collapsed ? leftAppEdges : undefined}
-                  style={{ height: '100%', minWidth: 0 }}
+                  style={{ height: '100%', minWidth: leftFloor }}
                 />
               </div>
             </>
@@ -685,7 +782,6 @@ export default function AppLayout() {
         data-app-edges={previewAppEdges}
         style={previewBackgroundStyle(previewBackground)}
       >
-        <WorkspaceHintBanner />
         {/* Keep center FlexLayout mounted while floated so the popout portal stays alive. */}
         <div
           style={
@@ -757,7 +853,7 @@ export default function AppLayout() {
                 }
                 style={
                   rightFlexOnly && !rightSidebar.collapsed
-                    ? { minWidth: 0, minHeight: 0, height: '100%' }
+                    ? { minWidth: rightFloor, minHeight: 0, height: '100%' }
                     : {
                         position: 'fixed',
                         width: 0,
@@ -772,7 +868,7 @@ export default function AppLayout() {
                 <FlexLayoutContainer
                   side="right"
                   appEdges={rightFlexOnly && !rightSidebar.collapsed ? rightAppEdges : undefined}
-                  style={{ height: '100%', minWidth: 0 }}
+                  style={{ height: '100%', minWidth: rightFloor }}
                 />
               </div>
             </>
@@ -781,6 +877,7 @@ export default function AppLayout() {
       )}
 
       <BusyNotification message={openingToast} />
+      <WorkspaceHintBanner />
       <Notification
         message={displayError}
         onDismiss={() => setDismissedError(currentError)}

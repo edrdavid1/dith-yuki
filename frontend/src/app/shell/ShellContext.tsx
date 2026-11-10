@@ -9,6 +9,11 @@ import {
   type ReactNode,
 } from 'react';
 import type { DockSide } from '../../types/panels';
+import {
+  SIDEBAR_EXPANDED_MAX_WIDTH,
+  SIDEBAR_EXPANDED_MIN_WIDTH,
+} from '../../defaults/DefaultLayouts';
+import { clampExpandedSidebarWidth } from '../../features/panels/horizontalDock';
 import { clampSplitRatio } from '../../features/panels/panelDragMode';
 import {
   DEFAULT_PREVIEW_BACKGROUND,
@@ -25,6 +30,18 @@ export type SidebarGeom = {
   width: number;
   collapsed: boolean;
 };
+
+function clampSidebarGeom(geom: SidebarGeom): SidebarGeom {
+  if (geom.collapsed) return geom;
+  return {
+    ...geom,
+    width: clampExpandedSidebarWidth(
+      geom.width,
+      SIDEBAR_EXPANDED_MIN_WIDTH,
+      SIDEBAR_EXPANDED_MAX_WIDTH,
+    ),
+  };
+}
 
 export type ShellState = {
   leftSidebar: SidebarGeom;
@@ -208,12 +225,16 @@ export function migrateShellPrefs(raw: unknown): PersistedShellPrefsV2 {
     const splits = readSplitRatios(obj);
     return {
       version: 2,
-      leftSidebar: isSidebarGeom(obj.leftSidebar)
-        ? { ...obj.leftSidebar }
-        : { ...DEFAULT_SIDEBAR_GEOM },
-      rightSidebar: isSidebarGeom(obj.rightSidebar)
-        ? { ...obj.rightSidebar }
-        : { ...DEFAULT_SIDEBAR_GEOM },
+      leftSidebar: clampSidebarGeom(
+        isSidebarGeom(obj.leftSidebar)
+          ? { ...obj.leftSidebar }
+          : { ...DEFAULT_SIDEBAR_GEOM },
+      ),
+      rightSidebar: clampSidebarGeom(
+        isSidebarGeom(obj.rightSidebar)
+          ? { ...obj.rightSidebar }
+          : { ...DEFAULT_SIDEBAR_GEOM },
+      ),
       leftSplitRatio: splits.leftSplitRatio,
       rightSplitRatio: splits.rightSplitRatio,
       effectPanelRatio: splits.leftSplitRatio,
@@ -245,14 +266,16 @@ export function migrateShellPrefs(raw: unknown): PersistedShellPrefsV2 {
   const v1 = obj as PersistedShellPrefsV1;
   const side: DockSide = isDockSide(v1.sidebarSide) ? v1.sidebarSide : 'right';
   const other: DockSide = side === 'left' ? 'right' : 'left';
-  const migrated: SidebarGeom = {
+  const migrated: SidebarGeom = clampSidebarGeom({
     width: typeof v1.sidebarWidth === 'number' ? v1.sidebarWidth : DEFAULT_SIDEBAR_WIDTH,
     collapsed: typeof v1.sidebarCollapsed === 'boolean' ? v1.sidebarCollapsed : false,
-  };
+  });
 
   const prefs = defaultPrefs();
   prefs[side === 'left' ? 'leftSidebar' : 'rightSidebar'] = migrated;
-  prefs[other === 'left' ? 'leftSidebar' : 'rightSidebar'] = { ...DEFAULT_SIDEBAR_GEOM };
+  prefs[other === 'left' ? 'leftSidebar' : 'rightSidebar'] = clampSidebarGeom({
+    ...DEFAULT_SIDEBAR_GEOM,
+  });
   if (typeof v1.effectPanelRatio === 'number') {
     const r = clampSplitRatio(v1.effectPanelRatio);
     prefs.leftSplitRatio = r;

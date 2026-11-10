@@ -64,7 +64,7 @@ export const PopoutTestWindow: React.FC = () => {
 
       <div style={{ background: '#fff', padding: '15px', borderRadius: '4px', marginBottom: '15px' }}>
         <h3>Window Information</h3>
-        <ul style={{ fontSize: '13px' }}>
+        <ul style={{ fontSize: '15px' }}>
           <li><strong>Window Name:</strong> {windowInfo.name}</li>
           <li><strong>Position:</strong> ({windowInfo.screenX}, {windowInfo.screenY})</li>
           <li><strong>Size:</strong> {windowInfo.innerWidth} × {windowInfo.innerHeight}</li>
@@ -76,7 +76,7 @@ export const PopoutTestWindow: React.FC = () => {
 
       <div style={{ background: '#fff', padding: '15px', borderRadius: '4px', marginBottom: '15px' }}>
         <h3>IPC Status</h3>
-        <p style={{ fontSize: '14px', color: ipcStatus.includes('✅') ? '#27ae60' : '#e74c3c' }}>
+        <p style={{ fontSize: '16px', color: ipcStatus.includes('✅') ? '#27ae60' : '#e74c3c' }}>
           {ipcStatus}
         </p>
       </div>
@@ -84,14 +84,14 @@ export const PopoutTestWindow: React.FC = () => {
       <div style={{ background: '#fff', padding: '15px', borderRadius: '4px', marginBottom: '15px' }}>
         <h3>Styling Test</h3>
         <p>If this text appears with styling (blue color, monospace font), CSS is loaded correctly:</p>
-        <p style={{ color: '#3498db', fontSize: '16px', fontWeight: 'bold' }}>
+        <p style={{ color: '#3498db', fontSize: '18px', fontWeight: 800 }}>
           ✅ Styling works!
         </p>
       </div>
 
       <div style={{ background: '#fff', padding: '15px', borderRadius: '4px', marginBottom: '15px' }}>
         <h3>Console Logs</h3>
-        <p style={{ fontSize: '12px', color: '#7f8c8d' }}>
+        <p style={{ fontSize: '14px', color: '#7f8c8d' }}>
           Open DevTools Console (Cmd+Option+I or Ctrl+Shift+I) to see detailed logs of this popout window.
         </p>
         <button
@@ -132,7 +132,7 @@ export const PopoutTestWindow: React.FC = () => {
         </button>
       </div>
 
-      <p style={{ marginTop: '20px', fontSize: '12px', color: '#7f8c8d', textAlign: 'center' }}>
+      <p style={{ marginTop: '20px', fontSize: '14px', color: '#7f8c8d', textAlign: 'center' }}>
         B2 Spike Test | Check main window console for spike outcome (Path A/B/C)
       </p>
     </div>

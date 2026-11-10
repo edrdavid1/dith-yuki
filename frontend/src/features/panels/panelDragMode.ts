@@ -1,3 +1,4 @@
+import { CENTER_COLUMN_MIN_WIDTH } from '../../defaults/DefaultLayouts';
 import type { DockSide } from '../../types/panels';
 
 export type PanelDragMode = 'reorder' | 'undock' | 'cross';
@@ -68,6 +69,42 @@ export function sidebarColumnWidth(
 ): number {
   if (!hasDocked) return 0;
   return collapsed ? 40 : width;
+}
+
+/**
+ * Scale left/right pixel columns so the preview keeps CENTER_COLUMN_MIN_WIDTH
+ * when possible. Per-side floors (e.g. 240 × horizontal span) are hard — the
+ * preview may shrink below centerMin before a side-by-side column goes under
+ * its floor.
+ */
+export function clampSidebarsToViewport(
+  leftPx: number,
+  rightPx: number,
+  viewportW: number,
+  centerMin: number = CENTER_COLUMN_MIN_WIDTH,
+  leftMin: number = 0,
+  rightMin: number = 0,
+): [number, number] {
+  const floorL = Math.max(0, leftMin);
+  const floorR = Math.max(0, rightMin);
+  let left = Math.max(leftPx, floorL);
+  let right = Math.max(rightPx, floorR);
+  const floors = floorL + floorR;
+  // Prefer keeping the preview min; if floors need more, preview yields.
+  const budget = Math.max(floors, Math.max(0, viewportW - centerMin));
+  const sum = left + right;
+  if (sum <= budget) return [left, right];
+  if (sum <= 0) return [0, 0];
+  const scale = budget / sum;
+  left = Math.floor(left * scale);
+  right = Math.floor(right * scale);
+  left = Math.max(left, floorL);
+  right = Math.max(right, floorR);
+  // If floors alone exceed budget, still honor them (hard 240×N).
+  if (left + right > viewportW && floors > 0) {
+    return [floorL, floorR];
+  }
+  return [left, right];
 }
 
 /**

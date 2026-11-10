@@ -129,10 +129,31 @@ Collapse: `SidebarCollapseStrip` (40px); drag ширины &lt; **220px** → co
 Docked titlebar рисуется через `onRenderTab` → общий `WindowTitlebar` (variant docked: □ · ridges · Title · ridges · □).  
 Тело панели с `hideChrome`, чтобы не было второго заголовка.
 
-### 5.3 Вертикальный стек (как Color Lab)
+### 5.3 Стек и side-by-side (multi-column)
 
-Drop left/center/right внутри колонки в `onAction` переписывается в **`bottom`**.  
-`normalizeSideToVerticalStack` разносит peer-табы в один tabset в вертикальный стек. Горизонтальный split внутри сайдбара продуктово не нужен.
+**Модель данных (без нового layout engine):** один FlexLayout `Model` на сторону (`left` / `right` / `center`). Внутри сайдбара:
+
+- вертикальный стек = `column` из tabset’ов (как раньше);
+- side-by-side = `row` из tabset’ов (каждая «колонка» — свой tabset со стеком);
+- ширина outer chrome (`ShellContext`) — отдельный prefs JSON; ширины tabset’ов внутри — веса FlexLayout.
+
+**Drop zones (stock FlexLayout ~25% края):**
+
+- top/bottom → стек в той же колонке (`data-drop-axis=stack`);
+- left/right → новая колонка рядом (`data-drop-axis=side`);
+- `center` в `onAction` → `bottom` (WindowTitlebar не делит strip);
+- 3-я колонка на стороне запрещена (`MAX_SIDE_COLUMNS = 2`); иначе left/right принимаются и сайдбар дорастает до ≥240×N.
+- **Важно:** titlebar undock и native FlexLayout tab-drag стартуют с одного mousedown. Перед `floatPanel` вызывается `cancelFlexLayoutDrag`, а `onAction` отклоняет `MOVE_NODE` уже floating-таба — иначе mouseup с edge-dock (`enableEdgeDock`) переносит живой popout и окно исчезает.
+- **Жесты:** undock только после `EXIT_SLACK_PX` (64) за краем колонки; stock edge-dock (10px) расширен патчем до ~40px / длиннее mid-band, center drop-квадрат сужен (0.38–0.62), чтобы side-place было легче попасть.
+
+**Миграция:** старые JSON (только вертикальный стек) грузятся как есть; peer-табы по-прежнему нормализуются в стек. Ширины shell &lt; 240 / &gt; 600 clamp’ятся при `migrateShellPrefs`.
+
+**Решения по продуктовым вопросам:**
+
+1. **Collapse:** shell-collapse сайдбара = узкая полоска 40px (как сейчас). Пока колонка expanded, ширина ≥ 240 даже если панели «схлопнуты» по высоте до titlebar.
+2. **Max columns / side:** `floor(600/240) = 2`.
+3. **Preview:** всегда центр (`Model C`); панели left/right of Preview через outer shell, не через center FlexLayout.
+4. **Out of space:** не H-scroll. Sidebars пропорционально clamp’ятся, чтобы preview ≥ **320px**. Не auto-collapse в strip.
 
 ### 5.4 Патч FloatingWindow
 
@@ -141,8 +162,10 @@ Stock FlexLayout при occlusion/unload может дернуть `beforeunload
 - Исходник патча: `frontend/src/patches/flexlayoutFloatingWindow.cjs`
 - Накат: `frontend/scripts/patch-flexlayout.cjs` (`postinstall` / `npm run patch:flexlayout`)
 - Суть: не закрывать popout на `beforeunload` из-за occlusion; reuse named window; style clone; close-poll
+- **Имя окна:** `window.open` name = `flexPopoutWindowName(tabId)` (без `#`). Сырой FlexLayout id `#uuid` в WKWebView обрезается по `#` → все popout’ы делили пустое имя и второй float переиспользовал первое окно.
+- **Vite prebundle:** патч также сбрасывает `node_modules/.vite/deps/flexlayout-react.js*`. Иначе dev-сервер продолжает отдавать stock `window.open(url, id)` и multi-float снова ломается. Vite plugin `ensure-flexlayout-float-patch` гоняет скрипт на `buildStart` / `configureServer`.
 
-**После `npm install` патч должен применяться автоматически.** Без него float в Tauri нестабилен.
+**После `npm install` патч должен применяться автоматически.** Без него float в Tauri нестабилен. Если второй detached window «съедает» первый — перезапустите Vite (или `npm run patch:flexlayout`).
 
 ---
 
@@ -170,7 +193,7 @@ layoutPanelFactory оборачивает тело в FlexPopoutChrome
 | Действие | Механизм |
 |----------|----------|
 | Undock drag из колонки | `useFlexTitlebarUndock` → `floatPanel` |
-| Close на popout | `dockPanel` → `unFloatTab` |
+| Close на popout | `dockPanel` → `closeFlexPopoutShell` (этот `flex-popout-*`) + `unFloatTab` |
 | Drag popout на left/right dock | JS `setPosition` + affinity → `complete_float_drag` → `flex-panel-dock-request` → `redockFlexPanelToSide` |
 | Move to other side (меню) | `movePanelBetweenSides` (delete + `addNode` BOTTOM на другую модель) |
 
@@ -245,6 +268,10 @@ findFirstTabSetId(model)
 listFlexComponents(model)
 listDockedFlexComponents(model)
 normalizeSideToVerticalStack(model): boolean
+// horizontalDock.ts
+maxDockedHorizontalSpan(model): number
+sidebarWidthForHorizontalSpan(span, preferred): number
+canAcceptHorizontalDrop(...)
 ```
 
 Слушатель `flex-panel-dock-request` живёт внутри `LayoutProvider`.

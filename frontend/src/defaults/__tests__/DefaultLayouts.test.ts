@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   DOCK_TABSET_MIN_HEIGHT,
+  DOCK_TABSET_MIN_WIDTH,
   getDefaultFlexLayoutJson,
   isValidFlexLayoutJson,
   parseFlexLayoutJson,
@@ -34,6 +35,12 @@ describe('DefaultLayouts (B5)', () => {
     const model = getDefaultFlexLayoutJson('right');
     expect(model.global?.tabSetMinHeight).toBe(DOCK_TABSET_MIN_HEIGHT);
     expect(model.global?.tabSetTabStripHeight).toBe(DOCK_TABSET_MIN_HEIGHT);
+  });
+
+  it('keeps docked panels at a usable min width for side-by-side', () => {
+    const model = getDefaultFlexLayoutJson('right');
+    expect(model.global?.tabSetMinWidth).toBe(DOCK_TABSET_MIN_WIDTH);
+    expect(model.global?.enableEdgeDock).toBe(true);
   });
 
   it('parseFlexLayoutJson falls back cleanly on garbage', () => {

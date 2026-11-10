@@ -3,12 +3,24 @@
  *
  * - `sidebar`: undock when the pointer leaves the column left/right (side panels).
  * - `anyDirection`: undock after a short drag in any direction (Preview canvas).
+ *
+ * Titlebar mousedown also starts FlexLayout's native tab drag (bubble to TabButton).
+ * In-column left/right docks stay *inside* the column rect, so they never trip
+ * undock. Crossing the column edge into Preview floats — even if a FlexLayout
+ * outline is still painted. Before float we cancel that native drag so mouseup
+ * cannot MOVE_NODE the live popout (see flexFloatDragGuard).
  */
 
 import { useCallback, useRef } from 'react';
+import { cancelFlexLayoutDrag } from './flexFloatDragGuard';
 
-const THRESHOLD_PX = 6;
-const EXIT_SLACK_PX = 28;
+const THRESHOLD_PX = 8;
+/**
+ * Past this gap outside the column, the gesture is float (not side-dock).
+ * Keep comfortably larger than FlexLayout's edge-dock strip (~40px) so a
+ * side-place drag that overshoots the column edge doesn't instantly undock.
+ */
+export const EXIT_SLACK_PX = 64;
 /** Preview canvas undock — short drag, any direction (old PreviewSlot behavior). */
 const ANY_DIRECTION_PX = 12;
 
@@ -50,6 +62,8 @@ export function useFlexTitlebarUndock(options: {
       if (done) return;
       done = true;
       cleanup();
+      // Drop FL's in-flight tab drag before floatPanel opens the OS popout.
+      cancelFlexLayoutDrag();
       onUndockRef.current();
     };
 
@@ -68,9 +82,11 @@ export function useFlexTitlebarUndock(options: {
         if (dist < THRESHOLD_PX) return;
         armed = true;
       }
+
       const col = columnElRef.current.current;
       if (!col) return;
       const rect = col.getBoundingClientRect();
+      // Side-dock targets live inside the column; float once we leave it.
       const outside =
         ev.clientX < rect.left - EXIT_SLACK_PX ||
         ev.clientX > rect.right + EXIT_SLACK_PX;

@@ -193,10 +193,10 @@ export const FlexLayoutPopoutTest: React.FC = () => {
       {/* Header */}
       <div style={{ padding: '20px', background: '#2c3e50', color: '#ecf0f1' }}>
         <h1 style={{ margin: '0 0 10px 0' }}>🔬 B2 Spike: FlexLayout Popout Test</h1>
-        <p style={{ margin: '0', fontSize: '14px' }}>
+        <p style={{ margin: '0', fontSize: '16px' }}>
           Testing: Does window.open() work inside Tauri WebView?
         </p>
-        <p style={{ margin: '5px 0 0 0', fontSize: '12px', color: '#95a5a6' }}>
+        <p style={{ margin: '5px 0 0 0', fontSize: '14px', color: '#95a5a6' }}>
           Expected duration: 1–2 hours | Outcome: Path A/B/C
         </p>
       </div>
@@ -212,7 +212,7 @@ export const FlexLayoutPopoutTest: React.FC = () => {
             border: 'none',
             borderRadius: '4px',
             cursor: 'pointer',
-            fontWeight: 'bold',
+            fontWeight: 800,
           }}
         >
           ▶ Run All Tests
@@ -271,7 +271,7 @@ export const FlexLayoutPopoutTest: React.FC = () => {
           padding: '15px',
           background: '#fff',
           fontFamily: 'Courier New, monospace',
-          fontSize: '13px',
+          fontSize: '15px',
           lineHeight: '1.6',
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
@@ -299,7 +299,7 @@ export const FlexLayoutPopoutTest: React.FC = () => {
       </div>
 
       {/* Instructions */}
-      <div style={{ padding: '15px', background: '#ecf0f1', borderTop: '1px solid #bdc3c7', fontSize: '12px', color: '#7f8c8d' }}>
+      <div style={{ padding: '15px', background: '#ecf0f1', borderTop: '1px solid #bdc3c7', fontSize: '14px', color: '#7f8c8d' }}>
         <strong>📌 Quick Guide:</strong>
         <br />
         1. Click "Run All Tests" to execute all test cases (A–E)

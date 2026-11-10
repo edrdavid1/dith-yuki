@@ -14,17 +14,22 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { getAllWebviewWindows } from '@tauri-apps/api/webviewWindow';
 import { Actions, DockLocation, Model, TabNode, TabSetNode } from 'flexlayout-react';
 import type { IJsonModel } from 'flexlayout-react';
 import {
   DOCK_TABSET_MIN_HEIGHT,
+  DOCK_TABSET_MIN_WIDTH,
   getDefaultFlexLayout,
   getDefaultFlexLayoutJson,
   LAYOUT_TOAST_MESSAGES,
 } from '../defaults/DefaultLayouts';
+export {
+  maxDockedHorizontalSpan,
+  sidebarWidthForHorizontalSpan,
+} from '../features/panels/horizontalDock';
 import type { FlexSide } from '../defaults/DefaultLayouts';
 import { isPanelOnFlexLayout } from '../factories/layoutPanelFactory';
+import { closeFlexPopoutShell } from '../features/panels/closeFlexPopoutShell';
 
 // ─── Context type ─────────────────────────────────────────────────────────────
 
@@ -199,12 +204,15 @@ export function rebalanceFloatingTabsets(model: Model): void {
           hasDocked
             ? {
                 minHeight: DOCK_TABSET_MIN_HEIGHT,
+                // Hard floor for side-by-side splitter drag (≥240 each).
+                minWidth: DOCK_TABSET_MIN_WIDTH,
                 height: undefined,
                 enableTabStrip: true,
               }
             : {
                 weight: 0.01,
                 minHeight: 0,
+                minWidth: 0,
                 height: 0,
                 enableTabStrip: false,
               },
@@ -220,8 +228,9 @@ export function rebalanceFloatingTabsets(model: Model): void {
 let rebalanceGuard = 0;
 
 /**
- * Color Lab parity: panels in a sidebar stack vertically — never as side-by-side
- * tabs (full WindowTitlebar chrome cannot share a narrow strip).
+ * WindowTitlebar chrome cannot share a tab strip — if a drop created peer
+ * docked tabs in one tabset, stack the extras below. Horizontal (left/right)
+ * splits into separate tabsets are left alone.
  */
 export function normalizeSideToVerticalStack(model: Model): boolean {
   let changed = false;
@@ -267,14 +276,16 @@ function applyAppChromePolicy(model: Model): Model {
       tabEnableRename: false,
       tabEnableClose: false,
       tabSetEnableMaximize: false,
-      // Invisible overlap splitter — borders of stacked panels share one line.
+      // Invisible overlap splitter — borders of stacked/side-by-side panels share one line.
       splitterSize: 0,
       splitterExtra: 4,
-      // No left/right edge-dock hit targets (sidebar is a vertical stack only).
-      enableEdgeDock: false,
+      // Left/right edge drops create side-by-side tabsets inside the column.
+      enableEdgeDock: true,
       // Titlebar-tall floor so stacked panels cannot cover each other's titles.
       tabSetMinHeight: DOCK_TABSET_MIN_HEIGHT,
       tabSetTabStripHeight: DOCK_TABSET_MIN_HEIGHT,
+      // Usable floor for side-by-side (and single) docked panels.
+      tabSetMinWidth: DOCK_TABSET_MIN_WIDTH,
     })
   );
   normalizeSideToVerticalStack(model);
@@ -506,19 +517,8 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         } else if (side === 'left' || side === 'right') {
           redockFlexPanelToSideRef.current?.(panelId, side);
         }
-        void getAllWebviewWindows().then((wins) => {
-          void Promise.all(
-            wins
-              .filter((w) => w.label.startsWith('flex-popout-'))
-              .map(async (w) => {
-                try {
-                  await w.close();
-                } catch {
-                  /* ignore */
-                }
-              }),
-          );
-        });
+        // dockPanel / movePanelBetweenSides close only this panel's popout.
+        // Closing every flex-popout-* here killed sibling detached windows.
       },
     ).then((fn) => {
       if (cancelled) fn();
@@ -558,6 +558,15 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       component: panelComponent,
       enableFloat: true,
     };
+
+    // Close this tab's OS popout before deleting it (siblings stay open).
+    if (tab.isFloating()) {
+      try {
+        void closeFlexPopoutShell(tab.getWindow?.() ?? null);
+      } catch {
+        /* ignore */
+      }
+    }
 
     fromModel.doAction(Actions.deleteTab(tab.getId()));
 
@@ -666,10 +675,10 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
     if (!tab.isFloating()) return;
 
-    // Close the browser/Tauri popout shell if FlexLayout still has a Window handle.
+    // Match+close this tab's flex-popout WebviewWindow (DOM Window.close alone
+    // leaves an empty Tauri shell). Must run while getWindow() is still set.
     try {
-      const pop = tab.getWindow?.();
-      if (pop && !pop.closed) pop.close();
+      void closeFlexPopoutShell(tab.getWindow?.() ?? null);
     } catch {
       /* ignore */
     }

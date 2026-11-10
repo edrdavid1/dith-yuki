@@ -6,7 +6,7 @@
  *
  * B3/B4a/B4b/B5:
  *   left   — Layers tab
- *   right  — Effect Settings + Color Lab (vertical stack via applyAppChromePolicy)
+ *   right  — Effect Settings + Color Lab (peer tabs → vertical stack on load; side-by-side allowed)
  *   center — Preview (canvas host; float = flex-popout)
  */
 
@@ -24,6 +24,23 @@ export type SidebarFlexSide = 'left' | 'right';
  */
 export const DOCK_TABSET_MIN_HEIGHT = 20;
 
+/**
+ * Floor for a visible (non-collapsed) docked tabset — side-by-side panels and
+ * the expanded sidebar column stay usable at this width.
+ */
+export const DOCK_TABSET_MIN_WIDTH = 240;
+
+/**
+ * Expanded sidebar: drag floor (= column hard min) / collapse threshold / hard cap.
+ * Cap 600 → at most two 240px columns per side.
+ */
+export const SIDEBAR_EXPANDED_MIN_WIDTH = DOCK_TABSET_MIN_WIDTH;
+export const SIDEBAR_COLLAPSE_WIDTH = 220;
+export const SIDEBAR_EXPANDED_MAX_WIDTH = 600;
+
+/** Preview stays centered; never shrink below this when sidebars claim space. */
+export const CENTER_COLUMN_MIN_WIDTH = 320;
+
 const FLEX_GLOBAL = {
   tabEnableRename: false,
   tabEnableClose: false,
@@ -35,13 +52,16 @@ const FLEX_GLOBAL = {
   // FlexLayout OS popout via window.open (not Tauri WebviewWindow).
   tabEnableFloat: true,
   // Hit target only — layout size 0 so stacked panel borders share one line
-  // (see flexlayout-theme.css splitter_horz negative margin).
+  // (see flexlayout-theme.css splitter_horz / splitter_vert negative margin).
   splitterSize: 0,
   splitterExtra: 4,
-  enableEdgeDock: false,
+  // Allow left/right edge drops for side-by-side docks inside a column.
+  enableEdgeDock: true,
   // Keep each stacked panel at least one titlebar tall while resizing.
   tabSetMinHeight: DOCK_TABSET_MIN_HEIGHT,
   tabSetTabStripHeight: DOCK_TABSET_MIN_HEIGHT,
+  // Side-by-side panels must not crush below a usable chrome width.
+  tabSetMinWidth: DOCK_TABSET_MIN_WIDTH,
 } as const;
 
 // ─── Default layout JSON ──────────────────────────────────────────────────────

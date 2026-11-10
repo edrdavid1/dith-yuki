@@ -21,7 +21,7 @@
   background: var(--bg-window);
   color: var(--text-color);
   font-family: var(--font-family);
-  font-size: 12px;
+  font-size: 14px;
   cursor: pointer;
   box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
 }
