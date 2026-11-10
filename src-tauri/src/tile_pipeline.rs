@@ -85,12 +85,19 @@ fn try_processed_from_dithered_cache(
     }
     let spatial_r = engine_project::filters::post_direct_spatial_radius(&post);
     let neighborhood = if spatial_r > 0 {
+        let b = layer.bounds_l0;
         Some(engine_project::filters::gather_dithered_neighborhood(
             &state.tiles.tile_cache,
             key.doc,
             key.layer,
             key.coord,
             spatial_r,
+            engine_project::filters::NeighborTileBounds {
+                min_x: b.min_x,
+                min_y: b.min_y,
+                max_x: b.max_x,
+                max_y: b.max_y,
+            },
         ))
     } else {
         None
@@ -257,10 +264,18 @@ fn wake_spatial_post_after_dithered(state: &AppState, dithered: TileKey, content
     if radius <= 0 {
         return;
     }
+    let b = layer.bounds_l0;
+    let bounds = engine_project::filters::NeighborTileBounds {
+        min_x: b.min_x,
+        min_y: b.min_y,
+        max_x: b.max_x,
+        max_y: b.max_y,
+    };
     let layer_gen = snapshot.generations.get_layer_gen(dithered.layer);
     for coord in engine_project::filters::processed_coords_needing_spatial_upgrade(
         dithered.coord,
         radius,
+        bounds,
     ) {
         if coord == dithered.coord {
             continue;
@@ -271,7 +286,7 @@ fn wake_spatial_post_after_dithered(state: &AppState, dithered: TileKey, content
             coord,
             stage: CacheStage::Processed,
         };
-        // Only upgrade tiles that already published a Processed (pointwise preview).
+        // Only upgrade tiles that already published a Processed (clamp preview).
         if state.tiles.tile_cache.get_entry(pkey).is_none() {
             continue;
         }
@@ -1428,12 +1443,19 @@ pub fn compute_processed_tile(
                     }
                     let spatial_r = engine_project::filters::post_direct_spatial_radius(&post);
                     let neighborhood = if spatial_r > 0 {
+                        let b = layer.bounds_l0;
                         Some(engine_project::filters::gather_dithered_neighborhood(
                             &state.tiles.tile_cache,
                             key.doc,
                             key.layer,
                             key.coord,
                             spatial_r,
+                            engine_project::filters::NeighborTileBounds {
+                                min_x: b.min_x,
+                                min_y: b.min_y,
+                                max_x: b.max_x,
+                                max_y: b.max_y,
+                            },
                         ))
                     } else {
                         None

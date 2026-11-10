@@ -1,7 +1,9 @@
 //! P3 spatial neighbors: sample across Dithered tiles for Post blur/sharpness.
 //!
-//! When the neighborhood is incomplete, spatial Adjust skips blur/sharpness
-//! (pointwise-only preview). Callers re-run Processed when neighbors land.
+//! Out-of-bounds tile offsets (beyond layer `TileBounds`) are not required.
+//! When an **in-bounds** neighbor is still missing, `complete` is false and
+//! Adjust falls back to in-tile clamp blur; callers may re-run Processed when
+//! that neighbor’s Dithered arrives.
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -171,13 +173,31 @@ pub fn neighbor_tile_offsets(radius_px: i32) -> Vec<(i32, i32)> {
     out
 }
 
+/// Inclusive tile index bounds for the layer (usually `layer.bounds_l0`).
+#[derive(Clone, Copy, Debug)]
+pub struct NeighborTileBounds {
+    pub min_x: u32,
+    pub min_y: u32,
+    pub max_x: u32,
+    pub max_y: u32,
+}
+
+impl NeighborTileBounds {
+    pub fn contains(&self, x: u32, y: u32) -> bool {
+        x >= self.min_x && x <= self.max_x && y >= self.min_y && y <= self.max_y
+    }
+}
+
 /// Gather fresh Dithered tiles for `center` into a [`SpatialNeighborhood`].
+///
+/// Tile coords outside `bounds` are ignored (edge clamp), not treated as missing.
 pub fn gather_dithered_neighborhood(
     cache: &TileCache,
     doc: u32,
     layer: u32,
     center: TileCoord,
     radius_px: i32,
+    bounds: NeighborTileBounds,
 ) -> SpatialNeighborhood {
     let mut tiles = HashMap::new();
     let mut complete = true;
@@ -185,13 +205,18 @@ pub fn gather_dithered_neighborhood(
         let tx = center.x as i32 + dx;
         let ty = center.y as i32 + dy;
         if tx < 0 || ty < 0 {
-            // Outside document — not required; edge clamp handles it.
+            continue;
+        }
+        let ux = tx as u32;
+        let uy = ty as u32;
+        if !bounds.contains(ux, uy) {
+            // Past the layer — not required.
             continue;
         }
         let coord = TileCoord {
             level: center.level,
-            x: tx as u32,
-            y: ty as u32,
+            x: ux,
+            y: uy,
         };
         let key = TileKey {
             doc,
@@ -200,7 +225,6 @@ pub fn gather_dithered_neighborhood(
             stage: CacheStage::Dithered,
         };
         if !engine_tiles::tile_fresh(cache, key) {
-            // Center must exist for Post-from-Dithered; missing neighbor ⇒ incomplete.
             if dx != 0 || dy != 0 {
                 complete = false;
             }
@@ -212,7 +236,6 @@ pub fn gather_dithered_neighborhood(
             complete = false;
         }
     }
-    // Center missing ⇒ treat as incomplete (caller should not use this path).
     if !tiles.contains_key(&(center.x, center.y)) {
         complete = false;
     }
@@ -228,6 +251,7 @@ pub fn gather_dithered_neighborhood(
 pub fn processed_coords_needing_spatial_upgrade(
     completed: TileCoord,
     radius_px: i32,
+    bounds: NeighborTileBounds,
 ) -> Vec<TileCoord> {
     let mut out = Vec::new();
     for (dx, dy) in neighbor_tile_offsets(radius_px) {
@@ -236,10 +260,15 @@ pub fn processed_coords_needing_spatial_upgrade(
         if tx < 0 || ty < 0 {
             continue;
         }
+        let ux = tx as u32;
+        let uy = ty as u32;
+        if !bounds.contains(ux, uy) {
+            continue;
+        }
         out.push(TileCoord {
             level: completed.level,
-            x: tx as u32,
-            y: ty as u32,
+            x: ux,
+            y: uy,
         });
     }
     out
@@ -348,7 +377,7 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_neighborhood_skips_blur() {
+    fn incomplete_neighborhood_falls_back_to_clamp_blur() {
         let mut tile = PixelTile::new();
         for y in 0..TILE_FULL_SIZE as u32 {
             for x in 0..TILE_FULL_SIZE as u32 {
@@ -375,16 +404,60 @@ mod tests {
             complete: false,
             radius_px: 12,
         };
-        let mut pointwise = PixelTile::new();
+        let mut via_incomplete = PixelTile::new();
         with_spatial_neighbors(Some(&incomplete), || {
             crate::filters::adjust::apply_adjust_into(
-                &tile, coord, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, &mut pointwise,
+                &tile, coord, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, &mut via_incomplete,
             );
         });
-        // Blur skipped ⇒ step edge preserved (pointwise identity).
-        let mid = TILE_FULL_SIZE as u32 / 2;
-        assert!((pointwise.at(mid - 1, HALO + 8, 0) - 0.0).abs() < 1e-6);
-        assert!((pointwise.at(mid, HALO + 8, 0) - 1.0).abs() < 1e-6);
+        let mut clamped = PixelTile::new();
+        crate::filters::adjust::apply_adjust_into(
+            &tile, coord, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, &mut clamped,
+        );
+        assert_eq!(
+            via_incomplete.data, clamped.data,
+            "incomplete neighborhood must use in-tile clamp blur"
+        );
+    }
+
+    #[test]
+    fn gather_ignores_oob_neighbors_as_complete() {
+        use engine_tiles::TileCache;
+        let cache = TileCache::new(16 * 1024 * 1024);
+        // Single-tile document: every Moore neighbor is OOB except center.
+        let center = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
+        let mut center_tile = PixelTile::new();
+        center_tile.set(HALO, HALO, 0, 0.5);
+        center_tile.set(HALO, HALO, 3, 1.0);
+        let key = TileKey {
+            doc: 1,
+            layer: 1,
+            coord: center,
+            stage: CacheStage::Dithered,
+        };
+        assert!(cache.insert_fresh_gen(key, Arc::new(center_tile), 0));
+        let nb = gather_dithered_neighborhood(
+            &cache,
+            1,
+            1,
+            center,
+            12,
+            NeighborTileBounds {
+                min_x: 0,
+                min_y: 0,
+                max_x: 0,
+                max_y: 0,
+            },
+        );
+        assert!(
+            nb.complete,
+            "document-edge tiles must not require OOB neighbors"
+        );
+        assert_eq!(nb.tiles.len(), 1);
     }
 
     #[test]

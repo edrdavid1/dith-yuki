@@ -75,7 +75,8 @@ pub use fusion::{
 pub use glitch::{GlitchFilter, GlitchParams, GlitchSubOp};
 pub use neighbors::{
     gather_dithered_neighborhood, post_direct_spatial_radius,
-    processed_coords_needing_spatial_upgrade, with_spatial_neighbors, SpatialNeighborhood,
+    processed_coords_needing_spatial_upgrade, with_spatial_neighbors, NeighborTileBounds,
+    SpatialNeighborhood,
 };
 pub use levels::LevelsFilter;
 pub use palette_quantize::PaletteQuantizeFilter;
