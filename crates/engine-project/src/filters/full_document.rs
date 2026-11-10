@@ -1565,6 +1565,11 @@ mod tests {
         use crate::filter::{DitherColorMode, DitherModeV2, DitherParamsV2};
         use crate::filters::layer_has_mixed_ed_topology;
 
+        // Avoid racing `leader_panic_wakes_waiters_and_slot_retries` (FD_TEST_PANIC).
+        let _gate = FD_TEST_GATE.lock().unwrap_or_else(|e| e.into_inner());
+        FD_TEST_PANIC.store(false, Ordering::Relaxed);
+        FD_TEST_COMPUTE_DELAY_MS.store(0, Ordering::Relaxed);
+
         let w = 64u32;
         let h = 64u32;
         let mut doc = Document::new(DocumentId::new(1), w, h);
