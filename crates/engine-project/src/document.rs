@@ -362,6 +362,7 @@ impl Document {
             | FilterParams::Exposure { .. }
             | FilterParams::HighlightsShadows { .. }
             | FilterParams::TemperatureTint { .. }
+            | FilterParams::Vibrance { .. }
             | FilterParams::Ascii(_)
             | FilterParams::Placeholder(_) => false,
         }
