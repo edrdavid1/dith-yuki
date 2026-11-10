@@ -98,6 +98,8 @@ Rule:
 - Alternative: preview on a box-downsample of `Dithered L0` (not real dither, but acceptable for scrubbing Curves). Decide after measuring how it looks; for Post that should not change the character of dither, this is a reasonable compromise.
 - Visually, when the level drops, the image blurs slightly during drag. This is expected, but it is worth showing in the very first prototype rather than learning from users.
 
+**Status (2026-11-11):** Implemented on `task/4-lever1-pyramid-scrub` — Post-only refresh (`preserve_dithered`) uses `schedule_post_scrub_viewport`: if every visible tile already has clean `Dithered`, enqueue `Processed` at the viewport level; otherwise expand to visible L0 only. Never calls `schedule_ed_for_viewport` on Post scrub. Viewport Composite uses `classify_priority` (center-out) instead of flat Immediate.
+
 ## On the P4 fork (CPU composite)
 
 The answer about `TileCanvas.tsx` changes the estimate: GPU Post in Rust (wgpu) requires a GPU composite first, which is a month. But there is a cheaper alternative worth evaluating when deciding on P4:

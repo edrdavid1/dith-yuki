@@ -10,8 +10,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use engine_tiles::coords::GlobalCoordSigned;
-use engine_tiles::{PixelTile, TileCoord, TileKey, HALO, TILE_SIZE};
 use engine_tiles::{CacheStage, TileCache};
+use engine_tiles::{PixelTile, TileCoord, TileKey, HALO, TILE_SIZE};
 
 use crate::filter::{FilterInstance, FilterParams};
 
@@ -39,10 +39,7 @@ pub fn with_spatial_neighbors<R>(
 }
 
 pub fn current_spatial_neighbors() -> Option<&'static SpatialNeighborhood> {
-    SPATIAL_NEIGHBORS.with(|cell| {
-        cell.get()
-            .map(|p| unsafe { &*p })
-    })
+    SPATIAL_NEIGHBORS.with(|cell| cell.get().map(|p| unsafe { &*p }))
 }
 
 /// Fresh Dithered tiles around `center` for cross-tile spatial Post.
@@ -106,8 +103,7 @@ impl SpatialNeighborhood {
             x: tx,
             y: ty,
         };
-        let (mut lx, mut ly) =
-            GlobalCoordSigned { x: gx, y: gy }.to_local_with_halo(owner, HALO);
+        let (mut lx, mut ly) = GlobalCoordSigned { x: gx, y: gy }.to_local_with_halo(owner, HALO);
         let max = TILE_FULL_SIZE - 1;
         lx = lx.clamp(0, max);
         ly = ly.clamp(0, max);
@@ -381,7 +377,16 @@ mod tests {
         let mut tile = PixelTile::new();
         for y in 0..TILE_FULL_SIZE as u32 {
             for x in 0..TILE_FULL_SIZE as u32 {
-                tile.set(x, y, 0, if x < TILE_FULL_SIZE as u32 / 2 { 0.0 } else { 1.0 });
+                tile.set(
+                    x,
+                    y,
+                    0,
+                    if x < TILE_FULL_SIZE as u32 / 2 {
+                        0.0
+                    } else {
+                        1.0
+                    },
+                );
                 tile.set(x, y, 1, 0.0);
                 tile.set(x, y, 2, 0.0);
                 tile.set(x, y, 3, 1.0);
@@ -393,11 +398,14 @@ mod tests {
             y: 0,
         };
         let mut tiles = HashMap::new();
-        tiles.insert((0, 0), Arc::new({
-            let mut t = PixelTile::new();
-            t.copy_from(&tile);
-            t
-        }));
+        tiles.insert(
+            (0, 0),
+            Arc::new({
+                let mut t = PixelTile::new();
+                t.copy_from(&tile);
+                t
+            }),
+        );
         let incomplete = SpatialNeighborhood {
             center: coord,
             tiles,
@@ -407,12 +415,28 @@ mod tests {
         let mut via_incomplete = PixelTile::new();
         with_spatial_neighbors(Some(&incomplete), || {
             crate::filters::adjust::apply_adjust_into(
-                &tile, coord, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, &mut via_incomplete,
+                &tile,
+                coord,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                &mut via_incomplete,
             );
         });
         let mut clamped = PixelTile::new();
         crate::filters::adjust::apply_adjust_into(
-            &tile, coord, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, &mut clamped,
+            &tile,
+            coord,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            &mut clamped,
         );
         assert_eq!(
             via_incomplete.data, clamped.data,
@@ -478,16 +502,22 @@ mod tests {
             y: 0,
         };
         let mut tiles = HashMap::new();
-        tiles.insert((0, 0), Arc::new({
-            let mut t = PixelTile::new();
-            t.copy_from(&left);
-            t
-        }));
-        tiles.insert((1, 0), Arc::new({
-            let mut t = PixelTile::new();
-            t.copy_from(&right);
-            t
-        }));
+        tiles.insert(
+            (0, 0),
+            Arc::new({
+                let mut t = PixelTile::new();
+                t.copy_from(&left);
+                t
+            }),
+        );
+        tiles.insert(
+            (1, 0),
+            Arc::new({
+                let mut t = PixelTile::new();
+                t.copy_from(&right);
+                t
+            }),
+        );
         let nb = SpatialNeighborhood {
             center: coord,
             tiles,
@@ -496,12 +526,28 @@ mod tests {
         };
         let mut clamped = PixelTile::new();
         crate::filters::adjust::apply_adjust_into(
-            &left, coord, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, &mut clamped,
+            &left,
+            coord,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            &mut clamped,
         );
         let mut crossed = PixelTile::new();
         with_spatial_neighbors(Some(&nb), || {
             crate::filters::adjust::apply_adjust_into(
-                &left, coord, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, &mut crossed,
+                &left,
+                coord,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                &mut crossed,
             );
         });
         let edge_x = HALO + TILE_SIZE - 1;

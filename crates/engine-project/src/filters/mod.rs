@@ -24,13 +24,13 @@ pub mod ed_wrap_padding;
 pub mod full_document;
 pub mod fusion;
 pub mod glitch;
-pub mod neighbors;
 pub mod glow;
 pub mod gpu_bridge;
 pub mod gpu_graph;
 pub mod hilbert;
 pub mod levels;
 pub mod line_screen;
+pub mod neighbors;
 pub mod neutral;
 pub mod ostromoukhov_table;
 pub mod palette_quantize;
@@ -73,12 +73,12 @@ pub use fusion::{
     set_post_fusion_enabled_for_test,
 };
 pub use glitch::{GlitchFilter, GlitchParams, GlitchSubOp};
+pub use levels::LevelsFilter;
 pub use neighbors::{
     gather_dithered_neighborhood, post_direct_spatial_radius,
     processed_coords_needing_spatial_upgrade, with_spatial_neighbors, NeighborTileBounds,
     SpatialNeighborhood,
 };
-pub use levels::LevelsFilter;
 pub use palette_quantize::PaletteQuantizeFilter;
 
 // Re-export filter types from filter.rs for convenience
