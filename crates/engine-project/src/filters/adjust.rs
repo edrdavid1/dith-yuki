@@ -23,6 +23,42 @@ fn luminance(r: f32, g: f32, b: f32) -> f32 {
     0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
+#[inline]
+pub(crate) fn adjust_sat_m(saturation: f32) -> f32 {
+    if saturation >= 0.0 {
+        1.0 + saturation * 2.0
+    } else {
+        1.0 + saturation
+    }
+}
+
+/// Pointwise Adjust leg (contrast → brightness → saturation). Shared with P3 fusion.
+#[inline]
+pub(crate) fn apply_adjust_point_rgba(
+    mut r: f32,
+    mut g: f32,
+    mut b: f32,
+    a: f32,
+    contrast_m: f32,
+    brightness: f32,
+    sat_m: f32,
+) -> (f32, f32, f32, f32) {
+    r = (r - 0.5) * contrast_m + 0.5 + brightness;
+    g = (g - 0.5) * contrast_m + 0.5 + brightness;
+    b = (b - 0.5) * contrast_m + 0.5 + brightness;
+
+    let lum = luminance(r, g, b);
+    r = lum + (r - lum) * sat_m;
+    g = lum + (g - lum) * sat_m;
+    b = lum + (b - lum) * sat_m;
+
+    if a <= 1e-6 {
+        (0.0, 0.0, 0.0, a)
+    } else {
+        (r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0), a)
+    }
+}
+
 /// Hash → roughly uniform [0, 1).
 fn hash01(x: u32, y: u32, ch: u32) -> f32 {
     let mut n = x
@@ -35,6 +71,21 @@ fn hash01(x: u32, y: u32, ch: u32) -> f32 {
 }
 
 fn box_blur_rgb(src: &PixelTile, radius: i32) -> PixelTile {
+    box_blur_rgb_sampled(src, radius, |sx, sy, c| {
+        let w = TILE_FULL_SIZE as i32;
+        let h = TILE_FULL_SIZE as i32;
+        let sx = sx.clamp(0, w - 1) as u32;
+        let sy = sy.clamp(0, h - 1) as u32;
+        src.at(sx, sy, c)
+    })
+}
+
+/// Separable box blur; `sample(lx, ly, channel)` may read outside the tile.
+fn box_blur_rgb_sampled(
+    src: &PixelTile,
+    radius: i32,
+    sample: impl Fn(i32, i32, u32) -> f32,
+) -> PixelTile {
     let w = TILE_FULL_SIZE as i32;
     let h = TILE_FULL_SIZE as i32;
     let radius = radius.clamp(1, MAX_BLUR_RADIUS);
@@ -46,9 +97,8 @@ fn box_blur_rgb(src: &PixelTile, radius: i32) -> PixelTile {
         for x in 0..w {
             let mut acc = [0.0f32; 3];
             for dx in -radius..=radius {
-                let sx = (x + dx).clamp(0, w - 1) as u32;
                 for c in 0..3u32 {
-                    acc[c as usize] += src.at(sx, y as u32, c);
+                    acc[c as usize] += sample(x + dx, y, c);
                 }
             }
             for c in 0..3u32 {
@@ -62,9 +112,86 @@ fn box_blur_rgb(src: &PixelTile, radius: i32) -> PixelTile {
         for x in 0..w {
             let mut acc = [0.0f32; 3];
             for dy in -radius..=radius {
-                let sy = (y + dy).clamp(0, h - 1) as u32;
                 for c in 0..3u32 {
-                    acc[c as usize] += tmp.at(x as u32, sy, c);
+                    // Vertical pass reads the horizontal temp; out-of-range still
+                    // uses `sample` only for the source alpha path — tmp is local.
+                    let sy = (y + dy).clamp(0, h - 1);
+                    acc[c as usize] += tmp.at(x as u32, sy as u32, c);
+                }
+            }
+            for c in 0..3u32 {
+                out.set(x as u32, y as u32, c, acc[c as usize] / diam);
+            }
+            out.set(x as u32, y as u32, 3, src.at(x as u32, y as u32, 3));
+        }
+    }
+    out
+}
+
+fn box_blur_rgb_with_neighbors(
+    src: &PixelTile,
+    coord: TileCoord,
+    radius: i32,
+    neighbors: &crate::filters::neighbors::SpatialNeighborhood,
+) -> PixelTile {
+    // Expand horizontal pass across tiles via global sampling. Vertical pass
+    // stays on the temp tile (same as in-tile blur); for R ≪ TILE_SIZE the
+    // dominant seam is horizontal/vertical edge of the *source*, which the
+    // first pass already fixed. For full cross-tile vertical we sample src
+    // neighbors into an expanded approach: both passes use global sample of
+    // a virtually premultiplied field — rebuild via per-tap global read of src.
+    let radius = radius.clamp(1, MAX_BLUR_RADIUS);
+    let diam = (2 * radius + 1) as f32;
+    let w = TILE_FULL_SIZE as i32;
+    let h = TILE_FULL_SIZE as i32;
+    let mut tmp = PixelTile::new();
+    let mut out = PixelTile::new();
+
+    let sample_src = |lx: i32, ly: i32, c: u32| -> f32 {
+        if lx >= 0 && ly >= 0 && lx < w && ly < h {
+            return src.at(lx as u32, ly as u32, c);
+        }
+        let gx = coord.x as i32 * TILE_SIZE as i32 + lx - HALO as i32;
+        let gy = coord.y as i32 * TILE_SIZE as i32 + ly - HALO as i32;
+        neighbors.sample_rgba(gx, gy)[c as usize]
+    };
+
+    for y in 0..h {
+        for x in 0..w {
+            let mut acc = [0.0f32; 3];
+            for dx in -radius..=radius {
+                for c in 0..3u32 {
+                    acc[c as usize] += sample_src(x + dx, y, c);
+                }
+            }
+            for c in 0..3u32 {
+                tmp.set(x as u32, y as u32, c, acc[c as usize] / diam);
+            }
+            tmp.set(x as u32, y as u32, 3, src.at(x as u32, y as u32, 3));
+        }
+    }
+
+    // Vertical: sample tmp locally when in-range; for out-of-range Y, recompute
+    // the horizontal blur tap at (x, y+dy) from source neighbors (no tmp there).
+    for y in 0..h {
+        for x in 0..w {
+            let mut acc = [0.0f32; 3];
+            for dy in -radius..=radius {
+                let sy = y + dy;
+                if sy >= 0 && sy < h {
+                    for c in 0..3u32 {
+                        acc[c as usize] += tmp.at(x as u32, sy as u32, c);
+                    }
+                } else {
+                    let mut row = [0.0f32; 3];
+                    for dx in -radius..=radius {
+                        for c in 0..3u32 {
+                            row[c as usize] += sample_src(x + dx, sy, c);
+                        }
+                    }
+                    for c in 0..3u32 {
+                        acc[c as usize] += row[c as usize] / diam;
+                    }
                 }
             }
             for c in 0..3u32 {
@@ -157,52 +284,50 @@ pub fn apply_adjust_into(
         return;
     }
     let contrast_m = 1.0 + contrast;
-    let sat_m = if saturation >= 0.0 {
-        1.0 + saturation * 2.0
-    } else {
-        1.0 + saturation
-    };
+    let sat_m = adjust_sat_m(saturation);
 
     for y in 0..TILE_FULL_SIZE {
         for x in 0..TILE_FULL_SIZE {
-            let mut r = tile.at(x, y, 0);
-            let mut g = tile.at(x, y, 1);
-            let mut b = tile.at(x, y, 2);
-            let a = tile.at(x, y, 3);
-
-            r = (r - 0.5) * contrast_m + 0.5 + brightness;
-            g = (g - 0.5) * contrast_m + 0.5 + brightness;
-            b = (b - 0.5) * contrast_m + 0.5 + brightness;
-
-            let lum = luminance(r, g, b);
-            r = lum + (r - lum) * sat_m;
-            g = lum + (g - lum) * sat_m;
-            b = lum + (b - lum) * sat_m;
-
-            dst.set(x, y, 0, r.clamp(0.0, 1.0));
-            dst.set(x, y, 1, g.clamp(0.0, 1.0));
-            dst.set(x, y, 2, b.clamp(0.0, 1.0));
+            let (r, g, b, a) = apply_adjust_point_rgba(
+                tile.at(x, y, 0),
+                tile.at(x, y, 1),
+                tile.at(x, y, 2),
+                tile.at(x, y, 3),
+                contrast_m,
+                brightness,
+                sat_m,
+            );
+            dst.set(x, y, 0, r);
+            dst.set(x, y, 1, g);
+            dst.set(x, y, 2, b);
             dst.set(x, y, 3, a);
-            if a <= 1e-6 {
-                dst.set(x, y, 0, 0.0);
-                dst.set(x, y, 1, 0.0);
-                dst.set(x, y, 2, 0.0);
-            }
         }
     }
 
     let blur_r = blur_radius_px(blur);
-    if blur_r > 0 || sharpness > 1e-6 {
+    let neighbors = crate::filters::neighbors::current_spatial_neighbors();
+    // Incomplete neighborhood: skip spatial (pointwise preview); upgrade later.
+    let skip_spatial = matches!(neighbors, Some(n) if !n.complete);
+
+    if !skip_spatial && (blur_r > 0 || sharpness > 1e-6) {
         premultiply_rgb(dst);
     }
-    if blur_r > 0 {
-        let blurred = box_blur_rgb(dst, blur_r);
+    if !skip_spatial && blur_r > 0 {
+        let blurred = if let Some(n) = neighbors.filter(|n| n.complete) {
+            box_blur_rgb_with_neighbors(dst, coord, blur_r, n)
+        } else {
+            box_blur_rgb(dst, blur_r)
+        };
         dst.copy_from(&blurred);
     }
 
-    if sharpness > 1e-6 {
+    if !skip_spatial && sharpness > 1e-6 {
         let sharp_r = blur_r.max(SHARP_RADIUS);
-        let blurred = box_blur_rgb(dst, sharp_r);
+        let blurred = if let Some(n) = neighbors.filter(|n| n.complete) {
+            box_blur_rgb_with_neighbors(dst, coord, sharp_r, n)
+        } else {
+            box_blur_rgb(dst, sharp_r)
+        };
         let amount = sharpness * 1.5;
         let mut sharpened = PixelTile::new();
         for y in 0..TILE_FULL_SIZE {
@@ -217,7 +342,7 @@ pub fn apply_adjust_into(
         }
         dst.copy_from(&sharpened);
     }
-    if blur_r > 0 || sharpness > 1e-6 {
+    if !skip_spatial && (blur_r > 0 || sharpness > 1e-6) {
         unpremultiply_rgb(dst);
     }
 

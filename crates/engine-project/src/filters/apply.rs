@@ -263,7 +263,9 @@ pub fn apply_enabled_filters_to_tile(
     debug_assert_ne!(front.data.as_ptr(), back.data.as_ptr());
 
     let mut applied_any = false;
-    for filter in enabled {
+    let mut idx = 0;
+    while idx < enabled.len() {
+        let filter = enabled[idx];
         if crate::filters::neutral::filter_is_neutral_for_apply(filter) {
             verify_neutral_passthrough_tile(
                 &front,
@@ -280,8 +282,25 @@ pub fn apply_enabled_filters_to_tile(
                 park,
             )?;
             crate::post_barrier_metrics::record_neutral_apply_skip();
+            idx += 1;
             continue;
         }
+
+        let run = crate::filters::fusion::fusible_run_len(&enabled[idx..]);
+        if run >= 2 {
+            engine_tiles::with_raw_block_sampling(!applied_any, || {
+                crate::filters::fusion::apply_fused_pointwise_into(
+                    &front,
+                    &mut back,
+                    &enabled[idx..idx + run],
+                )
+            })?;
+            std::mem::swap(&mut front, &mut back);
+            applied_any = true;
+            idx += run;
+            continue;
+        }
+
         let opacity = filter.effective_opacity();
         if opacity >= 1.0 && filter.blend_mode == BlendMode::Normal {
             engine_tiles::with_raw_block_sampling(!applied_any, || {
@@ -330,6 +349,7 @@ pub fn apply_enabled_filters_to_tile(
 
         std::mem::swap(&mut front, &mut back);
         applied_any = true;
+        idx += 1;
     }
 
     // Result leaves in `front`; spare returns to the park for the next tile.
@@ -555,7 +575,9 @@ pub fn apply_enabled_filters_row_strip(
 
     let mut applied_any = false;
     let mut captured_barrier = false;
-    for filter in enabled {
+    let mut idx = 0;
+    while idx < enabled.len() {
+        let filter = enabled[idx];
         if crate::filters::neutral::filter_is_neutral_for_apply(filter) {
             if crate::post_cache::neutral_verify_enabled() {
                 for i in 0..n {
@@ -585,8 +607,42 @@ pub fn apply_enabled_filters_row_strip(
                 }
             }
             crate::post_barrier_metrics::record_neutral_apply_skip();
+            idx += 1;
             continue;
         }
+
+        let run = crate::filters::fusion::fusible_run_len(&enabled[idx..]);
+        if run >= 2 {
+            for i in 0..n {
+                abort_if_post_cancelled(cancel_check)?;
+                engine_tiles::with_raw_block_sampling(!applied_any, || {
+                    crate::filters::fusion::apply_fused_pointwise_into(
+                        &front[i],
+                        &mut back[i],
+                        &enabled[idx..idx + run],
+                    )
+                })?;
+            }
+            std::mem::swap(&mut front, &mut back);
+            applied_any = true;
+            // Barrier capture: only if the last filter in the fused run is the barrier.
+            if !captured_barrier {
+                if let Some(bid) = barrier_id {
+                    let last = enabled[idx + run - 1];
+                    if last.id.as_u128() == bid {
+                        if let Some((mid, _)) = dithered_out.as_mut() {
+                            for i in 0..n {
+                                mid[i].copy_from(&front[i]);
+                            }
+                        }
+                        captured_barrier = true;
+                    }
+                }
+            }
+            idx += run;
+            continue;
+        }
+
         let opacity = filter.effective_opacity();
         if filter.requires_full_row {
             let params = dither_params_for_ed(filter)?;
@@ -677,6 +733,7 @@ pub fn apply_enabled_filters_row_strip(
                 }
             }
         }
+        idx += 1;
     }
 
     for i in 0..n {
@@ -800,7 +857,9 @@ pub fn apply_enabled_filters_column_strip(
     let mut applied_any = false;
     let mut captured_barrier = false;
 
-    for filter in enabled {
+    let mut idx = 0;
+    while idx < enabled.len() {
+        let filter = enabled[idx];
         if crate::filters::neutral::filter_is_neutral_for_apply(filter) {
             if crate::post_cache::neutral_verify_enabled() {
                 for i in 0..n {
@@ -830,8 +889,41 @@ pub fn apply_enabled_filters_column_strip(
                 }
             }
             crate::post_barrier_metrics::record_neutral_apply_skip();
+            idx += 1;
             continue;
         }
+
+        let run = crate::filters::fusion::fusible_run_len(&enabled[idx..]);
+        if run >= 2 {
+            for i in 0..n {
+                abort_if_post_cancelled(cancel_check)?;
+                engine_tiles::with_raw_block_sampling(!applied_any, || {
+                    crate::filters::fusion::apply_fused_pointwise_into(
+                        &front[i],
+                        &mut back[i],
+                        &enabled[idx..idx + run],
+                    )
+                })?;
+            }
+            std::mem::swap(&mut front, &mut back);
+            applied_any = true;
+            if !captured_barrier {
+                if let Some(bid) = barrier_id {
+                    let last = enabled[idx + run - 1];
+                    if last.id.as_u128() == bid {
+                        if let Some((mid, _)) = dithered_out.as_mut() {
+                            for i in 0..n {
+                                mid[i].copy_from(&front[i]);
+                            }
+                        }
+                        captured_barrier = true;
+                    }
+                }
+            }
+            idx += run;
+            continue;
+        }
+
         let opacity = filter.effective_opacity();
         if filter.requires_full_column {
             let params = dither_params_for_ed(filter)?;
@@ -922,6 +1014,7 @@ pub fn apply_enabled_filters_column_strip(
                 }
             }
         }
+        idx += 1;
     }
 
     for i in 0..n {
@@ -1501,6 +1594,85 @@ mod tests {
         })
         .unwrap();
         assert_eq!(with_neutral.data, active_only.data);
+    }
+
+    #[test]
+    fn fused_pointwise_stack_matches_sequential() {
+        use engine_tiles::with_tile_buffer_park;
+
+        let mut tile = PixelTile::new();
+        for y in 0..260 {
+            for x in 0..260 {
+                let u = x as f32 / 259.0;
+                let v = y as f32 / 259.0;
+                tile.set(x, y, 0, u);
+                tile.set(x, y, 1, v);
+                tile.set(x, y, 2, (u + v) * 0.5);
+                tile.set(x, y, 3, if (x + y) % 19 == 0 { 0.0 } else { 1.0 });
+            }
+        }
+        let adjust = FilterInstance::new(
+            FilterKind::Adjust,
+            FilterParams::Adjust {
+                contrast: 0.2,
+                brightness: -0.05,
+                saturation: 0.15,
+                blur: 0.0,
+                sharpness: 0.0,
+                noise: 0.0,
+            },
+        );
+        let curves = FilterInstance::new(
+            FilterKind::Curves,
+            FilterParams::Curves {
+                curve: vec![(0.0, 0.0), (0.5, 0.55), (1.0, 1.0)],
+                channel: CurveChannel::All,
+            },
+        );
+        let levels = FilterInstance::new(
+            FilterKind::Levels,
+            FilterParams::Levels {
+                input_black: 0.05,
+                input_white: 0.95,
+                gamma: 1.25,
+                output_black: 0.0,
+                output_white: 1.0,
+                channel_r: true,
+                channel_g: true,
+                channel_b: true,
+            },
+        );
+        let enabled = [&adjust, &curves, &levels];
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
+        let (pc, lc, tc, doc, rs) = make_caches_and_doc();
+        let blocks = BlockRepresentativeCache::new();
+        let layer_id = LayerId::new(1);
+
+        crate::filters::fusion::set_post_fusion_enabled_for_test(true);
+        let fused = with_tile_buffer_park(|park| {
+            apply_enabled_filters_to_tile(
+                &tile, &enabled, layer_id, coord, &pc, &lc, &tc, &doc, &rs, &blocks, None, park,
+            )
+        })
+        .unwrap();
+
+        crate::filters::fusion::set_post_fusion_enabled_for_test(false);
+        let sequential = with_tile_buffer_park(|park| {
+            apply_enabled_filters_to_tile(
+                &tile, &enabled, layer_id, coord, &pc, &lc, &tc, &doc, &rs, &blocks, None, park,
+            )
+        })
+        .unwrap();
+        crate::filters::fusion::set_post_fusion_enabled_for_test(true);
+
+        assert_eq!(
+            fused.data, sequential.data,
+            "P3 fusion must be bitwise invisible vs sequential"
+        );
     }
 
     #[test]

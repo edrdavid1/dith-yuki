@@ -85,7 +85,7 @@ Post(tile) = sequential filters with opacity/blend
 | **P0** | Metrics only | No |
 | **P1** | Keys, events, barrier, `classify_change`; **clearing unchanged** | No (log + tests) |
 | **P2** | `Dithered` cache + Post-from-cache + **clearing rule change**; feature flag + verify mode | Yes (behind flag) |
-| **P3** | Fusion for **new** pointwise ops; spatial neighbors from cache | Yes |
+| **P3** | Fusion for **new** pointwise ops; spatial neighbors from cache | Yes — on `task/3-p3-pass-fusion`: (1) opaque Normal Adjust/Curves/Levels fusion (`DITHER_POST_FUSION=0`); (2) Dithered-neighbor blur/sharp for Post Adjust when it is the first non-neutral Post filter; incomplete neighborhood → pointwise preview + upgrade wake. |
 | **P4** | GPU Post | Yes |
 | **P5** | New Post filters / Grade UI | Yes |
 

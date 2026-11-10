@@ -118,7 +118,7 @@ If most projects have one layer with dither and Post on top, this option may be 
 2. Lever 2
 3. Lever 4 (`rayon` over tiles), if Post is currently sequential: check whether it may already be done
 4. Lever 1 with the rule above
-5. Lever 5 (pass fusion)
+5. Lever 5 (pass fusion) — **done on `task/3-p3-pass-fusion`**: fuse consecutive opaque Normal Adjust (pointwise-only) / Curves / Levels into one pixel loop; kill-switch `DITHER_POST_FUSION=0`. Same branch: P3 Dithered-neighbor Adjust blur/sharp (direct Post only; Curves-before-Adjust still in-tile clamp).
 6. Measurement, then decision on P4 with both alternatives on the table
 
 **Composite path (answered):** CPU — `TileCanvas` IPC tile bytes → worker → `CanvasRenderingContext2D` / `drawImage`. Rust/wgpu Post implies GPU composite first; webview shader Post is the lighter fork for single-layer stacks.

@@ -69,9 +69,9 @@ pub use post_barrier::{
 };
 pub use post_barrier_metrics::{
     filter_index as post_filter_index, is_post_cancelled, note_stack_change, post_cancelled,
-    record_clear as record_post_clear, record_ed_run_started, record_post_tile_cancelled,
-    record_post_tile_discarded_after_compute, snapshot as post_barrier_counters,
-    PostBarrierCounters, POST_CANCELLED_REASON,
+    record_clear as record_post_clear, record_ed_run_started, record_post_fusion_run,
+    record_post_tile_cancelled, record_post_tile_discarded_after_compute,
+    snapshot as post_barrier_counters, PostBarrierCounters, POST_CANCELLED_REASON,
 };
 pub use post_cache::{
     init_from_env as init_post_cache_from_env, neutral_verify_enabled, post_cache_enabled,

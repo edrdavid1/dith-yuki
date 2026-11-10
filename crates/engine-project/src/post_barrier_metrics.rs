@@ -18,6 +18,8 @@ static NEUTRAL_APPLY_SKIPPED: AtomicU64 = AtomicU64::new(0);
 static ED_RUNS_STARTED: AtomicU64 = AtomicU64::new(0);
 static POST_TILES_CANCELLED: AtomicU64 = AtomicU64::new(0);
 static POST_TILES_DISCARDED_AFTER_COMPUTE: AtomicU64 = AtomicU64::new(0);
+static POST_FUSION_RUNS: AtomicU64 = AtomicU64::new(0);
+static POST_FUSION_FILTERS: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy)]
 pub struct PostBarrierCounters {
@@ -30,6 +32,8 @@ pub struct PostBarrierCounters {
     pub ed_runs_started: u64,
     pub post_tiles_cancelled: u64,
     pub post_tiles_discarded_after_compute: u64,
+    pub post_fusion_runs: u64,
+    pub post_fusion_filters: u64,
 }
 
 pub fn snapshot() -> PostBarrierCounters {
@@ -44,11 +48,19 @@ pub fn snapshot() -> PostBarrierCounters {
         post_tiles_cancelled: POST_TILES_CANCELLED.load(Ordering::Relaxed),
         post_tiles_discarded_after_compute: POST_TILES_DISCARDED_AFTER_COMPUTE
             .load(Ordering::Relaxed),
+        post_fusion_runs: POST_FUSION_RUNS.load(Ordering::Relaxed),
+        post_fusion_filters: POST_FUSION_FILTERS.load(Ordering::Relaxed),
     }
 }
 
 pub fn record_neutral_apply_skip() {
     NEUTRAL_APPLY_SKIPPED.fetch_add(1, Ordering::Relaxed);
+}
+
+/// One fused pointwise run covering `filter_count` consecutive filters.
+pub fn record_post_fusion_run(filter_count: u64) {
+    POST_FUSION_RUNS.fetch_add(1, Ordering::Relaxed);
+    POST_FUSION_FILTERS.fetch_add(filter_count, Ordering::Relaxed);
 }
 
 pub fn record_ed_run_started() {
