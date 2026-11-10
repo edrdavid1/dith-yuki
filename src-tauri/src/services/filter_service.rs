@@ -209,6 +209,7 @@ impl FilterService {
             "TemperatureTint" => FilterKind::TemperatureTint,
             "Vibrance" => FilterKind::Vibrance,
             "Hue" => FilterKind::Hue,
+            "Clarity" => FilterKind::Clarity,
             "Ascii" => FilterKind::Ascii,
             other => filter_kind_for_algorithm_id(other).ok_or_else(|| {
                 AppError::InvalidOperation(format!("Invalid filter kind: {other}"))
@@ -511,6 +512,14 @@ impl FilterService {
                         .and_then(|v| v.as_f64())
                         .unwrap_or(0.0) as f32;
                     FilterParams::Hue { degrees }
+                }
+                FilterKind::Clarity => {
+                    let amount = req
+                        .params
+                        .get("amount")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as f32;
+                    FilterParams::Clarity { amount }
                 }
                 FilterKind::Ascii => {
                     let p: engine_project::filter::AsciiParams =
@@ -1342,6 +1351,19 @@ impl FilterService {
                         .map(|v| v as f32)
                         .unwrap_or(existing);
                     FilterParams::Hue { degrees }
+                }
+                FilterKind::Clarity => {
+                    let existing = match existing_params {
+                        FilterParams::Clarity { amount } => amount,
+                        _ => 0.0,
+                    };
+                    let amount = req
+                        .params
+                        .get("amount")
+                        .and_then(|v| v.as_f64())
+                        .map(|v| v as f32)
+                        .unwrap_or(existing);
+                    FilterParams::Clarity { amount }
                 }
                 FilterKind::Ascii => {
                     let p: engine_project::filter::AsciiParams =

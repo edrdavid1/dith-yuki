@@ -364,6 +364,7 @@ impl Document {
             | FilterParams::TemperatureTint { .. }
             | FilterParams::Vibrance { .. }
             | FilterParams::Hue { .. }
+            | FilterParams::Clarity { .. }
             | FilterParams::Ascii(_)
             | FilterParams::Placeholder(_) => false,
         }

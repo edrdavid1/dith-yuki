@@ -70,7 +70,7 @@ fn hash01(x: u32, y: u32, ch: u32) -> f32 {
     (n as f32) / (u32::MAX as f32)
 }
 
-fn box_blur_rgb(src: &PixelTile, radius: i32) -> PixelTile {
+pub(crate) fn box_blur_rgb(src: &PixelTile, radius: i32) -> PixelTile {
     box_blur_rgb_sampled(src, radius, |sx, sy, c| {
         let w = TILE_FULL_SIZE as i32;
         let h = TILE_FULL_SIZE as i32;
@@ -130,7 +130,7 @@ fn box_blur_rgb_sampled(
 
 /// Stitch a padded RGBA field once, then run a fast separable blur (no per-tap
 /// HashMap lookups). Output is the center `TILE_FULL_SIZE²` region.
-fn box_blur_rgb_with_neighbors(
+pub(crate) fn box_blur_rgb_with_neighbors(
     src: &PixelTile,
     coord: TileCoord,
     radius: i32,
@@ -219,7 +219,7 @@ fn blur_radius_px(blur: f32) -> i32 {
         .clamp(1.0, MAX_BLUR_RADIUS as f32) as i32
 }
 
-fn premultiply_rgb(tile: &mut PixelTile) {
+pub(crate) fn premultiply_rgb(tile: &mut PixelTile) {
     for y in 0..TILE_FULL_SIZE {
         for x in 0..TILE_FULL_SIZE {
             let a = tile.at(x, y, 3);
@@ -230,7 +230,7 @@ fn premultiply_rgb(tile: &mut PixelTile) {
     }
 }
 
-fn unpremultiply_rgb(tile: &mut PixelTile) {
+pub(crate) fn unpremultiply_rgb(tile: &mut PixelTile) {
     for y in 0..TILE_FULL_SIZE {
         for x in 0..TILE_FULL_SIZE {
             let a = tile.at(x, y, 3);
