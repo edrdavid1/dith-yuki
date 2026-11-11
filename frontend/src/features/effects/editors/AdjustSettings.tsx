@@ -17,19 +17,19 @@ function num(params: Record<string, unknown>, key: string, fallback: number): nu
   return Number.isFinite(v) ? v : fallback;
 }
 
-/** Basic Adjustments: WB + Tone + Color. Detail / Blur-Noise are separate layers. */
+/** Basic Adjustments: White Balance + Tone + Color. */
 function AdjustSettings({ params, onUpdate }: AdjustSettingsProps) {
-  const exposure = clampParam(num(params, 'exposure', 0), -5, 5);
-  const contrast = clampParam(num(params, 'contrast', 0), -1, 1);
-  const brightness = clampParam(num(params, 'brightness', 0), -1, 1);
-  const shadows = clampParam(num(params, 'shadows', 0), -1, 1);
-  const highlights = clampParam(num(params, 'highlights', 0), -1, 1);
   const temperature = clampParam(num(params, 'temperature', 0), -1, 1);
   const tint = clampParam(num(params, 'tint', 0), -1, 1);
+  const exposure = clampParam(num(params, 'exposure', 0), -5, 5);
+  const contrast = clampParam(num(params, 'contrast', 0), -1, 1);
+  const highlights = clampParam(num(params, 'highlights', 0), -1, 1);
+  const shadows = clampParam(num(params, 'shadows', 0), -1, 1);
   const saturation = clampParam(num(params, 'saturation', 0), -1, 1);
   const vibrance = clampParam(num(params, 'vibrance', 0), -1, 1);
   const hue = clampParam(num(params, 'hue', 0), -180, 180);
-  // Legacy spatial knobs may still live on Adjust from old docs — preserve on update.
+  // Legacy knobs may still live on Adjust from old docs — preserve on update.
+  const brightness = clampParam(num(params, 'brightness', 0), -1, 1);
   const blur = clampParam(num(params, 'blur', 0), 0, 2);
   const sharpness = clampParam(num(params, 'sharpness', 0), 0, 2);
   const noise = clampParam(num(params, 'noise', 0), 0, 1);
@@ -37,16 +37,16 @@ function AdjustSettings({ params, onUpdate }: AdjustSettingsProps) {
 
   const emit = (overrides: Record<string, unknown>) => {
     onUpdate({
-      exposure: overrides.exposure ?? exposure,
-      contrast: overrides.contrast ?? contrast,
-      brightness: overrides.brightness ?? brightness,
-      shadows: overrides.shadows ?? shadows,
-      highlights: overrides.highlights ?? highlights,
       temperature: overrides.temperature ?? temperature,
       tint: overrides.tint ?? tint,
+      exposure: overrides.exposure ?? exposure,
+      contrast: overrides.contrast ?? contrast,
+      highlights: overrides.highlights ?? highlights,
+      shadows: overrides.shadows ?? shadows,
       saturation: overrides.saturation ?? saturation,
       vibrance: overrides.vibrance ?? vibrance,
       hue: overrides.hue ?? hue,
+      brightness,
       blur,
       sharpness,
       noise,
@@ -56,96 +56,98 @@ function AdjustSettings({ params, onUpdate }: AdjustSettingsProps) {
 
   return (
     <div className={cn('effect-settings-content')}>
-      <Slider
-        label="Exposure"
-        value={exposure}
-        min={-5}
-        max={5}
-        step={0.01}
-        decimals={2}
-        onChange={(v) => emit({ exposure: clampParam(v, -5, 5) })}
-      />
-      <Slider
-        label="Contrast"
-        value={contrast}
-        min={-1}
-        max={1}
-        step={0.01}
-        decimals={2}
-        onChange={(v) => emit({ contrast: clampParam(v, -1, 1) })}
-      />
-      <Slider
-        label="Brightness"
-        value={brightness}
-        min={-1}
-        max={1}
-        step={0.01}
-        decimals={2}
-        onChange={(v) => emit({ brightness: clampParam(v, -1, 1) })}
-      />
-      <Slider
-        label="Shadows"
-        value={shadows}
-        min={-1}
-        max={1}
-        step={0.01}
-        decimals={2}
-        onChange={(v) => emit({ shadows: clampParam(v, -1, 1) })}
-      />
-      <Slider
-        label="Highlights"
-        value={highlights}
-        min={-1}
-        max={1}
-        step={0.01}
-        decimals={2}
-        onChange={(v) => emit({ highlights: clampParam(v, -1, 1) })}
-      />
-      <Slider
-        label="Temperature"
-        value={temperature}
-        min={-1}
-        max={1}
-        step={0.01}
-        decimals={2}
-        onChange={(v) => emit({ temperature: clampParam(v, -1, 1) })}
-      />
-      <Slider
-        label="Tint"
-        value={tint}
-        min={-1}
-        max={1}
-        step={0.01}
-        decimals={2}
-        onChange={(v) => emit({ tint: clampParam(v, -1, 1) })}
-      />
-      <Slider
-        label="Saturation"
-        value={saturation}
-        min={-1}
-        max={1}
-        step={0.01}
-        decimals={2}
-        onChange={(v) => emit({ saturation: clampParam(v, -1, 1) })}
-      />
-      <Slider
-        label="Vibrance"
-        value={vibrance}
-        min={-1}
-        max={1}
-        step={0.01}
-        decimals={2}
-        onChange={(v) => emit({ vibrance: clampParam(v, -1, 1) })}
-      />
-      <Slider
-        label="Hue"
-        value={hue}
-        min={-180}
-        max={180}
-        step={1}
-        decimals={0}
-        onChange={(v) => emit({ hue: clampParam(v, -180, 180) })}
-      />
+      <section className={cn('adjust-section')} aria-label="White Balance">
+        <h3 className={cn('adjust-section-title')}>White Balance</h3>
+        <Slider
+          label="Temperature"
+          value={temperature}
+          min={-1}
+          max={1}
+          step={0.01}
+          decimals={2}
+          onChange={(v) => emit({ temperature: clampParam(v, -1, 1) })}
+        />
+        <Slider
+          label="Tint"
+          value={tint}
+          min={-1}
+          max={1}
+          step={0.01}
+          decimals={2}
+          onChange={(v) => emit({ tint: clampParam(v, -1, 1) })}
+        />
+      </section>
+
+      <section className={cn('adjust-section')} aria-label="Tone">
+        <h3 className={cn('adjust-section-title')}>Tone</h3>
+        <Slider
+          label="Exposure"
+          value={exposure}
+          min={-5}
+          max={5}
+          step={0.01}
+          decimals={2}
+          onChange={(v) => emit({ exposure: clampParam(v, -5, 5) })}
+        />
+        <Slider
+          label="Contrast"
+          value={contrast}
+          min={-1}
+          max={1}
+          step={0.01}
+          decimals={2}
+          onChange={(v) => emit({ contrast: clampParam(v, -1, 1) })}
+        />
+        <Slider
+          label="Highlights"
+          value={highlights}
+          min={-1}
+          max={1}
+          step={0.01}
+          decimals={2}
+          onChange={(v) => emit({ highlights: clampParam(v, -1, 1) })}
+        />
+        <Slider
+          label="Shadows"
+          value={shadows}
+          min={-1}
+          max={1}
+          step={0.01}
+          decimals={2}
+          onChange={(v) => emit({ shadows: clampParam(v, -1, 1) })}
+        />
+      </section>
+
+      <section className={cn('adjust-section')} aria-label="Color">
+        <h3 className={cn('adjust-section-title')}>Color</h3>
+        <Slider
+          label="Saturation"
+          value={saturation}
+          min={-1}
+          max={1}
+          step={0.01}
+          decimals={2}
+          onChange={(v) => emit({ saturation: clampParam(v, -1, 1) })}
+        />
+        <Slider
+          label="Vibrance"
+          value={vibrance}
+          min={-1}
+          max={1}
+          step={0.01}
+          decimals={2}
+          onChange={(v) => emit({ vibrance: clampParam(v, -1, 1) })}
+        />
+        <Slider
+          label="Hue"
+          value={hue}
+          min={-180}
+          max={180}
+          step={1}
+          decimals={0}
+          onChange={(v) => emit({ hue: clampParam(v, -180, 180) })}
+        />
+      </section>
     </div>
   );
 }
