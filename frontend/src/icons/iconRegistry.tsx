@@ -114,7 +114,7 @@ const PIXEL_ICONS: Record<string, PixelIcon> = {
   'effect.hue': Reload,
   'effect.clarity': Frame,
   'effect.detail': Frame,
-  'effect.blur_noise': Expand,
+  'effect.blur_noise': Sparkles,
   'effect.ascii': LetterA,
   'effect.nearest_color': Pipette,
   'effect.palette_quantize': ColorsSwatch,
