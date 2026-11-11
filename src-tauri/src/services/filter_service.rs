@@ -226,6 +226,7 @@ impl FilterService {
             "Vibrance" => FilterKind::Vibrance,
             "Hue" => FilterKind::Hue,
             "Clarity" => FilterKind::Clarity,
+            "Detail" => FilterKind::Detail,
             "BlurNoise" => FilterKind::BlurNoise,
             "Ascii" => FilterKind::Ascii,
             other => filter_kind_for_algorithm_id(other).ok_or_else(|| {
@@ -551,6 +552,19 @@ impl FilterService {
                         .and_then(|v| v.as_f64())
                         .unwrap_or(0.0) as f32;
                     FilterParams::Clarity { amount }
+                }
+                FilterKind::Detail => {
+                    let clarity = req
+                        .params
+                        .get("clarity")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as f32;
+                    let sharpness = req
+                        .params
+                        .get("sharpness")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as f32;
+                    FilterParams::Detail { clarity, sharpness }
                 }
                 FilterKind::BlurNoise => {
                     let blur = req
@@ -1464,6 +1478,25 @@ impl FilterService {
                         .map(|v| v as f32)
                         .unwrap_or(existing);
                     FilterParams::Clarity { amount }
+                }
+                FilterKind::Detail => {
+                    let (ec, es) = match existing_params {
+                        FilterParams::Detail { clarity, sharpness } => (clarity, sharpness),
+                        _ => (0.0, 0.0),
+                    };
+                    let clarity = req
+                        .params
+                        .get("clarity")
+                        .and_then(|v| v.as_f64())
+                        .map(|v| v as f32)
+                        .unwrap_or(ec);
+                    let sharpness = req
+                        .params
+                        .get("sharpness")
+                        .and_then(|v| v.as_f64())
+                        .map(|v| v as f32)
+                        .unwrap_or(es);
+                    FilterParams::Detail { clarity, sharpness }
                 }
                 FilterKind::BlurNoise => {
                     let (eb, en) = match existing_params {

@@ -99,6 +99,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "crosshatch_dither",
         "crt",
         "curves",
+        "detail",
         "dispersed_dot_ordered",
         "exposure",
         "fan93",
@@ -277,8 +278,8 @@ fn register_all_ids_unique() {
     );
     assert_eq!(
         all_ids.len(),
-        53,
-        "must register all 53 built-in algorithms"
+        54,
+        "must register all 54 built-in algorithms"
     );
 }
 

@@ -18,6 +18,7 @@ mod cmyk_halftone;
 mod crosshatch_dither;
 mod crt;
 mod curves;
+mod detail;
 mod dispersed_dot_ordered;
 mod error_diffusion;
 mod exposure;
@@ -103,6 +104,7 @@ pub fn register_all(registry: &mut AlgorithmRegistry) {
     registry.register(Box::new(vibrance::Vibrance));
     registry.register(Box::new(hue::Hue));
     registry.register(Box::new(clarity::Clarity));
+    registry.register(Box::new(detail::Detail));
     registry.register(Box::new(blur_noise::BlurNoise));
     registry.register(Box::new(glitch::Glitch));
     registry.register(Box::new(error_diffusion::ZhouFang));

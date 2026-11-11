@@ -93,22 +93,6 @@ const SCHEMA: &[ParamField] = &[
         default: 0.0,
         step: Some(1.0),
     },
-    ParamField::Slider {
-        key: "clarity",
-        label: "Clarity",
-        min: -1.0,
-        max: 1.0,
-        default: 0.0,
-        step: Some(0.01),
-    },
-    ParamField::Slider {
-        key: "sharpness",
-        label: "Sharpness",
-        min: 0.0,
-        max: 2.0,
-        default: 0.0,
-        step: None,
-    },
 ];
 
 #[derive(Deserialize)]

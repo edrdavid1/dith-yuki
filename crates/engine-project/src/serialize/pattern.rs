@@ -137,6 +137,7 @@ fn min_version_for_kind(kind: FilterKind) -> Option<&'static str> {
         | FilterKind::Vibrance
         | FilterKind::Hue
         | FilterKind::Clarity
+        | FilterKind::Detail
         | FilterKind::BlurNoise => Some("2.0.6"),
     }
 }

@@ -17,6 +17,7 @@ import RGBSettings from './editors/RGBSettings';
 import GlowSettings from './editors/GlowSettings';
 import CrtSettings from './editors/CrtSettings';
 import AdjustSettings from './editors/AdjustSettings';
+import DetailSettings from './editors/DetailSettings';
 import BlurNoiseSettings from './editors/BlurNoiseSettings';
 import AsciiSettings from './editors/AsciiSettings';
 import AlgorithmSettingsPanel from './AlgorithmSettingsPanel';
@@ -94,6 +95,8 @@ function EffectIcon({ type }: { type: EffectType }) {
       return <Icon name="effect.crt" width={20} height={20} />;
     case 'Adjust':
       return <Icon name="effect.adjust" width={20} height={20} />;
+    case 'Detail':
+      return <Icon name="effect.detail" width={20} height={20} />;
     case 'BlurNoise':
       return <Icon name="effect.blur_noise" width={20} height={20} />;
     case 'Ascii':
@@ -144,7 +147,8 @@ const ALGO_TO_EFFECT: Record<string, { type: EffectType; label: string }> = {
   curves: { type: 'Curves', label: 'Curves' },
   glow: { type: 'Glow', label: 'Glow' },
   crt: { type: 'CRT', label: 'CRT' },
-  adjust: { type: 'Adjust', label: 'Adjust' },
+  adjust: { type: 'Adjust', label: 'Adjustments' },
+  detail: { type: 'Detail', label: 'Detail' },
   blur_noise: { type: 'BlurNoise', label: 'Blur / Noise' },
   ascii: { type: 'Ascii', label: 'ASCII' },
 };
@@ -446,6 +450,8 @@ export default function EffectSettingsPanel({
         return <CrtSettings params={params} onUpdate={handleUpdate} />;
       case 'Adjust':
         return <AdjustSettings params={params} onUpdate={handleUpdate} />;
+      case 'Detail':
+        return <DetailSettings params={params} onUpdate={handleUpdate} />;
       case 'BlurNoise':
         return <BlurNoiseSettings params={params} onUpdate={handleUpdate} />;
       default:

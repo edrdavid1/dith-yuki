@@ -17,6 +17,7 @@ function num(params: Record<string, unknown>, key: string, fallback: number): nu
   return Number.isFinite(v) ? v : fallback;
 }
 
+/** Basic Adjustments: WB + Tone + Color. Detail / Blur-Noise are separate layers. */
 function AdjustSettings({ params, onUpdate }: AdjustSettingsProps) {
   const exposure = clampParam(num(params, 'exposure', 0), -5, 5);
   const contrast = clampParam(num(params, 'contrast', 0), -1, 1);
@@ -28,11 +29,11 @@ function AdjustSettings({ params, onUpdate }: AdjustSettingsProps) {
   const saturation = clampParam(num(params, 'saturation', 0), -1, 1);
   const vibrance = clampParam(num(params, 'vibrance', 0), -1, 1);
   const hue = clampParam(num(params, 'hue', 0), -180, 180);
-  const clarity = clampParam(num(params, 'clarity', 0), -1, 1);
-  const sharpness = clampParam(num(params, 'sharpness', 0), 0, 2);
-  // Legacy blur/noise may still live on Adjust from old docs — preserve on update.
+  // Legacy spatial knobs may still live on Adjust from old docs — preserve on update.
   const blur = clampParam(num(params, 'blur', 0), 0, 2);
+  const sharpness = clampParam(num(params, 'sharpness', 0), 0, 2);
   const noise = clampParam(num(params, 'noise', 0), 0, 1);
+  const clarity = clampParam(num(params, 'clarity', 0), -1, 1);
 
   const emit = (overrides: Record<string, unknown>) => {
     onUpdate({
@@ -46,10 +47,10 @@ function AdjustSettings({ params, onUpdate }: AdjustSettingsProps) {
       saturation: overrides.saturation ?? saturation,
       vibrance: overrides.vibrance ?? vibrance,
       hue: overrides.hue ?? hue,
-      clarity: overrides.clarity ?? clarity,
-      sharpness: overrides.sharpness ?? sharpness,
       blur,
+      sharpness,
       noise,
+      clarity,
     });
   };
 
@@ -144,24 +145,6 @@ function AdjustSettings({ params, onUpdate }: AdjustSettingsProps) {
         step={1}
         decimals={0}
         onChange={(v) => emit({ hue: clampParam(v, -180, 180) })}
-      />
-      <Slider
-        label="Clarity"
-        value={clarity}
-        min={-1}
-        max={1}
-        step={0.01}
-        decimals={2}
-        onChange={(v) => emit({ clarity: clampParam(v, -1, 1) })}
-      />
-      <Slider
-        label="Sharpness"
-        value={sharpness}
-        min={0}
-        max={2}
-        step={0.05}
-        decimals={2}
-        onChange={(v) => emit({ sharpness: clampParam(v, 0, 2) })}
       />
     </div>
   );
