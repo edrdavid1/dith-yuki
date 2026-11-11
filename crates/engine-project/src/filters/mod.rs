@@ -18,6 +18,7 @@ pub mod context;
 pub mod crosshatch;
 pub mod crt;
 pub mod curves;
+pub mod detail;
 pub mod dither;
 pub mod dither_diffusion;
 pub mod dither_ordered;

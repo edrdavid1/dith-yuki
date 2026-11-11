@@ -111,7 +111,7 @@ First Post filters after P2: **Curves**, **Levels** (pointwise, LUT-friendly), *
 
 Priorities: Curves, Levels, Exposure, Highlights/Shadows, Temperature/Tint → detail → LUT. Keep existing `Adjust` as its own filter for compatibility; decide Grade-as-tabs vs separate filters **before** P5 to avoid a second format migration.
 
-**P5 decision (2026-11-11):** tone/color/detail on **Adjust**; **Blur / Noise** is its own stack layer. Standalone Exposure/HS/Temp/Vibrance/Hue/Clarity remain loadable but hidden from the chooser. Next: utilities / LUT.
+**P5 decision (2026-11-11):** **Adjustments** = WB + Tone + Color (one global layer). **Detail** = Clarity + Sharpness (own layer, Post by default — sharpening after dither). **Blur / Noise** separate. Color-as-masked layer later if needed. Standalone Exposure/HS/Temp/Vibrance/Hue/Clarity remain loadable but hidden from the chooser. Next: utilities / LUT.
 
 ### Notes on current Adjust
 

@@ -16,6 +16,7 @@ const TAGGED_KEYS = [
   'Vibrance',
   'Hue',
   'Clarity',
+  'Detail',
   'BlurNoise',
 ] as const;
 

@@ -17,6 +17,7 @@ contrast_aware_y
 crosshatch_dither
 crt
 curves
+detail
 dispersed_dot_ordered
 exposure
 fan93

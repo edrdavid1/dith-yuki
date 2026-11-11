@@ -53,6 +53,7 @@ export type IconName =
   | 'effect.vibrance'
   | 'effect.hue'
   | 'effect.clarity'
+  | 'effect.detail'
   | 'effect.blur_noise'
   | 'effect.ascii'
   | 'effect.nearest_color'
@@ -112,6 +113,7 @@ const PIXEL_ICONS: Record<string, PixelIcon> = {
   'effect.vibrance': Sparkles,
   'effect.hue': Reload,
   'effect.clarity': Frame,
+  'effect.detail': Frame,
   'effect.blur_noise': Expand,
   'effect.ascii': LetterA,
   'effect.nearest_color': Pipette,

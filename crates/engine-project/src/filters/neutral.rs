@@ -102,6 +102,7 @@ fn params_are_identity(filter: &FilterInstance) -> bool {
         FilterParams::Vibrance { amount } => *amount == 0.0,
         FilterParams::Hue { degrees } => *degrees == 0.0,
         FilterParams::Clarity { amount } => *amount == 0.0,
+        FilterParams::Detail { clarity, sharpness } => *clarity == 0.0 && *sharpness == 0.0,
         FilterParams::BlurNoise { blur, noise } => *blur == 0.0 && *noise == 0.0,
         _ => false,
     }

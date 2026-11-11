@@ -13,6 +13,7 @@ export type EffectType =
   | 'Glow'
   | 'CRT'
   | 'Adjust'
+  | 'Detail'
   | 'BlurNoise'
   | 'Ascii';
 
@@ -28,6 +29,7 @@ export const EFFECT_TO_FILTER_KIND: Record<EffectType, FilterKind> = {
   Glow: 'Glow',
   CRT: 'Crt',
   Adjust: 'Adjust',
+  Detail: 'Detail',
   BlurNoise: 'BlurNoise',
   Ascii: 'Ascii',
 };
@@ -100,10 +102,15 @@ export const EFFECT_DEFAULTS: Record<EffectType, Record<string, unknown>> = {
     saturation: 0,
     vibrance: 0,
     hue: 0,
+    // Legacy spatial fields preserved for old docs.
     clarity: 0,
     sharpness: 0,
     blur: 0,
     noise: 0,
+  },
+  Detail: {
+    clarity: 0,
+    sharpness: 0,
   },
   BlurNoise: {
     blur: 0,
@@ -253,6 +260,8 @@ export function specForAlgorithm(
       return { kind: 'Glow', params: { ...EFFECT_DEFAULTS.Glow } };
     case 'adjust':
       return { kind: 'Adjust', params: { ...EFFECT_DEFAULTS.Adjust } };
+    case 'detail':
+      return { kind: 'Detail', params: { ...EFFECT_DEFAULTS.Detail } };
     case 'blur_noise':
       return { kind: 'BlurNoise', params: { ...EFFECT_DEFAULTS.BlurNoise } };
     case 'exposure':
@@ -260,9 +269,11 @@ export function specForAlgorithm(
     case 'temperature_tint':
     case 'vibrance':
     case 'hue':
-    case 'clarity':
-      // P5 grade knobs live on Adjust — one stack layer.
+      // Basic WB/Tone/Color live on Adjustments.
       return { kind: 'Adjust', params: { ...EFFECT_DEFAULTS.Adjust } };
+    case 'clarity':
+      // Standalone clarity → Detail layer.
+      return { kind: 'Detail', params: { ...EFFECT_DEFAULTS.Detail } };
     case 'curves':
       return { kind: 'Curves', params: { ...EFFECT_DEFAULTS.Curves } };
     case 'glitch':

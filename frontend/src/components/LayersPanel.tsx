@@ -110,13 +110,14 @@ function filterKindToName(
     case 'Levels': return 'RGB Channels';
     case 'Glow': return 'Glow';
     case 'Crt': return 'CRT';
-    case 'Adjust': return 'Adjust';
+    case 'Adjust': return 'Adjustments';
     case 'Exposure': return 'Exposure';
     case 'HighlightsShadows': return 'Highlights / Shadows';
     case 'TemperatureTint': return 'Temperature / Tint';
     case 'Vibrance': return 'Vibrance';
     case 'Hue': return 'Hue';
     case 'Clarity': return 'Clarity';
+    case 'Detail': return 'Detail';
     case 'BlurNoise': return 'Blur / Noise';
     case 'Ascii': return 'ASCII';
     case 'PaletteQuantize': return 'Palette Quantize';
@@ -148,6 +149,7 @@ function filterKindToIconType(
     case 'Vibrance': return 'vibrance';
     case 'Hue': return 'hue';
     case 'Clarity': return 'clarity';
+    case 'Detail': return 'detail';
     case 'BlurNoise': return 'blur_noise';
     case 'Ascii': return 'ascii';
     case 'PaletteQuantize': return 'palette_quantize';
@@ -813,6 +815,8 @@ function EffectIconSvg({ type }: { type: string }) {
       return <Icon name="effect.hue" width={18} height={18} />;
     case 'clarity':
       return <Icon name="effect.clarity" width={18} height={18} />;
+    case 'detail':
+      return <Icon name="effect.detail" width={18} height={18} />;
     case 'blur_noise':
       return <Icon name="effect.blur_noise" width={18} height={18} />;
     case 'ascii':

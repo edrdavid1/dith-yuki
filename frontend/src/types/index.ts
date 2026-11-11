@@ -32,6 +32,7 @@ export type FilterKind =
   | 'Vibrance'
   | 'Hue'
   | 'Clarity'
+  | 'Detail'
   | 'BlurNoise'
   | 'Ascii';
 
@@ -51,6 +52,7 @@ export type FilterParams =
   | VibranceParams
   | HueParams
   | ClarityParams
+  | DetailParams
   | BlurNoiseParams
   | AsciiParams;
 
@@ -279,6 +281,14 @@ export interface ClarityParams {
   type: 'Clarity';
   /** Midtone local contrast (−1 … 1). 0 = identity. */
   amount: number;
+}
+
+export interface DetailParams {
+  type: 'Detail';
+  /** Midtone local contrast (−1 … 1). 0 = identity. */
+  clarity: number;
+  /** Unsharp amount (0 … 2). 0 = skip. */
+  sharpness: number;
 }
 
 export interface BlurNoiseParams {

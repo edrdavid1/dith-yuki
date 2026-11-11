@@ -365,6 +365,7 @@ impl Document {
             | FilterParams::Vibrance { .. }
             | FilterParams::Hue { .. }
             | FilterParams::Clarity { .. }
+            | FilterParams::Detail { .. }
             | FilterParams::BlurNoise { .. }
             | FilterParams::Ascii(_)
             | FilterParams::Placeholder(_) => false,
