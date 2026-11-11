@@ -9,6 +9,8 @@
 //! - Adjust: Contrast / brightness / saturation / blur / sharpness / noise
 //! - Exposure: EV stops (pointwise Post)
 //! - Clarity: midtone local contrast (spatial Post)
+//! - Invert / Threshold / Posterize: pointwise Post utilities
+//! - CubeLut: Adobe `.cube` 3D LUT (pointwise Post)
 
 pub mod adjust;
 pub mod ascii_job;
@@ -17,6 +19,7 @@ pub mod clarity;
 pub mod context;
 pub mod crosshatch;
 pub mod crt;
+pub mod cube_lut;
 pub mod curves;
 pub mod detail;
 pub mod dither;
@@ -36,15 +39,18 @@ pub mod gpu_graph;
 pub mod highlights_shadows;
 pub mod hilbert;
 pub mod hue;
+pub mod invert;
 pub mod levels;
 pub mod line_screen;
 pub mod neighbors;
 pub mod neutral;
 pub mod ostromoukhov_table;
 pub mod palette_quantize;
+pub mod posterize;
 pub mod random_dot_stipple;
 pub mod riemersma;
 pub mod temperature_tint;
+pub mod threshold;
 pub mod vibrance;
 pub mod void_and_cluster;
 pub mod voronoi_stipple;

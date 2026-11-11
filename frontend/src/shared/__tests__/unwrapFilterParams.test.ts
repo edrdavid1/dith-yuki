@@ -59,4 +59,10 @@ describe('unwrapFilterParams', () => {
     ).toEqual({ temperature: 0.3, tint: -0.2 });
     expect(unwrapFilterParams({ Vibrance: { amount: 0.5 } }).amount).toBe(0.5);
   });
+
+  it('flattens P5 utility tags (Invert / Threshold / Posterize)', () => {
+    expect(unwrapFilterParams({ Invert: {} })).toEqual({});
+    expect(unwrapFilterParams({ Threshold: { threshold: 0.4 } }).threshold).toBe(0.4);
+    expect(unwrapFilterParams({ Posterize: { levels: 6 } }).levels).toBe(6);
+  });
 });

@@ -4,8 +4,9 @@ use crate::document::Document;
 use crate::filter::{DitherModeV2, FilterParams};
 use crate::layer::LayerNode;
 use crate::serialize::assets::{
-    content_hash, materialize_threshold_map, parse_threshold_basename, threshold_map_basename,
-    threshold_map_zip_entry, threshold_maps_cache_dir,
+    content_hash, cube_lut_basename, cube_lut_zip_entry, luts_cache_dir, materialize_cube_lut,
+    materialize_threshold_map, parse_cube_basename, parse_threshold_basename,
+    threshold_map_basename, threshold_map_zip_entry, threshold_maps_cache_dir,
 };
 use crate::serialize::document_dto::DocumentFile;
 use crate::serialize::id_remap::remap_document_file;
@@ -89,6 +90,50 @@ pub fn collect_custom_png_embeds(
     Ok((embeds, path_to_basename))
 }
 
+/// Collect CubeLut embeds for Save (basename → `.cube` bytes).
+pub type CubeLutEmbedMaps = (HashMap<String, Vec<u8>>, HashMap<String, String>);
+
+/// Collect CubeLut embeds for Save (basename → cube bytes).
+pub fn collect_cube_lut_embeds(
+    doc: &Document,
+    read_cube: &mut dyn FnMut(&str) -> Result<Vec<u8>, ProjectError>,
+) -> Result<CubeLutEmbedMaps, ProjectError> {
+    let mut path_to_basename: HashMap<String, String> = HashMap::new();
+    let mut embeds: HashMap<String, Vec<u8>> = HashMap::new();
+
+    fn walk(
+        nodes: &[LayerNode],
+        read_cube: &mut dyn FnMut(&str) -> Result<Vec<u8>, ProjectError>,
+        path_to_basename: &mut HashMap<String, String>,
+        embeds: &mut HashMap<String, Vec<u8>>,
+    ) -> Result<(), ProjectError> {
+        for node in nodes {
+            match node {
+                LayerNode::Leaf(layer) => {
+                    for filter in &layer.filters {
+                        if let FilterParams::CubeLut { path, .. } = &filter.params {
+                            if path.is_empty() || path_to_basename.contains_key(path) {
+                                continue;
+                            }
+                            let bytes = read_cube_file_for_save(path, read_cube)?;
+                            let basename = cube_lut_basename(&bytes);
+                            embeds.insert(basename.clone(), bytes);
+                            path_to_basename.insert(path.clone(), basename);
+                        }
+                    }
+                }
+                LayerNode::Group(g) => {
+                    walk(&g.children, read_cube, path_to_basename, embeds)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    walk(&doc.root, read_cube, &mut path_to_basename, &mut embeds)?;
+    Ok((embeds, path_to_basename))
+}
+
 /// Read threshold PNG for save: filesystem path, or content-addressed cache if
 /// the document still holds a `{hash}.png` basename.
 pub(crate) fn read_threshold_png_for_save(
@@ -107,6 +152,33 @@ pub(crate) fn read_threshold_png_for_save(
             ) {
                 if let Ok(cache_dir) = threshold_maps_cache_dir() {
                     let cached = cache_dir.join(format!("{stem}.png"));
+                    if cached.exists() {
+                        return fs::read(&cached).map_err(|e| ProjectError::Io(e.to_string()));
+                    }
+                }
+            }
+            Err(first_err)
+        }
+    }
+}
+
+/// Read cube LUT for save: filesystem path, or content-addressed cache if the
+/// document still holds a `{hash}.cube` basename.
+pub(crate) fn read_cube_file_for_save(
+    path: &str,
+    read_cube: &mut dyn FnMut(&str) -> Result<Vec<u8>, ProjectError>,
+) -> Result<Vec<u8>, ProjectError> {
+    match read_cube(path) {
+        Ok(bytes) => Ok(bytes),
+        Err(first_err) => {
+            if let Ok(stem) = parse_cube_basename(
+                Path::new(path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(path),
+            ) {
+                if let Ok(cache_dir) = luts_cache_dir() {
+                    let cached = cache_dir.join(format!("{stem}.cube"));
                     if cached.exists() {
                         return fs::read(&cached).map_err(|e| ProjectError::Io(e.to_string()));
                     }
@@ -139,6 +211,26 @@ pub(crate) fn rewrite_custom_png_paths(
     }
 }
 
+pub(crate) fn rewrite_cube_lut_paths(
+    nodes: &mut [LayerNode],
+    path_to_basename: &HashMap<String, String>,
+) {
+    for node in nodes {
+        match node {
+            LayerNode::Leaf(layer) => {
+                for filter in &mut layer.filters {
+                    if let FilterParams::CubeLut { path, .. } = &mut filter.params {
+                        if let Some(b) = path_to_basename.get(path) {
+                            *path = b.clone();
+                        }
+                    }
+                }
+            }
+            LayerNode::Group(g) => rewrite_cube_lut_paths(&mut g.children, path_to_basename),
+        }
+    }
+}
+
 fn rewrite_custom_png_to_synthetic(
     nodes: &mut [LayerNode],
     basename_to_path: &HashMap<String, PathBuf>,
@@ -163,6 +255,37 @@ fn rewrite_custom_png_to_synthetic(
             }
             LayerNode::Group(g) => {
                 rewrite_custom_png_to_synthetic(&mut g.children, basename_to_path)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn rewrite_cube_lut_to_synthetic(
+    nodes: &mut [LayerNode],
+    basename_to_path: &HashMap<String, PathBuf>,
+) -> Result<(), ProjectError> {
+    for node in nodes {
+        match node {
+            LayerNode::Leaf(layer) => {
+                for filter in &mut layer.filters {
+                    if let FilterParams::CubeLut { path, .. } = &mut filter.params {
+                        if path.is_empty() {
+                            continue;
+                        }
+                        let key = Path::new(path.as_str())
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| path.clone());
+                        let Some(synth) = basename_to_path.get(&key) else {
+                            return Err(ProjectError::UnresolvedCubeLut(path.clone()));
+                        };
+                        *path = synth.to_string_lossy().into_owned();
+                    }
+                }
+            }
+            LayerNode::Group(g) => {
+                rewrite_cube_lut_to_synthetic(&mut g.children, basename_to_path)?;
             }
         }
     }
@@ -275,8 +398,29 @@ pub fn open_project_from_bytes(
         Ok(())
     })?;
 
+    // Materialize cube LUTs into the shared content-addressed asset cache.
+    let mut cube_basename_to_synth: HashMap<String, PathBuf> = HashMap::new();
+    collect_cube_lut_basenames_from_file(&file, &mut |basename| {
+        let entry = cube_lut_zip_entry(basename);
+        let bytes = read_cached(&mut reader, &entry)?;
+        let stem = parse_cube_basename(basename).map_err(|e| {
+            ProjectError::InvalidArchive(format!("invalid CubeLut basename '{basename}': {e}"))
+        })?;
+        let actual = content_hash(&bytes);
+        if actual != stem {
+            return Err(ProjectError::HashMismatch {
+                entry: basename.to_string(),
+                actual,
+            });
+        }
+        let path = materialize_cube_lut(&bytes).map_err(|e| ProjectError::Io(e.to_string()))?;
+        cube_basename_to_synth.insert(basename.to_string(), path);
+        Ok(())
+    })?;
+
     let mut remapped = remap_document_file(&file, runtime_doc_id);
     rewrite_custom_png_to_synthetic(&mut remapped.document.root, &basename_to_synth)?;
+    rewrite_cube_lut_to_synthetic(&mut remapped.document.root, &cube_basename_to_synth)?;
 
     // Decode each raw_asset PNG and decompose under remapped LayerId.
     for (old_layer_id, asset_name) in &remapped.raw_assets {
@@ -368,6 +512,39 @@ fn collect_custom_png_basenames_from_file(
     walk(&file.root, visit)
 }
 
+fn collect_cube_lut_basenames_from_file(
+    file: &DocumentFile,
+    visit: &mut dyn FnMut(&str) -> Result<(), ProjectError>,
+) -> Result<(), ProjectError> {
+    fn walk(
+        nodes: &[crate::serialize::document_dto::LayerNodeFile],
+        visit: &mut dyn FnMut(&str) -> Result<(), ProjectError>,
+    ) -> Result<(), ProjectError> {
+        use crate::serialize::document_dto::LayerNodeFile;
+        for node in nodes {
+            match node {
+                LayerNodeFile::Leaf(layer) => {
+                    for filter in &layer.filters {
+                        if let Ok(FilterParams::CubeLut { path, .. }) =
+                            serde_json::from_value::<FilterParams>(filter.params.clone())
+                        {
+                            if !path.is_empty() {
+                                visit(&path)?;
+                            }
+                        }
+                    }
+                }
+                LayerNodeFile::Group(g) => walk(&g.children, visit)?,
+                LayerNodeFile::Unknown(_) => {}
+                #[cfg(feature = "version-drill")]
+                LayerNodeFile::CanaryDrill { .. } => {}
+            }
+        }
+        Ok(())
+    }
+    walk(&file.root, visit)
+}
+
 fn sanitize_document_file_strings(file: &mut DocumentFile) {
     use crate::serialize::document_dto::LayerNodeFile;
     for pal in &mut file.palettes {
@@ -405,6 +582,12 @@ pub(crate) fn chrono_like_now() -> String {
 /// Read a threshold PNG from disk (user or synthetic path) without sandbox —
 /// caller is responsible for sandboxing user paths at the IPC boundary.
 pub fn read_png_file(path: &str) -> Result<Vec<u8>, ProjectError> {
+    fs::read(path).map_err(|e| ProjectError::Io(format!("{path}: {e}")))
+}
+
+/// Read a `.cube` LUT from disk (user or synthetic path) without sandbox —
+/// caller is responsible for sandboxing user paths at the IPC boundary.
+pub fn read_cube_file(path: &str) -> Result<Vec<u8>, ProjectError> {
     fs::read(path).map_err(|e| ProjectError::Io(format!("{path}: {e}")))
 }
 
@@ -639,6 +822,91 @@ mod tests {
                     other => panic!("expected CustomPng, got {other:?}"),
                 },
                 other => panic!("unexpected {other:?}"),
+            },
+            _ => panic!("expected leaf"),
+        }
+    }
+
+    #[test]
+    fn cube_lut_survives_without_original_user_path() {
+        use crate::serialize::archive::ZipArchiveReader;
+        use crate::serialize::assets::cube_lut_basename;
+        use std::fs;
+
+        let w = 16u32;
+        let h = 16u32;
+        let rgba = vec![0.3f32; (w * h * 4) as usize];
+        let cache = TileCache::new(20_000_000);
+        decompose_image_to_tiles(&rgba, w, h, 1, 1, &cache).unwrap();
+
+        let cube = br#"TITLE "Identity"
+LUT_3D_SIZE 2
+0.0 0.0 0.0
+1.0 0.0 0.0
+0.0 1.0 0.0
+1.0 1.0 0.0
+0.0 0.0 1.0
+1.0 0.0 1.0
+0.0 1.0 1.0
+1.0 1.0 1.0
+"#;
+        let home = dirs::home_dir().expect("home");
+        let user_path = home.join(".dither_yuki_test_dyproj").join("identity.cube");
+        fs::create_dir_all(user_path.parent().unwrap()).unwrap();
+        fs::write(&user_path, cube).unwrap();
+        let expected_basename = cube_lut_basename(cube);
+
+        let mut doc = Document::new(DocumentId::new(1), w, h);
+        let mut layer = Layer::new(LayerId::new(1), LayerKind::Raster, w, h);
+        layer.filters.push(FilterInstance::new(
+            FilterKind::CubeLut,
+            FilterParams::CubeLut {
+                path: user_path.to_string_lossy().into_owned(),
+                amount: 1.0,
+            },
+        ));
+        doc.root.push(LayerNode::Leaf(layer));
+
+        let saved = save_project_to_bytes(&doc, &cache, "0.1.0", |_| unreachable!()).unwrap();
+
+        // Zip must carry the embedded cube under assets/luts/.
+        {
+            let mut reader = ZipArchiveReader::open(&saved.zip_bytes).unwrap();
+            let entry = format!("assets/luts/{expected_basename}");
+            let bytes = reader.read_entry(&entry).unwrap();
+            assert_eq!(bytes, cube);
+            let file: DocumentFile =
+                serde_json::from_slice(&reader.read_entry("document.json").unwrap()).unwrap();
+            match &file.root[0] {
+                crate::serialize::document_dto::LayerNodeFile::Leaf(l) => {
+                    let params: FilterParams =
+                        serde_json::from_value(l.filters[0].params.clone()).unwrap();
+                    match params {
+                        FilterParams::CubeLut { path, .. } => {
+                            assert_eq!(path, expected_basename);
+                        }
+                        other => panic!("expected CubeLut in document.json, got {other:?}"),
+                    }
+                }
+                _ => panic!("expected leaf"),
+            }
+        }
+
+        let _ = fs::remove_file(&user_path);
+
+        let staging = TileCache::new(20_000_000);
+        let opened =
+            open_project_from_bytes(&saved.zip_bytes, &staging, DocumentId::new(1)).unwrap();
+        match &opened.document.root[0] {
+            LayerNode::Leaf(l) => match &l.filters[0].params {
+                FilterParams::CubeLut { path, amount } => {
+                    assert_eq!(*amount, 1.0);
+                    assert!(path.contains("asset-cache"));
+                    assert!(path.contains("luts"));
+                    assert!(std::path::Path::new(path).exists());
+                    assert!(path.ends_with(".cube"));
+                }
+                other => panic!("expected CubeLut, got {other:?}"),
             },
             _ => panic!("expected leaf"),
         }

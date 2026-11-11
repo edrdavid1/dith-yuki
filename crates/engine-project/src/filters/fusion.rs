@@ -13,6 +13,13 @@ use crate::filter::{FilterInstance, FilterParams};
 use crate::filters::adjust::{adjust_sat_m, apply_adjust_point_rgba};
 use crate::filters::curves::{CurveChannel, CurvesFilter};
 use crate::filters::exposure::apply_exposure_point_rgba;
+use crate::filters::cube_lut::apply_cube_lut_point_rgba;
+use crate::filters::invert::apply_invert_point_rgba;
+use crate::filters::posterize::apply_posterize_point_rgba;
+use crate::filters::threshold::apply_threshold_point_rgba;
+use engine_color::{global_cube_lut_cache, CubeLut3D};
+use std::path::Path;
+use std::sync::Arc;
 use crate::filters::highlights_shadows::apply_highlights_shadows_point_rgba;
 use crate::filters::hue::apply_hue_point_rgba;
 use crate::filters::levels::LevelsFilter;
@@ -87,7 +94,12 @@ pub fn is_fusible_pointwise(filter: &FilterInstance) -> bool {
         | FilterParams::HighlightsShadows { .. }
         | FilterParams::TemperatureTint { .. }
         | FilterParams::Vibrance { .. }
-        | FilterParams::Hue { .. } => true,
+        | FilterParams::Hue { .. }
+        | FilterParams::Invert {}
+        | FilterParams::Threshold { .. }
+        | FilterParams::Posterize { .. } => true,
+        // Active cube LUT only (neutral ones are skipped before fusion).
+        FilterParams::CubeLut { path, amount } => !path.trim().is_empty() && *amount != 0.0,
         _ => false,
     }
 }
@@ -139,6 +151,17 @@ enum FusibleOp {
     },
     Hue {
         degrees: f32,
+    },
+    Invert,
+    Threshold {
+        threshold: f32,
+    },
+    Posterize {
+        levels: u32,
+    },
+    CubeLut {
+        lut: Arc<CubeLut3D>,
+        amount: f32,
     },
 }
 
@@ -225,6 +248,20 @@ fn build_op(filter: &FilterInstance) -> Result<FusibleOp, EngineError> {
         FilterParams::Hue { degrees } => Ok(FusibleOp::Hue {
             degrees: degrees.clamp(-180.0, 180.0),
         }),
+        FilterParams::Invert {} => Ok(FusibleOp::Invert),
+        FilterParams::Threshold { threshold } => Ok(FusibleOp::Threshold {
+            threshold: threshold.clamp(0.0, 1.0),
+        }),
+        FilterParams::Posterize { levels } => Ok(FusibleOp::Posterize {
+            levels: (*levels).clamp(2, 64),
+        }),
+        FilterParams::CubeLut { path, amount } => {
+            let amount = amount.clamp(0.0, 1.0);
+            let lut = global_cube_lut_cache()
+                .get_or_load(Path::new(path))
+                .map_err(|e| EngineError::invalid_filter_params(e.to_string()))?;
+            Ok(FusibleOp::CubeLut { lut, amount })
+        }
         _ => Err(EngineError::invalid_filter_params(
             "filter is not fusible pointwise",
         )),
@@ -335,6 +372,14 @@ fn apply_op_rgba(op: &FusibleOp, r: f32, g: f32, b: f32, a: f32) -> (f32, f32, f
         }
         FusibleOp::Vibrance { amount } => apply_vibrance_point_rgba(r, g, b, a, *amount),
         FusibleOp::Hue { degrees } => apply_hue_point_rgba(r, g, b, a, *degrees),
+        FusibleOp::Invert => apply_invert_point_rgba(r, g, b, a),
+        FusibleOp::Threshold { threshold } => {
+            apply_threshold_point_rgba(r, g, b, a, *threshold)
+        }
+        FusibleOp::Posterize { levels } => apply_posterize_point_rgba(r, g, b, a, *levels),
+        FusibleOp::CubeLut { lut, amount } => {
+            apply_cube_lut_point_rgba(r, g, b, a, lut.as_ref(), *amount)
+        }
     }
 }
 

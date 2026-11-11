@@ -367,6 +367,10 @@ impl Document {
             | FilterParams::Clarity { .. }
             | FilterParams::Detail { .. }
             | FilterParams::BlurNoise { .. }
+            | FilterParams::Invert {}
+            | FilterParams::Threshold { .. }
+            | FilterParams::Posterize { .. }
+            | FilterParams::CubeLut { .. }
             | FilterParams::Ascii(_)
             | FilterParams::Placeholder(_) => false,
         }

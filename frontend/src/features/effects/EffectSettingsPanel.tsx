@@ -19,6 +19,7 @@ import CrtSettings from './editors/CrtSettings';
 import AdjustSettings from './editors/AdjustSettings';
 import DetailSettings from './editors/DetailSettings';
 import BlurNoiseSettings from './editors/BlurNoiseSettings';
+import CubeLutSettings from './editors/CubeLutSettings';
 import AsciiSettings from './editors/AsciiSettings';
 import AlgorithmSettingsPanel from './AlgorithmSettingsPanel';
 import { useAlgorithmCatalog } from './hooks/useAlgorithmCatalog';
@@ -40,6 +41,28 @@ function chooseOnPointerDown(action: () => void) {
     e.stopPropagation();
     action();
   };
+}
+
+function settingsPanelTitle(
+  filter: FilterInfo,
+  effectType: EffectType | null | undefined
+): string {
+  const mode = unwrapFilterParams(filter.params as unknown as Record<string, unknown>).mode;
+  if (isGlitchFamilyFilter(filter.kind, filter.algorithm_id, mode)) return 'Glitching';
+  if (
+    effectType === 'Dithering' ||
+    (filter.algorithm_id != null && isDitheringAlgorithmId(filter.algorithm_id))
+  ) {
+    return 'Dithering';
+  }
+  if (effectType === 'Ascii' || filter.kind === 'Ascii' || filter.algorithm_id === 'ascii') {
+    return 'ASCII';
+  }
+  if (filter.kind === 'CubeLut' || filter.algorithm_id === 'cube_lut') return 'CUBE LUT';
+  if (filter.kind === 'Invert' || filter.algorithm_id === 'invert') return 'Invert';
+  if (filter.kind === 'Threshold' || filter.algorithm_id === 'threshold') return 'Threshold';
+  if (filter.kind === 'Posterize' || filter.algorithm_id === 'posterize') return 'Posterize';
+  return filter.algorithm_id ?? effectType ?? 'Dithering';
 }
 
 export interface LayerWithFilters {
@@ -131,6 +154,14 @@ function AlgorithmIcon({ algorithmId, category }: { algorithmId: string; categor
       return <Icon name="effect.nearest_color" width={20} height={20} />;
     case 'palette_quantize':
       return <Icon name="effect.palette_quantize" width={20} height={20} />;
+    case 'invert':
+      return <Icon name="effect.invert" width={20} height={20} />;
+    case 'threshold':
+      return <Icon name="effect.threshold" width={20} height={20} />;
+    case 'posterize':
+      return <Icon name="effect.posterize" width={20} height={20} />;
+    case 'cube_lut':
+      return <Icon name="effect.cube_lut" width={20} height={20} />;
     default:
       return <CategoryIcon category={category} />;
   }
@@ -458,6 +489,10 @@ export default function EffectSettingsPanel({
         break;
     }
 
+    if (filter.kind === 'CubeLut' || filter.algorithm_id === 'cube_lut') {
+      return <CubeLutSettings params={params} onUpdate={handleUpdate} />;
+    }
+
     if (filter.algorithm_id) {
       return (
         <AlgorithmSettingsPanel
@@ -479,23 +514,7 @@ export default function EffectSettingsPanel({
     >
       {!hideChrome && (
         <WindowTitlebar
-          title={
-            isGlitchFamilyFilter(
-              filter.kind,
-              filter.algorithm_id,
-              unwrapFilterParams(filter.params as unknown as Record<string, unknown>).mode
-            )
-              ? 'Glitching'
-              : effectType === 'Dithering' ||
-                  (filter.algorithm_id != null &&
-                    isDitheringAlgorithmId(filter.algorithm_id))
-                ? 'Dithering'
-                : effectType === 'Ascii' ||
-                    filter.kind === 'Ascii' ||
-                    filter.algorithm_id === 'ascii'
-                  ? 'ASCII'
-                  : (filter.algorithm_id ?? effectType ?? 'Dithering')
-          }
+          title={settingsPanelTitle(filter, effectType)}
           onMouseDown={onTitleBarMouseDown}
           dockSide={dockSide}
           onMoveToSide={onMoveToSide}

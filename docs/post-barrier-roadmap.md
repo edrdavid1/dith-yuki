@@ -111,7 +111,7 @@ First Post filters after P2: **Curves**, **Levels** (pointwise, LUT-friendly), *
 
 Priorities: Curves, Levels, Exposure, Highlights/Shadows, Temperature/Tint → detail → LUT. Keep existing `Adjust` as its own filter for compatibility; decide Grade-as-tabs vs separate filters **before** P5 to avoid a second format migration.
 
-**P5 decision (2026-11-11):** **Adjustments** = WB + Tone + Color (one global layer). **Detail** = Clarity + Sharpness (own layer, Post by default — sharpening after dither). **Blur / Noise** separate. Color-as-masked layer later if needed. Standalone Exposure/HS/Temp/Vibrance/Hue/Clarity remain loadable but hidden from the chooser. Next: utilities / LUT.
+**P5 decision (2026-11-11):** **Adjustments** = WB + Tone + Color (one global layer). **Detail** = Clarity + Sharpness (own layer, Post by default — sharpening after dither). **Blur / Noise** separate. Color-as-masked layer later if needed. Standalone Exposure/HS/Temp/Vibrance/Hue/Clarity remain loadable but hidden from the chooser. **Utilities (2026-11-11):** Invert / Threshold / Posterize are chooser-visible Post filters (not under stylize). **CUBE LUT (2026-11-11):** `cube_lut` loads Adobe `.cube` 3D tables from a path (cached); amount mix; Post by default. **Embed (2026-11-11):** `.cube` files are content-hashed into `assets/luts/{hash}.cube` on Save (same pattern as CustomPng threshold maps) and materialized under `asset-cache/luts/` on Open.
 
 ### Notes on current Adjust
 

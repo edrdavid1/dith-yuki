@@ -3,7 +3,7 @@
 //! - [`archive`] — zip **write** helpers (read path is [`secure_zip`])
 //! - [`secure_zip`] — sole ZIP read path with limits / allowlist (SPEC §6)
 //! - [`limits`] — archive resource ceilings
-//! - [`assets`] — threshold-map content hashing, embed paths, synthetic materialize
+//! - [`assets`] — threshold-map / cube-LUT content hashing, embed paths, synthetic materialize
 //! - [`migrate`] — per-kind `format_version` gates (`dyproj` vs `dyuki`)
 //! - [`pattern`] — `.dyuki` pack/unpack (placeholders, app_version_min)
 
@@ -30,9 +30,11 @@ pub use archive::{
     ZipArchiveWriter, MIME_DYPROJ, MIME_DYPROJ_LEGACY, MIME_DYUKI, MIME_DYUKI_LEGACY,
 };
 pub use assets::{
-    asset_cache_root, content_hash, materialize_threshold_map, materialize_threshold_map_with_hash,
-    parse_threshold_basename, sha256_hex, threshold_map_basename, threshold_map_zip_entry,
-    threshold_maps_cache_dir, AssetsError, THRESHOLD_MAPS_PREFIX,
+    asset_cache_root, content_hash, cube_lut_basename, cube_lut_zip_entry, luts_cache_dir,
+    materialize_cube_lut, materialize_cube_lut_with_hash, materialize_threshold_map,
+    materialize_threshold_map_with_hash, parse_cube_basename, parse_threshold_basename, sha256_hex,
+    threshold_map_basename, threshold_map_zip_entry, threshold_maps_cache_dir, AssetsError,
+    LUTS_PREFIX, THRESHOLD_MAPS_PREFIX,
 };
 pub use document_dto::{filter_from_file, filter_to_file, DocumentFile, FilterInstanceFile};
 pub use features::{
@@ -71,8 +73,9 @@ pub use pixels::{
     FORBIDDEN_PNG_ANCILLARY,
 };
 pub use project::{
-    collect_custom_png_embeds, open_project_from_bytes, open_project_from_path, read_png_file,
-    save_project_to_bytes, save_project_to_path, OpenProjectResult, SaveProjectResult,
+    collect_cube_lut_embeds, collect_custom_png_embeds, open_project_from_bytes,
+    open_project_from_path, read_cube_file, read_png_file, save_project_to_bytes,
+    save_project_to_path, OpenProjectResult, SaveProjectResult,
 };
 pub use sanitize::{sanitize_display_string, sanitize_display_string_or, sanitize_filename};
 pub use secure_json::{parse_value as parse_json_value, SecureJsonError, MAX_JSON_DEPTH};

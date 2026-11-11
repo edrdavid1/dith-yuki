@@ -119,6 +119,10 @@ function filterKindToName(
     case 'Clarity': return 'Clarity';
     case 'Detail': return 'Detail';
     case 'BlurNoise': return 'Blur / Noise';
+    case 'Invert': return 'Invert';
+    case 'Threshold': return 'Threshold';
+    case 'Posterize': return 'Posterize';
+    case 'CubeLut': return 'CUBE LUT';
     case 'Ascii': return 'ASCII';
     case 'PaletteQuantize': return 'Palette Quantize';
     default: return kind;
@@ -151,6 +155,10 @@ function filterKindToIconType(
     case 'Clarity': return 'clarity';
     case 'Detail': return 'detail';
     case 'BlurNoise': return 'blur_noise';
+    case 'Invert': return 'invert';
+    case 'Threshold': return 'threshold';
+    case 'Posterize': return 'posterize';
+    case 'CubeLut': return 'cube_lut';
     case 'Ascii': return 'ascii';
     case 'PaletteQuantize': return 'palette_quantize';
     default: return 'dithering';
@@ -819,6 +827,14 @@ function EffectIconSvg({ type }: { type: string }) {
       return <Icon name="effect.detail" width={18} height={18} />;
     case 'blur_noise':
       return <Icon name="effect.blur_noise" width={18} height={18} />;
+    case 'invert':
+      return <Icon name="effect.invert" width={18} height={18} />;
+    case 'threshold':
+      return <Icon name="effect.threshold" width={18} height={18} />;
+    case 'posterize':
+      return <Icon name="effect.posterize" width={18} height={18} />;
+    case 'cube_lut':
+      return <Icon name="effect.cube_lut" width={18} height={18} />;
     case 'ascii':
       return <Icon name="effect.ascii" width={18} height={18} />;
     case 'nearest_color':

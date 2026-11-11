@@ -34,6 +34,10 @@ export type FilterKind =
   | 'Clarity'
   | 'Detail'
   | 'BlurNoise'
+  | 'Invert'
+  | 'Threshold'
+  | 'Posterize'
+  | 'CubeLut'
   | 'Ascii';
 
 export type FilterParams =
@@ -54,6 +58,10 @@ export type FilterParams =
   | ClarityParams
   | DetailParams
   | BlurNoiseParams
+  | InvertParams
+  | ThresholdParams
+  | PosterizeParams
+  | CubeLutParams
   | AsciiParams;
 
 export interface DitherParams {
@@ -297,6 +305,30 @@ export interface BlurNoiseParams {
   blur: number;
   /** Grain noise (0 … 1). */
   noise: number;
+}
+
+export interface InvertParams {
+  type: 'Invert';
+}
+
+export interface ThresholdParams {
+  type: 'Threshold';
+  /** Rec.709 luminance cutoff (0 … 1). */
+  threshold: number;
+}
+
+export interface PosterizeParams {
+  type: 'Posterize';
+  /** Tone steps per channel (2 … 64). */
+  levels: number;
+}
+
+export interface CubeLutParams {
+  type: 'CubeLut';
+  /** Absolute path or embedded `{hash}.cube` basename (empty = identity). */
+  path: string;
+  /** Mix toward LUT (0 … 1). */
+  amount: number;
 }
 
 /** Text-art / ASCII — not a dither mode. */

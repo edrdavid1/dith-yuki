@@ -18,6 +18,10 @@ const TAGGED_KEYS = [
   'Clarity',
   'Detail',
   'BlurNoise',
+  'Invert',
+  'Threshold',
+  'Posterize',
+  'CubeLut',
 ] as const;
 
 /**

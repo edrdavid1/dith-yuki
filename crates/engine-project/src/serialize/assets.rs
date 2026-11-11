@@ -1,11 +1,14 @@
-//! Threshold-map embedding: content hash, zip entry paths, synthetic materialize.
+//! Threshold-map and cube-LUT embedding: content hash, zip entry paths,
+//! synthetic materialize.
 //!
-//! Content hash = hex(BLAKE3(png_bytes)[0..16]) → 32 lowercase hex chars.
-//! Zip entry = `assets/threshold_maps/{hash}.png`.
-//! JSON / callers store basename `{hash}.png` only.
+//! Content hash = hex(BLAKE3(bytes)[0..16]) → 32 lowercase hex chars.
+//! Threshold zip entry = `assets/threshold_maps/{hash}.png`.
+//! Cube LUT zip entry = `assets/luts/{hash}.cube`.
+//! JSON / callers store basename `{hash}.png` / `{hash}.cube` only.
 //!
 //! Runtime materialize path is **content-addressed** (no project/import uuid):
 //! `{app_data}/dither-yuki/asset-cache/threshold-maps/{content_hash}.png`
+//! `{app_data}/dither-yuki/asset-cache/luts/{content_hash}.cube`
 //! Same bytes from any `.dyproj` / `.dyuki` share one file (natural dedup).
 //!
 //! Synthetic paths are an **internal** path class — this module does **not**
@@ -18,6 +21,9 @@ use thiserror::Error;
 
 /// Zip directory prefix for embedded threshold maps (trailing slash omitted in joins).
 pub const THRESHOLD_MAPS_PREFIX: &str = "assets/threshold_maps";
+
+/// Zip directory prefix for embedded Adobe `.cube` LUTs.
+pub const LUTS_PREFIX: &str = "assets/luts";
 
 /// Errors from asset hashing / materialization.
 #[derive(Debug, Error)]
@@ -113,8 +119,61 @@ pub fn materialize_threshold_map_with_hash(
 
 /// Parse `{hash}.png` basename; returns the 32-char hash stem.
 pub fn parse_threshold_basename(basename: &str) -> Result<&str, AssetsError> {
+    parse_hashed_basename(basename, "png")
+}
+
+/// Basename stored in JSON: `{content_hash}.cube`.
+pub fn cube_lut_basename(cube_bytes: &[u8]) -> String {
+    format!("{}.cube", content_hash(cube_bytes))
+}
+
+/// Full zip entry path for an embedded cube LUT.
+pub fn cube_lut_zip_entry(basename_or_hash: &str) -> String {
+    let name = if basename_or_hash.ends_with(".cube") {
+        basename_or_hash.to_string()
+    } else {
+        format!("{basename_or_hash}.cube")
+    };
+    format!("{LUTS_PREFIX}/{name}")
+}
+
+/// Directory for materialized cube LUT files.
+pub fn luts_cache_dir() -> Result<PathBuf, AssetsError> {
+    Ok(asset_cache_root()?.join("luts"))
+}
+
+/// Write cube bytes to `asset-cache/luts/{content_hash}.cube` and return that path.
+///
+/// Existing files with the same hash are left untouched (cross-document dedup).
+pub fn materialize_cube_lut(cube_bytes: &[u8]) -> Result<PathBuf, AssetsError> {
+    let hash = content_hash(cube_bytes);
+    materialize_cube_lut_with_hash(&hash, cube_bytes)
+}
+
+/// Same as [`materialize_cube_lut`], when the caller already has the hash
+/// (must match `content_hash(cube_bytes)`).
+pub fn materialize_cube_lut_with_hash(
+    hash: &str,
+    cube_bytes: &[u8],
+) -> Result<PathBuf, AssetsError> {
+    let dir = luts_cache_dir()?;
+    fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{hash}.cube"));
+    if !path.exists() {
+        let mut f = fs::File::create(&path)?;
+        f.write_all(cube_bytes)?;
+    }
+    Ok(path)
+}
+
+/// Parse `{hash}.cube` basename; returns the 32-char hash stem.
+pub fn parse_cube_basename(basename: &str) -> Result<&str, AssetsError> {
+    parse_hashed_basename(basename, "cube")
+}
+
+fn parse_hashed_basename<'a>(basename: &'a str, ext: &str) -> Result<&'a str, AssetsError> {
     let path = Path::new(basename);
-    if path.extension().and_then(|e| e.to_str()) != Some("png") {
+    if path.extension().and_then(|e| e.to_str()) != Some(ext) {
         return Err(AssetsError::InvalidBasename(basename.to_string()));
     }
     let stem = path
@@ -185,5 +244,46 @@ mod tests {
             .expect("ThresholdMapCache loads content-addressed path");
         assert_eq!(map.width, 2);
         assert_eq!(map.height, 2);
+    }
+
+    fn identity_cube_2() -> Vec<u8> {
+        br#"TITLE "Identity"
+LUT_3D_SIZE 2
+0.0 0.0 0.0
+1.0 0.0 0.0
+0.0 1.0 0.0
+1.0 1.0 0.0
+0.0 0.0 1.0
+1.0 0.0 1.0
+0.0 1.0 1.0
+1.0 1.0 1.0
+"#
+        .to_vec()
+    }
+
+    #[test]
+    fn cube_lut_hash_and_zip_entry() {
+        let cube = identity_cube_2();
+        let h = content_hash(&cube);
+        assert_eq!(cube_lut_basename(&cube), format!("{h}.cube"));
+        assert_eq!(
+            cube_lut_zip_entry(&cube_lut_basename(&cube)),
+            format!("assets/luts/{h}.cube")
+        );
+        assert_eq!(parse_cube_basename(&format!("{h}.cube")).unwrap(), h);
+    }
+
+    #[test]
+    fn materialize_cube_lut_dedups() {
+        let cube = identity_cube_2();
+        let path1 = materialize_cube_lut(&cube).expect("materialize");
+        let path2 = materialize_cube_lut(&cube).expect("materialize again");
+        assert_eq!(path1, path2);
+        assert!(path1.to_string_lossy().contains("asset-cache"));
+        assert!(path1.to_string_lossy().contains("luts"));
+        assert_eq!(
+            path1.file_name().and_then(|n| n.to_str()),
+            Some(cube_lut_basename(&cube).as_str())
+        );
     }
 }

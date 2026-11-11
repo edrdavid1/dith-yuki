@@ -16,6 +16,7 @@ contrast_aware_x
 contrast_aware_y
 crosshatch_dither
 crt
+cube_lut
 curves
 detail
 dispersed_dot_ordered
@@ -28,6 +29,7 @@ glow
 halftone_screen_angled
 highlights_shadows
 hue
+invert
 jarvis_judice_ninke
 line_screen
 modulated_diffuse_x
@@ -35,6 +37,7 @@ modulated_diffuse_y
 nearest_color
 ostromoukhov
 palette_quantize
+posterize
 random_dot_stipple
 riemersma
 shiau_fan
@@ -45,6 +48,7 @@ smooth_diffuse
 stevenson_arce
 stucki
 temperature_tint
+threshold
 vibrance
 void_and_cluster
 voronoi_stipple
