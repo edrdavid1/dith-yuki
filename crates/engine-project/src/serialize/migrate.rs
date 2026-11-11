@@ -91,6 +91,9 @@ pub enum ProjectError {
     #[error("CustomPng path was not rewritten to a materialized asset: {0}")]
     UnresolvedCustomPng(String),
 
+    #[error("CubeLut path was not rewritten to a materialized asset: {0}")]
+    UnresolvedCubeLut(String),
+
     #[error(
         "this pattern requires app version {required} or newer (running {running}); update the app"
     )]

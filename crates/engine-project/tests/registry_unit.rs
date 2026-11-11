@@ -98,6 +98,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "contrast_aware_y",
         "crosshatch_dither",
         "crt",
+        "cube_lut",
         "curves",
         "detail",
         "dispersed_dot_ordered",
@@ -110,6 +111,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "halftone_screen_angled",
         "highlights_shadows",
         "hue",
+        "invert",
         "jarvis_judice_ninke",
         "line_screen",
         "modulated_diffuse_x",
@@ -117,6 +119,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "nearest_color",
         "ostromoukhov",
         "palette_quantize",
+        "posterize",
         "random_dot_stipple",
         "riemersma",
         "shiau_fan",
@@ -127,6 +130,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "stevenson_arce",
         "stucki",
         "temperature_tint",
+        "threshold",
         "vibrance",
         "void_and_cluster",
         "voronoi_stipple",
@@ -278,8 +282,8 @@ fn register_all_ids_unique() {
     );
     assert_eq!(
         all_ids.len(),
-        54,
-        "must register all 54 built-in algorithms"
+        58,
+        "must register all 58 built-in algorithms"
     );
 }
 
@@ -326,7 +330,7 @@ fn migration_corpus() {
         );
     }
     assert_eq!(
-        count, 36,
+        count, 40,
         "expected one migration fixture per built-in algorithm"
     );
 }

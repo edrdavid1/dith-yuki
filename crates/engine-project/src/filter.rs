@@ -44,6 +44,14 @@ pub enum FilterKind {
     Detail,
     /// Blur + grain noise (spatial; split out of Adjust).
     BlurNoise,
+    /// Invert RGB (pointwise Post utility).
+    Invert,
+    /// Hard luminance threshold (pointwise Post utility).
+    Threshold,
+    /// Quantize RGB to N tone steps (pointwise Post utility).
+    Posterize,
+    /// Adobe `.cube` 3D LUT (pointwise Post).
+    CubeLut,
     /// Text-art / ASCII (not a dither mode).
     Ascii,
     Placeholder,
@@ -68,6 +76,10 @@ impl std::fmt::Display for FilterKind {
             FilterKind::Clarity => write!(f, "Clarity"),
             FilterKind::Detail => write!(f, "Detail"),
             FilterKind::BlurNoise => write!(f, "BlurNoise"),
+            FilterKind::Invert => write!(f, "Invert"),
+            FilterKind::Threshold => write!(f, "Threshold"),
+            FilterKind::Posterize => write!(f, "Posterize"),
+            FilterKind::CubeLut => write!(f, "CubeLut"),
             FilterKind::Ascii => write!(f, "Ascii"),
             FilterKind::Placeholder => write!(f, "Placeholder"),
         }
@@ -1160,12 +1172,47 @@ pub enum FilterParams {
         /// Deterministic RGB noise (0 .. 1).
         noise: f32,
     },
+    /// Invert RGB channels (no params).
+    Invert {},
+    /// Hard luminance threshold (0 .. 1). Default 0.5.
+    Threshold {
+        /// Cutoff in Rec.709 luminance (0 .. 1).
+        #[serde(default = "default_threshold_cutoff")]
+        threshold: f32,
+    },
+    /// Posterize to N tone levels per channel (2 .. 64). Default 8.
+    Posterize {
+        /// Number of tone steps (2 .. 64).
+        #[serde(default = "default_posterize_levels")]
+        levels: u32,
+    },
+    /// Adobe `.cube` 3D LUT. Empty `path` or `amount == 0` is identity.
+    CubeLut {
+        /// Absolute path, or `{content_hash}.cube` basename when embedded in `.dyproj`.
+        #[serde(default)]
+        path: String,
+        /// Mix toward LUT result (0 = identity, 1 = full). Default 1.
+        #[serde(default = "default_cube_lut_amount")]
+        amount: f32,
+    },
     /// Text-art / ASCII output stage (`engine-ascii`). Not a dither mode.
     Ascii(AsciiParams),
     /// Placeholder for unknown or future filters.
     ///
     /// Old JSON `{"Placeholder": "x"}` still deserialises (`raw_params: None`).
     Placeholder(PlaceholderParams),
+}
+
+fn default_threshold_cutoff() -> f32 {
+    0.5
+}
+
+fn default_posterize_levels() -> u32 {
+    8
+}
+
+fn default_cube_lut_amount() -> f32 {
+    1.0
 }
 
 /// Parameters for [`FilterParams::Ascii`].
@@ -1835,6 +1882,31 @@ impl FilterInstance {
                 }
                 Ok(())
             }
+            FilterParams::Invert {} => Ok(()),
+            FilterParams::Threshold { threshold } => {
+                if !(0.0..=1.0).contains(threshold) {
+                    return Err(EngineError::invalid_filter_params(
+                        "Threshold must be in range [0.0, 1.0]",
+                    ));
+                }
+                Ok(())
+            }
+            FilterParams::Posterize { levels } => {
+                if !(2..=64).contains(levels) {
+                    return Err(EngineError::invalid_filter_params(
+                        "Posterize levels must be in range [2, 64]",
+                    ));
+                }
+                Ok(())
+            }
+            FilterParams::CubeLut { path: _, amount } => {
+                if !(0.0..=1.0).contains(amount) {
+                    return Err(EngineError::invalid_filter_params(
+                        "CubeLut amount must be in range [0.0, 1.0]",
+                    ));
+                }
+                Ok(())
+            }
             FilterParams::Ascii(p) => p.validate(),
             FilterParams::Placeholder(_) => Ok(()),
         }
@@ -1862,6 +1934,10 @@ pub fn algorithm_id_for_params(params: &FilterParams) -> Option<&'static str> {
         FilterParams::Clarity { .. } => Some("clarity"),
         FilterParams::Detail { .. } => Some("detail"),
         FilterParams::BlurNoise { .. } => Some("blur_noise"),
+        FilterParams::Invert {} => Some("invert"),
+        FilterParams::Threshold { .. } => Some("threshold"),
+        FilterParams::Posterize { .. } => Some("posterize"),
+        FilterParams::CubeLut { .. } => Some("cube_lut"),
         FilterParams::Curves { .. } => Some("curves"),
         FilterParams::Glitch(_) => Some("glitch"),
         FilterParams::Ascii(_) => Some("ascii"),
@@ -1922,6 +1998,10 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         "clarity" => Some(FilterKind::Clarity),
         "detail" => Some(FilterKind::Detail),
         "blur_noise" => Some(FilterKind::BlurNoise),
+        "invert" => Some(FilterKind::Invert),
+        "threshold" => Some(FilterKind::Threshold),
+        "posterize" => Some(FilterKind::Posterize),
+        "cube_lut" => Some(FilterKind::CubeLut),
         "curves" => Some(FilterKind::Curves),
         "glitch" => Some(FilterKind::Glitch),
         "ascii" => Some(FilterKind::Ascii),
@@ -2033,6 +2113,17 @@ pub fn filter_params_to_json(params: &FilterParams) -> Result<serde_json::Value,
         FilterParams::BlurNoise { blur, noise } => Ok(serde_json::json!({
             "blur": blur,
             "noise": noise,
+        })),
+        FilterParams::Invert {} => Ok(serde_json::json!({})),
+        FilterParams::Threshold { threshold } => Ok(serde_json::json!({
+            "threshold": threshold,
+        })),
+        FilterParams::Posterize { levels } => Ok(serde_json::json!({
+            "levels": levels,
+        })),
+        FilterParams::CubeLut { path, amount } => Ok(serde_json::json!({
+            "path": path,
+            "amount": amount,
         })),
         FilterParams::Curves { curve, channel } => Ok(serde_json::json!({
             "curve": curve,

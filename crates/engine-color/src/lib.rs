@@ -11,6 +11,7 @@
 
 pub mod auto_interpolate;
 pub mod brightness_sorted;
+pub mod cube_lut;
 pub mod display_rgb;
 pub mod harmony;
 pub mod icc_precheck;
@@ -52,6 +53,9 @@ pub use brightness_sorted::BrightnessSortedPalette;
 pub use palette_guided::{
     default_channel_levels, palette_channel_ranges, quantize_channel_guided, ChannelRange,
     PaletteChannelRangeCache,
+};
+pub use cube_lut::{
+    global_cube_lut_cache, CubeLut3D, CubeLutCache, CubeLutError, MAX_CUBE_SIZE,
 };
 pub use palette_lut::{PaletteLut3D, PaletteLutCache, DEFAULT_LUT_SIZE};
 

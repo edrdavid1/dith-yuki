@@ -8,13 +8,14 @@
 
 .filter-add-btn {
   padding: 2px 8px;
-  border: var(--border);
+  border: none;
   border-radius: 0;
   background: var(--bg-window);
   color: var(--text-color);
   cursor: pointer;
   font-size: 13px;
   font-family: var(--font-family);
+  /* Raised bevel: white top/left, black bottom/right (same as pattern/layer buttons). */
   box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
 }
 

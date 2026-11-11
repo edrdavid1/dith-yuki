@@ -228,6 +228,10 @@ impl FilterService {
             "Clarity" => FilterKind::Clarity,
             "Detail" => FilterKind::Detail,
             "BlurNoise" => FilterKind::BlurNoise,
+            "Invert" => FilterKind::Invert,
+            "Threshold" => FilterKind::Threshold,
+            "Posterize" => FilterKind::Posterize,
+            "CubeLut" => FilterKind::CubeLut,
             "Ascii" => FilterKind::Ascii,
             other => filter_kind_for_algorithm_id(other).ok_or_else(|| {
                 AppError::InvalidOperation(format!("Invalid filter kind: {other}"))
@@ -578,6 +582,37 @@ impl FilterService {
                         .and_then(|v| v.as_f64())
                         .unwrap_or(0.0) as f32;
                     FilterParams::BlurNoise { blur, noise }
+                }
+                FilterKind::Invert => FilterParams::Invert {},
+                FilterKind::Threshold => {
+                    let threshold = req
+                        .params
+                        .get("threshold")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.5) as f32;
+                    FilterParams::Threshold { threshold }
+                }
+                FilterKind::Posterize => {
+                    let levels = req
+                        .params
+                        .get("levels")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(8) as u32;
+                    FilterParams::Posterize { levels }
+                }
+                FilterKind::CubeLut => {
+                    let path = req
+                        .params
+                        .get("path")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let amount = req
+                        .params
+                        .get("amount")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(1.0) as f32;
+                    FilterParams::CubeLut { path, amount }
                 }
                 FilterKind::Ascii => {
                     let p: engine_project::filter::AsciiParams =
@@ -1516,6 +1551,52 @@ impl FilterService {
                         .map(|v| v as f32)
                         .unwrap_or(en);
                     FilterParams::BlurNoise { blur, noise }
+                }
+                FilterKind::Invert => FilterParams::Invert {},
+                FilterKind::Threshold => {
+                    let existing = match existing_params {
+                        FilterParams::Threshold { threshold } => threshold,
+                        _ => 0.5,
+                    };
+                    let threshold = req
+                        .params
+                        .get("threshold")
+                        .and_then(|v| v.as_f64())
+                        .map(|v| v as f32)
+                        .unwrap_or(existing);
+                    FilterParams::Threshold { threshold }
+                }
+                FilterKind::Posterize => {
+                    let existing = match existing_params {
+                        FilterParams::Posterize { levels } => levels,
+                        _ => 8,
+                    };
+                    let levels = req
+                        .params
+                        .get("levels")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as u32)
+                        .unwrap_or(existing);
+                    FilterParams::Posterize { levels }
+                }
+                FilterKind::CubeLut => {
+                    let (epath, eamount) = match existing_params {
+                        FilterParams::CubeLut { path, amount } => (path, amount),
+                        _ => (String::new(), 1.0),
+                    };
+                    let path = req
+                        .params
+                        .get("path")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or(epath);
+                    let amount = req
+                        .params
+                        .get("amount")
+                        .and_then(|v| v.as_f64())
+                        .map(|v| v as f32)
+                        .unwrap_or(eamount);
+                    FilterParams::CubeLut { path, amount }
                 }
                 FilterKind::Ascii => {
                     let p: engine_project::filter::AsciiParams =

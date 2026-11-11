@@ -432,6 +432,7 @@ pub fn is_allowlisted_entry(name: &str) -> bool {
             | "thumbnail.png"
     ) || is_layer_png(name)
         || is_threshold_map(name)
+        || is_cube_lut(name)
         || is_ext_entry(name)
 }
 
@@ -454,6 +455,20 @@ fn is_threshold_map(name: &str) -> bool {
     };
     // Current on-disk hash = 32 lowercase hex (BLAKE3 truncated). SPEC's future
     // sha256 (64 hex) is also accepted so Stage 4 can switch without loader churn.
+    is_content_hash_stem(stem)
+}
+
+fn is_cube_lut(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("assets/luts/") else {
+        return false;
+    };
+    let Some(stem) = rest.strip_suffix(".cube") else {
+        return false;
+    };
+    is_content_hash_stem(stem)
+}
+
+fn is_content_hash_stem(stem: &str) -> bool {
     let len = stem.len();
     (len == 32 || len == 64) && stem.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
@@ -595,5 +610,19 @@ mod tests {
             "assets/threshold_maps/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.png"
         ));
         assert!(!is_threshold_map("assets/threshold_maps/xyz.png"));
+    }
+
+    #[test]
+    fn allowlist_cube_lut_32_and_64_hex() {
+        assert!(is_cube_lut(
+            "assets/luts/0123456789abcdef0123456789abcdef.cube"
+        ));
+        assert!(is_cube_lut(
+            "assets/luts/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.cube"
+        ));
+        assert!(!is_cube_lut("assets/luts/xyz.cube"));
+        assert!(!is_cube_lut(
+            "assets/luts/0123456789abcdef0123456789abcdef.png"
+        ));
     }
 }

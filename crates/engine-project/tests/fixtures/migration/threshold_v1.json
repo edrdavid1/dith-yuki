@@ -1,0 +1,8 @@
+{
+  "id": "00000000-0000-4000-8000-000000000032",
+  "kind": "Threshold",
+  "params": {"Threshold": {"threshold": 0.5}},
+  "enabled": true,
+  "algorithm_id": "threshold",
+  "schema_version": 1
+}

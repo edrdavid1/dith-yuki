@@ -104,6 +104,11 @@ fn params_are_identity(filter: &FilterInstance) -> bool {
         FilterParams::Clarity { amount } => *amount == 0.0,
         FilterParams::Detail { clarity, sharpness } => *clarity == 0.0 && *sharpness == 0.0,
         FilterParams::BlurNoise { blur, noise } => *blur == 0.0 && *noise == 0.0,
+        // Invert / Threshold / Posterize always change pixels when enabled.
+        FilterParams::Invert {} | FilterParams::Threshold { .. } | FilterParams::Posterize { .. } => {
+            false
+        }
+        FilterParams::CubeLut { path, amount } => path.trim().is_empty() || *amount == 0.0,
         _ => false,
     }
 }

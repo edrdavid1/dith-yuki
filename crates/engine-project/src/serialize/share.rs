@@ -2,7 +2,9 @@
 
 use crate::document::Document;
 use crate::serialize::archive::{create_dither_archive, ZipArchiveReader, MIME_DYPROJ};
-use crate::serialize::assets::{threshold_map_basename, threshold_map_zip_entry};
+use crate::serialize::assets::{
+    cube_lut_zip_entry, threshold_map_basename, threshold_map_zip_entry,
+};
 use crate::serialize::document_dto::DocumentFile;
 use crate::serialize::features::FormatVersion;
 use crate::serialize::manifest::{build_dyproj_manifest_json, build_manifest_files};
@@ -13,7 +15,8 @@ use crate::serialize::pixels::{
     strip_png_ancillary_chunks,
 };
 use crate::serialize::project::{
-    chrono_like_now, collect_custom_png_embeds, rewrite_custom_png_paths, SaveProjectResult,
+    chrono_like_now, collect_cube_lut_embeds, collect_custom_png_embeds, read_cube_file,
+    rewrite_cube_lut_paths, rewrite_custom_png_paths, SaveProjectResult,
 };
 use crate::serialize::thumbnail::{build_thumbnail_png_cached, neutral_thumbnail_png};
 use engine_tiles::TileCache;
@@ -186,8 +189,12 @@ pub fn write_project_to_bytes(
         embeds = cleaned_embeds;
     }
 
+    let mut read_cube = |path: &str| read_cube_file(path);
+    let (cube_embeds, cube_path_to_basename) = collect_cube_lut_embeds(doc, &mut read_cube)?;
+
     let mut doc_for_json = doc.clone();
     rewrite_custom_png_paths(&mut doc_for_json.root, &path_to_basename);
+    rewrite_cube_lut_paths(&mut doc_for_json.root, &cube_path_to_basename);
 
     let rasters = collect_raster_layers(&doc.root);
     let mut layer_pngs: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
@@ -237,6 +244,7 @@ pub fn write_project_to_bytes(
 
     // BTreeMap keeps asset order stable across HashMap reshuffles.
     let embeds: BTreeMap<String, Vec<u8>> = embeds.into_iter().collect();
+    let cube_embeds: BTreeMap<String, Vec<u8>> = cube_embeds.into_iter().collect();
 
     let mut payload: Vec<(String, Vec<u8>)> = Vec::new();
     payload.push(("document.json".into(), document_json));
@@ -247,6 +255,9 @@ pub fn write_project_to_bytes(
     }
     for (basename, bytes) in &embeds {
         payload.push((threshold_map_zip_entry(basename), bytes.clone()));
+    }
+    for (basename, bytes) in &cube_embeds {
+        payload.push((cube_lut_zip_entry(basename), bytes.clone()));
     }
     let mut ext_sorted: Vec<_> = doc
         .ext_blobs

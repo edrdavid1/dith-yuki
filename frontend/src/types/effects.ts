@@ -264,6 +264,14 @@ export function specForAlgorithm(
       return { kind: 'Detail', params: { ...EFFECT_DEFAULTS.Detail } };
     case 'blur_noise':
       return { kind: 'BlurNoise', params: { ...EFFECT_DEFAULTS.BlurNoise } };
+    case 'invert':
+      return { kind: 'Invert', params: {} };
+    case 'threshold':
+      return { kind: 'Threshold', params: { threshold: 0.5 } };
+    case 'posterize':
+      return { kind: 'Posterize', params: { levels: 8 } };
+    case 'cube_lut':
+      return { kind: 'CubeLut', params: { path: '', amount: 1 } };
     case 'exposure':
     case 'highlights_shadows':
     case 'temperature_tint':

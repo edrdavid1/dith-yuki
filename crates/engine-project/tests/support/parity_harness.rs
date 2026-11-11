@@ -50,46 +50,9 @@ pub fn dither_params(mode: DitherModeV2) -> DitherParamsV2 {
 
 pub fn params_json(params: &FilterParams) -> serde_json::Value {
     match params {
+        // Dither algorithms expect the V2 params object, not an outer tag.
         FilterParams::DitherV2(p) => serde_json::to_value(p).unwrap(),
-        FilterParams::Crt {
-            period,
-            strength,
-            mask_strength,
-        } => serde_json::json!({
-            "period": period,
-            "strength": strength,
-            "mask_strength": mask_strength,
-        }),
-        FilterParams::Glow {
-            radius,
-            intensity,
-            threshold,
-        } => serde_json::json!({
-            "radius": radius,
-            "intensity": intensity,
-            "threshold": threshold,
-        }),
-        FilterParams::Adjust {
-            contrast,
-            brightness,
-            saturation,
-            blur,
-            sharpness,
-            noise,
-        } => serde_json::json!({
-            "contrast": contrast,
-            "brightness": brightness,
-            "saturation": saturation,
-            "blur": blur,
-            "sharpness": sharpness,
-            "noise": noise,
-        }),
-        FilterParams::Curves { curve, channel } => serde_json::json!({
-            "curve": curve,
-            "channel": channel,
-        }),
-        FilterParams::Glitch(p) => serde_json::to_value(p).unwrap(),
-        other => serde_json::to_value(other).unwrap(),
+        other => engine_project::filter::filter_params_to_json(other).unwrap(),
     }
 }
 

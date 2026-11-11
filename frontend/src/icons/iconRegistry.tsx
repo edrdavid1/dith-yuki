@@ -55,6 +55,10 @@ export type IconName =
   | 'effect.clarity'
   | 'effect.detail'
   | 'effect.blur_noise'
+  | 'effect.invert'
+  | 'effect.threshold'
+  | 'effect.posterize'
+  | 'effect.cube_lut'
   | 'effect.ascii'
   | 'effect.nearest_color'
   | 'effect.palette_quantize'
@@ -115,6 +119,10 @@ const PIXEL_ICONS: Record<string, PixelIcon> = {
   'effect.clarity': Frame,
   'effect.detail': Frame,
   'effect.blur_noise': Sparkles,
+  'effect.invert': FlipHorizontal2,
+  'effect.threshold': SortVertical,
+  'effect.posterize': Grid3x3,
+  'effect.cube_lut': ColorsSwatch,
   'effect.ascii': LetterA,
   'effect.nearest_color': Pipette,
   'effect.palette_quantize': ColorsSwatch,
