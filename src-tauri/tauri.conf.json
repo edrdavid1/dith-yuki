@@ -11,6 +11,24 @@
   "app": {
     "windows": [
       {
+        "label": "splash",
+        "url": "splash.html",
+        "title": "Dither Yuki",
+        "width": 300,
+        "height": 300,
+        "center": true,
+        "decorations": false,
+        "resizable": false,
+        "closable": false,
+        "minimizable": false,
+        "maximizable": false,
+        "skipTaskbar": true,
+        "shadow": true,
+        "visible": true,
+        "focus": true,
+        "backgroundColor": "#000000"
+      },
+      {
         "label": "main",
         "create": false,
         "title": "Dither Yuki",

@@ -3,6 +3,7 @@
   "description": "Default permissions",
   "windows": [
     "main",
+    "splash",
     "panel-*",
     "flex-popout-*",
     "*"

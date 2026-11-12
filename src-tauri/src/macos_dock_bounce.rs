@@ -1,13 +1,13 @@
-//! macOS Dock attention while the main window is still hidden at launch.
+//! macOS Dock attention for post-startup events (export ready, needs response).
 //!
-//! The window starts `visible: false`. Fast cold starts finish before the
-//! reveal delay and never touch the Dock. Slow starts request continuous
-//! Dock bouncing so the user can tell the app is opening, not frozen.
+//! Startup feedback is the Photoshop-style splash window (`splash.rs`) — do
+//! **not** call [`start`] from app setup; that overlapped the system Dock jump.
 //!
 //! `stop` only cancels attention (and re-activates if we had to yield focus
-//! for bouncing). Showing the window is the caller's job.
+//! for bouncing). Showing windows is the caller's job.
 
 #[cfg(target_os = "macos")]
+#[allow(dead_code)] // `start` kept for post-startup attention; cold start uses splash.
 mod native {
     use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
     use std::time::Duration;
@@ -149,6 +149,7 @@ mod native {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(unused_imports)] // `start` reserved for post-startup callers.
 pub use native::{start, stop};
 
 #[cfg(not(target_os = "macos"))]
