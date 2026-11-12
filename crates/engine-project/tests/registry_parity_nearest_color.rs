@@ -9,7 +9,7 @@ use engine_project::filters::dither_residuals::ErrorResidualsStore;
 use engine_project::filters::palette_quantize::PaletteQuantizeFilter;
 use engine_project::types::{DocumentId, LayerId};
 use engine_project::{Document, FilterContext};
-use engine_registry::{AlgorithmId, AlgorithmRegistry, TemporalStability};
+use engine_registry::{AlgorithmId, AlgorithmRegistry, GpuEligibility, TemporalStability};
 use engine_tiles::block_cache::BlockRepresentativeCache;
 use engine_tiles::{PixelTile, TileCoord, HALO, TILE_SIZE};
 
@@ -85,6 +85,24 @@ fn nearest_color_oklab_matches_palette_quantize_nearest() {
         .get(AlgorithmId::new("nearest_color"))
         .expect("nearest_color registered");
     assert_eq!(algo.temporal_stability(), TemporalStability::Stable);
+    assert_eq!(
+        algo.gpu_eligibility(&serde_json::json!({
+            "palette_id": palette_id,
+            "metric": "oklab",
+        })),
+        GpuEligibility::Eligible,
+        "nearest_color oklab must be GPU Eligible (PaletteQuantize path)"
+    );
+    assert_eq!(
+        algo.gpu_eligibility(&serde_json::json!({
+            "palette_id": palette_id,
+            "metric": "srgb",
+        })),
+        engine_registry::GpuEligibility::Cpu(
+            engine_registry::CpuCheckpointKind::UnsupportedFilter
+        ),
+        "nearest_color non-Oklab stays CPU"
+    );
 
     let ctx = FilterContext::new(
         coord,

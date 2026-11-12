@@ -57,6 +57,9 @@ Working agent specs stay local only (not in this repo on GitHub).
 |---|---|
 | [PERF_DECISIONS.md](./PERF_DECISIONS.md) | Perf ADRs |
 | [PERF_RESIZE_BASELINE.md](./PERF_RESIZE_BASELINE.md) | Live-resize baseline |
+| [effects-correction-spec.md](./effects-correction-spec.md) | Non-dither effects: GPU Eligible pack, seams, PR slices |
+| [post-barrier-roadmap.md](./post-barrier-roadmap.md) | Dithered cache / Post barrier |
+| [post-processing-levers.md](./post-processing-levers.md) | Post scrub levers vs P4 GPU |
 
 ## Legal
 

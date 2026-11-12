@@ -5,7 +5,9 @@
 //! never GpuEligible.
 //!
 //! Force CPU: `DITHER_FORCE_CPU=1`. Opt-in cold GPU compute: `DITHER_GPU_PREVIEW=1`.
-//! Warm resident Composite slots may download without opt-in (auto-dispatch A1).
+//! Pointwise pack off: `DITHER_POINTWISE_GPU=0`. Spatial pack off:
+//! `DITHER_SPATIAL_GPU=0`. Warm resident Composite slots may download without
+//! opt-in (auto-dispatch A1).
 
 mod adapter_info;
 pub mod apply_progress;
@@ -16,6 +18,8 @@ mod composite;
 mod context;
 mod crt;
 mod decision;
+mod glow;
+mod pointwise;
 mod dispatch;
 pub mod ed_prototype;
 pub mod ed_wavefront_spike;
@@ -54,6 +58,8 @@ pub use composite::{
 };
 pub use context::GpuContext;
 pub use crt::{apply_crt_gpu, CrtGpuParams};
+pub use glow::{apply_glow_gpu, GlowGpuParams};
+pub use pointwise::{apply_pointwise_gpu, PointwiseGpuParams};
 pub use decision::{decide_tile_dispatch, TileDispatch, TileDispatchInput};
 pub use dispatch::{
     core_pixel_count, dispatch_rgba32, map_read_with_timeout, TileUniforms, CORE_SIZE,
@@ -61,23 +67,27 @@ pub use dispatch::{
 };
 pub use executor::{GpuExecutor, GpuFrameJob, GpuTileWork};
 pub use graph::{
-    compile_graph, BayerPassParams, ComputeGraph, CpuCheckpointKind, CrosshatchPassParams,
-    CrtPassParams, GpuPass, GpuPipelineKey, GraphCompileError, GraphLayerFilter, GraphNode,
-    HalftonePassParams, LineScreenPassParams, PaletteGuidedPassParams, PaletteMixedPassParams,
-    PaletteQuantizePassParams, VoidAndClusterPassParams, WavePassParams,
+    compile_graph, AdjustPointwisePassParams, BayerPassParams, ComputeGraph, CpuCheckpointKind,
+    BlurNoisePassParams, CrosshatchPassParams, CrtPassParams, CubeLutPassParams, CurvesPassParams,
+    DetailPassParams, GlowPassParams, GpuPass, GpuPipelineKey, GraphCompileError, GraphLayerFilter,
+    GraphNode, HalftonePassParams, LevelsPassParams, LineScreenPassParams,
+    PaletteGuidedPassParams, PaletteMixedPassParams, PaletteQuantizePassParams, PointwiseOp,
+    PointwisePassParams, VoidAndClusterPassParams, WavePassParams,
 };
 pub use halftone::{apply_halftone_gpu, HalftoneGpuParams};
 pub use palette_guided::{palette_guided_params, palette_mixed_params_from_palette};
 pub use palette_quantize::palette_quantize_params_from_lut;
 pub use prefer::{
     force_cpu, gpu_filters_enabled, gpu_preview_enabled, gpu_resident_enabled, gpu_warmup_enabled,
-    prefer_gpu, set_gpu_preview_ui_override,
+    pointwise_gpu_enabled, prefer_gpu, set_gpu_preview_ui_override, spatial_gpu_enabled,
 };
 pub use resident::{
-    GpuTileCache, GpuVramStats, ResidentBayerPipelines, ResidentCompositePipelines,
-    ResidentCrosshatchPipelines, ResidentCrtPipelines, ResidentHalftonePipelines,
-    ResidentLineScreenPipelines, ResidentPaletteGuidedPipelines, ResidentPalettePipelines,
-    ResidentVoidAndClusterPipelines, ResidentWavePipelines,
+    GpuTileCache, GpuVramStats, ResidentBayerPipelines, ResidentBlurNoisePipelines,
+    ResidentCompositePipelines, ResidentCrosshatchPipelines, ResidentCrtPipelines,
+    ResidentDetailPipelines, ResidentGlowPipelines, ResidentHalftonePipelines,
+    ResidentLineScreenPipelines, ResidentPaletteGuidedPipelines, ResidentCubeLutPipelines,
+    ResidentPalettePipelines, ResidentPointwisePipelines, ResidentVoidAndClusterPipelines,
+    ResidentWavePipelines, TILE_EXTENT,
 };
 pub use stats::not_worse_than;
 pub use strip_bind::{effective_max_bind, max_blocked_fs_strip_cores, max_blue_noise_strip_h};

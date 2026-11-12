@@ -9,7 +9,7 @@ export type EffectType =
   | 'Dithering'
   | 'Glitching'
   | 'Curves'
-  | 'RGBChannels'
+  | 'Levels'
   | 'Glow'
   | 'CRT'
   | 'Adjust'
@@ -19,13 +19,13 @@ export type EffectType =
 
 /** Maps EffectType to the corresponding FilterKind used in IPC.
  * Registry algorithms are added via `specForAlgorithm` / `onSelectAlgorithm`.
- * This map remains for the legacy EffectType path (shortcuts, RGB channels).
+ * This map remains for the legacy EffectType path (shortcuts, Levels).
  */
 export const EFFECT_TO_FILTER_KIND: Record<EffectType, FilterKind> = {
   Dithering: 'DitherV2',
   Glitching: 'Glitch',
   Curves: 'Curves',
-  RGBChannels: 'Levels',
+  Levels: 'Levels',
   Glow: 'Glow',
   CRT: 'Crt',
   Adjust: 'Adjust',
@@ -71,7 +71,7 @@ export const EFFECT_DEFAULTS: Record<EffectType, Record<string, unknown>> = {
     curve: [[0, 0], [1, 1]],
     channel: 'All',
   },
-  RGBChannels: {
+  Levels: {
     input_black: 0.0,
     input_white: 1.0,
     gamma: 1.0,
@@ -82,9 +82,10 @@ export const EFFECT_DEFAULTS: Record<EffectType, Record<string, unknown>> = {
     channel_b: true,
   },
   Glow: {
-    radius: 2.0,
+    radius: 4.0,
     intensity: 1.0,
-    threshold: 0.0,
+    threshold: 0.35,
+    softness: 2,
   },
   CRT: {
     period: 2,
@@ -284,6 +285,8 @@ export function specForAlgorithm(
       return { kind: 'Detail', params: { ...EFFECT_DEFAULTS.Detail } };
     case 'curves':
       return { kind: 'Curves', params: { ...EFFECT_DEFAULTS.Curves } };
+    case 'levels':
+      return { kind: 'Levels', params: { ...EFFECT_DEFAULTS.Levels } };
     case 'glitch':
       return { kind: 'Glitch', params: { ...EFFECT_DEFAULTS.Glitching } };
     case 'ascii':

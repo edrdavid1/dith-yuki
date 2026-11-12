@@ -31,6 +31,7 @@ highlights_shadows
 hue
 invert
 jarvis_judice_ninke
+levels
 line_screen
 modulated_diffuse_x
 modulated_diffuse_y

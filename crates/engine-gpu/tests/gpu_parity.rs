@@ -4,12 +4,15 @@
 //! Run with: `cargo test -p engine-gpu --features gpu-tests -- --ignored`
 
 use engine_gpu::{
-    apply_bayer_gpu, apply_crt_gpu, apply_halftone_gpu, BayerGpuParams, BayerMatrixSize,
-    CrtGpuParams, GpuContext, HalftoneGpuParams, CORE_SIZE, FLOATS_PER_TILE,
+    apply_bayer_gpu, apply_crt_gpu, apply_glow_gpu, apply_halftone_gpu, apply_pointwise_gpu,
+    BayerGpuParams, BayerMatrixSize, CrtGpuParams, GlowGpuParams, GpuContext, HalftoneGpuParams,
+    PointwiseGpuParams, PointwiseOp, PointwisePassParams, CORE_SIZE, FLOATS_PER_TILE, TILE_EXTENT,
 };
 
 const HALFTONE_PARITY_EPS: f32 = 1.0 / 255.0;
 const CRT_PARITY_EPS: f32 = 1.0 / 255.0;
+const GLOW_PARITY_EPS: f32 = 1.0 / 255.0;
+const POINTWISE_PARITY_EPS: f32 = 1.0 / 255.0;
 
 fn solid_core(v: f32) -> Vec<f32> {
     let mut buf = vec![0.0f32; FLOATS_PER_TILE];
@@ -450,6 +453,212 @@ fn crt_horizontal_seam_tile_offset() {
     assert_eps(&[top[last]], &[0.8], CRT_PARITY_EPS);
     assert_eps(&[bot[first]], &[0.4], CRT_PARITY_EPS);
     assert!((top[last] - bot[first]).abs() > 0.1);
+}
+
+fn solid_full_tile(v: f32) -> Vec<f32> {
+    let n = (TILE_EXTENT * TILE_EXTENT * 4) as usize;
+    let mut buf = vec![0.0f32; n];
+    for i in 0..(TILE_EXTENT * TILE_EXTENT) as usize {
+        let o = i * 4;
+        buf[o] = v;
+        buf[o + 1] = v;
+        buf[o + 2] = v;
+        buf[o + 3] = 1.0;
+    }
+    buf
+}
+
+fn cpu_glow_full(input: &[f32], radius: i32, intensity: f32, threshold: f32) -> Vec<f32> {
+    let n = TILE_EXTENT as i32;
+    let knee = 0.05f32;
+    let soft = |lum: f32| -> f32 {
+        if threshold <= 0.0 {
+            return 1.0;
+        }
+        let lo = (threshold - knee).max(0.0);
+        let hi = (threshold + knee).min(1.0);
+        if hi <= lo {
+            return if lum >= threshold { 1.0 } else { 0.0 };
+        }
+        let t = ((lum - lo) / (hi - lo)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    let mut mask = vec![0.0f32; (TILE_EXTENT * TILE_EXTENT * 3) as usize];
+    for y in 0..n {
+        for x in 0..n {
+            let i = ((y * n + x) * 4) as usize;
+            let r = input[i];
+            let g = input[i + 1];
+            let b = input[i + 2];
+            let w = soft(0.2126 * r + 0.7152 * g + 0.0722 * b);
+            let m = ((y * n + x) * 3) as usize;
+            mask[m] = r * w;
+            mask[m + 1] = g * w;
+            mask[m + 2] = b * w;
+        }
+    }
+    let diam = (2 * radius + 1) as f32;
+    let blur = |src: &[f32]| {
+        let mut tmp = vec![0.0f32; src.len()];
+        let mut out = vec![0.0f32; src.len()];
+        for y in 0..n {
+            for x in 0..n {
+                let mut acc = [0.0f32; 3];
+                for dx in -radius..=radius {
+                    let sx = (x + dx).clamp(0, n - 1);
+                    let i = ((y * n + sx) * 3) as usize;
+                    acc[0] += src[i];
+                    acc[1] += src[i + 1];
+                    acc[2] += src[i + 2];
+                }
+                let o = ((y * n + x) * 3) as usize;
+                tmp[o] = acc[0] / diam;
+                tmp[o + 1] = acc[1] / diam;
+                tmp[o + 2] = acc[2] / diam;
+            }
+        }
+        for y in 0..n {
+            for x in 0..n {
+                let mut acc = [0.0f32; 3];
+                for dy in -radius..=radius {
+                    let sy = (y + dy).clamp(0, n - 1);
+                    let i = ((sy * n + x) * 3) as usize;
+                    acc[0] += tmp[i];
+                    acc[1] += tmp[i + 1];
+                    acc[2] += tmp[i + 2];
+                }
+                let o = ((y * n + x) * 3) as usize;
+                out[o] = acc[0] / diam;
+                out[o + 1] = acc[1] / diam;
+                out[o + 2] = acc[2] / diam;
+            }
+        }
+        out
+    };
+    let blurred = blur(&mask);
+    let mut out = input.to_vec();
+    for y in 0..n {
+        for x in 0..n {
+            let i = ((y * n + x) * 4) as usize;
+            let m = ((y * n + x) * 3) as usize;
+            for c in 0..3 {
+                out[i + c] = (input[i + c] + blurred[m + c] * intensity).clamp(0.0, 1.0);
+            }
+        }
+    }
+    out
+}
+
+#[test]
+#[ignore = "requires GPU adapter"]
+fn glow_parity_within_eps() {
+    let ctx = GpuContext::try_new_blocking().expect("adapter");
+    let input = solid_full_tile(0.6);
+    let cpu = cpu_glow_full(&input, 2, 1.0, 0.0);
+    let gpu = apply_glow_gpu(
+        &ctx,
+        &input,
+        GlowGpuParams {
+            radius: 2.0,
+            intensity: 1.0,
+            threshold: 0.0,
+            softness: 1,
+        },
+    )
+    .unwrap();
+    assert_eq!(gpu.len(), cpu.len());
+    for (a, b) in gpu.iter().zip(cpu.iter()) {
+        assert!(
+            (a - b).abs() <= GLOW_PARITY_EPS,
+            "glow parity |{a}-{b}| > {GLOW_PARITY_EPS}"
+        );
+    }
+}
+
+fn cpu_invert_core(input: &[f32]) -> Vec<f32> {
+    let mut out = input.to_vec();
+    for i in (0..out.len()).step_by(4) {
+        out[i] = 1.0 - out[i];
+        out[i + 1] = 1.0 - out[i + 1];
+        out[i + 2] = 1.0 - out[i + 2];
+    }
+    out
+}
+
+fn cpu_threshold_core(input: &[f32], threshold: f32) -> Vec<f32> {
+    let mut out = input.to_vec();
+    for i in (0..out.len()).step_by(4) {
+        let y = 0.2126 * out[i] + 0.7152 * out[i + 1] + 0.0722 * out[i + 2];
+        let v = if y >= threshold { 1.0 } else { 0.0 };
+        out[i] = v;
+        out[i + 1] = v;
+        out[i + 2] = v;
+    }
+    out
+}
+
+fn cpu_posterize_core(input: &[f32], levels: u32) -> Vec<f32> {
+    let steps = (levels.max(2) - 1) as f32;
+    let mut out = input.to_vec();
+    for i in (0..out.len()).step_by(4) {
+        for c in 0..3 {
+            let v = out[i + c].clamp(0.0, 1.0);
+            out[i + c] = (v * steps).round() / steps;
+        }
+    }
+    out
+}
+
+#[test]
+#[ignore = "requires GPU adapter"]
+fn invert_threshold_posterize_parity() {
+    let ctx = GpuContext::try_new_blocking().expect("adapter");
+    let solid = solid_core(0.35);
+    let grad = gradient_core();
+
+    for input in [&solid, &grad] {
+        let gpu = apply_pointwise_gpu(
+            &ctx,
+            input,
+            PointwiseGpuParams {
+                pass: PointwisePassParams {
+                    op: PointwiseOp::Invert,
+                },
+                tile_x: 0,
+                tile_y: 0,
+            },
+        )
+        .unwrap();
+        assert_eps(&gpu, &cpu_invert_core(input), POINTWISE_PARITY_EPS);
+
+        let gpu = apply_pointwise_gpu(
+            &ctx,
+            input,
+            PointwiseGpuParams {
+                pass: PointwisePassParams {
+                    op: PointwiseOp::Threshold { threshold: 0.5 },
+                },
+                tile_x: 0,
+                tile_y: 0,
+            },
+        )
+        .unwrap();
+        assert_eps(&gpu, &cpu_threshold_core(input, 0.5), POINTWISE_PARITY_EPS);
+
+        let gpu = apply_pointwise_gpu(
+            &ctx,
+            input,
+            PointwiseGpuParams {
+                pass: PointwisePassParams {
+                    op: PointwiseOp::Posterize { levels: 8 },
+                },
+                tile_x: 0,
+                tile_y: 0,
+            },
+        )
+        .unwrap();
+        assert_eps(&gpu, &cpu_posterize_core(input, 8), POINTWISE_PARITY_EPS);
+    }
 }
 
 #[test]

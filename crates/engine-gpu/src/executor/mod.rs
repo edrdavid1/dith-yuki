@@ -10,10 +10,12 @@ use crate::composite::GpuCompositeFrameJob;
 use crate::context::GpuContext;
 use crate::graph::{ComputeGraph, GpuPipelineKey, GraphNode};
 use crate::resident::{
-    GpuTileCache, ReadbackRing, ResidentBayerPipelines, ResidentCompositePipelines,
-    ResidentCrosshatchPipelines, ResidentCrtPipelines, ResidentGatherPipelines,
-    ResidentHalftonePipelines, ResidentLineScreenPipelines, ResidentPaletteGuidedPipelines,
-    ResidentPalettePipelines, ResidentVoidAndClusterPipelines, ResidentWavePipelines, SlotHandle,
+    GpuTileCache, ReadbackRing, ResidentBayerPipelines, ResidentBlurNoisePipelines,
+    ResidentCompositePipelines, ResidentCrosshatchPipelines, ResidentCrtPipelines,
+    ResidentDetailPipelines, ResidentGatherPipelines, ResidentGlowPipelines,
+    ResidentHalftonePipelines, ResidentLineScreenPipelines, ResidentCubeLutPipelines,
+    ResidentPaletteGuidedPipelines, ResidentPalettePipelines, ResidentPointwisePipelines,
+    ResidentVoidAndClusterPipelines, ResidentWavePipelines, SlotHandle,
 };
 use crate::GpuError;
 
@@ -75,6 +77,11 @@ impl GpuExecutor {
         let crosshatch = ResidentCrosshatchPipelines::create(&ctx.device)?;
         let wave = ResidentWavePipelines::create(&ctx.device)?;
         let crt = ResidentCrtPipelines::create(&ctx.device)?;
+        let glow = ResidentGlowPipelines::create(&ctx.device)?;
+        let blur_noise = ResidentBlurNoisePipelines::create(&ctx.device)?;
+        let detail = ResidentDetailPipelines::create(&ctx.device)?;
+        let pointwise = ResidentPointwisePipelines::create(&ctx.device)?;
+        let cube_lut = ResidentCubeLutPipelines::create(&ctx.device)?;
         let palette = ResidentPalettePipelines::create(&ctx.device)?;
         let palette_guided = ResidentPaletteGuidedPipelines::create(&ctx.device)?;
         let composite = ResidentCompositePipelines::create(&ctx.device)?;
@@ -92,6 +99,11 @@ impl GpuExecutor {
                     crosshatch,
                     wave,
                     crt,
+                    glow,
+                    blur_noise,
+                    detail,
+                    pointwise,
+                    cube_lut,
                     palette,
                     palette_guided,
                     composite,
@@ -158,6 +170,11 @@ fn executor_loop(
     crosshatch: ResidentCrosshatchPipelines,
     wave: ResidentWavePipelines,
     crt: ResidentCrtPipelines,
+    glow: ResidentGlowPipelines,
+    blur_noise: ResidentBlurNoisePipelines,
+    detail: ResidentDetailPipelines,
+    pointwise: ResidentPointwisePipelines,
+    cube_lut: ResidentCubeLutPipelines,
     palette: ResidentPalettePipelines,
     palette_guided: ResidentPaletteGuidedPipelines,
     composite: ResidentCompositePipelines,
@@ -186,6 +203,11 @@ fn executor_loop(
                     &crosshatch,
                     &wave,
                     &crt,
+                    &glow,
+                    &blur_noise,
+                    &detail,
+                    &pointwise,
+                    &cube_lut,
                     &palette,
                     &palette_guided,
                     gather.as_ref(),
@@ -206,6 +228,11 @@ fn executor_loop(
                     &crosshatch,
                     &wave,
                     &crt,
+                    &glow,
+                    &blur_noise,
+                    &detail,
+                    &pointwise,
+                    &cube_lut,
                     &palette,
                     &palette_guided,
                     gather.as_ref(),
@@ -258,6 +285,11 @@ fn run_frame(
     crosshatch: &ResidentCrosshatchPipelines,
     wave: &ResidentWavePipelines,
     crt: &ResidentCrtPipelines,
+    glow: &ResidentGlowPipelines,
+    blur_noise: &ResidentBlurNoisePipelines,
+    detail: &ResidentDetailPipelines,
+    pointwise: &ResidentPointwisePipelines,
+    cube_lut: &ResidentCubeLutPipelines,
     palette: &ResidentPalettePipelines,
     palette_guided: &ResidentPaletteGuidedPipelines,
     gather: Option<&ResidentGatherPipelines>,
@@ -456,6 +488,97 @@ fn run_frame(
                                 work.coord.x,
                                 work.coord.y,
                                 crt_params,
+                            );
+                            ResidentBayerPipelines::copy_layer(
+                                &mut encoder,
+                                cache.scratch_a(),
+                                scratch_layer,
+                                cache.resident_texture(),
+                                slot.index,
+                            );
+                        }
+                    }
+                    if let Some(glow_params) = pass.glow {
+                        if pass.pipeline == GpuPipelineKey::Glow {
+                            glow.encode_glow_pass(
+                                &ctx.device,
+                                &mut encoder,
+                                cache.resident_texture(),
+                                slot.index,
+                                cache.scratch_a(),
+                                scratch_layer,
+                                cache.scratch_b(),
+                                scratch_layer,
+                                glow_params,
+                            );
+                        }
+                    }
+                    if let Some(bn) = pass.blur_noise {
+                        if pass.pipeline == GpuPipelineKey::BlurNoise {
+                            blur_noise.encode_blur_noise_pass(
+                                &ctx.device,
+                                &mut encoder,
+                                cache.resident_texture(),
+                                slot.index,
+                                cache.scratch_a(),
+                                scratch_layer,
+                                cache.scratch_b(),
+                                scratch_layer,
+                                work.coord.x,
+                                work.coord.y,
+                                bn,
+                            );
+                        }
+                    }
+                    if let Some(dt) = pass.detail {
+                        if pass.pipeline == GpuPipelineKey::Detail {
+                            detail.encode_detail_pass(
+                                &ctx.device,
+                                &mut encoder,
+                                cache.resident_texture(),
+                                slot.index,
+                                cache.scratch_a(),
+                                scratch_layer,
+                                cache.scratch_b(),
+                                scratch_layer,
+                                dt,
+                            );
+                        }
+                    }
+                    if let Some(pw) = &pass.pointwise {
+                        if pass.pipeline == GpuPipelineKey::Pointwise {
+                            pointwise.encode_pointwise_pass(
+                                &ctx.device,
+                                &mut encoder,
+                                cache.resident_texture(),
+                                slot.index,
+                                cache.scratch_a(),
+                                scratch_layer,
+                                work.coord.x,
+                                work.coord.y,
+                                pw,
+                            );
+                            ResidentBayerPipelines::copy_layer(
+                                &mut encoder,
+                                cache.scratch_a(),
+                                scratch_layer,
+                                cache.resident_texture(),
+                                slot.index,
+                            );
+                        }
+                    }
+                    if let Some(cl) = &pass.cube_lut {
+                        if pass.pipeline == GpuPipelineKey::CubeLut {
+                            cube_lut.encode_cube_lut_pass(
+                                &ctx.device,
+                                &mut encoder,
+                                cache.resident_texture(),
+                                slot.index,
+                                cache.scratch_a(),
+                                scratch_layer,
+                                work.coord.x,
+                                work.coord.y,
+                                cl,
                             );
                             ResidentBayerPipelines::copy_layer(
                                 &mut encoder,

@@ -34,6 +34,7 @@ mod halftone_screen_angled;
 mod highlights_shadows;
 mod hue;
 mod invert;
+mod levels;
 mod line_screen;
 mod nearest_color;
 mod palette_quantize;
@@ -113,6 +114,7 @@ pub fn register_all(registry: &mut AlgorithmRegistry) {
     registry.register(Box::new(invert::Invert));
     registry.register(Box::new(threshold::Threshold));
     registry.register(Box::new(posterize::Posterize));
+    registry.register(Box::new(levels::Levels));
     registry.register(Box::new(cube_lut::CubeLut));
     registry.register(Box::new(glitch::Glitch));
     registry.register(Box::new(error_diffusion::ZhouFang));

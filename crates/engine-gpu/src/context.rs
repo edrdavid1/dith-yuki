@@ -5,7 +5,9 @@ use std::sync::Mutex;
 
 use crate::bayer::BayerPipelines;
 use crate::crt::CrtPipeline;
+use crate::glow::GlowPipeline;
 use crate::halftone::HalftonePipeline;
+use crate::pointwise::PointwisePipeline;
 use crate::void_and_cluster::VoidAndClusterPipelines;
 
 /// Shared GPU device for tile compute.
@@ -23,6 +25,8 @@ pub struct GpuContext {
     pub(crate) void_and_cluster: Option<VoidAndClusterPipelines>,
     pub(crate) halftone: Option<HalftonePipeline>,
     pub(crate) crt: Option<CrtPipeline>,
+    pub(crate) glow: Option<GlowPipeline>,
+    pub(crate) pointwise: Option<PointwisePipeline>,
     /// Track C Phase 1: chosen once at adapter init.
     pub vram_budget_bytes: u64,
     pub vram_budget_source: crate::VramBudgetSource,
@@ -94,6 +98,8 @@ impl GpuContext {
             void_and_cluster: None,
             halftone: None,
             crt: None,
+            glow: None,
+            pointwise: None,
             vram_budget_bytes: vram.bytes,
             vram_budget_source: vram.source,
         };
@@ -113,6 +119,14 @@ impl GpuContext {
         ctx.crt = CrtPipeline::create(&ctx.device).ok();
         if ctx.crt.is_none() {
             log::warn!("engine-gpu: CRT pipeline create failed; CRT stays CPU");
+        }
+        ctx.glow = GlowPipeline::create(&ctx.device).ok();
+        if ctx.glow.is_none() {
+            log::warn!("engine-gpu: Glow pipeline create failed; Glow stays CPU");
+        }
+        ctx.pointwise = PointwisePipeline::create(&ctx.device).ok();
+        if ctx.pointwise.is_none() {
+            log::warn!("engine-gpu: Pointwise pipeline create failed; pointwise pack stays CPU");
         }
 
         Some(ctx)

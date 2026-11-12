@@ -12,7 +12,6 @@ use super::dither_diffusion::{
 };
 use super::dither_ordered::apply_ordered_with_cache_into;
 use super::dither_residuals::ErrorResidualsStore;
-use super::levels::LevelsFilter;
 use crate::compositor::blend_tile;
 use crate::document::Document;
 use crate::error::EngineError;
@@ -1122,7 +1121,7 @@ fn apply_single_filter_into(
 
     // Registry-only dispatch for built-in algorithms (task 4.1).
     // `algorithm_id` may be missing on legacy instances — infer from params.
-    // Levels / CustomPng / Placeholder are not in the 17-id registry.
+    // CustomPng / Placeholder are not in the algorithm registry.
     if let Some(id) = resolve_algorithm_id(filter) {
         let Some(algo) = crate::algorithms::builtin_registry().get_by_str(&id) else {
             return Err(EngineError::unknown_algorithm(id));
@@ -1161,25 +1160,6 @@ fn apply_single_filter_into(
     }
 
     match &filter.params {
-        FilterParams::Levels {
-            input_black,
-            input_white,
-            gamma,
-            output_black,
-            output_white,
-            channel_r,
-            channel_g,
-            channel_b,
-        } => apply_levels_filter_into(
-            tile,
-            *input_black,
-            *input_white,
-            *gamma,
-            *output_black,
-            *output_white,
-            [*channel_r, *channel_g, *channel_b],
-            dst,
-        ),
         FilterParams::Dither { mode, color_depth } => {
             let params_v2 = DitherParamsV2::from((mode.clone(), *color_depth));
             dispatch_dither_v2_into(
@@ -1411,30 +1391,6 @@ fn dispatch_dither_v2_inner_into(
         }
         _ => unreachable!("unhandled dither mode in dispatch"),
     }
-}
-
-/// Apply Levels filter into `dst`.
-fn apply_levels_filter_into(
-    tile: &PixelTile,
-    input_black: f32,
-    input_white: f32,
-    gamma: f32,
-    output_black: f32,
-    output_white: f32,
-    channels: [bool; 3],
-    dst: &mut PixelTile,
-) -> Result<(), EngineError> {
-    let mut filter = LevelsFilter::new();
-    filter.input_black = input_black;
-    filter.input_white = input_white;
-    filter.gamma = gamma;
-    filter.output_black = output_black;
-    filter.output_white = output_white;
-    filter.channel_r = channels[0];
-    filter.channel_g = channels[1];
-    filter.channel_b = channels[2];
-    filter.rebuild_lut();
-    filter.apply_to_tile_into(tile, dst)
 }
 
 #[cfg(test)]
@@ -2456,6 +2412,7 @@ mod tests {
                 radius: 1.0,
                 intensity: 1.0,
                 threshold: 0.0,
+                softness: 1,
             },
         );
         filter.opacity = 0.5;

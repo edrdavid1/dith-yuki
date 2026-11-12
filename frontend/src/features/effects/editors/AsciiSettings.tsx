@@ -52,7 +52,8 @@ function AsciiSettings({ params, onUpdate }: AsciiSettingsProps) {
   return (
     <div className={cn('effect-settings-content')}>
       <p className={cn('effect-palette-hint')}>
-        ASCII runs as a full-document pass — preview updates after the grid is ready.
+        ASCII is a full-image job — preview updates after the grid is ready. Place grade
+        under it or stylize above deliberately; it is not a progressive tile scrub.
       </p>
       <DropdownMenu
         label="Font"

@@ -108,7 +108,7 @@ function filterKindToName(
     case 'DitherV2': case 'Dither': return 'Dithering';
     case 'Glitch': return 'Glitching';
     case 'Curves': return 'Curves';
-    case 'Levels': return 'RGB Channels';
+    case 'Levels': return 'RGB channels';
     case 'Glow': return 'Glow';
     case 'Crt': return 'CRT';
     case 'Adjust': return 'Adjustments';

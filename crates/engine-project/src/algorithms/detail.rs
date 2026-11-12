@@ -64,9 +64,16 @@ impl FilterAlgorithm for Detail {
     }
 
     fn gpu_eligibility(&self, params: &serde_json::Value) -> GpuEligibility {
+        // Neutral → Eligible (graph Skip). Non-zero → GPU clamp path when spatial pack on.
+        if !engine_gpu::spatial_gpu_enabled() {
+            return match serde_json::from_value::<DetailParams>(params.clone()) {
+                Ok(p) if p.clarity == 0.0 && p.sharpness == 0.0 => GpuEligibility::Eligible,
+                Ok(_) => GpuEligibility::Cpu(CpuCheckpointKind::AdjustBlur),
+                Err(_) => GpuEligibility::Cpu(CpuCheckpointKind::UnsupportedFilter),
+            };
+        }
         match serde_json::from_value::<DetailParams>(params.clone()) {
-            Ok(p) if p.clarity == 0.0 && p.sharpness == 0.0 => GpuEligibility::Eligible,
-            Ok(_) => GpuEligibility::Cpu(CpuCheckpointKind::AdjustBlur),
+            Ok(_) => GpuEligibility::Eligible,
             Err(_) => GpuEligibility::Cpu(CpuCheckpointKind::UnsupportedFilter),
         }
     }

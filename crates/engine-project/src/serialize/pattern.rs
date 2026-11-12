@@ -922,6 +922,7 @@ pub fn import_pattern_into_document(
             .map_err(|e| ProjectError::InvalidArchive(e.to_string()))?;
         new_filters.push(inst);
     }
+    let new_filters = crate::filters::expand_adjust_spatial_filters(&new_filters);
 
     let layer = find_leaf_mut(&mut doc.root, target_layer_id)?;
     let mut filter_ids = Vec::new();
@@ -1584,6 +1585,7 @@ mod tests {
                 radius: 1.0,
                 intensity: 1.0,
                 threshold: 0.0,
+                softness: 1,
             },
         );
         let id_a = a.id;

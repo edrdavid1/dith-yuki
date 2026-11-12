@@ -54,7 +54,11 @@ impl FilterAlgorithm for Posterize {
     }
 
     fn gpu_eligibility(&self, _params: &serde_json::Value) -> GpuEligibility {
-        GpuEligibility::Cpu(CpuCheckpointKind::UnsupportedFilter)
+        if engine_gpu::pointwise_gpu_enabled() {
+            GpuEligibility::Eligible
+        } else {
+            GpuEligibility::Cpu(CpuCheckpointKind::UnsupportedFilter)
+        }
     }
 
     fn param_schema(&self) -> &'static [ParamField] {

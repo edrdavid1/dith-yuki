@@ -28,12 +28,8 @@ function AdjustSettings({ params, onUpdate }: AdjustSettingsProps) {
   const saturation = clampParam(num(params, 'saturation', 0), -1, 1);
   const vibrance = clampParam(num(params, 'vibrance', 0), -1, 1);
   const hue = clampParam(num(params, 'hue', 0), -180, 180);
-  // Legacy knobs may still live on Adjust from old docs — preserve on update.
+  // Legacy brightness still stored; spatial knobs moved to BlurNoise / Detail (PR-G).
   const brightness = clampParam(num(params, 'brightness', 0), -1, 1);
-  const blur = clampParam(num(params, 'blur', 0), 0, 2);
-  const sharpness = clampParam(num(params, 'sharpness', 0), 0, 2);
-  const noise = clampParam(num(params, 'noise', 0), 0, 1);
-  const clarity = clampParam(num(params, 'clarity', 0), -1, 1);
 
   const emit = (overrides: Record<string, unknown>) => {
     onUpdate({
@@ -47,10 +43,10 @@ function AdjustSettings({ params, onUpdate }: AdjustSettingsProps) {
       vibrance: overrides.vibrance ?? vibrance,
       hue: overrides.hue ?? hue,
       brightness,
-      blur,
-      sharpness,
-      noise,
-      clarity,
+      blur: 0,
+      sharpness: 0,
+      noise: 0,
+      clarity: 0,
     });
   };
 

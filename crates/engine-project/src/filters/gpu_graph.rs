@@ -3,10 +3,17 @@
 use engine_color::palette_cache::PaletteKdCache;
 use engine_color::palette_guided::default_channel_levels;
 use engine_color::palette_lut::{PaletteLutCache, DEFAULT_LUT_SIZE};
+use std::path::Path;
+use std::sync::Arc;
+
+use engine_color::global_cube_lut_cache;
 use engine_gpu::{
     compile_graph, palette_guided_params, palette_mixed_params_from_palette,
-    palette_quantize_params_from_lut, BayerPassParams, ComputeGraph, CpuCheckpointKind,
-    CrtPassParams, GpuPipelineKey, GraphCompileError, GraphLayerFilter, HalftonePassParams,
+    palette_quantize_params_from_lut, AdjustPointwisePassParams, BayerPassParams, ComputeGraph,
+    BlurNoisePassParams, CpuCheckpointKind, CrtPassParams, CubeLutPassParams, CurvesPassParams,
+    DetailPassParams, GlowPassParams,
+    GpuPipelineKey, GraphCompileError, GraphLayerFilter, HalftonePassParams, LevelsPassParams,
+    PointwiseOp, PointwisePassParams,
 };
 
 use crate::document::Document;
@@ -124,6 +131,109 @@ fn build_gpu_layer_filter(
             strength: *strength,
             mask_strength: *mask_strength,
         }),
+        FilterParams::Glow {
+            radius,
+            intensity,
+            threshold,
+            softness,
+        } => GraphLayerFilter::Glow(GlowPassParams {
+            radius: *radius,
+            intensity: *intensity,
+            threshold: *threshold,
+            softness: *softness,
+        }),
+        FilterParams::BlurNoise { blur, noise }
+            if *blur <= 1e-4 && *noise <= 1e-6 =>
+        {
+            GraphLayerFilter::Skip
+        }
+        FilterParams::BlurNoise { blur, noise } => GraphLayerFilter::BlurNoise(BlurNoisePassParams {
+            blur: *blur,
+            noise: *noise,
+        }),
+        FilterParams::Detail {
+            clarity,
+            sharpness,
+        } if clarity.abs() <= 1e-6 && *sharpness <= 1e-6 => GraphLayerFilter::Skip,
+        FilterParams::Detail {
+            clarity,
+            sharpness,
+        } => GraphLayerFilter::Detail(DetailPassParams {
+            clarity: *clarity,
+            sharpness: *sharpness,
+        }),
+        FilterParams::Invert {} => GraphLayerFilter::Pointwise(PointwisePassParams {
+            op: PointwiseOp::Invert,
+        }),
+        FilterParams::Threshold { threshold } => GraphLayerFilter::Pointwise(PointwisePassParams {
+            op: PointwiseOp::Threshold {
+                threshold: *threshold,
+            },
+        }),
+        FilterParams::Posterize { levels } => GraphLayerFilter::Pointwise(PointwisePassParams {
+            op: PointwiseOp::Posterize { levels: *levels },
+        }),
+        FilterParams::Levels {
+            input_black,
+            input_white,
+            gamma,
+            output_black,
+            output_white,
+            channel_r,
+            channel_g,
+            channel_b,
+        } => {
+            let mut mask = 0u32;
+            if *channel_r {
+                mask |= 1;
+            }
+            if *channel_g {
+                mask |= 2;
+            }
+            if *channel_b {
+                mask |= 4;
+            }
+            GraphLayerFilter::Pointwise(PointwisePassParams {
+                op: PointwiseOp::Levels(LevelsPassParams {
+                    input_black: *input_black,
+                    input_white: *input_white,
+                    gamma: *gamma,
+                    output_black: *output_black,
+                    output_white: *output_white,
+                    channel_mask: mask,
+                }),
+            })
+        }
+        FilterParams::Curves { curve, channel } => {
+            match bake_curves_pass(curve, *channel) {
+                Some(p) => GraphLayerFilter::Pointwise(PointwisePassParams {
+                    op: PointwiseOp::Curves(p),
+                }),
+                None => GraphLayerFilter::CpuCheckpoint(CpuCheckpointKind::UnsupportedFilter),
+            }
+        }
+        FilterParams::CubeLut { path, amount } => match bake_cube_lut_pass(path, *amount) {
+            Some(p) => GraphLayerFilter::CubeLut(p),
+            None => {
+                // Empty / unloadable → identity pass-through as Invert twice would
+                // change pixels; use Adjust-neutral Pointwise no-op via Invert of
+                // already-inverted is wrong. Emit Adjust identity (exposure 0…).
+                GraphLayerFilter::Pointwise(PointwisePassParams {
+                    op: PointwiseOp::Adjust(AdjustPointwisePassParams {
+                        exposure: 0.0,
+                        contrast: 0.0,
+                        brightness: 0.0,
+                        saturation: 0.0,
+                        shadows: 0.0,
+                        highlights: 0.0,
+                        temperature: 0.0,
+                        tint: 0.0,
+                        vibrance: 0.0,
+                        hue: 0.0,
+                    }),
+                })
+            }
+        },
         FilterParams::Adjust {
             blur,
             sharpness,
@@ -133,8 +243,76 @@ fn build_gpu_layer_filter(
         } if *blur > 0.0 || *sharpness > 0.0 || *noise > 0.0 || clarity.abs() > 0.0 => {
             GraphLayerFilter::CpuCheckpoint(CpuCheckpointKind::AdjustBlur)
         }
+        FilterParams::Adjust {
+            exposure,
+            contrast,
+            brightness,
+            saturation,
+            shadows,
+            highlights,
+            temperature,
+            tint,
+            vibrance,
+            hue,
+            ..
+        } => GraphLayerFilter::Pointwise(PointwisePassParams {
+            op: PointwiseOp::Adjust(AdjustPointwisePassParams {
+                exposure: *exposure,
+                contrast: *contrast,
+                brightness: *brightness,
+                saturation: *saturation,
+                shadows: *shadows,
+                highlights: *highlights,
+                temperature: *temperature,
+                tint: *tint,
+                vibrance: *vibrance,
+                hue: *hue,
+            }),
+        }),
         _ => GraphLayerFilter::CpuCheckpoint(CpuCheckpointKind::UnsupportedFilter),
     }
+}
+
+fn bake_curves_pass(
+    curve: &[(f32, f32)],
+    channel: crate::filters::curves::CurveChannel,
+) -> Option<CurvesPassParams> {
+    use crate::filters::curves::{CurveChannel, CurvesFilter};
+    let mut filter = CurvesFilter::new(channel);
+    for &(input, output) in curve {
+        filter.add_point(input, output).ok()?;
+    }
+    let lut: Vec<f32> = (0..4096)
+        .map(|i| filter.lut_lookup(i as f32 / 4095.0))
+        .collect();
+    let channel_u = match channel {
+        CurveChannel::Red => 0,
+        CurveChannel::Green => 1,
+        CurveChannel::Blue => 2,
+        CurveChannel::All => 3,
+        CurveChannel::Luminance => 4,
+    };
+    Some(CurvesPassParams {
+        channel: channel_u,
+        lut: Arc::from(lut.into_boxed_slice()),
+    })
+}
+
+fn bake_cube_lut_pass(path: &str, amount: f32) -> Option<CubeLutPassParams> {
+    let amount = amount.clamp(0.0, 1.0);
+    if path.trim().is_empty() || amount == 0.0 {
+        return None;
+    }
+    let lut = global_cube_lut_cache()
+        .get_or_load(Path::new(path))
+        .ok()?;
+    Some(CubeLutPassParams {
+        size: lut.size as u32,
+        amount,
+        domain_min: lut.domain_min,
+        domain_max: lut.domain_max,
+        data: Arc::from(lut.rgb_data().to_vec().into_boxed_slice()),
+    })
 }
 
 fn try_palette_quantize_spec(
@@ -544,6 +722,224 @@ mod tests {
     }
 
     #[test]
+    fn levels_and_curves_compile_gpu_only_stack() {
+        let filters = [
+            FilterInstance::new(
+                FilterKind::Threshold,
+                FilterParams::Threshold { threshold: 0.5 },
+            ),
+            FilterInstance::new(
+                FilterKind::Levels,
+                FilterParams::Levels {
+                    input_black: 0.0,
+                    input_white: 1.0,
+                    gamma: 1.2,
+                    output_black: 0.0,
+                    output_white: 1.0,
+                    channel_r: true,
+                    channel_g: true,
+                    channel_b: true,
+                },
+            ),
+            FilterInstance::new(
+                FilterKind::Curves,
+                FilterParams::Curves {
+                    curve: vec![(0.0, 0.0), (0.5, 0.55), (1.0, 1.0)],
+                    channel: crate::filters::curves::CurveChannel::All,
+                },
+            ),
+            bayer_layer(),
+        ];
+        let g = compile_layer_graph(&filters).unwrap();
+        assert!(g.is_gpu_only());
+        assert_eq!(g.nodes.len(), 4);
+    }
+
+    #[test]
+    fn pointwise_pack_compiles_gpu_only_with_crt_glow() {
+        // Panel top = filters[0] = last applied. Apply order: Bayer → CRT → Invert → Glow.
+        let filters = [
+            FilterInstance::new(
+                FilterKind::Glow,
+                FilterParams::Glow {
+                    radius: 2.0,
+                    intensity: 1.0,
+                    threshold: 0.2,
+                    softness: 1,
+                },
+            ),
+            FilterInstance::new(FilterKind::Invert, FilterParams::Invert {}),
+            FilterInstance::new(
+                FilterKind::Crt,
+                FilterParams::Crt {
+                    period: 2,
+                    strength: 0.5,
+                    mask_strength: 0.0,
+                },
+            ),
+            bayer_layer(),
+        ];
+        let g = compile_layer_graph(&filters).unwrap();
+        assert!(g.is_gpu_only(), "Invert must not poison CRT/Glow stack");
+        assert_eq!(g.nodes.len(), 4);
+    }
+
+    #[test]
+    fn pure_adjust_compiles_pointwise_gpu_node() {
+        let f = FilterInstance::new(
+            FilterKind::Adjust,
+            FilterParams::Adjust {
+                contrast: 0.2,
+                brightness: 0.1,
+                saturation: -0.1,
+                blur: 0.0,
+                sharpness: 0.0,
+                noise: 0.0,
+                exposure: 0.25,
+                shadows: 0.0,
+                highlights: 0.0,
+                temperature: 0.0,
+                tint: 0.0,
+                vibrance: 0.0,
+                hue: 0.0,
+                clarity: 0.0,
+            },
+        );
+        let g = compile_layer_graph(&[f]).unwrap();
+        assert!(g.is_gpu_only());
+        assert!(matches!(
+            g.nodes.first(),
+            Some(engine_gpu::GraphNode::Gpu(engine_gpu::GpuPass {
+                pipeline: engine_gpu::GpuPipelineKey::Pointwise,
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn invert_threshold_posterize_compile_gpu() {
+        for (kind, params) in [
+            (FilterKind::Invert, FilterParams::Invert {}),
+            (
+                FilterKind::Threshold,
+                FilterParams::Threshold { threshold: 0.4 },
+            ),
+            (FilterKind::Posterize, FilterParams::Posterize { levels: 6 }),
+        ] {
+            let g = compile_layer_graph(&[FilterInstance::new(kind, params)]).unwrap();
+            assert!(g.is_gpu_only());
+            assert!(matches!(
+                g.nodes.first(),
+                Some(engine_gpu::GraphNode::Gpu(engine_gpu::GpuPass {
+                    pipeline: engine_gpu::GpuPipelineKey::Pointwise,
+                    ..
+                }))
+            ));
+        }
+    }
+
+    #[test]
+    fn glow_compiles_gpu_node_when_within_halo() {
+        // r×softness ≤ HALO (2) stays resident; larger radii → Cpu(AdjustBlur).
+        let f = FilterInstance::new(
+            FilterKind::Glow,
+            FilterParams::Glow {
+                radius: 2.0,
+                intensity: 1.0,
+                threshold: 0.35,
+                softness: 1,
+            },
+        );
+        let g = compile_layer_graph(&[f]).unwrap();
+        assert!(g.is_gpu_only());
+        assert!(matches!(
+            g.nodes.first(),
+            Some(engine_gpu::GraphNode::Gpu(engine_gpu::GpuPass {
+                pipeline: engine_gpu::GpuPipelineKey::Glow,
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn glow_large_radius_cpu_checkpoint() {
+        let f = FilterInstance::new(
+            FilterKind::Glow,
+            FilterParams::Glow {
+                radius: 8.0,
+                intensity: 1.0,
+                threshold: 0.35,
+                softness: 2,
+            },
+        );
+        let g = compile_layer_graph(&[f]).unwrap();
+        assert!(!g.is_gpu_only());
+        assert!(matches!(
+            g.nodes.first(),
+            Some(engine_gpu::GraphNode::CpuCheckpoint(
+                engine_gpu::CpuCheckpointKind::AdjustBlur
+            ))
+        ));
+    }
+
+    #[test]
+    fn blur_noise_compiles_gpu_node() {
+        let f = FilterInstance::new(
+            FilterKind::BlurNoise,
+            FilterParams::BlurNoise {
+                blur: 1.0,
+                noise: 0.0,
+            },
+        );
+        let g = compile_layer_graph(&[f]).unwrap();
+        assert!(g.is_gpu_only());
+        assert!(matches!(
+            g.nodes.first(),
+            Some(engine_gpu::GraphNode::Gpu(engine_gpu::GpuPass {
+                pipeline: engine_gpu::GpuPipelineKey::BlurNoise,
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn detail_compiles_gpu_node() {
+        let f = FilterInstance::new(
+            FilterKind::Detail,
+            FilterParams::Detail {
+                clarity: 0.0,
+                sharpness: 1.0,
+            },
+        );
+        let g = compile_layer_graph(&[f]).unwrap();
+        assert!(g.is_gpu_only());
+        assert!(matches!(
+            g.nodes.first(),
+            Some(engine_gpu::GraphNode::Gpu(engine_gpu::GpuPass {
+                pipeline: engine_gpu::GpuPipelineKey::Detail,
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn neutral_blur_noise_is_skipped() {
+        let filters = [
+            FilterInstance::new(
+                FilterKind::BlurNoise,
+                FilterParams::BlurNoise {
+                    blur: 0.0,
+                    noise: 0.0,
+                },
+            ),
+            bayer_layer(),
+        ];
+        let g = compile_layer_graph(&filters).unwrap();
+        assert!(g.is_gpu_only());
+        assert_eq!(g.nodes.len(), 1);
+    }
+
+    #[test]
     fn crt_compiles_gpu_node() {
         let f = FilterInstance::new(
             FilterKind::Crt,
@@ -664,6 +1060,54 @@ mod tests {
                 pipeline: engine_gpu::GpuPipelineKey::PaletteQuantize,
                 ..
             }))
+        ));
+    }
+
+    #[test]
+    fn nearest_color_oklab_compiles_palette_quantize_gpu() {
+        let doc = bw_doc();
+        let lut = engine_color::palette_lut::PaletteLutCache::new();
+        let kd = engine_color::palette_cache::PaletteKdCache::new();
+        let ctx = PaletteGraphCtx {
+            document: &doc,
+            lut_cache: &lut,
+            kd_cache: &kd,
+        };
+        let mut f = FilterInstance::new(
+            FilterKind::PaletteQuantize,
+            FilterParams::PaletteQuantize {
+                palette_id: crate::types::PaletteId::new(1),
+                diffusion: None,
+                metric: "oklab".to_string(),
+            },
+        );
+        f.algorithm_id = Some("nearest_color".into());
+        let g = compile_layer_graph_with_palettes(&[f], Some(&ctx)).unwrap();
+        assert!(g.is_gpu_only());
+        assert!(matches!(
+            g.nodes.first(),
+            Some(engine_gpu::GraphNode::Gpu(engine_gpu::GpuPass {
+                pipeline: engine_gpu::GpuPipelineKey::PaletteQuantize,
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn nearest_color_srgb_stays_checkpoint() {
+        let mut f = FilterInstance::new(
+            FilterKind::PaletteQuantize,
+            FilterParams::PaletteQuantize {
+                palette_id: crate::types::PaletteId::new(1),
+                diffusion: None,
+                metric: "srgb".to_string(),
+            },
+        );
+        f.algorithm_id = Some("nearest_color".into());
+        let specs = layer_to_graph_specs(&[f]);
+        assert!(matches!(
+            specs[0],
+            GraphLayerFilter::CpuCheckpoint(CpuCheckpointKind::UnsupportedFilter)
         ));
     }
 

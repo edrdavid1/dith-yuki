@@ -42,6 +42,7 @@ pub mod hue;
 pub mod invert;
 pub mod levels;
 pub mod line_screen;
+pub mod migrate_adjust;
 pub mod neighbors;
 pub mod neutral;
 pub mod ostromoukhov_table;
@@ -90,6 +91,7 @@ pub use fusion::{
 };
 pub use glitch::{GlitchFilter, GlitchParams, GlitchSubOp};
 pub use levels::LevelsFilter;
+pub use migrate_adjust::expand_adjust_spatial_filters;
 pub use neighbors::{
     gather_dithered_neighborhood, post_direct_spatial_radius,
     processed_coords_needing_spatial_upgrade, with_spatial_neighbors, NeighborTileBounds,

@@ -8,8 +8,8 @@ use engine_gpu::{
     palette_quantize_params_from_lut, void_and_cluster_ranks, BayerPassParams,
     CrosshatchPassParams, CrtPassParams, GpuCompositeFrameJob, GpuCompositeLayerOp,
     GpuCompositeTileWork, GpuContext, GpuExecutor, GpuFrameJob, GpuPipelineKey, GpuTileCache,
-    GpuTileWork, GraphLayerFilter, HalftonePassParams, LineScreenPassParams,
-    VoidAndClusterPassParams, WavePassParams,
+    GpuTileWork, GraphLayerFilter, HalftonePassParams, LineScreenPassParams, PointwiseOp,
+    PointwisePassParams, VoidAndClusterPassParams, WavePassParams,
 };
 use engine_tiles::{CacheStage, PixelTile, TileCoord, TileKey};
 
@@ -2135,4 +2135,122 @@ fn resident_composite_three_layers_multiply_screen() {
     // Multi-pass Screen/Multiply can drift 1–2 ULP vs scalar CPU.
     assert_tile_within_eps(&gpu, &cpu, 1e-5);
     executor.shutdown();
+}
+
+const POINTWISE_PARITY_EPS: f32 = 1.0 / 255.0;
+
+fn cpu_invert_tile(input: &PixelTile) -> PixelTile {
+    let mut out = PixelTile::new();
+    for y in 0..256u32 {
+        for x in 0..256u32 {
+            let px = x + 2;
+            let py = y + 2;
+            out.set(px, py, 0, 1.0 - input.at(px, py, 0));
+            out.set(px, py, 1, 1.0 - input.at(px, py, 1));
+            out.set(px, py, 2, 1.0 - input.at(px, py, 2));
+            out.set(px, py, 3, input.at(px, py, 3));
+        }
+    }
+    out
+}
+
+fn cpu_threshold_tile(input: &PixelTile, threshold: f32) -> PixelTile {
+    let mut out = PixelTile::new();
+    for y in 0..256u32 {
+        for x in 0..256u32 {
+            let px = x + 2;
+            let py = y + 2;
+            let r = input.at(px, py, 0);
+            let g = input.at(px, py, 1);
+            let b = input.at(px, py, 2);
+            let v = if 0.2126 * r + 0.7152 * g + 0.0722 * b >= threshold {
+                1.0
+            } else {
+                0.0
+            };
+            out.set(px, py, 0, v);
+            out.set(px, py, 1, v);
+            out.set(px, py, 2, v);
+            out.set(px, py, 3, input.at(px, py, 3));
+        }
+    }
+    out
+}
+
+fn cpu_posterize_tile(input: &PixelTile, levels: u32) -> PixelTile {
+    let steps = (levels.max(2) - 1) as f32;
+    let mut out = PixelTile::new();
+    for y in 0..256u32 {
+        for x in 0..256u32 {
+            let px = x + 2;
+            let py = y + 2;
+            for c in 0..3u32 {
+                let v = input.at(px, py, c).clamp(0.0, 1.0);
+                out.set(px, py, c, (v * steps).round() / steps);
+            }
+            out.set(px, py, 3, input.at(px, py, 3));
+        }
+    }
+    out
+}
+
+fn run_resident_pointwise(op: PointwiseOp, cpu: impl Fn(&PixelTile) -> PixelTile) {
+    let ctx = shared_test_ctx();
+    let cache = Arc::new(test_cache(&ctx));
+    let mut executor = GpuExecutor::spawn(Arc::clone(&ctx), Arc::clone(&cache)).expect("executor");
+
+    let raw = gradient_tile();
+    let expected = cpu(&raw);
+    let key = TileKey {
+        doc: 1,
+        layer: 1,
+        coord: TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        },
+        stage: CacheStage::Processed,
+    };
+    let graph = Arc::new(
+        compile_graph(&[GraphLayerFilter::Pointwise(PointwisePassParams { op })])
+            .expect("graph"),
+    );
+    executor
+        .submit_frame_blocking(GpuFrameJob {
+            doc_gen: 1,
+            graph,
+            speculative: false,
+            tiles: vec![GpuTileWork {
+                key,
+                coord: key.coord,
+                generation: 1,
+                pixels: Arc::new(dup_tile(&raw)),
+            }],
+        })
+        .expect("gpu submit");
+    let gpu_tile = cache.demote(&ctx, &key).expect("demote").expect("slot");
+    assert_tile_within_eps(&gpu_tile, &expected, POINTWISE_PARITY_EPS);
+    executor.shutdown();
+}
+
+#[test]
+#[ignore = "requires GPU adapter"]
+fn resident_invert_matches_cpu() {
+    run_resident_pointwise(PointwiseOp::Invert, cpu_invert_tile);
+}
+
+#[test]
+#[ignore = "requires GPU adapter"]
+fn resident_threshold_matches_cpu() {
+    run_resident_pointwise(PointwiseOp::Threshold { threshold: 0.45 }, |t| {
+        cpu_threshold_tile(t, 0.45)
+    });
+}
+
+#[test]
+#[ignore = "requires GPU adapter"]
+fn resident_posterize_matches_cpu() {
+    run_resident_pointwise(PointwiseOp::Posterize { levels: 8 }, |t| {
+        cpu_posterize_tile(t, 8)
+    });
 }

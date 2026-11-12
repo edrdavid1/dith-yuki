@@ -76,7 +76,7 @@ describe('ditherFilterLocksOpacity', () => {
         enabled: true,
         opacity: 0.5,
         blend_mode: 'Normal',
-        params: { type: 'Glow', radius: 1, intensity: 1, threshold: 0 } as FilterInfo['params'],
+        params: { type: 'Glow', radius: 1, intensity: 1, threshold: 0, softness: 1 } as FilterInfo['params'],
       })
     ).toBe(false);
   });

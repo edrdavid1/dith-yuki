@@ -77,9 +77,10 @@ GlobalCoordSigned::from_local_with_halo(tile_coord, local_x, local_y, halo)
 | Ordered Dither (Bayer/CustomPng/Wave) | Нет (координаты глобальные) | `filters/dither_ordered.rs` |
 | CMYK Halftone | Нет (`GlobalCoord` + screen angles) | `filters/dither_ordered.rs` |
 | CRT scanlines | Нет (`Y_g` / `X_g` via `GlobalCoord`) | `filters/crt.rs` |
-| Glow (blur ≤ HALO) | Нет (v1 radius capped to HALO) | `filters/glow.rs` |
+| Glow (bloom, radius ≤ 16) | Да — CPU neighbors when Post complete; GPU Eligible only if `r×softness ≤ HALO` | `filters/glow.rs` + `engine-gpu` glow shaders |
+| BlurNoise / Detail | Да — CPU neighbors when Post complete; GPU clamp path | `filters/blur_noise.rs`, `detail.rs` + resident shaders |
 | PaletteQuantize (без diffusion) | Нет | `filters/palette_quantize.rs` |
-| Glitch | Нет (seed deterministic) | `filters/glitch.rs` |
+| Glitch | Да — gather samples Dithered neighbors when Post complete; else in-tile clamp | `filters/glitch.rs` |
 
 Эти фильтры могут обрабатывать любой тайл в любом порядке и параллельно.
 Pattern filters (Bayer, CMYK Halftone, Wave, CRT) MUST obtain document coords only
@@ -345,7 +346,7 @@ Warm download from an already-filled VRAM slot runs **without** preview opt-in. 
 - **Executor:** dedicated `GpuExecutor` thread (no worker `submit_lock`).
 - **Decision:** `decide_tile_dispatch` — warm+current gen → GPU download; cold+opt-in → GPU compute; else CPU.
 - **Eligible:** Bayer2/4/8/16 + Clustered/Dispersed/VAC (`pixel_size==1`, Track H bias/angle); Halftone angled; Line Screen; Crosshatch; Wave; CRT; Guided/Mixed/PaletteQuantize (A7).
-- **Not eligible:** all ED kernels, CustomPng, stipple, Glow, `pixel_size>1`. Pyramid `level > 0` → CPU.
+- **Not eligible:** all ED kernels, CustomPng, stipple, `pixel_size>1`. Pyramid `level > 0` → CPU.
 - **Parity:** Bayer exact (`f32 ==`); Halftone/CRT max ‖Δ‖∞ ≤ `1/255`.
 
 Cost vs CPU: [architecture.md](./architecture.md) §13.4.
