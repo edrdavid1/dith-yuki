@@ -5,7 +5,7 @@ mod parity_harness;
 
 use engine_project::filter::FilterParams;
 use engine_project::filters::CurveChannel;
-use engine_registry::{CpuCheckpointKind, GpuEligibility};
+use engine_registry::GpuEligibility;
 use parity_harness::Env;
 
 #[test]
@@ -18,7 +18,7 @@ fn registry_parity_curves() {
             curve: curve.clone(),
             channel: CurveChannel::All,
         },
-        GpuEligibility::Cpu(CpuCheckpointKind::UnsupportedFilter),
+        GpuEligibility::Eligible,
     );
     env.assert_curves(curve, CurveChannel::All);
 }

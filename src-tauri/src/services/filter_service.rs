@@ -440,7 +440,7 @@ impl FilterService {
                         .params
                         .get("radius")
                         .and_then(|v| v.as_f64())
-                        .unwrap_or(2.0) as f32;
+                        .unwrap_or(4.0) as f32;
                     let intensity = req
                         .params
                         .get("intensity")
@@ -450,11 +450,17 @@ impl FilterService {
                         .params
                         .get("threshold")
                         .and_then(|v| v.as_f64())
-                        .unwrap_or(0.0) as f32;
+                        .unwrap_or(0.35) as f32;
+                    let softness = req
+                        .params
+                        .get("softness")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(2) as u8;
                     FilterParams::Glow {
                         radius,
                         intensity,
                         threshold,
+                        softness,
                     }
                 }
                 FilterKind::Crt => {
@@ -1309,7 +1315,7 @@ impl FilterService {
                         .params
                         .get("radius")
                         .and_then(|v| v.as_f64())
-                        .unwrap_or(2.0) as f32;
+                        .unwrap_or(4.0) as f32;
                     let intensity = req
                         .params
                         .get("intensity")
@@ -1319,11 +1325,17 @@ impl FilterService {
                         .params
                         .get("threshold")
                         .and_then(|v| v.as_f64())
-                        .unwrap_or(0.0) as f32;
+                        .unwrap_or(0.35) as f32;
+                    let softness = req
+                        .params
+                        .get("softness")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(2) as u8;
                     FilterParams::Glow {
                         radius,
                         intensity,
                         threshold,
+                        softness,
                     }
                 }
                 FilterKind::Crt => {

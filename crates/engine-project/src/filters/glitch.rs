@@ -292,6 +292,12 @@ fn level_dims(w: u32, h: u32, level: u8) -> (i32, i32) {
 }
 
 fn sample_tile_rgba(tile: &PixelTile, coord: TileCoord, gx: i32, gy: i32) -> [f32; 4] {
+    // Complete Post neighborhood → cross-tile Dithered samples (PR-H).
+    if let Some(nb) = crate::filters::neighbors::current_spatial_neighbors() {
+        if nb.complete {
+            return nb.sample_rgba(gx, gy);
+        }
+    }
     let (lx, ly) = GlobalCoordSigned { x: gx, y: gy }.to_local_with_halo(coord, HALO);
     let max = TILE_FULL_SIZE as i32 - 1;
     let lx = lx.clamp(0, max) as u32;
@@ -302,6 +308,19 @@ fn sample_tile_rgba(tile: &PixelTile, coord: TileCoord, gx: i32, gy: i32) -> [f3
         tile.at(lx, ly, 2),
         tile.at(lx, ly, 3),
     ]
+}
+
+/// Neighbor gather radius for active Glitch (group / scanline footprint).
+///
+/// Caps at [`TILE_SIZE`] so Moore ±1 tile covers the worst-case block/group
+/// and scanline segment (both ≤ 256).
+pub fn glitch_spatial_radius_px(params: &GlitchParams) -> i32 {
+    if !params.any_active() {
+        return 0;
+    }
+    let group = (params.block_size.saturating_mul(params.group_size)) as i32;
+    let scan = params.scanline_segment as i32;
+    group.max(scan).clamp(1, TILE_SIZE as i32)
 }
 
 /// Gather one destination pixel. Pure function of global coords + params.
@@ -986,5 +1005,25 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn spatial_radius_zero_when_inactive() {
+        assert_eq!(glitch_spatial_radius_px(&GlitchParams::default()), 0);
+    }
+
+    #[test]
+    fn spatial_radius_tracks_group_and_scanline() {
+        let mut p = GlitchParams::default();
+        p.block_shift = GlitchSubOp {
+            enabled: true,
+            amount: 10.0,
+        };
+        p.block_size = 16;
+        p.group_size = 4; // 64 px group
+        p.scanline_segment = 128;
+        assert_eq!(glitch_spatial_radius_px(&p), 128);
+        p.scanline_segment = 64;
+        assert_eq!(glitch_spatial_radius_px(&p), 64);
     }
 }

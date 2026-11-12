@@ -90,6 +90,7 @@ impl FilterKind {
     /// Tone/correction ops. Newly added instances go at the bottom of the
     /// Layers list (end of `filters`) so they run before stylize filters.
     pub fn inserts_under_stylize(self) -> bool {
+        // BlurNoise inserts at top (Post) like Detail/Glow — softens after dither.
         matches!(
             self,
             Self::Adjust
@@ -100,7 +101,6 @@ impl FilterKind {
                 | Self::TemperatureTint
                 | Self::Vibrance
                 | Self::Hue
-                | Self::BlurNoise
         )
     }
 }
@@ -1075,14 +1075,18 @@ pub enum FilterParams {
     Glitch(GlitchFilterParams),
     /// Redesigned dither with full artistic parameters (V2)
     DitherV2(DitherParamsV2),
-    /// Soft glow / bloom (blur + composite). Radius capped to HALO in v1.
+    /// Soft glow / bloom (blur + composite). GPU-eligible; large radius uses
+    /// neighbor gather on CPU when available.
     Glow {
-        /// Blur radius in px (0.5 .. HALO).
+        /// Blur radius in px (0.5 .. 16).
         radius: f32,
         /// Additive bloom strength (0 .. 4).
         intensity: f32,
-        /// Luminance threshold; pixels below contribute 0 to the glow mask (0 .. 1).
+        /// Luminance threshold; soft knee around this value (0 .. 1).
         threshold: f32,
+        /// Extra box-blur passes (1 .. 3); higher ≈ softer / wider bloom.
+        #[serde(default = "default_glow_softness")]
+        softness: u8,
     },
     /// CRT-style scanlines (+ optional RGB triad mask).
     Crt {
@@ -1213,6 +1217,10 @@ fn default_posterize_levels() -> u32 {
 
 fn default_cube_lut_amount() -> f32 {
     1.0
+}
+
+fn default_glow_softness() -> u8 {
+    1
 }
 
 /// Parameters for [`FilterParams::Ascii`].
@@ -1666,11 +1674,11 @@ impl FilterInstance {
                 radius,
                 intensity,
                 threshold,
+                softness,
             } => {
-                // v1: radius capped to HALO (2) so blur stays within tile halo.
-                if !(0.5..=2.0).contains(radius) {
+                if !(0.5..=16.0).contains(radius) {
                     return Err(EngineError::invalid_filter_params(
-                        "Glow radius must be in range [0.5, 2.0] (HALO cap)",
+                        "Glow radius must be in range [0.5, 16.0]",
                     ));
                 }
                 if !(0.0..=4.0).contains(intensity) {
@@ -1681,6 +1689,11 @@ impl FilterInstance {
                 if !(0.0..=1.0).contains(threshold) {
                     return Err(EngineError::invalid_filter_params(
                         "Glow threshold must be in range [0.0, 1.0]",
+                    ));
+                }
+                if !(1..=3).contains(softness) {
+                    return Err(EngineError::invalid_filter_params(
+                        "Glow softness must be in range [1, 3]",
                     ));
                 }
                 Ok(())
@@ -1939,9 +1952,10 @@ pub fn algorithm_id_for_params(params: &FilterParams) -> Option<&'static str> {
         FilterParams::Posterize { .. } => Some("posterize"),
         FilterParams::CubeLut { .. } => Some("cube_lut"),
         FilterParams::Curves { .. } => Some("curves"),
+        FilterParams::Levels { .. } => Some("levels"),
         FilterParams::Glitch(_) => Some("glitch"),
         FilterParams::Ascii(_) => Some("ascii"),
-        FilterParams::Levels { .. } | FilterParams::Placeholder(_) => None,
+        FilterParams::Placeholder(_) => None,
     }
 }
 
@@ -2003,6 +2017,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         "posterize" => Some(FilterKind::Posterize),
         "cube_lut" => Some(FilterKind::CubeLut),
         "curves" => Some(FilterKind::Curves),
+        "levels" => Some(FilterKind::Levels),
         "glitch" => Some(FilterKind::Glitch),
         "ascii" => Some(FilterKind::Ascii),
         _ => None,
@@ -2055,10 +2070,12 @@ pub fn filter_params_to_json(params: &FilterParams) -> Result<serde_json::Value,
             radius,
             intensity,
             threshold,
+            softness,
         } => Ok(serde_json::json!({
             "radius": radius,
             "intensity": intensity,
             "threshold": threshold,
+            "softness": softness,
         })),
         FilterParams::Adjust {
             contrast,
@@ -2128,6 +2145,25 @@ pub fn filter_params_to_json(params: &FilterParams) -> Result<serde_json::Value,
         FilterParams::Curves { curve, channel } => Ok(serde_json::json!({
             "curve": curve,
             "channel": channel,
+        })),
+        FilterParams::Levels {
+            input_black,
+            input_white,
+            gamma,
+            output_black,
+            output_white,
+            channel_r,
+            channel_g,
+            channel_b,
+        } => Ok(serde_json::json!({
+            "input_black": input_black,
+            "input_white": input_white,
+            "gamma": gamma,
+            "output_black": output_black,
+            "output_white": output_white,
+            "channel_r": channel_r,
+            "channel_g": channel_g,
+            "channel_b": channel_b,
         })),
         FilterParams::Glitch(p) => serde_json::to_value(p),
         FilterParams::Ascii(p) => serde_json::to_value(p),

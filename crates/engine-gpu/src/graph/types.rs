@@ -15,6 +15,15 @@ pub enum GraphLayerFilter {
     Crosshatch(CrosshatchPassParams),
     Wave(WavePassParams),
     Crt(CrtPassParams),
+    Glow(GlowPassParams),
+    /// Premultiplied box blur + hash grain (clamp path).
+    BlurNoise(BlurNoisePassParams),
+    /// Clarity + unsharp (clamp path).
+    Detail(DetailPassParams),
+    /// Invert / Threshold / Posterize / Adjust / Levels / Curves pointwise grade.
+    Pointwise(PointwisePassParams),
+    /// Adobe `.cube` 3D LUT.
+    CubeLut(CubeLutPassParams),
     /// Nearest-color snap via `PaletteLut3D` (no ED). Payload carries LUT + palette RGB.
     PaletteQuantize(PaletteQuantizePassParams),
     /// Ordered Bayer + per-channel Guided quantize (palette ranges).
@@ -38,6 +47,11 @@ pub enum GpuPipelineKey {
     Crosshatch,
     Wave,
     Crt,
+    Glow,
+    BlurNoise,
+    Detail,
+    Pointwise,
+    CubeLut,
     PaletteQuantize,
     PaletteGuided,
     PaletteMixed,
@@ -114,6 +128,105 @@ pub struct CrtPassParams {
     pub mask_strength: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GlowPassParams {
+    pub radius: f32,
+    pub intensity: f32,
+    pub threshold: f32,
+    pub softness: u8,
+}
+
+/// Blur/Noise pass (`blur` slider 0..=2 → px; `noise` 0..=1).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BlurNoisePassParams {
+    pub blur: f32,
+    pub noise: f32,
+}
+
+/// Detail pass (clarity −1..=1, sharpness 0..=2).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DetailPassParams {
+    pub clarity: f32,
+    pub sharpness: f32,
+}
+
+/// Pointwise Adjust grade params (spatial knobs must be zero on the CPU side).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AdjustPointwisePassParams {
+    pub exposure: f32,
+    pub contrast: f32,
+    pub brightness: f32,
+    pub saturation: f32,
+    pub shadows: f32,
+    pub highlights: f32,
+    pub temperature: f32,
+    pub tint: f32,
+    pub vibrance: f32,
+    pub hue: f32,
+}
+
+/// Levels remap (matches CPU `LevelsFilter::apply_to_value` + channel mask).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LevelsPassParams {
+    pub input_black: f32,
+    pub input_white: f32,
+    pub gamma: f32,
+    pub output_black: f32,
+    pub output_white: f32,
+    /// Bit0=R, bit1=G, bit2=B. Disabled channel → 0.
+    pub channel_mask: u32,
+}
+
+/// Curves 1D LUT (4096 samples) + channel select.
+#[derive(Clone, Debug)]
+pub struct CurvesPassParams {
+    /// 0=R, 1=G, 2=B, 3=All, 4=Luminance (CPU maps luminance→green).
+    pub channel: u32,
+    pub lut: Arc<[f32]>,
+}
+
+impl PartialEq for CurvesPassParams {
+    fn eq(&self, other: &Self) -> bool {
+        self.channel == other.channel && Arc::ptr_eq(&self.lut, &other.lut)
+    }
+}
+
+/// Cube LUT 3D (Adobe order, R fastest) + mix amount.
+#[derive(Clone, Debug)]
+pub struct CubeLutPassParams {
+    pub size: u32,
+    pub amount: f32,
+    pub domain_min: [f32; 3],
+    pub domain_max: [f32; 3],
+    /// Interleaved RGB, length `size³ * 3`.
+    pub data: Arc<[f32]>,
+}
+
+impl PartialEq for CubeLutPassParams {
+    fn eq(&self, other: &Self) -> bool {
+        self.size == other.size
+            && self.amount == other.amount
+            && self.domain_min == other.domain_min
+            && self.domain_max == other.domain_max
+            && Arc::ptr_eq(&self.data, &other.data)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PointwiseOp {
+    Invert,
+    Threshold { threshold: f32 },
+    Posterize { levels: u32 },
+    Adjust(AdjustPointwisePassParams),
+    Levels(LevelsPassParams),
+    Curves(CurvesPassParams),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PointwisePassParams {
+    pub op: PointwiseOp,
+}
+
 /// GPU payload for nearest palette snap (Strict LUT path / PaletteQuantize filter).
 #[derive(Clone, Debug)]
 pub struct PaletteQuantizePassParams {
@@ -177,6 +290,11 @@ pub struct GpuPass {
     pub crosshatch: Option<CrosshatchPassParams>,
     pub wave: Option<WavePassParams>,
     pub crt: Option<CrtPassParams>,
+    pub glow: Option<GlowPassParams>,
+    pub blur_noise: Option<BlurNoisePassParams>,
+    pub detail: Option<DetailPassParams>,
+    pub pointwise: Option<PointwisePassParams>,
+    pub cube_lut: Option<CubeLutPassParams>,
     pub palette_quantize: Option<PaletteQuantizePassParams>,
     pub palette_guided: Option<PaletteGuidedPassParams>,
     pub palette_mixed: Option<PaletteMixedPassParams>,
@@ -296,6 +414,80 @@ pub fn hash_graph_nodes(nodes: &[GraphNode]) -> u64 {
                     h ^= (c.period as u64) << 16;
                     h ^= c.strength.to_bits() as u64;
                     h ^= c.mask_strength.to_bits() as u64;
+                }
+                if let Some(g) = &p.glow {
+                    h ^= g.radius.to_bits() as u64;
+                    h ^= g.intensity.to_bits() as u64;
+                    h ^= g.threshold.to_bits() as u64;
+                    h ^= g.softness as u64;
+                    h ^= 0x676c_6f77; // "glow"
+                }
+                if let Some(bn) = &p.blur_noise {
+                    h ^= bn.blur.to_bits() as u64;
+                    h ^= bn.noise.to_bits() as u64;
+                    h ^= 0x626e_5f5f; // "bn__"
+                }
+                if let Some(d) = &p.detail {
+                    h ^= d.clarity.to_bits() as u64;
+                    h ^= d.sharpness.to_bits() as u64;
+                    h ^= 0x6474_5f5f; // "dt__"
+                }
+                if let Some(pw) = &p.pointwise {
+                    h ^= 0x7077_5f5f; // "pw__"
+                    match &pw.op {
+                        PointwiseOp::Invert => h ^= 1,
+                        PointwiseOp::Threshold { threshold } => {
+                            h ^= 2;
+                            h ^= threshold.to_bits() as u64;
+                        }
+                        PointwiseOp::Posterize { levels } => {
+                            h ^= 3;
+                            h ^= *levels as u64;
+                        }
+                        PointwiseOp::Adjust(a) => {
+                            h ^= 4;
+                            h ^= a.exposure.to_bits() as u64;
+                            h ^= a.contrast.to_bits() as u64;
+                            h ^= a.brightness.to_bits() as u64;
+                            h ^= a.saturation.to_bits() as u64;
+                            h ^= a.shadows.to_bits() as u64;
+                            h ^= a.highlights.to_bits() as u64;
+                            h ^= a.temperature.to_bits() as u64;
+                            h ^= a.tint.to_bits() as u64;
+                            h ^= a.vibrance.to_bits() as u64;
+                            h ^= a.hue.to_bits() as u64;
+                        }
+                        PointwiseOp::Levels(l) => {
+                            h ^= 5;
+                            h ^= l.input_black.to_bits() as u64;
+                            h ^= l.input_white.to_bits() as u64;
+                            h ^= l.gamma.to_bits() as u64;
+                            h ^= l.output_black.to_bits() as u64;
+                            h ^= l.output_white.to_bits() as u64;
+                            h ^= l.channel_mask as u64;
+                        }
+                        PointwiseOp::Curves(c) => {
+                            h ^= 6;
+                            h ^= c.channel as u64;
+                            h ^= c.lut.len() as u64;
+                            if let Some(v) = c.lut.first() {
+                                h ^= v.to_bits() as u64;
+                            }
+                            if let Some(v) = c.lut.last() {
+                                h ^= v.to_bits() as u64;
+                            }
+                        }
+                    }
+                }
+                if let Some(c) = &p.cube_lut {
+                    h ^= 0x6362_5f5f; // "cb__"
+                    h ^= c.size as u64;
+                    h ^= c.amount.to_bits() as u64;
+                    h ^= c.data.len() as u64;
+                    h ^= c.domain_min[0].to_bits() as u64;
+                    if let Some(v) = c.data.first() {
+                        h ^= v.to_bits() as u64;
+                    }
                 }
                 if let Some(pq) = &p.palette_quantize {
                     h ^= pq.lut_size as u64;

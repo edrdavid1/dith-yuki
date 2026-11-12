@@ -17,6 +17,8 @@ use crate::filter::{FilterInstance, FilterParams};
 use crate::filters::blur_noise::blur_noise_spatial_radius_px;
 use crate::filters::clarity::CLARITY_RADIUS;
 use crate::filters::detail::detail_spatial_radius_px;
+use crate::filters::glow::glow_spatial_radius_px;
+use crate::filters::glitch::glitch_spatial_radius_px;
 
 const TILE_FULL_SIZE: i32 = (TILE_SIZE + 2 * HALO) as i32;
 /// Must match `adjust::MAX_BLUR_RADIUS` / `BLUR_PX_PER_UNIT`.
@@ -168,6 +170,24 @@ pub fn blur_noise_filter_radius_px(filter: &FilterInstance) -> i32 {
     }
 }
 
+/// Glow bloom radius in px (0 if not Glow).
+pub fn glow_filter_radius_px(filter: &FilterInstance) -> i32 {
+    match &filter.params {
+        FilterParams::Glow {
+            radius, softness, ..
+        } => glow_spatial_radius_px(*radius, *softness),
+        _ => 0,
+    }
+}
+
+/// Glitch gather footprint in px (0 if inactive / not Glitch).
+pub fn glitch_filter_radius_px(filter: &FilterInstance) -> i32 {
+    match &filter.params {
+        FilterParams::Glitch(p) => glitch_spatial_radius_px(p),
+        _ => 0,
+    }
+}
+
 /// Detail (clarity + sharpness) spatial radius in px.
 pub fn detail_filter_radius_px(filter: &FilterInstance) -> i32 {
     match &filter.params {
@@ -178,19 +198,27 @@ pub fn detail_filter_radius_px(filter: &FilterInstance) -> i32 {
     }
 }
 
-/// Max spatial radius among Post filters. Only counts Adjust/Clarity/Detail/
-/// BlurNoise that is the first non-neutral Post filter (Dithered-domain samples).
+/// Max spatial radius among Post filters (Dithered-domain neighbor gather).
+///
+/// Pointwise / grade filters contribute `0` and no longer block later spatial
+/// filters (Curves before Glow still gathers for Glow). Neutral filters are
+/// skipped. `post` is in **apply order** (toward Processed) as built by
+/// [`crate::post_barrier::split_enabled_at_barrier`].
 pub fn post_direct_spatial_radius(post: &[&FilterInstance]) -> i32 {
+    let mut max_r = 0i32;
     for f in post {
         if crate::filters::neutral::filter_is_neutral_for_apply(f) {
             continue;
         }
-        return adjust_spatial_radius_px(f)
+        let r = adjust_spatial_radius_px(f)
             .max(clarity_spatial_radius_px(f))
             .max(detail_filter_radius_px(f))
-            .max(blur_noise_filter_radius_px(f));
+            .max(blur_noise_filter_radius_px(f))
+            .max(glow_filter_radius_px(f))
+            .max(glitch_filter_radius_px(f));
+        max_r = max_r.max(r);
     }
-    0
+    max_r
 }
 
 /// Tile `(dx, dy)` offsets relative to center required for `radius_px`.
@@ -368,7 +396,7 @@ mod tests {
     }
 
     #[test]
-    fn curves_before_adjust_disables_direct_neighbor_radius() {
+    fn curves_before_adjust_still_gathers_for_spatial() {
         let curves = FilterInstance::new(
             FilterKind::Curves,
             FilterParams::Curves {
@@ -395,8 +423,117 @@ mod tests {
                 clarity: 0.0,
             },
         );
-        // First non-neutral is Curves ⇒ radius 0 (neighbor path not used).
-        assert_eq!(post_direct_spatial_radius(&[&curves, &blurred]), 0);
+        // Pointwise Curves is transparent for radius; Adjust blur still gathers.
+        assert_eq!(post_direct_spatial_radius(&[&curves, &blurred]), 24);
+        assert_eq!(post_direct_spatial_radius(&[&blurred, &curves]), 24);
+    }
+
+    #[test]
+    fn glitch_post_requests_neighbor_radius() {
+        use crate::filters::glitch::{GlitchParams, GlitchSubOp};
+        let mut params = GlitchParams::default();
+        params.block_shift = GlitchSubOp {
+            enabled: true,
+            amount: 8.0,
+        };
+        params.block_size = 8;
+        params.group_size = 4;
+        params.scanline_segment = 64;
+        let glitch = FilterInstance::new(FilterKind::Glitch, FilterParams::Glitch(params));
+        let r = glitch_filter_radius_px(&glitch);
+        assert!(r >= 64);
+        assert_eq!(post_direct_spatial_radius(&[&glitch]), r);
+    }
+
+    #[test]
+    fn glow_under_curves_in_apply_order_still_gathers() {
+        // Panel: Glow above Curves above Floyd → Post apply order = [Curves, Glow].
+        // Max-over-spatial must still see Glow.
+        let curves = FilterInstance::new(
+            FilterKind::Curves,
+            FilterParams::Curves {
+                curve: vec![(0.0, 0.0), (1.0, 1.0)],
+                channel: crate::filters::curves::CurveChannel::All,
+            },
+        );
+        let glow = FilterInstance::new(
+            FilterKind::Glow,
+            FilterParams::Glow {
+                radius: 4.0,
+                intensity: 1.0,
+                threshold: 0.2,
+                softness: 1,
+            },
+        );
+        let r = glow_filter_radius_px(&glow);
+        assert!(r > 0);
+        assert_eq!(post_direct_spatial_radius(&[&curves, &glow]), r);
+        assert_eq!(post_direct_spatial_radius(&[&glow, &curves]), r);
+    }
+
+    #[test]
+    fn post_slice_from_barrier_matches_panel_fixture() {
+        use crate::filter::{DitherModeV2, DitherParamsV2};
+        use crate::post_barrier::split_enabled_at_barrier;
+
+        let mut floyd = FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::FloydSteinberg,
+                ..Default::default()
+            }),
+        );
+        floyd.enabled = true;
+        // Panel top → bottom: Glow, Curves, Floyd. Post apply = [Curves, Glow].
+        let glow = FilterInstance::new(
+            FilterKind::Glow,
+            FilterParams::Glow {
+                radius: 4.0,
+                intensity: 1.0,
+                threshold: 0.0,
+                softness: 1,
+            },
+        );
+        let curves = FilterInstance::new(
+            FilterKind::Curves,
+            FilterParams::Curves {
+                curve: vec![(0.0, 0.0), (1.0, 1.0)],
+                channel: crate::filters::curves::CurveChannel::All,
+            },
+        );
+        let stack = [glow.clone(), curves, floyd];
+        let (_, post) = split_enabled_at_barrier(&stack).expect("barrier");
+        assert_eq!(post.len(), 2);
+        assert_eq!(
+            post_direct_spatial_radius(&post),
+            glow_filter_radius_px(&glow)
+        );
+
+        // Curves above Glow (panel): Post apply = [Glow, Curves] — still gathers.
+        let mut floyd2 = FilterInstance::new(
+            FilterKind::Dither,
+            FilterParams::DitherV2(DitherParamsV2 {
+                mode: DitherModeV2::FloydSteinberg,
+                ..Default::default()
+            }),
+        );
+        floyd2.enabled = true;
+        let stack2 = [
+            FilterInstance::new(
+                FilterKind::Curves,
+                FilterParams::Curves {
+                    curve: vec![(0.0, 0.0), (0.5, 0.6), (1.0, 1.0)],
+                    channel: crate::filters::curves::CurveChannel::All,
+                },
+            ),
+            glow.clone(),
+            floyd2,
+        ];
+        let (_, post2) = split_enabled_at_barrier(&stack2).expect("barrier");
+        assert_eq!(
+            post_direct_spatial_radius(&post2),
+            glow_filter_radius_px(&glow)
+        );
     }
 
     #[test]

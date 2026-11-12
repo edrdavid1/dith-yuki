@@ -7,10 +7,12 @@ use wgpu::util::DeviceExt;
 
 use crate::dispatch::{TileUniforms, CORE_SIZE, WORKGROUP_SIZE};
 use crate::graph::{
-    BayerPassParams, CrosshatchPassParams, CrtPassParams, GpuPipelineKey, HalftonePassParams,
-    LineScreenPassParams, PaletteGuidedPassParams, PaletteMixedPassParams,
-    PaletteQuantizePassParams, VoidAndClusterPassParams, WavePassParams,
+    BayerPassParams, BlurNoisePassParams, CrosshatchPassParams, CrtPassParams, CubeLutPassParams,
+    DetailPassParams, GlowPassParams, GpuPipelineKey, HalftonePassParams, LineScreenPassParams,
+    PaletteGuidedPassParams, PaletteMixedPassParams, PaletteQuantizePassParams,
+    PointwisePassParams, VoidAndClusterPassParams, WavePassParams,
 };
+use crate::pointwise::{pointwise_lut_bytes, pointwise_uniform_bytes};
 use crate::resident::format::TILE_EXTENT;
 use crate::void_and_cluster_matrix::{ranks, SIZE};
 use crate::GpuError;
@@ -1278,6 +1280,1060 @@ impl ResidentCrtPipelines {
 
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("resident-crt-pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        let groups = CORE_SIZE / WORKGROUP_SIZE;
+        pass.dispatch_workgroups(groups, groups, 1);
+    }
+}
+
+/// Glow uniforms (32 bytes).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct GlowUniforms {
+    params: [f32; 4],
+}
+
+pub struct ResidentGlowPipelines {
+    layout: wgpu::BindGroupLayout,
+    mask: wgpu::ComputePipeline,
+    blur_h: wgpu::ComputePipeline,
+    blur_v: wgpu::ComputePipeline,
+    composite: wgpu::ComputePipeline,
+}
+
+impl ResidentGlowPipelines {
+    pub fn create(device: &wgpu::Device) -> Result<Self, GpuError> {
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("resident-glow-bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba32Float,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("glow-resident-wgsl"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/glow_resident.wgsl").into()),
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("resident-glow-pl"),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+
+        let make = |entry: &str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+
+        Ok(Self {
+            layout,
+            mask: make("mask_main"),
+            blur_h: make("blur_h_main"),
+            blur_v: make("blur_v_main"),
+            composite: make("composite_main"),
+        })
+    }
+
+    fn layer_view(texture: &wgpu::Texture, layer: u32, label: &'static str) -> wgpu::TextureView {
+        texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some(label),
+            format: Some(wgpu::TextureFormat::Rgba32Float),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            base_mip_level: 0,
+            mip_level_count: None,
+            base_array_layer: layer,
+            array_layer_count: Some(1),
+            aspect: wgpu::TextureAspect::All,
+            usage: None,
+        })
+    }
+
+    fn dispatch_pass(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        pipeline: &wgpu::ComputePipeline,
+        uniform_buf: &wgpu::Buffer,
+        src: &wgpu::TextureView,
+        input: &wgpu::TextureView,
+        output: &wgpu::TextureView,
+        label: &str,
+    ) {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(src),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(input),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(output),
+                },
+            ],
+        });
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some(label),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        let groups = (TILE_EXTENT + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
+        pass.dispatch_workgroups(groups, groups, 1);
+    }
+
+    /// Mask → (H,V)×softness → composite into scratch_b, then copy to resident.
+    pub fn encode_glow_pass(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        resident: &wgpu::Texture,
+        resident_layer: u32,
+        scratch_a: &wgpu::Texture,
+        scratch_a_layer: u32,
+        scratch_b: &wgpu::Texture,
+        scratch_b_layer: u32,
+        params: GlowPassParams,
+    ) {
+        let softness = params.softness.clamp(1, 3);
+        let uniforms = GlowUniforms {
+            params: [
+                params.radius.clamp(0.5, 16.0),
+                params.intensity.clamp(0.0, 4.0),
+                params.threshold.clamp(0.0, 1.0),
+                softness as f32,
+            ],
+        };
+        let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("resident-glow-uniforms"),
+            contents: bytemuck::bytes_of(&uniforms),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+        let src = Self::layer_view(resident, resident_layer, "glow-src");
+        let a = Self::layer_view(scratch_a, scratch_a_layer, "glow-a");
+        let b = Self::layer_view(scratch_b, scratch_b_layer, "glow-b");
+
+        // mask: src → scratch_a
+        self.dispatch_pass(
+            device,
+            encoder,
+            &self.mask,
+            &uniform_buf,
+            &src,
+            &src,
+            &a,
+            "glow-mask",
+        );
+        for _ in 0..softness {
+            // H: a → b
+            self.dispatch_pass(
+                device,
+                encoder,
+                &self.blur_h,
+                &uniform_buf,
+                &src,
+                &a,
+                &b,
+                "glow-h",
+            );
+            // V: b → a
+            self.dispatch_pass(
+                device,
+                encoder,
+                &self.blur_v,
+                &uniform_buf,
+                &src,
+                &b,
+                &a,
+                "glow-v",
+            );
+        }
+        // composite: src + a → b
+        self.dispatch_pass(
+            device,
+            encoder,
+            &self.composite,
+            &uniform_buf,
+            &src,
+            &a,
+            &b,
+            "glow-comp",
+        );
+        ResidentBayerPipelines::copy_layer(
+            encoder,
+            scratch_b,
+            scratch_b_layer,
+            resident,
+            resident_layer,
+        );
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct BlurNoiseUniforms {
+    tile_offset: [u32; 2],
+    _pad: [u32; 2],
+    params: [f32; 4],
+}
+
+pub struct ResidentBlurNoisePipelines {
+    layout: wgpu::BindGroupLayout,
+    premultiply: wgpu::ComputePipeline,
+    blur_h: wgpu::ComputePipeline,
+    blur_v: wgpu::ComputePipeline,
+    finish: wgpu::ComputePipeline,
+}
+
+impl ResidentBlurNoisePipelines {
+    pub fn create(device: &wgpu::Device) -> Result<Self, GpuError> {
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("resident-blur-noise-bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba32Float,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("blur-noise-resident-wgsl"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/blur_noise_resident.wgsl").into(),
+            ),
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("resident-blur-noise-pl"),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+
+        let make = |entry: &str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+
+        Ok(Self {
+            layout,
+            premultiply: make("premultiply_main"),
+            blur_h: make("blur_h_main"),
+            blur_v: make("blur_v_main"),
+            finish: make("finish_main"),
+        })
+    }
+
+    fn layer_view(texture: &wgpu::Texture, layer: u32, label: &'static str) -> wgpu::TextureView {
+        texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some(label),
+            format: Some(wgpu::TextureFormat::Rgba32Float),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            base_mip_level: 0,
+            mip_level_count: None,
+            base_array_layer: layer,
+            array_layer_count: Some(1),
+            aspect: wgpu::TextureAspect::All,
+            usage: None,
+        })
+    }
+
+    fn dispatch_pass(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        pipeline: &wgpu::ComputePipeline,
+        uniform_buf: &wgpu::Buffer,
+        src: &wgpu::TextureView,
+        input: &wgpu::TextureView,
+        output: &wgpu::TextureView,
+        label: &str,
+    ) {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(src),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(input),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(output),
+                },
+            ],
+        });
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some(label),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        let groups = (TILE_EXTENT + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
+        pass.dispatch_workgroups(groups, groups, 1);
+    }
+
+    pub fn encode_blur_noise_pass(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        resident: &wgpu::Texture,
+        resident_layer: u32,
+        scratch_a: &wgpu::Texture,
+        scratch_a_layer: u32,
+        scratch_b: &wgpu::Texture,
+        scratch_b_layer: u32,
+        tile_x: u32,
+        tile_y: u32,
+        params: BlurNoisePassParams,
+    ) {
+        let blur = params.blur.clamp(0.0, 2.0);
+        let noise = params.noise.clamp(0.0, 1.0);
+        let radius = if blur <= 1e-4 {
+            0.0
+        } else {
+            (blur * 12.0).round().clamp(1.0, 24.0)
+        };
+        let uniforms = BlurNoiseUniforms {
+            tile_offset: [tile_x * CORE_SIZE, tile_y * CORE_SIZE],
+            _pad: [0, 0],
+            params: [radius, noise, 0.0, 0.0],
+        };
+        let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("resident-blur-noise-uniforms"),
+            contents: bytemuck::bytes_of(&uniforms),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+        let src = Self::layer_view(resident, resident_layer, "bn-src");
+        let a = Self::layer_view(scratch_a, scratch_a_layer, "bn-a");
+        let b = Self::layer_view(scratch_b, scratch_b_layer, "bn-b");
+
+        let finish_in = if radius > 0.0 {
+            self.dispatch_pass(
+                device,
+                encoder,
+                &self.premultiply,
+                &uniform_buf,
+                &src,
+                &src,
+                &a,
+                "bn-premul",
+            );
+            self.dispatch_pass(
+                device,
+                encoder,
+                &self.blur_h,
+                &uniform_buf,
+                &src,
+                &a,
+                &b,
+                "bn-h",
+            );
+            self.dispatch_pass(
+                device,
+                encoder,
+                &self.blur_v,
+                &uniform_buf,
+                &src,
+                &b,
+                &a,
+                "bn-v",
+            );
+            &a
+        } else {
+            &src
+        };
+
+        self.dispatch_pass(
+            device,
+            encoder,
+            &self.finish,
+            &uniform_buf,
+            &src,
+            finish_in,
+            &b,
+            "bn-finish",
+        );
+        ResidentBayerPipelines::copy_layer(
+            encoder,
+            scratch_b,
+            scratch_b_layer,
+            resident,
+            resident_layer,
+        );
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct DetailUniforms {
+    params: [f32; 4],
+}
+
+pub struct ResidentDetailPipelines {
+    layout: wgpu::BindGroupLayout,
+    premultiply: wgpu::ComputePipeline,
+    blur_h: wgpu::ComputePipeline,
+    blur_v: wgpu::ComputePipeline,
+    clarity: wgpu::ComputePipeline,
+    unpremultiply: wgpu::ComputePipeline,
+    sharpen: wgpu::ComputePipeline,
+}
+
+impl ResidentDetailPipelines {
+    pub fn create(device: &wgpu::Device) -> Result<Self, GpuError> {
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("resident-detail-bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba32Float,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("detail-resident-wgsl"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/detail_resident.wgsl").into(),
+            ),
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("resident-detail-pl"),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+
+        let make = |entry: &str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+
+        Ok(Self {
+            layout,
+            premultiply: make("premultiply_main"),
+            blur_h: make("blur_h_main"),
+            blur_v: make("blur_v_main"),
+            clarity: make("clarity_main"),
+            unpremultiply: make("unpremultiply_main"),
+            sharpen: make("sharpen_main"),
+        })
+    }
+
+    fn layer_view(texture: &wgpu::Texture, layer: u32, label: &'static str) -> wgpu::TextureView {
+        texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some(label),
+            format: Some(wgpu::TextureFormat::Rgba32Float),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            base_mip_level: 0,
+            mip_level_count: None,
+            base_array_layer: layer,
+            array_layer_count: Some(1),
+            aspect: wgpu::TextureAspect::All,
+            usage: None,
+        })
+    }
+
+    fn dispatch_pass(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        pipeline: &wgpu::ComputePipeline,
+        uniform_buf: &wgpu::Buffer,
+        src: &wgpu::TextureView,
+        input: &wgpu::TextureView,
+        output: &wgpu::TextureView,
+        label: &str,
+    ) {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(src),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(input),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(output),
+                },
+            ],
+        });
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some(label),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        let groups = (TILE_EXTENT + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
+        pass.dispatch_workgroups(groups, groups, 1);
+    }
+
+    fn make_uniforms(
+        device: &wgpu::Device,
+        clarity: f32,
+        sharpness: f32,
+        blur_radius: f32,
+    ) -> wgpu::Buffer {
+        let uniforms = DetailUniforms {
+            params: [clarity, sharpness, blur_radius, 0.0],
+        };
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("resident-detail-uniforms"),
+            contents: bytemuck::bytes_of(&uniforms),
+            usage: wgpu::BufferUsages::UNIFORM,
+        })
+    }
+
+    pub fn encode_detail_pass(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        resident: &wgpu::Texture,
+        resident_layer: u32,
+        scratch_a: &wgpu::Texture,
+        scratch_a_layer: u32,
+        scratch_b: &wgpu::Texture,
+        scratch_b_layer: u32,
+        params: DetailPassParams,
+    ) {
+        let clarity = params.clarity.clamp(-1.0, 1.0);
+        let sharpness = params.sharpness.clamp(0.0, 2.0);
+        let src = Self::layer_view(resident, resident_layer, "dt-src");
+        let a = Self::layer_view(scratch_a, scratch_a_layer, "dt-a");
+        let b = Self::layer_view(scratch_b, scratch_b_layer, "dt-b");
+
+        // Working straight image is always kept in `resident` (updated in place
+        // after each sub-stage). Scratch A/B are blur ping-pong only.
+        if clarity.abs() > 1e-6 {
+            let u12 = Self::make_uniforms(device, clarity, sharpness, 12.0);
+            self.dispatch_pass(
+                device, encoder, &self.premultiply, &u12, &src, &src, &a, "dt-c-premul",
+            );
+            self.dispatch_pass(
+                device, encoder, &self.blur_h, &u12, &src, &a, &b, "dt-c-h",
+            );
+            self.dispatch_pass(
+                device, encoder, &self.blur_v, &u12, &src, &b, &a, "dt-c-v",
+            );
+            self.dispatch_pass(
+                device, encoder, &self.clarity, &u12, &src, &a, &b, "dt-clarity",
+            );
+            self.dispatch_pass(
+                device, encoder, &self.unpremultiply, &u12, &src, &b, &a, "dt-c-unpremul",
+            );
+            ResidentBayerPipelines::copy_layer(
+                encoder,
+                scratch_a,
+                scratch_a_layer,
+                resident,
+                resident_layer,
+            );
+        }
+
+        if sharpness > 1e-6 {
+            let src2 = Self::layer_view(resident, resident_layer, "dt-src2");
+            let u2 = Self::make_uniforms(device, clarity, sharpness, 2.0);
+            self.dispatch_pass(
+                device, encoder, &self.premultiply, &u2, &src2, &src2, &a, "dt-s-premul",
+            );
+            self.dispatch_pass(
+                device, encoder, &self.blur_h, &u2, &src2, &a, &b, "dt-s-h",
+            );
+            self.dispatch_pass(
+                device, encoder, &self.blur_v, &u2, &src2, &b, &a, "dt-s-v",
+            );
+            self.dispatch_pass(
+                device, encoder, &self.sharpen, &u2, &src2, &a, &b, "dt-sharpen",
+            );
+            ResidentBayerPipelines::copy_layer(
+                encoder,
+                scratch_b,
+                scratch_b_layer,
+                resident,
+                resident_layer,
+            );
+        }
+    }
+}
+
+pub struct ResidentPointwisePipelines {
+    layout: wgpu::BindGroupLayout,
+    pipeline: wgpu::ComputePipeline,
+}
+
+impl ResidentPointwisePipelines {
+    pub fn create(device: &wgpu::Device) -> Result<Self, GpuError> {
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("resident-pointwise-bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba32Float,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("pointwise-resident-wgsl"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/pointwise_resident.wgsl").into(),
+            ),
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("resident-pointwise-pl"),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("resident-pointwise-main"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        Ok(Self { layout, pipeline })
+    }
+
+    fn layer_view(texture: &wgpu::Texture, layer: u32, label: &'static str) -> wgpu::TextureView {
+        texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some(label),
+            format: Some(wgpu::TextureFormat::Rgba32Float),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            base_mip_level: 0,
+            mip_level_count: None,
+            base_array_layer: layer,
+            array_layer_count: Some(1),
+            aspect: wgpu::TextureAspect::All,
+            usage: None,
+        })
+    }
+
+    pub fn encode_pointwise_pass(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        resident: &wgpu::Texture,
+        resident_layer: u32,
+        scratch: &wgpu::Texture,
+        scratch_layer: u32,
+        tile_x: u32,
+        tile_y: u32,
+        params: &PointwisePassParams,
+    ) {
+        let uniforms = pointwise_uniform_bytes(params, tile_x, tile_y);
+        let lut = pointwise_lut_bytes(params);
+        let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("resident-pointwise-uniforms"),
+            contents: bytemuck::bytes_of(&uniforms),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let lut_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("resident-pointwise-lut1d"),
+            contents: bytemuck::cast_slice(lut.as_ref()),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let in_view = Self::layer_view(resident, resident_layer, "pointwise-res-in");
+        let out_view = Self::layer_view(scratch, scratch_layer, "pointwise-scratch-out");
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("resident-pointwise-bg"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&in_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&out_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: lut_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("resident-pointwise-pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        let groups = CORE_SIZE / WORKGROUP_SIZE;
+        pass.dispatch_workgroups(groups, groups, 1);
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct CubeLutUniforms {
+    tile: TileUniforms,
+    params: [f32; 4],
+    domain_min: [f32; 4],
+    domain_max: [f32; 4],
+}
+
+pub struct ResidentCubeLutPipelines {
+    layout: wgpu::BindGroupLayout,
+    pipeline: wgpu::ComputePipeline,
+}
+
+impl ResidentCubeLutPipelines {
+    pub fn create(device: &wgpu::Device) -> Result<Self, GpuError> {
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("resident-cube-lut-bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba32Float,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("cube-lut-resident-wgsl"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../shaders/cube_lut_resident.wgsl").into(),
+            ),
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("resident-cube-lut-pl"),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("resident-cube-lut-main"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        Ok(Self { layout, pipeline })
+    }
+
+    fn layer_view(texture: &wgpu::Texture, layer: u32, label: &'static str) -> wgpu::TextureView {
+        texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some(label),
+            format: Some(wgpu::TextureFormat::Rgba32Float),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            base_mip_level: 0,
+            mip_level_count: None,
+            base_array_layer: layer,
+            array_layer_count: Some(1),
+            aspect: wgpu::TextureAspect::All,
+            usage: None,
+        })
+    }
+
+    pub fn encode_cube_lut_pass(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        resident: &wgpu::Texture,
+        resident_layer: u32,
+        scratch: &wgpu::Texture,
+        scratch_layer: u32,
+        tile_x: u32,
+        tile_y: u32,
+        params: &CubeLutPassParams,
+    ) {
+        let uniforms = CubeLutUniforms {
+            tile: TileUniforms::for_tile(tile_x, tile_y),
+            params: [params.size as f32, params.amount, 0.0, 0.0],
+            domain_min: [
+                params.domain_min[0],
+                params.domain_min[1],
+                params.domain_min[2],
+                0.0,
+            ],
+            domain_max: [
+                params.domain_max[0],
+                params.domain_max[1],
+                params.domain_max[2],
+                0.0,
+            ],
+        };
+        let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("resident-cube-lut-uniforms"),
+            contents: bytemuck::bytes_of(&uniforms),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let cube_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("resident-cube-lut-data"),
+            contents: bytemuck::cast_slice(params.data.as_ref()),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let in_view = Self::layer_view(resident, resident_layer, "cube-lut-res-in");
+        let out_view = Self::layer_view(scratch, scratch_layer, "cube-lut-scratch-out");
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("resident-cube-lut-bg"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&in_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&out_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: cube_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("resident-cube-lut-pass"),
             timestamp_writes: None,
         });
         pass.set_pipeline(&self.pipeline);

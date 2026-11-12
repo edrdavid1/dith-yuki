@@ -11,6 +11,43 @@ pub fn force_cpu() -> bool {
     env_flag_enabled(std::env::var("DITHER_FORCE_CPU").ok().as_deref())
 }
 
+/// Pointwise Eligible pack (Invert / Threshold / Posterize / Adjust grade).
+///
+/// Default **on**. `DITHER_POINTWISE_GPU=0` forces CpuCheckpoint for the pack.
+/// `DITHER_FORCE_CPU` also disables.
+pub fn pointwise_gpu_enabled() -> bool {
+    if force_cpu() {
+        return false;
+    }
+    match std::env::var("DITHER_POINTWISE_GPU") {
+        Ok(v) => match v.trim() {
+            "0" | "false" | "FALSE" | "no" | "NO" | "off" | "OFF" => false,
+            "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON" => true,
+            _ => true,
+        },
+        Err(_) => true,
+    }
+}
+
+/// Spatial GPU pack (Glow / BlurNoise / Detail).
+///
+/// Default **on**. `DITHER_SPATIAL_GPU=0` forces CpuCheckpoint for the pack.
+/// `DITHER_FORCE_CPU` also disables. Large Glow (`r×softness > HALO`) still
+/// falls back via eligibility even when this flag is on (PR-E interim).
+pub fn spatial_gpu_enabled() -> bool {
+    if force_cpu() {
+        return false;
+    }
+    match std::env::var("DITHER_SPATIAL_GPU") {
+        Ok(v) => match v.trim() {
+            "0" | "false" | "FALSE" | "no" | "NO" | "off" | "OFF" => false,
+            "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON" => true,
+            _ => true,
+        },
+        Err(_) => true,
+    }
+}
+
 /// Prefer GPU for eligible filters (retired legacy `DITHER_GPU` semantics; maps to `gpu_preview_enabled`).
 pub fn prefer_gpu() -> bool {
     gpu_preview_enabled()

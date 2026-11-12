@@ -58,7 +58,12 @@ Not all filters run on the GPU. The pipeline uses explicit **`CpuCheckpointKind`
 | **Line Screen / Crosshatch** | GPU Pass (`line_screen_resident` / `crosshatch_resident`) | Parametric stripe / hatch ladder |
 | **Wave** | GPU Pass (`wave_resident`) | Sinusoidal threshold + Bayer-style quantize |
 | **CRT** | GPU Pass (`crt.rs`) | Per-pixel pattern shader |
+| **Glow** (`r×softness ≤ HALO`) | GPU Pass (`glow_resident`) | In-tile clamp; larger radius → `Cpu(AdjustBlur)`; `DITHER_SPATIAL_GPU=0` → CPU |
+| **BlurNoise / Detail** | GPU Pass (`blur_noise_resident` / `detail_resident`) | Premul box blur + noise / clarity+unsharp (clamp); `DITHER_SPATIAL_GPU=0` → CPU |
+| **Invert / Threshold / Posterize / Levels / Curves / Adjust (pointwise)** | GPU Pass (`pointwise.rs` / `Pointwise`) | Grade ops + 1D LUT for Curves; `DITHER_POINTWISE_GPU=0` → CPU |
+| **CUBE LUT** | GPU Pass (`cube_lut_resident`) | Tetrahedral sample of Adobe `.cube` |
 | **Palette Quantize / Guided** | GPU Pass (`palette_*.rs`) | LUT / distance pass in WGSL |
+| **Nearest Color (Oklab)** | Same as Palette Quantize | brightness / sRGB stay CPU |
 | **Error Diffusion (ED)** (FS, JJN, Stucki, Atkinson) | **`CpuCheckpointKind::ErrorDiffusion`** | Cross-pixel error propagation is strictly sequential; ED always falls back to CPU |
 | **`pixel_size > 1`** (Block Granularity) | **`CpuCheckpointKind::BlockGranularity`** | **Permanent Non-goal (Option a)**. Block-representative compute routes to CPU |
 

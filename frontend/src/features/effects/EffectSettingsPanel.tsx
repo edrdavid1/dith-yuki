@@ -50,6 +50,9 @@ function settingsPanelTitle(
   if (filter.kind === 'Invert' || filter.algorithm_id === 'invert') return 'Invert';
   if (filter.kind === 'Threshold' || filter.algorithm_id === 'threshold') return 'Threshold';
   if (filter.kind === 'Posterize' || filter.algorithm_id === 'posterize') return 'Posterize';
+  if (filter.kind === 'Levels' || filter.algorithm_id === 'levels' || effectType === 'Levels') {
+    return 'RGB channels';
+  }
   return filter.algorithm_id ?? effectType ?? 'Dithering';
 }
 
@@ -98,7 +101,7 @@ function EffectIcon({ type }: { type: EffectType }) {
       return <Icon name="effect.glitching" width={20} height={20} />;
     case 'Curves':
       return <Icon name="effect.curves" width={20} height={20} />;
-    case 'RGBChannels':
+    case 'Levels':
       return <Icon name="effect.rgb" width={20} height={20} />;
     case 'Glow':
       return <Icon name="effect.glow" width={20} height={20} />;
@@ -155,15 +158,11 @@ function AlgorithmIcon({ algorithmId, category }: { algorithmId: string; categor
   }
 }
 
-/** Levels is not in the Registry; keep it as a static chooser row. */
-const LEGACY_CHOOSER: { type: EffectType; label: string }[] = [
-  { type: 'RGBChannels', label: 'RGB channels' },
-];
-
 /** Non-dither registry ids that still map to the legacy EffectType chooser/editors. */
 const ALGO_TO_EFFECT: Record<string, { type: EffectType; label: string }> = {
   glitch: { type: 'Glitching', label: 'Glitching' },
   curves: { type: 'Curves', label: 'Curves' },
+  levels: { type: 'Levels', label: 'RGB channels' },
   glow: { type: 'Glow', label: 'Glow' },
   crt: { type: 'CRT', label: 'CRT' },
   adjust: { type: 'Adjust', label: 'Adjustments' },
@@ -358,23 +357,6 @@ export default function EffectSettingsPanel({
                   </button>
                 );
               })}
-              {LEGACY_CHOOSER.map((option) => (
-                <button
-                  key={option.type}
-                  className={cn("effect-chooser-row")}
-                  role="option"
-                  aria-selected={false}
-                  {...activateOnPrimaryPress(() => onSelectEffect?.(option.type))}
-                  type="button"
-                >
-                  <div className={cn("effect-chooser-row-icon")}>
-                    <EffectIcon type={option.type} />
-                  </div>
-                  <div className={cn("effect-chooser-row-label")}>
-                    <span>{option.label}</span>
-                  </div>
-                </button>
-              ))}
               {EFFECT_PRESETS.map((preset) => (
                 <button
                   key={preset.id}
@@ -455,7 +437,7 @@ export default function EffectSettingsPanel({
         return <AsciiSettings params={params} onUpdate={handleUpdate} />;
       case 'Curves':
         return <CurvesSettings params={params} onUpdate={handleUpdate} />;
-      case 'RGBChannels':
+      case 'Levels':
         return <RGBSettings params={params} onUpdate={handleUpdate} />;
       case 'Glow':
         return <GlowSettings params={params} onUpdate={handleUpdate} />;

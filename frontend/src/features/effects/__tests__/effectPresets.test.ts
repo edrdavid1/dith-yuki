@@ -9,6 +9,7 @@ describe('effectPresets (Batch F)', () => {
   it('lists cross_stitch_pattern and does not invent an AlgorithmId', () => {
     expect(EFFECT_PRESETS.map((p) => p.id)).toContain('cross_stitch_pattern');
     expect(findEffectPreset('cross_stitch_pattern')).toBe(CROSS_STITCH_PRESET);
+    expect(CROSS_STITCH_PRESET.hint.toLowerCase()).toContain('preset');
   });
 
   it('builds a DitherV2 bayer_8x8 stack with coarse pixel_size', () => {

@@ -171,9 +171,13 @@ impl FilterAlgorithm for NearestColorAlgo {
         Ok(())
     }
 
-    fn gpu_eligibility(&self, _params: &serde_json::Value) -> GpuEligibility {
-        // Oklab nearest matches palette_quantize GPU path; brightness/sRGB stay CPU for now.
-        GpuEligibility::Cpu(CpuCheckpointKind::UnsupportedFilter)
+    fn gpu_eligibility(&self, params: &serde_json::Value) -> GpuEligibility {
+        // Oklab nearest reuses PaletteQuantize LUT resident path; brightness/sRGB stay CPU.
+        match parse_params(params) {
+            Ok(p) if matches!(p.metric, NearestMetric::Oklab) => GpuEligibility::Eligible,
+            Ok(_) => GpuEligibility::Cpu(CpuCheckpointKind::UnsupportedFilter),
+            Err(_) => GpuEligibility::Cpu(CpuCheckpointKind::UnsupportedFilter),
+        }
     }
 
     fn param_schema(&self) -> &'static [ParamField] {

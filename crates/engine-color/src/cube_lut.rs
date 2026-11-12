@@ -60,6 +60,11 @@ impl CubeLut3D {
         [self.data[i], self.data[i + 1], self.data[i + 2]]
     }
 
+    /// Interleaved RGB samples (Adobe order, R fastest). Length `size³ * 3`.
+    pub fn rgb_data(&self) -> &[f32] {
+        &self.data
+    }
+
     /// Map input RGB through the LUT (domain remap + tetrahedral interpolation).
     pub fn lookup(&self, r: f32, g: f32, b: f32) -> [f32; 3] {
         let n = self.size;

@@ -113,6 +113,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "hue",
         "invert",
         "jarvis_judice_ninke",
+        "levels",
         "line_screen",
         "modulated_diffuse_x",
         "modulated_diffuse_y",
@@ -282,8 +283,8 @@ fn register_all_ids_unique() {
     );
     assert_eq!(
         all_ids.len(),
-        58,
-        "must register all 58 built-in algorithms"
+        59,
+        "must register all 59 built-in algorithms"
     );
 }
 

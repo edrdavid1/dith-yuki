@@ -174,7 +174,11 @@ impl FilterAlgorithm for Adjust {
     fn gpu_eligibility(&self, params: &serde_json::Value) -> GpuEligibility {
         match serde_json::from_value::<AdjustParams>(params.clone()) {
             Ok(p) if p.blur == 0.0 && p.sharpness == 0.0 && p.noise == 0.0 && p.clarity == 0.0 => {
-                GpuEligibility::Eligible
+                if engine_gpu::pointwise_gpu_enabled() {
+                    GpuEligibility::Eligible
+                } else {
+                    GpuEligibility::Cpu(CpuCheckpointKind::UnsupportedFilter)
+                }
             }
             Ok(_) => GpuEligibility::Cpu(CpuCheckpointKind::AdjustBlur),
             Err(_) => GpuEligibility::Cpu(CpuCheckpointKind::UnsupportedFilter),
@@ -186,7 +190,8 @@ impl FilterAlgorithm for Adjust {
     }
 
     fn schema_version(&self) -> u32 {
-        2
+        // v3: spatial knobs split to BlurNoise/Detail via expand_adjust_spatial_filters.
+        3
     }
 
     fn category(&self) -> EffectCategory {

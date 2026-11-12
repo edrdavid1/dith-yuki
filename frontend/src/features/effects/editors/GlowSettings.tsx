@@ -13,15 +13,17 @@ interface GlowSettingsProps {
 }
 
 function GlowSettings({ params, onUpdate }: GlowSettingsProps) {
-  const radius = clampParam(Number(params.radius) || 2, 0.5, 2);
+  const radius = clampParam(Number(params.radius) || 4, 0.5, 16);
   const intensity = clampParam(Number(params.intensity) || 1, 0, 4);
-  const threshold = clampParam(Number(params.threshold) || 0, 0, 1);
+  const threshold = clampParam(Number(params.threshold) ?? 0.35, 0, 1);
+  const softness = clampParam(Number(params.softness) || 2, 1, 3);
 
   const emit = (overrides: Record<string, unknown>) => {
     onUpdate({
       radius: overrides.radius ?? radius,
       intensity: overrides.intensity ?? intensity,
       threshold: overrides.threshold ?? threshold,
+      softness: overrides.softness ?? softness,
     });
   };
 
@@ -31,10 +33,10 @@ function GlowSettings({ params, onUpdate }: GlowSettingsProps) {
         label="Radius"
         value={radius}
         min={0.5}
-        max={2}
+        max={16}
         step={0.5}
         decimals={1}
-        onChange={(v) => emit({ radius: clampParam(v, 0.5, 2) })}
+        onChange={(v) => emit({ radius: clampParam(v, 0.5, 16) })}
       />
       <Slider
         label="Intensity"
@@ -53,6 +55,15 @@ function GlowSettings({ params, onUpdate }: GlowSettingsProps) {
         step={0.05}
         decimals={2}
         onChange={(v) => emit({ threshold: clampParam(v, 0, 1) })}
+      />
+      <Slider
+        label="Softness"
+        value={softness}
+        min={1}
+        max={3}
+        step={1}
+        decimals={0}
+        onChange={(v) => emit({ softness: Math.round(clampParam(v, 1, 3)) })}
       />
     </div>
   );

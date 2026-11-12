@@ -76,6 +76,26 @@ vi.mock('../../shared/ipc/registry', () => ({
         },
       ];
     }
+    if (category === 'color_adjust') {
+      return [
+        {
+          id: 'levels',
+          display_name: 'Levels',
+          category: 'color_adjust',
+          deprecated: false,
+          execution_scope: 'tiled',
+          temporal_stability: 'stable',
+        },
+        {
+          id: 'adjust',
+          display_name: 'Adjust',
+          category: 'color_adjust',
+          deprecated: false,
+          execution_scope: 'tiled',
+          temporal_stability: 'stable',
+        },
+      ];
+    }
     return [];
   }),
   getAlgorithmSchema: vi.fn(async (id: string) => {
@@ -232,6 +252,7 @@ describe('EffectSettingsPanel', () => {
       expect(screen.queryByText('Floyd–Steinberg')).not.toBeInTheDocument();
       expect(screen.queryByText('Bayer 4×4')).not.toBeInTheDocument();
       expect(screen.getByText('RGB channels')).toBeInTheDocument();
+      expect(screen.queryByText('Levels')).not.toBeInTheDocument();
       expect(screen.queryByRole('slider')).not.toBeInTheDocument();
     });
 
@@ -297,14 +318,14 @@ describe('EffectSettingsPanel', () => {
       expect(onSelectEffect).toHaveBeenCalledWith('Glitching');
     });
 
-    it('calls onSelectEffect for the leftover RGB channels row', async () => {
+    it('calls onSelectEffect for RGB channels (Levels filter) from the registry catalog', async () => {
       const onSelectEffect = vi.fn();
       render(<EffectSettingsPanel selectedLayer={null} onUpdateParams={onUpdateParams} onSelectEffect={onSelectEffect} />);
       await waitFor(() => {
         expect(screen.getByText('RGB channels')).toBeInTheDocument();
       });
       fireEvent.pointerDown(screen.getByText('RGB channels'), { button: 0 });
-      expect(onSelectEffect).toHaveBeenCalledWith('RGBChannels');
+      expect(onSelectEffect).toHaveBeenCalledWith('Levels');
     });
   });
 
@@ -750,7 +771,7 @@ describe('EffectSettingsPanel', () => {
   });
 
   describe('Adjust settings', () => {
-    it('renders contrast brightness saturation blur sharpness noise', () => {
+    it('renders WB / tone / color controls (spatial knobs live on BlurNoise / Detail)', () => {
       render(
         <EffectSettingsPanel
           selectedLayer={{
@@ -777,11 +798,11 @@ describe('EffectSettingsPanel', () => {
         />
       );
       expect(screen.getByText('Contrast')).toBeInTheDocument();
-      expect(screen.getByText('Brightness')).toBeInTheDocument();
       expect(screen.getByText('Saturation')).toBeInTheDocument();
-      expect(screen.getByText('Blur')).toBeInTheDocument();
-      expect(screen.getByText('Sharpness')).toBeInTheDocument();
-      expect(screen.getByText('Noise')).toBeInTheDocument();
+      expect(screen.getByText('Exposure')).toBeInTheDocument();
+      expect(screen.queryByText('Blur')).not.toBeInTheDocument();
+      expect(screen.queryByText('Sharpness')).not.toBeInTheDocument();
+      expect(screen.queryByText('Noise')).not.toBeInTheDocument();
     });
   });
 
@@ -857,7 +878,7 @@ describe('EffectSettingsPanel', () => {
               {
                 id: 'filter-1',
                 kind: 'Glow',
-                params: { type: 'Glow', radius: 1, intensity: 1, threshold: 0 },
+                params: { type: 'Glow', radius: 1, intensity: 1, threshold: 0, softness: 1 },
                 enabled: true,
                 opacity: 1,
                 blend_mode: 'Normal',

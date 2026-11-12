@@ -20,6 +20,11 @@ fn empty_pass(pipeline: GpuPipelineKey) -> GpuPass {
         crosshatch: None,
         wave: None,
         crt: None,
+        glow: None,
+        blur_noise: None,
+        detail: None,
+        pointwise: None,
+        cube_lut: None,
         palette_quantize: None,
         palette_guided: None,
         palette_mixed: None,
@@ -64,6 +69,31 @@ pub fn compile_graph(filters: &[GraphLayerFilter]) -> Result<ComputeGraph, Graph
             GraphLayerFilter::Crt(p) => {
                 let mut pass = empty_pass(GpuPipelineKey::Crt);
                 pass.crt = Some(*p);
+                nodes.push(GraphNode::Gpu(pass));
+            }
+            GraphLayerFilter::Glow(p) => {
+                let mut pass = empty_pass(GpuPipelineKey::Glow);
+                pass.glow = Some(*p);
+                nodes.push(GraphNode::Gpu(pass));
+            }
+            GraphLayerFilter::BlurNoise(p) => {
+                let mut pass = empty_pass(GpuPipelineKey::BlurNoise);
+                pass.blur_noise = Some(*p);
+                nodes.push(GraphNode::Gpu(pass));
+            }
+            GraphLayerFilter::Detail(p) => {
+                let mut pass = empty_pass(GpuPipelineKey::Detail);
+                pass.detail = Some(*p);
+                nodes.push(GraphNode::Gpu(pass));
+            }
+            GraphLayerFilter::Pointwise(p) => {
+                let mut pass = empty_pass(GpuPipelineKey::Pointwise);
+                pass.pointwise = Some(p.clone());
+                nodes.push(GraphNode::Gpu(pass));
+            }
+            GraphLayerFilter::CubeLut(p) => {
+                let mut pass = empty_pass(GpuPipelineKey::CubeLut);
+                pass.cube_lut = Some(p.clone());
                 nodes.push(GraphNode::Gpu(pass));
             }
             GraphLayerFilter::PaletteQuantize(p) => {

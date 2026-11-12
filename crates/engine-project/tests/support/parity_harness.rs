@@ -237,11 +237,12 @@ impl Env {
     pub fn assert_glow(&self, radius: f32, intensity: f32, threshold: f32) {
         let src = gradient_tile();
         let mut expected = PixelTile::new();
-        apply_glow_into(&src, radius, intensity, threshold, &mut expected);
+        apply_glow_into(&src, radius, intensity, threshold, 1, &mut expected);
         let params = FilterParams::Glow {
             radius,
             intensity,
             threshold,
+            softness: 1,
         };
         self.assert_registry("glow", FilterKind::Glow, params, &src, &expected);
     }

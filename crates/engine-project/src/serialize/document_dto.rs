@@ -479,11 +479,13 @@ pub fn layer_node_from_file(node: &LayerNodeFile) -> LayerNode {
             visible: layer.visible,
             offset: layer.offset,
             mask: layer.mask.clone(),
-            filters: layer
-                .filters
-                .iter()
-                .map(|f| filter_from_file(f, None))
-                .collect(),
+            filters: crate::filters::expand_adjust_spatial_filters(
+                &layer
+                    .filters
+                    .iter()
+                    .map(|f| filter_from_file(f, None))
+                    .collect::<Vec<_>>(),
+            ),
             bounds_l0: layer.bounds_l0,
             // Open path bumps after PNG → Raw materialization.
             raw_rev: 0,

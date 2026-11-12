@@ -469,6 +469,31 @@ mod tests {
     }
 
     #[test]
+    fn floyd_invert_scrub_is_post_only() {
+        // Panel: Invert above Floyd → Post scrub must not touch ED / prefix.
+        let invert = FilterInstance::new(FilterKind::Invert, FilterParams::Invert {});
+        let base = vec![invert.clone(), floyd()];
+        let mut scrubbed = base.clone();
+        // Replacing Invert with a material Threshold still stays Post (above barrier).
+        scrubbed[0] = FilterInstance::new(
+            FilterKind::Threshold,
+            FilterParams::Threshold { threshold: 0.4 },
+        );
+        assert_eq!(classify_change(&base, &scrubbed), ChangeClass::Post);
+        let ext = PrefixExternals::default();
+        assert_eq!(
+            prefix_hash_through_barrier(&base, &ext),
+            prefix_hash_through_barrier(&scrubbed, &ext),
+            "Post Invert/Threshold scrub must keep dither prefix hash"
+        );
+        assert_eq!(
+            stack_edit_bump(&base, &scrubbed),
+            StackEditBump::Post,
+            "Invert scrub above Floyd → post_gen only"
+        );
+    }
+
+    #[test]
     fn classify_post_pre_barrier() {
         let base = vec![curves(), floyd(), adjust()];
 

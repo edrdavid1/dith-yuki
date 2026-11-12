@@ -22,7 +22,7 @@ export interface EffectPreset {
 export const CROSS_STITCH_PRESET: EffectPreset = {
   id: 'cross_stitch_pattern',
   label: 'Cross Stitch',
-  hint: 'Coarse Bayer blocks · optional palette',
+  hint: 'Preset · coarse Bayer blocks · optional palette',
   buildSpec: (paletteId) => ({
     kind: 'DitherV2',
     params: {

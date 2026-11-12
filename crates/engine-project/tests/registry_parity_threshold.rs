@@ -5,7 +5,7 @@ mod parity_harness;
 
 use engine_project::filter::{FilterKind, FilterParams};
 use engine_project::filters::threshold::apply_threshold_into;
-use engine_registry::{CpuCheckpointKind, GpuEligibility};
+use engine_registry::GpuEligibility;
 use engine_tiles::PixelTile;
 use parity_harness::{gradient_tile, Env};
 
@@ -13,11 +13,7 @@ use parity_harness::{gradient_tile, Env};
 fn registry_parity_threshold() {
     let env = Env::new();
     let params = FilterParams::Threshold { threshold: 0.5 };
-    env.assert_gpu(
-        "threshold",
-        &params,
-        GpuEligibility::Cpu(CpuCheckpointKind::UnsupportedFilter),
-    );
+    env.assert_gpu("threshold", &params, GpuEligibility::Eligible);
 
     let src = gradient_tile();
     let mut expected = PixelTile::new();

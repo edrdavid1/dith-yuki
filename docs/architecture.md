@@ -752,7 +752,7 @@ pub enum FilterParams {
     DitherV2(DitherParamsV2),
     PaletteQuantize { palette_id: PaletteId, diffusion: Option<DiffusionKernel> },
     Glitch { glitch_type: GlitchType, intensity: f32, seed: u64 },
-    Glow { radius: f32, intensity: f32, threshold: f32 },
+    Glow { radius: f32, intensity: f32, threshold: f32, softness: u8 },
     Crt { period: f32, strength: f32, mask_strength: f32 },
     Adjust { /* brightness/contrast/… */ },
     Ascii(AsciiParams),             // full-document text-art — see ascii-as-built.md
@@ -912,9 +912,9 @@ pub fn resolve_user_path(raw: &str, allowed_ext: &[&str]) -> Result<PathBuf, San
 | Warmup | A2 prefetch promote; `DITHER_GPU_WARMUP=0` disables |
 | Env | `DITHER_FORCE_CPU=1`; `DITHER_GPU_PREVIEW=1` (cold compute). No Preferences toggle (A4). `DITHER_GPU=1` aliases preview-enabled. |
 
-**Eligible:** Bayer / Clustered / Dispersed / VAC (ps=1, Track H bias/angle), Halftone angled, Line Screen, Crosshatch, Wave, CRT, Palette Guided/Mixed/Quantize (A7 LUT).  
-**Never GPU:** ED, CustomPng, stipple, Glow, `pixel_size>1`.  
-**Parity:** Bayer exact; Halftone/CRT ≤ `1/255`. As-built: [gpu-as-built.md](./gpu-as-built.md).
+**Eligible:** Bayer / Clustered / Dispersed / VAC (ps=1, Track H bias/angle), Halftone angled, Line Screen, Crosshatch, Wave, CRT, Glow (`r×softness ≤ HALO`), BlurNoise / Detail (clamp path), Invert / Threshold / Posterize / Levels / Curves / CubeLut / Adjust (pointwise, no spatial knobs), Palette Guided/Mixed/Quantize (A7 LUT), NearestColor (Oklab only).  
+**Never GPU:** ED, CustomPng, stipple, `pixel_size>1`. Kill-switches: `DITHER_POINTWISE_GPU=0`, `DITHER_SPATIAL_GPU=0`. Large Glow → `Cpu(AdjustBlur)` until gather (PR-E B).  
+**Parity:** Bayer exact; Halftone/CRT/pointwise ≤ `1/255`. As-built: [gpu-as-built.md](./gpu-as-built.md).
 
 ### 4.6 engine-core (Phase 0 stub)
 
@@ -1052,7 +1052,7 @@ SIMD-ускорение: `levels_row_simd` (wide f32x4) для batch processing 
 ### 5.7 CRT / Glow
 
 - **CRT:** scanlines + optional RGB triad mask; phase from `GlobalCoordSigned` (global Y/X). CPU always; GPU when Path B eligible + warm/opt-in.
-- **Glow:** soft bloom, radius ≤ HALO — **CPU-only** in Track D (GPU deferred).
+- **Glow:** soft bloom (threshold → N× box blur → add). Radius 0.5–16, softness 1–3. GPU resident when `r×softness ≤ HALO` (else CPU `AdjustBlur` + neighbor gather); `DITHER_SPATIAL_GPU=0` forces CPU.
 
 ### 5.8 SIMD Module (simd.rs)
 

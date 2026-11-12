@@ -17,10 +17,11 @@ pub use format::{
 };
 pub use gather::ResidentGatherPipelines;
 pub use pipelines::{
-    ResidentBayerPipelines, ResidentCompositePipelines, ResidentCrosshatchPipelines,
-    ResidentCrtPipelines, ResidentHalftonePipelines, ResidentLineScreenPipelines,
-    ResidentPaletteGuidedPipelines, ResidentPalettePipelines, ResidentVoidAndClusterPipelines,
-    ResidentWavePipelines,
+    ResidentBayerPipelines, ResidentBlurNoisePipelines, ResidentCompositePipelines,
+    ResidentCrosshatchPipelines, ResidentCrtPipelines, ResidentDetailPipelines,
+    ResidentGlowPipelines, ResidentHalftonePipelines, ResidentLineScreenPipelines,
+    ResidentPaletteGuidedPipelines, ResidentPalettePipelines, ResidentCubeLutPipelines,
+    ResidentPointwisePipelines, ResidentVoidAndClusterPipelines, ResidentWavePipelines,
 };
 pub use readback::{ReadbackRing, TILE_CORE_RGBA8_BYTES};
 pub use slot::{GpuSlotMeta, SlotAllocator, SlotHandle};

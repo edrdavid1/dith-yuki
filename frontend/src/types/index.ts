@@ -221,9 +221,10 @@ export interface PaletteQuantizeParams {
 
 export interface GlowParams {
   type: 'Glow';
-  radius: number;      // 0.5–2 (HALO cap)
+  radius: number;      // 0.5–16
   intensity: number;   // 0–4
   threshold: number;   // 0–1
+  softness?: number;   // 1–3 box-blur passes
 }
 
 export interface CrtParams {
