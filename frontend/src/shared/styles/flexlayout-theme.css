@@ -449,15 +449,25 @@
  * Floating-only tabsets are collapsed with inline height: 0px (see
  * rebalanceFloatingTabsets). FlexLayout still mounts an empty tabstrip whose
  * borders would leave a residual line under the remaining panel's title.
+ * Prefer [data-flex-float-host] (from onRenderTabSet) over style-attribute
+ * matching — FlexLayout's fill loop may leave 1px without height:0 inline.
  */
+.flexlayout__tabset:has([data-flex-float-host]),
 .flexlayout__tabset[style*='height: 0px'],
 .flexlayout__tabset[style*='height:0px'] {
   visibility: hidden !important;
   border: none !important;
   overflow: hidden !important;
   pointer-events: none !important;
+  flex: 0 0 0 !important;
+  max-height: 0 !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
 }
 
+.flexlayout__tabset:has([data-flex-float-host]) .flexlayout__tabset_tabbar_outer,
+.flexlayout__tabset:has([data-flex-float-host]) .flexlayout__tabset_content,
 .flexlayout__tabset[style*='height: 0px'] .flexlayout__tabset_tabbar_outer,
 .flexlayout__tabset[style*='height:0px'] .flexlayout__tabset_tabbar_outer,
 .flexlayout__tabset[style*='height: 0px'] .flexlayout__tabset_content,

@@ -270,7 +270,7 @@ export default function PreviewWindow({
     }
   }, []);
 
-  // Clean up drag state if mouse leaves window
+  // Clean up drag state if mouse leaves the preview surface (W5: popout owner view).
   useEffect(() => {
     const handleGlobalMouseUp = () => {
       draggingRef.current = false;
@@ -278,8 +278,9 @@ export default function PreviewWindow({
         containerRef.current.style.cursor = spaceHeldRef.current ? 'grab' : 'default';
       }
     };
-    window.addEventListener('mouseup', handleGlobalMouseUp);
-    return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
+    const view = containerRef.current?.ownerDocument.defaultView ?? window;
+    view.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => view.removeEventListener('mouseup', handleGlobalMouseUp);
   }, []);
 
   // ─── Wheel: native + non-passive so trackpad pan can preventDefault ──

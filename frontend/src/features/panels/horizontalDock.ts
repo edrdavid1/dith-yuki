@@ -13,11 +13,11 @@ import {
   SIDEBAR_EXPANDED_MAX_WIDTH,
   SIDEBAR_EXPANDED_MIN_WIDTH,
 } from '../../defaults/DefaultLayouts';
+import { canAcceptExtraColumn } from './computeShellWidths';
+import { MAX_SIDE_COLUMNS } from './gestureConfig';
 
-/** Hard cap: 600 / 240 → at most two visible columns per side. */
-export const MAX_SIDE_COLUMNS = Math.floor(
-  SIDEBAR_EXPANDED_MAX_WIDTH / DOCK_TABSET_MIN_WIDTH,
-);
+/** Hard cap on side-by-side columns — see gestureConfig.MAX_SIDE_COLUMNS. */
+export { MAX_SIDE_COLUMNS };
 
 function rowOrientation(node: { getOrientation?: () => unknown }): unknown {
   return typeof node.getOrientation === 'function' ? node.getOrientation() : null;
@@ -65,6 +65,12 @@ export type HorizontalDropBudget = {
   viewportWidth: number;
   maxSidebarWidth?: number;
   centerMinWidth?: number;
+  /** W8: which shell side this host is (for emergency-collapse drop gate). */
+  side?: 'left' | 'right';
+  /** Docked horizontal columns on the opposite side. */
+  otherColumns?: number;
+  thisSideCollapsed?: boolean;
+  otherSideCollapsed?: boolean;
 };
 
 /**
@@ -87,12 +93,36 @@ export function horizontalSidebarRoom(budget: HorizontalDropBudget): number {
 }
 
 /**
- * Whether a left/right drop that adds a column can keep every column ≥ 240px
- * after growing this sidebar (and shrinking the opposite side toward its floor).
+ * Whether a left/right drop that adds a column fits without emergency collapse
+ * (W8). Falls back to soft-floor room when shell side metadata is omitted.
  */
 export function canFitAdditionalColumn(budget: HorizontalDropBudget): boolean {
   const next = budget.currentSpan + 1;
   if (next > MAX_SIDE_COLUMNS) return false;
+  if (budget.side) {
+    const side = budget.side;
+    const columnsLeft = side === 'left' ? budget.currentSpan : (budget.otherColumns ?? 0);
+    const columnsRight = side === 'right' ? budget.currentSpan : (budget.otherColumns ?? 0);
+    return canAcceptExtraColumn({
+      viewportWidth: budget.viewportWidth,
+      prefs: {
+        leftWidth: side === 'left' ? budget.sidebarWidth : budget.otherSidebarWidth,
+        rightWidth: side === 'right' ? budget.sidebarWidth : budget.otherSidebarWidth,
+      },
+      columnsLeft,
+      columnsRight,
+      collapsed: {
+        left: side === 'left'
+          ? (budget.thisSideCollapsed ?? false)
+          : (budget.otherSideCollapsed ?? false),
+        right: side === 'right'
+          ? (budget.thisSideCollapsed ?? false)
+          : (budget.otherSideCollapsed ?? false),
+      },
+      side,
+      maxColumns: MAX_SIDE_COLUMNS,
+    });
+  }
   return horizontalSidebarRoom(budget) >= next * DOCK_TABSET_MIN_WIDTH;
 }
 
@@ -115,32 +145,51 @@ export function isHorizontalRearrange(
 }
 
 /**
- * Accept left/right dock when under the column cap. Prefer completing the dock
- * and growing the sidebar (`ensureSidebarFitsSpan`) over rejecting — a hard
- * reject made left-edge docks feel broken (gesture fell through to float).
- *
- * Still deny a 3rd column (MAX_SIDE_COLUMNS). Rearranges of an existing row
- * always allowed. Outline preview (no from/to) stays allowed so rearrange
- * highlights aren't dimmed at max span.
+ * Accept left/right dock when under the column cap and the extra column fits
+ * without emergency collapse (W8). Rearranges of an existing row always
+ * allowed. Outline preview (no from/to): at max span stay allowed (rearrange
+ * highlights); otherwise gate on `canAcceptExtraColumn`.
  */
 export function canAcceptHorizontalDrop(
   model: Model,
   fromNodeId: string | undefined,
   toNodeId: string | undefined,
-  _budget: Omit<HorizontalDropBudget, 'currentSpan'>,
+  budget: Omit<HorizontalDropBudget, 'currentSpan'>,
 ): boolean {
   const currentSpan = maxDockedHorizontalSpan(model);
 
-  if (!fromNodeId || !toNodeId) {
+  if (fromNodeId && toNodeId && isHorizontalRearrange(model, fromNodeId, toNodeId)) {
     return true;
   }
 
-  if (isHorizontalRearrange(model, fromNodeId, toNodeId)) {
-    return true;
+  if (currentSpan >= MAX_SIDE_COLUMNS) {
+    // Outline at max span: allow so rearrange highlights aren't dimmed.
+    return !fromNodeId || !toNodeId;
   }
 
-  // New column: allow whenever we stay within the hard column cap.
-  return currentSpan < MAX_SIDE_COLUMNS;
+  const side = budget.side ?? 'left';
+  const columnsLeft = side === 'left' ? currentSpan : (budget.otherColumns ?? 0);
+  const columnsRight = side === 'right' ? currentSpan : (budget.otherColumns ?? 0);
+
+  return canAcceptExtraColumn({
+    viewportWidth: budget.viewportWidth,
+    prefs: {
+      leftWidth: side === 'left' ? budget.sidebarWidth : budget.otherSidebarWidth,
+      rightWidth: side === 'right' ? budget.sidebarWidth : budget.otherSidebarWidth,
+    },
+    columnsLeft,
+    columnsRight,
+    collapsed: {
+      left: side === 'left'
+        ? (budget.thisSideCollapsed ?? false)
+        : (budget.otherSideCollapsed ?? false),
+      right: side === 'right'
+        ? (budget.thisSideCollapsed ?? false)
+        : (budget.otherSideCollapsed ?? false),
+    },
+    side,
+    maxColumns: MAX_SIDE_COLUMNS,
+  });
 }
 
 /** Clamp a persisted expanded sidebar width into the legal range. */

@@ -96,12 +96,10 @@ pub struct AppState {
     pub ascii_preview: AtomicBool,
     /// Refcount of callers inside a full-document ensure (monolithic “Rendering…”).
     pub full_document_busy: AtomicUsize,
-    /// FlexLayout persistence (left / right / center models).
-    pub flexlayout_persistence: Mutex<crate::flexlayout_persistence::FlexLayoutPersistence>,
-    /// Per-side FlexLayout persistence.
-    pub flexlayout_left: Mutex<crate::flexlayout_persistence::FlexLayoutPersistence>,
-    pub flexlayout_right: Mutex<crate::flexlayout_persistence::FlexLayoutPersistence>,
-    pub flexlayout_center: Mutex<crate::flexlayout_persistence::FlexLayoutPersistence>,
+    /// W7/W10: single layout.json envelope (left+center+right).
+    pub shell_layout: Mutex<crate::shell_layout_persistence::ShellLayoutPersistence>,
+    /// W7: FE ack for flush-layout before main close.
+    pub layout_flush_ack: std::sync::atomic::AtomicBool,
     /// Track C: how the CPU tile-cache budget was chosen (`empty_process` tests = override).
     pub ram_budget_source: crate::memory_budget::RamBudgetSource,
     /// Crash-recovery journal (Phase 2). `recovery_dir` set from app_data in setup.

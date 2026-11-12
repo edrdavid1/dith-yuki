@@ -19,9 +19,8 @@ const SRC_ROOT = join(__dirname, '../../..'); // frontend/src
 
 /** Audited exceptions — see docs/FORMAT_DECISIONS.md Stage close-out. */
 const BASELINE_ALLOWLIST = new Set([
-  // Hardcoded layout commands + JSON from FlexLayout model (UI state, not files).
-  'components/FlexLayoutContainer.tsx',
-  'contexts/LayoutContext.tsx',
+  // W4/W7: layout load/save + dock-request listen live in the store.
+  'contexts/layoutStore.ts',
   // Spike: invoke is commented out; import may remain during experiments.
   'spikes/PopoutTestWindow.tsx',
 ]);

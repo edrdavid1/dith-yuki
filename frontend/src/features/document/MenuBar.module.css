@@ -198,7 +198,7 @@
   display: block;
 }
 
-/* Hide "New Project" menu item */
-.menubar-dropdown-item:first-child {
+/* Hide File → New Project without killing single-item menus (e.g. Window). */
+.menubar-dropdown-item[data-menubar-hide='true'] {
   display: none;
 }

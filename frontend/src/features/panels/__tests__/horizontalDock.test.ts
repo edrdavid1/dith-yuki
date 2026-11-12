@@ -60,7 +60,7 @@ describe('horizontal dock policy', () => {
     ).toBe(false);
   });
 
-  it('allows a new column whenever under the hard column cap', () => {
+  it('allows a new column when soft floors fit without emergency', () => {
     const model = modelFrom([
       {
         type: 'tabset',
@@ -71,10 +71,31 @@ describe('horizontal dock policy', () => {
     expect(
       canAcceptHorizontalDrop(model, undefined, undefined, {
         sidebarWidth: 280,
-        otherSidebarWidth: 400,
-        viewportWidth: 900,
+        otherSidebarWidth: 240,
+        viewportWidth: 1400,
+        side: 'left',
+        otherColumns: 1,
       }),
     ).toBe(true);
+  });
+
+  it('denies a new column when it would force emergency collapse', () => {
+    const model = modelFrom([
+      {
+        type: 'tabset',
+        weight: 100,
+        children: [{ type: 'tab', name: 'Effect Settings', component: 'effect' }],
+      },
+    ]);
+    expect(
+      canAcceptHorizontalDrop(model, undefined, undefined, {
+        sidebarWidth: 240,
+        otherSidebarWidth: 240,
+        viewportWidth: 700,
+        side: 'left',
+        otherColumns: 1,
+      }),
+    ).toBe(false);
   });
 
   it('keeps outline preview allowed at two columns (rearrange)', () => {

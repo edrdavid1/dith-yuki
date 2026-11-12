@@ -118,6 +118,10 @@ export const LAYOUT_TOAST_MESSAGES = {
   RESET_TO_DEFAULT:  'Layout reset to default',
   MIGRATION_V2_TO_V3: 'Layout updated — please reconfigure your panel positions',
   CORRUPT_RECOVERED: 'Layout file was corrupted; recovered to default',
+  /** W7: legacy flexlayout_{left,right,center}.json → layout.json */
+  MIGRATED_ENVELOPE: 'Layout files upgraded to a single layout.json',
+  /** W7: primary corrupt; restored from layout.json.bak */
+  RECOVERED_BAK: 'Layout recovered from backup',
   /** Existing flexlayout_* without colorlab — tab injected, rest of layout kept. */
   COLORLAB_ADDED: 'Color Lab added to the panel',
   /** Existing flexlayout_center without preview — tab injected. */

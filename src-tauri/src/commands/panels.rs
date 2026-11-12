@@ -211,8 +211,16 @@ fn is_flex_layout_panel(panel_id: &str) -> bool {
     matches!(panel_id, "layers" | "effect" | "colorlab" | "preview")
 }
 
-/// FlexLayout popouts use `flex-popout-N`.
-fn resolve_float_window(app_handle: &AppHandle, _panel_id: &str) -> Option<tauri::WebviewWindow> {
+/// FlexLayout popouts use `flex-popout-N`. Prefer the session-bound label.
+fn resolve_float_window(
+    app_handle: &AppHandle,
+    preferred_label: Option<&str>,
+) -> Option<tauri::WebviewWindow> {
+    if let Some(label) = preferred_label {
+        if let Some(w) = app_handle.get_webview_window(label) {
+            return Some(w);
+        }
+    }
     let windows = app_handle.webview_windows();
     let mut flex: Vec<_> = windows
         .into_iter()
@@ -228,8 +236,14 @@ fn resolve_float_window(app_handle: &AppHandle, _panel_id: &str) -> Option<tauri
     flex.pop()
 }
 
-fn poll_panel_affinity(app_handle: &AppHandle, state: &Arc<AppState>, panel_id: &str) {
-    let Some(win) = resolve_float_window(app_handle, panel_id) else {
+fn poll_panel_affinity(app_handle: &AppHandle, state: &Arc<AppState>) {
+    let preferred = state
+        .dock_affinity
+        .lock()
+        .ok()
+        .and_then(|c| c.session_snapshot())
+        .and_then(|s| s.window_label);
+    let Some(win) = resolve_float_window(app_handle, preferred.as_deref()) else {
         return;
     };
     let Ok(pos) = win.outer_position() else {
@@ -238,16 +252,15 @@ fn poll_panel_affinity(app_handle: &AppHandle, state: &Arc<AppState>, panel_id: 
     let Ok(size) = win.outer_size() else {
         return;
     };
-    let Ok(scale) = win.scale_factor() else {
-        return;
+    let label = win.label().to_string();
+    // W6: physical screen pixels.
+    let physical = crate::dock_affinity::Rect {
+        x: pos.x as f64,
+        y: pos.y as f64,
+        width: size.width as f64,
+        height: size.height as f64,
     };
-    let logical = crate::dock_affinity::Rect {
-        x: pos.x as f64 / scale,
-        y: pos.y as f64 / scale,
-        width: size.width as f64 / scale,
-        height: size.height as f64 / scale,
-    };
-    handle_panel_moved(app_handle, state, logical);
+    handle_panel_moved(app_handle, state, physical, &label);
 }
 
 fn parse_sidebar_side(side: &str) -> Result<SidebarSide, String> {
@@ -273,6 +286,7 @@ pub fn update_dock_zone(
 #[tauri::command]
 pub fn begin_float_drag(
     panel_id: String,
+    window_label: Option<String>,
     app_handle: AppHandle,
     state: State<Arc<AppState>>,
 ) -> Result<(), String> {
@@ -288,7 +302,7 @@ pub fn begin_float_drag(
         if !ctrl.enabled {
             return Ok(());
         }
-        ctrl.begin(&panel_id)
+        ctrl.begin(&panel_id, window_label)
     };
 
     if !started {
@@ -297,6 +311,19 @@ pub fn begin_float_drag(
 
     ensure_fallback_dock_zone(&app_handle, &state);
     let _ = app_handle.emit("dock-zones-refresh", ());
+    Ok(())
+}
+
+/// Attach the concrete `flex-popout-*` label once the frontend resolves the shell.
+#[tauri::command]
+pub fn bind_float_drag_window(
+    window_label: String,
+    state: State<Arc<AppState>>,
+) -> Result<(), String> {
+    let mut ctrl = state.dock_affinity.lock().map_err(|e| e.to_string())?;
+    if !ctrl.bind_window_label(&window_label) {
+        return Err("no active float-drag session".into());
+    }
     Ok(())
 }
 
@@ -322,11 +349,12 @@ fn ensure_fallback_dock_zone(app_handle: &AppHandle, state: &AppState) {
     let Ok(scale) = main.scale_factor() else {
         return;
     };
-    let x = pos.x as f64 / scale;
-    let y = pos.y as f64 / scale;
-    let w = size.width as f64 / scale;
-    let h = size.height as f64 / scale;
-    let edge = 96.0_f64.min(w * 0.2).max(64.0);
+    // W6: physical pixels; CSS strip widths × scale.
+    let x = pos.x as f64;
+    let y = pos.y as f64;
+    let w = size.width as f64;
+    let h = size.height as f64;
+    let edge = (96.0_f64.min((w / scale) * 0.2).max(64.0)) * scale;
 
     if need_left {
         let zone = crate::dock_affinity::DockZone {
@@ -337,12 +365,13 @@ fn ensure_fallback_dock_zone(app_handle: &AppHandle, state: &AppState) {
             scale_factor: scale,
             side: SidebarSide::Left,
             slots: vec![],
+            seq: 0,
         };
-        ctrl.set_dock_zone(SidebarSide::Left, Some(zone));
+        let _ = ctrl.set_dock_zone(SidebarSide::Left, Some(zone));
     }
 
     if need_right {
-        let strip = 320.0_f64.min(w * 0.4).max(edge);
+        let strip = (320.0_f64.min((w / scale) * 0.4).max(edge / scale)) * scale;
         let zone = crate::dock_affinity::DockZone {
             x: x + w - strip,
             y,
@@ -351,14 +380,45 @@ fn ensure_fallback_dock_zone(app_handle: &AppHandle, state: &AppState) {
             scale_factor: scale,
             side: SidebarSide::Right,
             slots: vec![],
+            seq: 0,
         };
-        ctrl.set_dock_zone(SidebarSide::Right, Some(zone));
+        let _ = ctrl.set_dock_zone(SidebarSide::Right, Some(zone));
     }
 }
 
+/// Returns true when `window_label` may act on the active session (W1 idempotent).
+fn session_label_matches(
+    ctrl: &crate::dock_affinity::DockAffinityController,
+    window_label: Option<&str>,
+) -> bool {
+    let Some(snap) = ctrl.session_snapshot() else {
+        return false;
+    };
+    match (window_label, snap.window_label.as_deref()) {
+        (None, _) => true,
+        (Some(want), Some(have)) => want == have,
+        (Some(_), None) => true, // session not yet bound — allow
+    }
+}
+
+/// Cancel float-drag. Idempotent: no session or label mismatch → no-op.
 #[tauri::command]
-pub fn cancel_float_drag(app_handle: AppHandle, state: State<Arc<AppState>>) -> Result<(), String> {
+pub fn cancel_float_drag(
+    window_label: Option<String>,
+    app_handle: AppHandle,
+    state: State<Arc<AppState>>,
+) -> Result<(), String> {
     let mut ctrl = state.dock_affinity.lock().map_err(|e| e.to_string())?;
+    if ctrl.session.is_none() {
+        return Ok(());
+    }
+    if !session_label_matches(&ctrl, window_label.as_deref()) {
+        eprintln!(
+            "[flex-dock] cancel_float_drag no-op (label mismatch want={:?})",
+            window_label
+        );
+        return Ok(());
+    }
     if let Some(ev) = ctrl.cancel() {
         emit_dock_affinity(&app_handle, &ev);
     }
@@ -366,19 +426,27 @@ pub fn cancel_float_drag(app_handle: AppHandle, state: State<Arc<AppState>>) -> 
 }
 
 /// Finish JS-driven float drag: poll last rect, then request Flex redock if armed.
+/// Idempotent: no session or label mismatch → no-op.
 #[tauri::command]
 pub fn complete_float_drag(
+    window_label: Option<String>,
     app_handle: AppHandle,
     state: State<Arc<AppState>>,
 ) -> Result<(), String> {
-    if let Some((pid, _, _, _)) = state
-        .dock_affinity
-        .lock()
-        .ok()
-        .and_then(|c| c.session_snapshot())
     {
-        poll_panel_affinity(&app_handle, state.inner(), &pid);
+        let ctrl = state.dock_affinity.lock().map_err(|e| e.to_string())?;
+        if ctrl.session.is_none() {
+            return Ok(());
+        }
+        if !session_label_matches(&ctrl, window_label.as_deref()) {
+            eprintln!(
+                "[flex-dock] complete_float_drag no-op (label mismatch want={:?})",
+                window_label
+            );
+            return Ok(());
+        }
     }
+    poll_panel_affinity(&app_handle, state.inner());
     finish_float_drag(&app_handle, state.inner());
     Ok(())
 }
@@ -392,19 +460,19 @@ pub fn finish_float_drag(app_handle: &AppHandle, state: &Arc<AppState>) {
         ctrl.session_snapshot()
     };
 
-    let Some((panel_id, armed, _insert_index, armed_side)) = snapshot else {
+    let Some(snap) = snapshot else {
         return;
     };
 
-    if armed && is_flex_layout_panel(&panel_id) {
-        let side_str = match armed_side.unwrap_or(SidebarSide::Right) {
+    if snap.armed && is_flex_layout_panel(&snap.panel_id) {
+        let side_str = match snap.armed_side.unwrap_or(SidebarSide::Right) {
             SidebarSide::Left => "left",
             SidebarSide::Right => "right",
         };
         let _ = app_handle.emit(
             "flex-panel-dock-request",
             serde_json::json!({
-                "panelId": panel_id,
+                "panelId": snap.panel_id,
                 "side": side_str,
             }),
         );
@@ -422,20 +490,28 @@ pub fn finish_float_drag(app_handle: &AppHandle, state: &Arc<AppState>) {
     }
 }
 
+/// `win_physical` is the floating window outer rect in **physical** screen pixels (W6).
 pub fn handle_panel_moved(
     app_handle: &AppHandle,
     state: &Arc<AppState>,
-    logical: crate::dock_affinity::Rect,
+    win_physical: crate::dock_affinity::Rect,
+    window_label: &str,
 ) {
     let event = {
         let mut ctrl = match state.dock_affinity.lock() {
             Ok(c) => c,
             Err(_) => return,
         };
-        if ctrl.session.is_none() {
+        let Some(session) = ctrl.session.as_ref() else {
             return;
+        };
+        // Ignore moves from sibling popouts when this drag is bound to a label.
+        if let Some(bound) = session.window_label.as_deref() {
+            if bound != window_label {
+                return;
+            }
         }
-        ctrl.on_moved(logical)
+        ctrl.on_moved(win_physical)
     };
     if let Some(ev) = event {
         emit_dock_affinity(app_handle, &ev);
@@ -658,5 +734,23 @@ mod tests {
         let result = correct_bounds_for_monitors(&bounds, &monitors, Some(&primary));
         assert_eq!(result.x, -399);
         assert_eq!(result.y, 0);
+    }
+
+    #[test]
+    fn session_label_matches_is_idempotent_friendly() {
+        let mut ctrl = crate::dock_affinity::DockAffinityController::new(true);
+        // No session → mismatch (cancel/complete no-op).
+        assert!(!session_label_matches(&ctrl, None));
+        assert!(!session_label_matches(&ctrl, Some("flex-popout-1")));
+
+        assert!(ctrl.begin("effect", Some("flex-popout-1".into())));
+        assert!(session_label_matches(&ctrl, None));
+        assert!(session_label_matches(&ctrl, Some("flex-popout-1")));
+        assert!(!session_label_matches(&ctrl, Some("flex-popout-2")));
+
+        // Unbound session still accepts an explicit label (bind races).
+        let mut unbound = crate::dock_affinity::DockAffinityController::new(true);
+        assert!(unbound.begin("layers", None));
+        assert!(session_label_matches(&unbound, Some("flex-popout-9")));
     }
 }

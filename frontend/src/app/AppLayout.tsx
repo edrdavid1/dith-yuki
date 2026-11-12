@@ -35,10 +35,6 @@ import {
   type DockAffinityEvent,
 } from '../shared/ipc';
 import SidebarCollapseStrip from '../features/panels/SidebarCollapseStrip';
-import {
-  clampSidebarsToViewport,
-  sidebarColumnWidth,
-} from '../features/panels/panelDragMode';
 import FlexLayoutContainer from '../components/FlexLayoutContainer';
 import ResizeHandle from '../components/common/ResizeHandle';
 import { isPanelOnFlexLayout } from '../factories/layoutPanelFactory';
@@ -46,16 +42,20 @@ import {
   isPreviewFloating,
   listDockedFlexComponents,
   listFlexComponents,
+  listFloatingFlexComponents,
   useLayoutContext,
 } from '../contexts/LayoutContext';
 import {
-  CENTER_COLUMN_MIN_WIDTH,
-  DOCK_TABSET_MIN_WIDTH,
+  lookupPanelIdByLabel,
+  forgetFlexPopoutLabelByWindowLabel,
+} from '../features/panels/flexPopoutRegistry';
+import {
   SIDEBAR_COLLAPSE_WIDTH,
   SIDEBAR_EXPANDED_MAX_WIDTH,
   SIDEBAR_EXPANDED_MIN_WIDTH,
 } from '../defaults/DefaultLayouts';
 import { maxDockedHorizontalSpan } from '../features/panels/horizontalDock';
+import { computeShellWidths } from '../features/panels/computeShellWidths';
 import type { DockSide, PanelId } from '../types/panels';
 import { appEdgesAttr } from '../shared/ui/appEdges';
 import { isMacOS } from '../lib/platform';
@@ -200,6 +200,13 @@ export default function AppLayout() {
         const ok = await confirmQuitRef.current();
         if (!ok) return;
         allowCloseRef.current = true;
+        // W7: flush shell layout before destroy (also handles flush-layout from Rust).
+        try {
+          const { layoutStore } = await import('../contexts/layoutStore');
+          await layoutStore.flushForClose();
+        } catch (err) {
+          console.error('[flex-dock] close flush failed:', err);
+        }
         try {
           await allowAppExit();
         } catch {
@@ -260,6 +267,8 @@ export default function AppLayout() {
     swapFlexSides,
     layoutToast,
     clearLayoutToast,
+    dockPanel,
+    returnAllPanelsToDock,
   } = useLayoutContext();
   // layoutEpoch: re-read docked vs floating after in-place float/dock mutations.
   void layoutEpoch;
@@ -292,7 +301,6 @@ export default function AppLayout() {
   const rightDockedFlexIds = listDockedFlexComponents(rightLayout.model).filter(
     (id): id is PanelId => isPanelOnFlexLayout(id)
   );
-
   const previewFloating = isPreviewFloating(centerLayout.model);
 
   // Any flex tab (incl. floating) keeps Layout mounted so OS popouts stay alive.
@@ -316,38 +324,26 @@ export default function AppLayout() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // Side-by-side tabsets each need ≥240px — floor the outer column accordingly.
+  // W8: pure shell solver — preview ≥320, soft 240 / hard 200, emergency strip.
   const leftSpan = maxDockedHorizontalSpan(leftLayout.model);
   const rightSpan = maxDockedHorizontalSpan(rightLayout.model);
-  const leftFloor =
-    leftHasDockedFlex && !leftSidebar.collapsed
-      ? leftSpan * DOCK_TABSET_MIN_WIDTH
-      : 0;
-  const rightFloor =
-    rightHasDockedFlex && !rightSidebar.collapsed
-      ? rightSpan * DOCK_TABSET_MIN_WIDTH
-      : 0;
-
-  const leftPreferred = leftSidebar.collapsed
-    ? leftSidebar.width
-    : Math.max(leftSidebar.width, SIDEBAR_EXPANDED_MIN_WIDTH, leftFloor);
-  const rightPreferred = rightSidebar.collapsed
-    ? rightSidebar.width
-    : Math.max(rightSidebar.width, SIDEBAR_EXPANDED_MIN_WIDTH, rightFloor);
-  const leftRaw = focusMode
-    ? 0
-    : sidebarColumnWidth(leftHasDockedFlex, leftSidebar.collapsed, leftPreferred);
-  const rightRaw = focusMode
-    ? 0
-    : sidebarColumnWidth(rightHasDockedFlex, rightSidebar.collapsed, rightPreferred);
-  const [leftW, rightW] = clampSidebarsToViewport(
-    leftRaw,
-    rightRaw,
-    viewportW,
-    CENTER_COLUMN_MIN_WIDTH,
-    focusMode ? 0 : leftFloor,
-    focusMode ? 0 : rightFloor,
-  );
+  const shell = computeShellWidths({
+    viewportWidth: viewportW,
+    prefs: { leftWidth: leftSidebar.width, rightWidth: rightSidebar.width },
+    columnsLeft: leftHasDockedFlex && !focusMode ? leftSpan : 0,
+    columnsRight: rightHasDockedFlex && !focusMode ? rightSpan : 0,
+    collapsed: {
+      left: focusMode || !leftHasDockedFlex || leftSidebar.collapsed,
+      right: focusMode || !rightHasDockedFlex || rightSidebar.collapsed,
+    },
+  });
+  const leftW = focusMode ? 0 : shell.leftWidth;
+  const rightW = focusMode ? 0 : shell.rightWidth;
+  // Emergency collapse is visual only — never written to sidebar prefs.
+  const leftVisuallyCollapsed =
+    focusMode || leftSidebar.collapsed || shell.emergencyCollapseLeft;
+  const rightVisuallyCollapsed =
+    focusMode || rightSidebar.collapsed || shell.emergencyCollapseRight;
 
   // macOS only — Windows OS chrome differs by version; we don't version-gate.
   const leftAppEdges = isMacOS() ? appEdgesAttr('bottom', 'left') : undefined;
@@ -496,6 +492,9 @@ export default function AppLayout() {
         case 'preferences':
           handleOpenPreferences();
           break;
+        case 'return-all-panels-to-dock':
+          returnAllPanelsToDock();
+          break;
         case 'about':
         case 'help':
           handleOpenHelp();
@@ -532,9 +531,47 @@ export default function AppLayout() {
     onSaveProjectAs,
     onShareProjectCopy,
     requestQuit,
+    returnAllPanelsToDock,
     updates,
     welcome,
   ]);
+
+  // W2: OS-closed flex-popout → dock the matching floating tab.
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+    void listen<{ label: string }>('flex-popout-destroyed', (event) => {
+      if (cancelled) return;
+      const label = event.payload?.label;
+      if (!label) return;
+      const panelId = lookupPanelIdByLabel(label);
+      forgetFlexPopoutLabelByWindowLabel(label);
+      if (!panelId || !isPanelOnFlexLayout(panelId)) {
+        console.warn('[flex-dock] flex-popout-destroyed: no panel for', label);
+        return;
+      }
+      console.info('[flex-dock] flex-popout-destroyed → dock', panelId, label);
+      if (panelId === 'preview') {
+        dockPanel('center', 'preview');
+        return;
+      }
+      const onLeft = listFloatingFlexComponents(leftLayout.model).includes(panelId);
+      const onRight = listFloatingFlexComponents(rightLayout.model).includes(panelId);
+      if (onLeft) dockPanel('left', panelId);
+      else if (onRight) dockPanel('right', panelId);
+      else {
+        // Model may already have unfloated via close-poll — still bump via dock no-op.
+        console.info('[flex-dock] destroyed panel already non-floating', panelId);
+      }
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [dockPanel, leftLayout.model, rightLayout.model]);
 
   useEffect(() => {
     return registerDocumentCommands({
@@ -585,6 +622,11 @@ export default function AppLayout() {
 
   const gridTemplateColumns = `${leftW}px 1fr ${rightW}px`;
 
+  const hasFloatingPanels =
+    listFloatingFlexComponents(leftLayout.model).length > 0 ||
+    listFloatingFlexComponents(rightLayout.model).length > 0 ||
+    listFloatingFlexComponents(centerLayout.model).length > 0;
+
   return (
     <WindowShell
       titlebarContent={
@@ -615,6 +657,7 @@ export default function AppLayout() {
               onOpenPatterns={handleOpenPatterns}
               onOpenPreferences={handleOpenPreferences}
               onOpenHelp={handleOpenHelp}
+              onReturnAllPanelsToDock={returnAllPanelsToDock}
               onUndo={() => {
                 if (doc.docId != null) void dispatch(undoDocument(doc.docId));
               }}
@@ -671,6 +714,17 @@ export default function AppLayout() {
                 <Icon name="focus-mode" width={16} height={16} />
               </button>
             </Tooltip>
+            <Tooltip label="Return all panels to dock">
+              <button
+                type="button"
+                className={cn('sidebar-changer-icon-btn')}
+                onClick={() => returnAllPanelsToDock()}
+                disabled={!hasFloatingPanels}
+                aria-label="Return all panels to dock"
+              >
+                <Icon name="return-panels" width={16} height={16} />
+              </button>
+            </Tooltip>
             <Tooltip
               label={labelWithShortcut(
                 'Copy preview image as PNG',
@@ -708,7 +762,7 @@ export default function AppLayout() {
               so OS popouts survive when the last docked tab floats away. */}
           {(leftFlexOnly || leftFloatHostOnly) && (
             <>
-              {leftFlexOnly && leftSidebar.collapsed && (
+              {leftFlexOnly && leftVisuallyCollapsed && (
                 <SidebarCollapseStrip
                   side="left"
                   panelIds={leftDockedFlexIds}
@@ -716,7 +770,7 @@ export default function AppLayout() {
                   hitTargetRef={leftHitRef}
                 />
               )}
-              {leftFlexOnly && !leftSidebar.collapsed && (
+              {leftFlexOnly && !leftVisuallyCollapsed && (
                 <ResizeHandle
                   direction="horizontal"
                   onResize={(d) => resizeColumnWidth('left', d, true)}
@@ -727,33 +781,37 @@ export default function AppLayout() {
                   )}
                 />
               )}
+              {/* Float-host: invisible drop rail only (no Return strip).
+                  Return via popout close / header “Return all panels” button. */}
               {leftFloatHostOnly && (
                 <div
-                  className={cn(
-                    'sidebar-empty-drop-edge',
-                    'sidebar-empty-drop-edge-left',
-                    affinity?.armed && affinity.side === 'left' && 'sidebar-empty-drop-edge-armed'
-                  )}
-                  data-dock-empty-edge="left"
                   ref={(el) => {
                     leftHitRef.current = el;
                   }}
+                  className={cn(
+                    'sidebar-empty-drop-edge',
+                    'sidebar-empty-drop-edge-left',
+                    affinity?.armed &&
+                      affinity.side === 'left' &&
+                      'sidebar-empty-drop-edge-armed',
+                  )}
+                  data-dock-empty-edge="left"
                   aria-hidden
                 />
               )}
               <div
                 className={
-                  leftFlexOnly && !leftSidebar.collapsed
+                  leftFlexOnly && !leftVisuallyCollapsed
                     ? cn('app-sidebar', 'sidebar-area-left')
                     : undefined
                 }
                 data-dock-side="left"
                 data-app-edges={
-                  leftFlexOnly && !leftSidebar.collapsed ? leftAppEdges : undefined
+                  leftFlexOnly && !leftVisuallyCollapsed ? leftAppEdges : undefined
                 }
                 style={
-                  leftFlexOnly && !leftSidebar.collapsed
-                    ? { minWidth: leftFloor, minHeight: 0, height: '100%' }
+                  leftFlexOnly && !leftVisuallyCollapsed
+                    ? { minWidth: leftW, minHeight: 0, height: '100%' }
                     : {
                         position: 'fixed',
                         width: 0,
@@ -763,12 +821,12 @@ export default function AppLayout() {
                         opacity: 0,
                       }
                 }
-                aria-hidden={!(leftFlexOnly && !leftSidebar.collapsed)}
+                aria-hidden={!(leftFlexOnly && !leftVisuallyCollapsed)}
               >
                 <FlexLayoutContainer
                   side="left"
-                  appEdges={leftFlexOnly && !leftSidebar.collapsed ? leftAppEdges : undefined}
-                  style={{ height: '100%', minWidth: leftFloor }}
+                  appEdges={leftFlexOnly && !leftVisuallyCollapsed ? leftAppEdges : undefined}
+                  style={{ height: '100%', minWidth: leftW }}
                 />
               </div>
             </>
@@ -803,6 +861,13 @@ export default function AppLayout() {
         {previewFloating && (
           <div className={cn('preview-undocked-placeholder')} style={previewBackgroundStyle(previewBackground)}>
             <span>Preview is in a separate window</span>
+            <button
+              type="button"
+              onClick={() => dockPanel('center', 'preview')}
+              style={{ marginTop: 12 }}
+            >
+              Return to canvas
+            </button>
           </div>
         )}
       </div>
@@ -812,7 +877,7 @@ export default function AppLayout() {
           {/* Right flex column — stable FlexLayout mount (see left). */}
           {(rightFlexOnly || rightFloatHostOnly) && (
             <>
-              {rightFlexOnly && rightSidebar.collapsed && (
+              {rightFlexOnly && rightVisuallyCollapsed && (
                 <SidebarCollapseStrip
                   side="right"
                   panelIds={rightDockedFlexIds}
@@ -820,7 +885,7 @@ export default function AppLayout() {
                   hitTargetRef={rightHitRef}
                 />
               )}
-              {rightFlexOnly && !rightSidebar.collapsed && (
+              {rightFlexOnly && !rightVisuallyCollapsed && (
                 <ResizeHandle
                   direction="horizontal"
                   onResize={(d) => resizeColumnWidth('right', d, true)}
@@ -829,31 +894,33 @@ export default function AppLayout() {
               )}
               {rightFloatHostOnly && (
                 <div
-                  className={cn(
-                    'sidebar-empty-drop-edge',
-                    'sidebar-empty-drop-edge-right',
-                    affinity?.armed && affinity.side === 'right' && 'sidebar-empty-drop-edge-armed'
-                  )}
-                  data-dock-empty-edge="right"
                   ref={(el) => {
                     rightHitRef.current = el;
                   }}
+                  className={cn(
+                    'sidebar-empty-drop-edge',
+                    'sidebar-empty-drop-edge-right',
+                    affinity?.armed &&
+                      affinity.side === 'right' &&
+                      'sidebar-empty-drop-edge-armed',
+                  )}
+                  data-dock-empty-edge="right"
                   aria-hidden
                 />
               )}
               <div
                 className={
-                  rightFlexOnly && !rightSidebar.collapsed
+                  rightFlexOnly && !rightVisuallyCollapsed
                     ? cn('app-sidebar', 'sidebar-area-right')
                     : undefined
                 }
                 data-dock-side="right"
                 data-app-edges={
-                  rightFlexOnly && !rightSidebar.collapsed ? rightAppEdges : undefined
+                  rightFlexOnly && !rightVisuallyCollapsed ? rightAppEdges : undefined
                 }
                 style={
-                  rightFlexOnly && !rightSidebar.collapsed
-                    ? { minWidth: rightFloor, minHeight: 0, height: '100%' }
+                  rightFlexOnly && !rightVisuallyCollapsed
+                    ? { minWidth: rightW, minHeight: 0, height: '100%' }
                     : {
                         position: 'fixed',
                         width: 0,
@@ -863,12 +930,12 @@ export default function AppLayout() {
                         opacity: 0,
                       }
                 }
-                aria-hidden={!(rightFlexOnly && !rightSidebar.collapsed)}
+                aria-hidden={!(rightFlexOnly && !rightVisuallyCollapsed)}
               >
                 <FlexLayoutContainer
                   side="right"
-                  appEdges={rightFlexOnly && !rightSidebar.collapsed ? rightAppEdges : undefined}
-                  style={{ height: '100%', minWidth: rightFloor }}
+                  appEdges={rightFlexOnly && !rightVisuallyCollapsed ? rightAppEdges : undefined}
+                  style={{ height: '100%', minWidth: rightW }}
                 />
               </div>
             </>

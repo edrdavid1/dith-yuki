@@ -32,11 +32,12 @@ interface MenuBarProps {
   onOpenPatterns: () => void;
   onOpenPreferences: () => void;
   onOpenHelp: () => void;
+  onReturnAllPanelsToDock?: () => void;
   onUndo?: () => void;
   onRedo?: () => void;
 }
 
-type MenuId = 'file' | 'edit' | 'patterns' | 'batch' | 'preferences' | 'help';
+type MenuId = 'file' | 'edit' | 'patterns' | 'batch' | 'window' | 'preferences' | 'help';
 
 interface MenuItem {
   id: MenuId;
@@ -48,11 +49,12 @@ const MENU_ITEMS: MenuItem[] = [
   { id: 'edit', label: 'Edit' },
   { id: 'patterns', label: 'Patterns' },
   { id: 'batch', label: 'Batch' },
+  { id: 'window', label: 'Window' },
   { id: 'preferences', label: 'Preferences' },
   { id: 'help', label: 'Help' },
 ];
 
-/** Top-level items that open a window directly (no dropdown). */
+/** Top-level items that run an action on click (no dropdown). */
 const DIRECT_OPEN_MENUS: ReadonlySet<MenuId> = new Set([
   'patterns',
   'batch',
@@ -85,6 +87,7 @@ function MenuBar({
   onOpenPatterns,
   onOpenPreferences,
   onOpenHelp,
+  onReturnAllPanelsToDock,
   onUndo,
   onRedo,
 }: MenuBarProps) {
@@ -166,6 +169,7 @@ function MenuBar({
             <button
               className={cn("menubar-dropdown-item")}
               role="menuitem"
+              data-menubar-hide="true"
               disabled={opening}
               onClick={() => handleAction(onNewProject ?? (() => {}))}
             >
@@ -336,6 +340,22 @@ function MenuBar({
           </div>
         );
       }
+      case 'window':
+        return (
+          <div className={cn('menubar-dropdown')} role="menu">
+            <button
+              className={cn('menubar-dropdown-item')}
+              role="menuitem"
+              type="button"
+              onClick={() =>
+                onReturnAllPanelsToDock && handleAction(onReturnAllPanelsToDock)
+              }
+              disabled={!onReturnAllPanelsToDock}
+            >
+              Return All Panels to Dock
+            </button>
+          </div>
+        );
       default:
         return null;
     }
@@ -354,7 +374,9 @@ function MenuBar({
               onMouseEnter={() => handleMenuHover(item.id)}
               role="menuitem"
               aria-haspopup={!DIRECT_OPEN_MENUS.has(item.id)}
-              aria-expanded={openMenu === item.id}
+              aria-expanded={
+                DIRECT_OPEN_MENUS.has(item.id) ? undefined : openMenu === item.id
+              }
               disabled={disabled}
             >
               {item.label}

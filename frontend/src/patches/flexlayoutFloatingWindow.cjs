@@ -1,6 +1,7 @@
 /**
  * Patched FlexLayout FloatingWindow for Tauri / WKWebView (CommonJS).
- * Copied into node_modules/flexlayout-react/lib/view/FloatingWindow.js on postinstall.
+ * Applied via patch-package (patches/flexlayout-react+0.7.15.patch). Source kept
+ * here for review; do not rely on copying this file at postinstall.
  *
  * - Do not use popout beforeunload → onCloseWindow (fires on occlusion → blank portal).
  * - Reuse named Window across React remounts (owner refcount).
@@ -16,6 +17,11 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FloatingWindow = void 0;
 exports.flexPopoutWindowName = flexPopoutWindowName;
+/** W3 verify / runtime gate — must stay in sync with verify:flexlayout-patch. */
+exports.__FLEX_PATCH__ = {
+  version: 1,
+  features: ["float-window", "named-popout", "edge-dock", "center-band"],
+};
 
 const React = require("react");
 const react_dom_1 = require("react-dom");
@@ -240,3 +246,4 @@ const FloatingWindow = (props) => {
 };
 
 exports.FloatingWindow = FloatingWindow;
+// Marker also assigned at top — kept at bottom so partial copies still verify.

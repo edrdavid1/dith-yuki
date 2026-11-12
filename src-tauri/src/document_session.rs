@@ -126,29 +126,10 @@ impl AppState {
             ),
             print_export_cancel: Mutex::new(None),
             batch_export_cancel: Mutex::new(None),
-            // B3: FlexLayout persistence (initialized with temp dir, updated in main.rs)
-            flexlayout_persistence: Mutex::new(
-                crate::flexlayout_persistence::FlexLayoutPersistence::new(std::env::temp_dir()),
+            shell_layout: Mutex::new(
+                crate::shell_layout_persistence::ShellLayoutPersistence::new(std::env::temp_dir()),
             ),
-            // B4a: per-side FlexLayout persistence (updated in main.rs)
-            flexlayout_left: Mutex::new(
-                crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
-                    std::env::temp_dir(),
-                    "flexlayout_left.json",
-                ),
-            ),
-            flexlayout_right: Mutex::new(
-                crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
-                    std::env::temp_dir(),
-                    "flexlayout_right.json",
-                ),
-            ),
-            flexlayout_center: Mutex::new(
-                crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
-                    std::env::temp_dir(),
-                    "flexlayout_center.json",
-                ),
-            ),
+            layout_flush_ack: std::sync::atomic::AtomicBool::new(false),
             ram_budget_source: crate::memory_budget::RamBudgetSource::TestOverride,
             journal: Mutex::new(crate::journal::JournalRuntime::disabled()),
             config: crate::config::ConfigStore::load(

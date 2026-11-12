@@ -5,15 +5,19 @@
   "author": "L'eco non di Bergamo",
   "type": "module",
   "scripts": {
+    "predev": "npm run verify:flexlayout-patch",
     "dev": "vite",
+    "prebuild": "npm run verify:flexlayout-patch",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "pretest": "npm run verify:flexlayout-patch",
     "test": "vitest run",
     "lint:ipc": "vitest run src/shared/ipc/__tests__/noRawInvoke.test.ts",
     "lint:html": "vitest run src/shared/__tests__/noDangerousHtml.test.ts",
     "lint:security": "npm run lint:ipc && npm run lint:html",
-    "postinstall": "node scripts/patch-flexlayout.cjs",
-    "patch:flexlayout": "node scripts/patch-flexlayout.cjs"
+    "postinstall": "patch-package",
+    "verify:flexlayout-patch": "node scripts/verify-flexlayout-patch.cjs",
+    "patch:flexlayout": "echo \"Use patches/flexlayout-react+0.7.15.patch via postinstall (patch-package). To regenerate: edit node_modules then npx patch-package flexlayout-react.\""
   },
   "dependencies": {
     "@reduxjs/toolkit": "^2.12.0",
@@ -44,6 +48,7 @@
     "@vitejs/plugin-react": "^4.0.0",
     "fast-check": "^4.9.0",
     "jsdom": "^30.0.0",
+    "patch-package": "^8.0.1",
     "terser": "^5.19.0",
     "typescript": "^5.0",
     "vite": "^4.4.0",
