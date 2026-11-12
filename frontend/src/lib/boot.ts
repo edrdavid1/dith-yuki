@@ -1,6 +1,6 @@
-/** Boot lifecycle: keep the main window hidden until the first UI paint, then reveal. */
+/** Boot lifecycle: splash is feedback only; main shows as soon as UI can paint. */
 
-import { stopDockBounce } from '../shared/ipc/app';
+import { invoke } from '@tauri-apps/api/core';
 
 let ready = false;
 
@@ -15,39 +15,21 @@ function clearMenubarStartupFocus(): void {
   }
 }
 
-/** Drop any leftover boot node immediately if present. */
+/** Drop any leftover in-page boot node immediately if present. */
 export function removeBootScreen(): void {
   document.getElementById('boot-screen')?.remove();
 }
 
-/** Show the main window (starts hidden in tauri.conf) and end Dock launch attention. */
-async function revealMainWindow(): Promise<void> {
-  if (isPanelWindow()) return;
-  try {
-    const { getCurrentWindow } = await import('@tauri-apps/api/window');
-    const win = getCurrentWindow();
-    if (win.label !== 'main') return;
-    // show() only — setFocus() parks keyboard focus on File in the titlebar.
-    await win.show();
-    try {
-      await stopDockBounce();
-    } catch {
-      // Non-Tauri / test environment.
-    }
-  } catch {
-    // Browser / non-Tauri — nothing to show.
-  }
-}
-
-/** Clear any leftover splash DOM; native side owns the slow-launch Dock marker. */
+/** Clear any leftover in-page splash DOM; OS splash is owned by Rust. */
 export function startBootGate(): void {
   removeBootScreen();
 }
 
 /**
- * First real UI has painted. Reveal the main window and stop launch attention.
+ * First real UI has painted. Show main immediately (same as pre-splash), then
+ * ask Rust to tear down the splash window. No minimum splash hold.
  */
-export function finishBoot(): void {
+export async function finishBoot(): Promise<void> {
   if (isPanelWindow()) {
     return;
   }
@@ -55,10 +37,39 @@ export function finishBoot(): void {
   ready = true;
 
   clearMenubarStartupFocus();
-  void revealMainWindow();
+
+  // Two frames: first UI frame is painted; don't reveal on a blank page.
+  await new Promise<void>((r) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => r())),
+  );
+
+  try {
+    // Show from JS first so splash IPC/destroy cannot delay first paint.
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    const win = getCurrentWindow();
+    if (win.label === 'main') {
+      await win.show();
+    }
+  } catch {
+    // Browser / non-Tauri — nothing to show.
+  }
+
+  try {
+    // Fire-and-forget teardown; main is already visible.
+    void invoke('boot_finished');
+  } catch (e) {
+    console.error('[boot] boot_finished failed', e);
+  }
+}
+
+/** Optional stage text on the splash (`window.setStage` via Rust eval). */
+export function bootStage(text: string): void {
+  invoke('boot_stage', { text }).catch((e) =>
+    console.debug('[boot] boot_stage failed', e),
+  );
 }
 
 /** @deprecated Prefer {@link finishBoot}; kept for any stray callers. */
 export function dismissBootScreen(): void {
-  finishBoot();
+  void finishBoot();
 }

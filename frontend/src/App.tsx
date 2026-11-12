@@ -55,22 +55,12 @@ function App() {
     };
   }, []);
 
-  // Reveal window (and fade splash only if the slow path actually showed it).
+  // Reveal main via Rust splash (boot_finished) once shell/recovery UI can paint.
   useEffect(() => {
     if (gate.kind === 'scanning') return;
     // Welcome/shell needs FlexLayout + document hydrate; recovery dialog does not.
     if (gate.kind === 'none' && (center.isLoading || !documentHydrated)) return;
-
-    let raf2 = 0;
-    const raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(() => {
-        finishBoot();
-      });
-    });
-    return () => {
-      cancelAnimationFrame(raf1);
-      if (raf2) cancelAnimationFrame(raf2);
-    };
+    void finishBoot();
   }, [gate.kind, center.isLoading, documentHydrated]);
 
   const finish = useCallback(async () => {

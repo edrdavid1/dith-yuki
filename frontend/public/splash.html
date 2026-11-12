@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dither Yuki</title>
+<style>
+  @font-face {
+    font-family: 'GranaPadano';
+    src: url('/fonts/GranaPadano.ttf') format('truetype');
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: swap;
+  }
+  html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    color: #f2f2f0;
+    font-family: 'GranaPadano', 'Geneva', system-ui, sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+    overflow: hidden;
+  }
+  .splash {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+  .splash-bg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+    pointer-events: none;
+  }
+  .splash-scrim {
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(
+        180deg,
+        rgba(0, 0, 0, 0.12) 0%,
+        rgba(0, 0, 0, 0.04) 40%,
+        rgba(0, 0, 0, 0.5) 68%,
+        rgba(0, 0, 0, 0.78) 100%
+      );
+    pointer-events: none;
+  }
+  .splash-mark {
+    position: absolute;
+    left: 50%;
+    top: 40%;
+    transform: translate(-50%, -50%);
+    width: 62%;
+    height: auto;
+    max-width: 186px;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    pointer-events: none;
+  }
+  .splash-copy {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 18px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0px;
+    padding: 0 14px;
+    text-align: center;
+  }
+  .splash-title {
+    margin: 0;
+    font-size: 43px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    line-height: 1;
+  }
+  .splash-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    max-width: 220px;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: #f2f2f0;
+    line-height: 1.2;
+  }
+</style>
+</head>
+<body>
+  <div class="splash">
+    <img class="splash-bg" src="/img/splash-window-bg.jpg" alt="" width="300" height="300">
+    <div class="splash-scrim" aria-hidden="true"></div>
+    <img class="splash-mark" src="/img/dith.png" alt="" width="186" height="186">
+    <div class="splash-copy">
+      <h1 class="splash-title">Dither Yuki</h1>
+      <div class="splash-meta">
+        <span>2026</span>
+        <span>vasdas</span>
+        <span>v 1.0</span>
+      </div>
+    </div>
+  </div>
+  <script>
+    /* Kept so Rust boot_stage eval stays harmless. */
+    window.setStage = function () {};
+  </script>
+</body>
+</html>

@@ -12,7 +12,7 @@ import './shared/styles/vendor/simplebar.css'
 import './shared/styles/chrome/titlebar.css'
 
 ;(async () => {
-  // Window stays hidden until App calls finishBoot() after first paint.
+  // Splash stays up until App calls finishBoot() → Rust boot_finished.
   startBootGate()
 
   await initPlatform()

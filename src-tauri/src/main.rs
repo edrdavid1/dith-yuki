@@ -38,6 +38,7 @@ mod macos_dock_bounce;
 mod macos_first_mouse;
 #[cfg(target_os = "macos")]
 mod macos_title;
+mod splash;
 mod memory_budget;
 mod native_menu;
 mod pattern_library;
@@ -153,6 +154,7 @@ fn main() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_macos_haptics::init())
         .manage(state.clone())
+        .manage(splash::SplashState::new())
         .manage(Arc::new(commands::QuitGuard {
             allow_exit: AtomicBool::new(false),
         }))
@@ -197,7 +199,7 @@ fn main() {
                         );
                     }
                 }
-                // Attention only — never show from here (finishBoot owns reveal).
+                // Attention only — never show from here (splash::reveal_main owns reveal).
                 WindowEvent::Focused(true) if label == "main" => {
                     #[cfg(target_os = "macos")]
                     macos_dock_bounce::stop(window.app_handle());
@@ -242,9 +244,9 @@ fn main() {
             // W5: scrub leftover flex-popout-* before (re)creating main.
             flex_popout_lifecycle::close_orphan_flex_popouts_at_startup(app.handle());
 
-            // Slow cold starts: bounce the Dock icon until the window is ready.
-            #[cfg(target_os = "macos")]
-            macos_dock_bounce::start(app.handle());
+            // Photoshop-style splash owns cold-start feedback (no manual Dock bounce).
+            splash::start_watchdog(app.handle());
+            splash::set_stage(app.handle(), "Starting…");
 
             // Deliver first-click events to every WKWebView even when its
             // window is inactive. Without this, macOS swallows the activation
@@ -395,21 +397,9 @@ fn main() {
                             }
                         }
                     })
-                    // Stay hidden until finishBoot() paints real UI, then show().
+                    // Stay hidden until splash::reveal_main (boot_finished / watchdog).
                     .visible(false)
                     .build()?;
-
-            // Failsafe: never leave the main window invisible if JS never calls show().
-            {
-                let win = main_window.clone();
-                let failsafe_handle = app.handle().clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_secs(4));
-                    let _ = win.show();
-                    #[cfg(target_os = "macos")]
-                    macos_dock_bounce::stop(&failsafe_handle);
-                });
-            }
 
             native_menu::install(app)?;
             let app_handle = app.handle().clone();
@@ -499,6 +489,9 @@ fn main() {
             handle_tile_request(&state, request)
         })
         .invoke_handler(tauri::generate_handler![
+            // Boot / splash
+            splash::boot_finished,
+            splash::boot_stage,
             // Document commands
             stop_dock_bounce,
             zoom_window,
