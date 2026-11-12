@@ -28,20 +28,8 @@ import { unwrapFilterParams } from '../../shared/unwrapFilterParams';
 import type { AlgorithmInfo, EffectCategory } from '../../shared/ipc/registry';
 import styles from './EffectSettingsPanel.module.css';
 import { bind } from '../../shared/ui/cn';
+import { activateOnPrimaryPress } from '../../shared/ui/activateOnPrimaryPress';
 const cn = bind(styles);
-
-/**
- * Fire on pointerdown so the first click works even when the main window was
- * unfocused (e.g. Preview flex-popout had focus — macOS/WKWebView focus-steal).
- */
-function chooseOnPointerDown(action: () => void) {
-  return (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    e.stopPropagation();
-    action();
-  };
-}
 
 function settingsPanelTitle(
   filter: FilterInfo,
@@ -286,8 +274,7 @@ export default function EffectSettingsPanel({
                   className={cn("effect-chooser-row")}
                   role="option"
                   aria-selected={false}
-                  onPointerDown={chooseOnPointerDown(() => onSelectEffect?.('Dithering'))}
-                  onClick={(e) => e.preventDefault()}
+                  {...activateOnPrimaryPress(() => onSelectEffect?.('Dithering'))}
                 >
                   <div className={cn("effect-chooser-row-icon")}>
                     <EffectIcon type="Dithering" />
@@ -303,8 +290,7 @@ export default function EffectSettingsPanel({
                   className={cn("effect-chooser-row")}
                   role="option"
                   aria-selected={false}
-                  onPointerDown={chooseOnPointerDown(() => onSelectEffect?.('Ascii'))}
-                  onClick={(e) => e.preventDefault()}
+                  {...activateOnPrimaryPress(() => onSelectEffect?.('Ascii'))}
                 >
                   <div className={cn("effect-chooser-row-icon")}>
                     <EffectIcon type="Ascii" />
@@ -320,8 +306,7 @@ export default function EffectSettingsPanel({
                   className={cn("effect-chooser-row")}
                   role="option"
                   aria-selected={false}
-                  onPointerDown={chooseOnPointerDown(() => onSelectEffect?.('Glitching'))}
-                  onClick={(e) => e.preventDefault()}
+                  {...activateOnPrimaryPress(() => onSelectEffect?.('Glitching'))}
                 >
                   <div className={cn("effect-chooser-row-icon")}>
                     <EffectIcon type="Glitching" />
@@ -353,12 +338,11 @@ export default function EffectSettingsPanel({
                     className={cn("effect-chooser-row")}
                     role="option"
                     aria-selected={false}
-                    onPointerDown={chooseOnPointerDown(() =>
+                    {...activateOnPrimaryPress(() =>
                       mapped
                         ? onSelectEffect?.(mapped.type)
-                        : onSelectAlgorithm?.(algo.id)
+                        : onSelectAlgorithm?.(algo.id),
                     )}
-                    onClick={(e) => e.preventDefault()}
                     type="button"
                   >
                     <div className={cn("effect-chooser-row-icon")}>
@@ -380,8 +364,7 @@ export default function EffectSettingsPanel({
                   className={cn("effect-chooser-row")}
                   role="option"
                   aria-selected={false}
-                  onPointerDown={chooseOnPointerDown(() => onSelectEffect?.(option.type))}
-                  onClick={(e) => e.preventDefault()}
+                  {...activateOnPrimaryPress(() => onSelectEffect?.(option.type))}
                   type="button"
                 >
                   <div className={cn("effect-chooser-row-icon")}>
@@ -398,8 +381,7 @@ export default function EffectSettingsPanel({
                   className={cn('effect-chooser-row')}
                   role="option"
                   aria-selected={false}
-                  onPointerDown={chooseOnPointerDown(() => onSelectPreset?.(preset.id))}
-                  onClick={(e) => e.preventDefault()}
+                  {...activateOnPrimaryPress(() => onSelectPreset?.(preset.id))}
                   type="button"
                   title={preset.hint}
                 >

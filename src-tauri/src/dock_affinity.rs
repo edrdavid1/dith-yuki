@@ -10,15 +10,16 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-/// Height of the floating titlebar band used as the hit-test anchor (logical px).
+/// Height of the floating titlebar band used as the hit-test anchor (CSS/logical px).
+/// Scaled by `DockZone.scale_factor` into physical pixels at hit-test time (W6).
 pub const HIT_BAND_HEIGHT: f64 = 32.0;
-/// Horizontal width of the hit-test band, centered on the floating window (logical px).
+/// Horizontal width of the hit-test band, centered on the floating window (CSS px).
 pub const HIT_BAND_WIDTH: f64 = 64.0;
-/// Half-height of the horizontal insert-gap hit strip on enter (logical px).
+/// Half-height of the horizontal insert-gap hit strip on enter (CSS px).
 pub const GAP_HIT_HALF_ENTER: f64 = 14.0;
-/// Half-height of the insert-gap hit strip while already armed (logical px).
+/// Half-height of the insert-gap hit strip while already armed (CSS px).
 pub const GAP_HIT_HALF_EXIT: f64 = 28.0;
-/// Extra horizontal padding around the dock zone when deciding exit (logical px).
+/// Extra horizontal padding around the dock zone when deciding exit (CSS px).
 pub const HYSTERESIS_EXIT_PADDING: f64 = 24.0;
 
 /// Panels that never participate in drag-to-redock.
@@ -48,6 +49,7 @@ pub struct DockSlot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DockZone {
+    /// Physical screen pixels (W6).
     pub x: f64,
     pub y: f64,
     pub width: f64,
@@ -57,6 +59,9 @@ pub struct DockZone {
     pub side: SidebarSide,
     #[serde(default)]
     pub slots: Vec<DockSlot>,
+    /// Monotonic FE seq; Rust drops packets with `seq <= last` (W6 latest-wins).
+    #[serde(default)]
+    pub seq: u64,
 }
 
 fn default_scale() -> f64 {
@@ -96,10 +101,22 @@ impl Rect {
 #[derive(Debug, Clone)]
 pub struct FloatDragSession {
     pub panel_id: String,
+    /// Bound `flex-popout-*` WebviewWindow label for this drag (multi-popout safe).
+    pub window_label: Option<String>,
     pub armed: bool,
     pub insert_index: usize,
     pub inside: bool,
     pub armed_side: Option<SidebarSide>,
+}
+
+/// Snapshot used by mouseup completion / poll.
+#[derive(Debug, Clone)]
+pub struct SessionSnapshot {
+    pub panel_id: String,
+    pub armed: bool,
+    pub insert_index: usize,
+    pub armed_side: Option<SidebarSide>,
+    pub window_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -117,6 +134,8 @@ pub struct DockAffinityController {
     pub enabled: bool,
     /// Active dock zones keyed by side (at most one entry per side).
     pub zones: HashMap<SidebarSide, DockZone>,
+    /// Last accepted `DockZone.seq` per side (W6).
+    pub zone_seq: HashMap<SidebarSide, u64>,
     pub session: Option<FloatDragSession>,
     last_emitted: Option<(bool, usize, Option<SidebarSide>)>,
 }
@@ -126,6 +145,7 @@ impl DockAffinityController {
         Self {
             enabled,
             zones: HashMap::new(),
+            zone_seq: HashMap::new(),
             session: None,
             last_emitted: None,
         }
@@ -136,31 +156,54 @@ impl DockAffinityController {
     }
 
     /// Upsert or clear the zone for `side`. Invalid (zero-size) zones clear that side.
-    pub fn set_dock_zone(&mut self, side: SidebarSide, zone: Option<DockZone>) {
+    /// Returns `false` when `zone.seq` is stale (W6 latest-wins).
+    pub fn set_dock_zone(&mut self, side: SidebarSide, zone: Option<DockZone>) -> bool {
         match zone {
             Some(mut z) if z.width > 0.0 && z.height > 0.0 => {
+                if z.seq > 0 {
+                    let last = self.zone_seq.get(&side).copied().unwrap_or(0);
+                    if z.seq <= last {
+                        return false;
+                    }
+                    self.zone_seq.insert(side, z.seq);
+                }
                 z.side = side;
                 self.zones.insert(side, z);
+                true
             }
             _ => {
                 self.zones.remove(&side);
+                true
             }
         }
     }
 
     /// Start a float-drag session. Returns false if rejected (disabled / floating-only).
-    pub fn begin(&mut self, panel_id: &str) -> bool {
+    ///
+    /// `window_label` should be the `flex-popout-*` shell for this panel when known;
+    /// call [`Self::bind_window_label`] later if discovery is async.
+    pub fn begin(&mut self, panel_id: &str, window_label: Option<String>) -> bool {
         if !self.enabled || Self::is_floating_only(panel_id) {
             return false;
         }
         self.session = Some(FloatDragSession {
             panel_id: panel_id.to_string(),
+            window_label,
             armed: false,
             insert_index: 0,
             inside: false,
             armed_side: None,
         });
         self.last_emitted = None;
+        true
+    }
+
+    /// Bind (or re-bind) the OS shell label for the active drag session.
+    pub fn bind_window_label(&mut self, window_label: &str) -> bool {
+        let Some(session) = self.session.as_mut() else {
+            return false;
+        };
+        session.window_label = Some(window_label.to_string());
         true
     }
 
@@ -210,17 +253,34 @@ impl DockAffinityController {
         })
     }
 
-    /// Snapshot of current session for mouseup completion: (panel_id, armed, insert, side).
-    pub fn session_snapshot(&self) -> Option<(String, bool, usize, Option<SidebarSide>)> {
-        self.session
-            .as_ref()
-            .map(|s| (s.panel_id.clone(), s.armed, s.insert_index, s.armed_side))
+    /// Snapshot of current session for mouseup completion.
+    pub fn session_snapshot(&self) -> Option<SessionSnapshot> {
+        self.session.as_ref().map(|s| SessionSnapshot {
+            panel_id: s.panel_id.clone(),
+            armed: s.armed,
+            insert_index: s.insert_index,
+            armed_side: s.armed_side,
+            window_label: s.window_label.clone(),
+        })
+    }
+}
+
+fn zone_scale(zone: &DockZone) -> f64 {
+    if zone.scale_factor > 0.0 {
+        zone.scale_factor
+    } else {
+        1.0
     }
 }
 
 pub fn titlebar_band(win: Rect) -> Rect {
-    let height = HIT_BAND_HEIGHT.min(win.height.max(0.0));
-    let width = HIT_BAND_WIDTH.min(win.width.max(0.0));
+    titlebar_band_scaled(win, 1.0)
+}
+
+pub fn titlebar_band_scaled(win: Rect, scale: f64) -> Rect {
+    let s = if scale > 0.0 { scale } else { 1.0 };
+    let height = (HIT_BAND_HEIGHT * s).min(win.height.max(0.0));
+    let width = (HIT_BAND_WIDTH * s).min(win.width.max(0.0));
     let x = win.x + ((win.width - width) * 0.5).max(0.0);
     Rect {
         x,
@@ -233,8 +293,13 @@ pub fn titlebar_band(win: Rect) -> Rect {
 /// Titlebar probe aligned to the left or right edge of the floating window.
 /// Used for vacant dock sides so a wide float can still hit a thin edge strip.
 pub fn side_titlebar_band(win: Rect, side: SidebarSide) -> Rect {
-    let height = HIT_BAND_HEIGHT.min(win.height.max(0.0));
-    let width = HIT_BAND_WIDTH.min(win.width.max(0.0));
+    side_titlebar_band_scaled(win, side, 1.0)
+}
+
+pub fn side_titlebar_band_scaled(win: Rect, side: SidebarSide, scale: f64) -> Rect {
+    let s = if scale > 0.0 { scale } else { 1.0 };
+    let height = (HIT_BAND_HEIGHT * s).min(win.height.max(0.0));
+    let width = (HIT_BAND_WIDTH * s).min(win.width.max(0.0));
     let x = match side {
         SidebarSide::Left => win.x,
         SidebarSide::Right => win.x + (win.width - width).max(0.0),
@@ -247,16 +312,13 @@ pub fn side_titlebar_band(win: Rect, side: SidebarSide) -> Rect {
     }
 }
 
-fn probe_band_for_side(win: Rect, side: SidebarSide, empty_zone: bool) -> Rect {
-    if empty_zone {
-        side_titlebar_band(win, side)
-    } else {
-        titlebar_band(win)
-    }
-}
-
 fn probe_band_for_zone(win: Rect, zone: &DockZone) -> Rect {
-    probe_band_for_side(win, zone.side, zone.slots.is_empty())
+    let scale = zone_scale(zone);
+    if zone.slots.is_empty() {
+        side_titlebar_band_scaled(win, zone.side, scale)
+    } else {
+        titlebar_band_scaled(win, scale)
+    }
 }
 
 /// Same midpoint semantics as frontend `computeInsertIndex`.
@@ -347,13 +409,14 @@ pub fn update_affinity(
         height: zone.height,
     };
     // Horizontal containment only — vertical arming is gap-based.
+    let scale = zone_scale(zone);
     let zone_x = Rect {
         x: zone_rect.x,
         y: band.y,
         width: zone_rect.width,
         height: band.height,
     };
-    let exit_x = zone_x.inflate(HYSTERESIS_EXIT_PADDING);
+    let exit_x = zone_x.inflate(HYSTERESIS_EXIT_PADDING * scale);
     let horiz_ok = if prev_inside {
         band.intersects(exit_x)
     } else {
@@ -362,9 +425,9 @@ pub fn update_affinity(
 
     let gaps = insert_gap_ys(zone);
     let gap_half = if prev_inside {
-        GAP_HIT_HALF_EXIT
+        GAP_HIT_HALF_EXIT * scale
     } else {
-        GAP_HIT_HALF_ENTER
+        GAP_HIT_HALF_ENTER * scale
     };
     // Empty stack: no insert gaps yet — arm anywhere vertically inside the zone
     // so the first float can redock to a vacant side (left/right edge strip).
@@ -469,6 +532,7 @@ mod tests {
                 .into_iter()
                 .map(|(mid_y, top, bottom)| DockSlot { mid_y, top, bottom })
                 .collect(),
+            seq: 0,
         }
     }
 
@@ -488,6 +552,7 @@ mod tests {
                     bottom: 0.0,
                 })
                 .collect(),
+            seq: 0,
         }
     }
 
@@ -638,17 +703,32 @@ mod tests {
     fn flex_panels_can_begin_affinity() {
         let mut c = DockAffinityController::new(true);
         // Preview participates in affinity (redock → center FlexLayout).
-        assert!(c.begin("preview"));
+        assert!(c.begin("preview", None));
         let _ = c.cancel();
         // FLOATING_ONLY_PANELS is empty after PanelManager retirement.
-        assert!(c.begin("colorlab"));
+        assert!(c.begin("colorlab", None));
         assert!(c.session.is_some());
     }
 
     #[test]
     fn disabled_controller_rejects_begin() {
         let mut c = DockAffinityController::new(false);
-        assert!(!c.begin("layers"));
+        assert!(!c.begin("layers", None));
+    }
+
+    #[test]
+    fn bind_window_label_attaches_to_session() {
+        let mut c = DockAffinityController::new(true);
+        assert!(c.begin("effect", None));
+        assert!(c.bind_window_label("flex-popout-3"));
+        let snap = c.session_snapshot().unwrap();
+        assert_eq!(snap.window_label.as_deref(), Some("flex-popout-3"));
+
+        assert!(c.begin("layers", Some("flex-popout-1".into())));
+        assert_eq!(
+            c.session_snapshot().unwrap().window_label.as_deref(),
+            Some("flex-popout-1")
+        );
     }
 
     #[test]
@@ -665,7 +745,7 @@ mod tests {
                 vec![(200.0, 0.0, 400.0)],
             )),
         );
-        assert!(c.begin("effect"));
+        assert!(c.begin("effect", None));
 
         let near_top = Rect {
             x: 210.0,
@@ -706,7 +786,7 @@ mod tests {
     #[test]
     fn end_session_emits_disarm() {
         let mut c = DockAffinityController::new(true);
-        assert!(c.begin("layers"));
+        assert!(c.begin("layers", None));
         let ev = c.end_session().unwrap();
         assert!(!ev.armed);
         assert!(ev.insert_index.is_none());
@@ -841,7 +921,7 @@ mod tests {
                 vec![(200.0, 0.0, 400.0)],
             )),
         );
-        assert!(c.begin("layers"));
+        assert!(c.begin("layers", Some("flex-popout-9".into())));
         let _ = c.on_moved(Rect {
             x: 10.0,
             y: 0.0,
@@ -849,9 +929,10 @@ mod tests {
             height: 300.0,
         });
         let snap = c.session_snapshot().unwrap();
-        assert_eq!(snap.0, "layers");
-        assert!(snap.1);
-        assert_eq!(snap.3, Some(SidebarSide::Left));
+        assert_eq!(snap.panel_id, "layers");
+        assert!(snap.armed);
+        assert_eq!(snap.armed_side, Some(SidebarSide::Left));
+        assert_eq!(snap.window_label.as_deref(), Some("flex-popout-9"));
     }
 
     #[test]
@@ -907,6 +988,7 @@ mod tests {
                 height: 700.0,
                 scale_factor: 1.0,
                 slots: vec![],
+                seq: 0,
             },
         );
 
@@ -949,6 +1031,7 @@ mod tests {
                 height: 800.0,
                 scale_factor: 1.0,
                 slots: vec![],
+                seq: 0,
             },
         );
 
@@ -987,5 +1070,60 @@ mod tests {
         assert!(!inside);
         assert!(!armed);
         assert!(side.is_none());
+    }
+
+    #[test]
+    fn set_dock_zone_drops_stale_seq() {
+        let mut c = DockAffinityController::new(true);
+        let mut z1 = zone(SidebarSide::Left, 0.0, 0.0, 100.0, 800.0, vec![]);
+        z1.seq = 5;
+        assert!(c.set_dock_zone(SidebarSide::Left, Some(z1)));
+        let mut stale = zone(SidebarSide::Left, 10.0, 0.0, 100.0, 800.0, vec![]);
+        stale.seq = 4;
+        assert!(!c.set_dock_zone(SidebarSide::Left, Some(stale)));
+        assert_eq!(c.zones.get(&SidebarSide::Left).unwrap().x, 0.0);
+        let mut fresh = zone(SidebarSide::Left, 20.0, 0.0, 100.0, 800.0, vec![]);
+        fresh.seq = 6;
+        assert!(c.set_dock_zone(SidebarSide::Left, Some(fresh)));
+        assert_eq!(c.zones.get(&SidebarSide::Left).unwrap().x, 20.0);
+    }
+
+    #[test]
+    fn physical_zone_hit_at_scale_2_and_negative_origin() {
+        // Monitor left of primary: zone at x=-800 physical, scale 2.0.
+        let mut zones = HashMap::new();
+        let mut z = zone(SidebarSide::Left, -800.0, 100.0, 80.0, 1600.0, vec![]);
+        z.scale_factor = 2.0;
+        zones.insert(SidebarSide::Left, z);
+
+        let win = Rect {
+            x: -800.0,
+            y: 120.0,
+            width: 80.0,
+            height: 64.0, // 32 CSS × 2
+        };
+        let (inside, armed, _, side) = update_affinity_multi(&zones, win, false, None);
+        assert!(inside);
+        assert!(armed);
+        assert_eq!(side, Some(SidebarSide::Left));
+    }
+
+    #[test]
+    fn physical_zone_hit_at_scale_1_5() {
+        let mut zones = HashMap::new();
+        let mut z = zone(SidebarSide::Right, 1500.0, 0.0, 144.0, 1200.0, vec![]);
+        z.scale_factor = 1.5;
+        zones.insert(SidebarSide::Right, z);
+
+        let win = Rect {
+            x: 1500.0,
+            y: 50.0,
+            width: 96.0, // 64 CSS × 1.5
+            height: 48.0,
+        };
+        let (inside, armed, _, side) = update_affinity_multi(&zones, win, false, None);
+        assert!(inside);
+        assert!(armed);
+        assert_eq!(side, Some(SidebarSide::Right));
     }
 }

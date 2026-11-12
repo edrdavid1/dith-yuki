@@ -14,6 +14,8 @@ type WindowTitlebarProps = {
   /** docked = □ stripes Title stripes □ ; floating = close/min/zoom + stripes Title */
   variant?: WindowTitlebarVariant;
   onMouseDown?: (e: React.MouseEvent) => void;
+  /** Preferred for floating popout drag (W1 pointer capture). */
+  onPointerDown?: (e: React.PointerEvent) => void;
   className?: string;
   style?: React.CSSProperties;
   /** When set with onMoveToSide, menu offers move-to-other-sidebar. */
@@ -80,6 +82,7 @@ export default function WindowTitlebar({
   title,
   variant = 'docked',
   onMouseDown,
+  onPointerDown,
   className,
   style,
   dockSide,
@@ -211,6 +214,7 @@ export default function WindowTitlebar({
       )}
       style={style}
       onMouseDown={onMouseDown}
+      onPointerDown={onPointerDown}
       onContextMenu={handleContextMenu}
       data-window-titlebar
       data-variant={variant}

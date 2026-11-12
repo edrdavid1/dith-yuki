@@ -30,22 +30,6 @@
   overflow: hidden !important;
 }
 
-/* ── Legacy docked panels (own border on panel root) ─────────────────────── */
-
-[data-app-edges~='bottom'][data-app-edges~='left'] > [data-panel-id]:last-of-type .lp,
-[data-app-edges~='bottom'][data-app-edges~='left'] > [data-panel-id]:last-of-type .effect-settings-panel,
-[data-app-edges~='bottom'][data-app-edges~='left'] > [data-panel-id]:last-of-type .color-lab-sidebar {
-  border-bottom-left-radius: var(--dock-outer-radius) !important;
-  overflow: hidden !important;
-}
-
-[data-app-edges~='bottom'][data-app-edges~='right'] > [data-panel-id]:last-of-type .lp,
-[data-app-edges~='bottom'][data-app-edges~='right'] > [data-panel-id]:last-of-type .effect-settings-panel,
-[data-app-edges~='bottom'][data-app-edges~='right'] > [data-panel-id]:last-of-type .color-lab-sidebar {
-  border-bottom-right-radius: var(--dock-outer-radius) !important;
-  overflow: hidden !important;
-}
-
 /* ── Preview canvas frame ────────────────────────────────────────────────── */
 
 [data-panel-id='preview'][data-app-edges~='bottom'][data-app-edges~='left'] {

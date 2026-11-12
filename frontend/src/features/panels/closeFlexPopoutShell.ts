@@ -1,18 +1,24 @@
 /**
  * Close one FlexLayout OS popout without touching siblings.
  *
- * Browser `Window.close()` on the `window.open` proxy is unreliable in Tauri /
- * WKWebView — the real shell is a `flex-popout-*` WebviewWindow. Match that
- * handle by outer position (while the DOM window is still open), then close
- * both. Never close-all: multi-float siblings must stay up.
+ * W6: `flexPopoutRegistry` is SoT. If a preferred label / panelId does not
+ * resolve to a live window, cancel with a log (+ toast) — never fall back to
+ * “any / first / focused” shell.
  */
 
 import { getAllWebviewWindows } from '@tauri-apps/api/webviewWindow';
 import type { WebviewWindow } from '@tauri-apps/api/webviewWindow';
+import {
+  listBoundFlexPopoutLabels,
+  lookupFlexPopoutLabel,
+} from './flexPopoutRegistry';
 
 const FLEX_POPOUT_PREFIX = 'flex-popout-';
-/** Logical-px tolerance when matching DOM screenX/Y to Tauri outerPosition. */
-const POS_MATCH_PX = 8;
+/**
+ * Logical CSS-px tolerance when matching DOM screenX/Y to Tauri outer/scale.
+ * Keep loose: WKWebView screenX can lag setPosition by a few dozen px.
+ */
+const POS_MATCH_PX = 48;
 
 export type DomWindowScreenPos = {
   screenX: number;
@@ -43,10 +49,8 @@ export function matchFlexPopoutLabelByPosition(
       bestDist = dist;
     }
   }
-  if (best) return best.label;
-  // Single orphaned popout — safe to close without a position hit.
-  if (candidates.length === 1) return candidates[0]!.label;
-  return null;
+  // W6: no sole-candidate fallback — ambiguous / miss → null.
+  return best?.label ?? null;
 }
 
 async function listFlexPopoutWindows(): Promise<WebviewWindow[]> {
@@ -54,31 +58,78 @@ async function listFlexPopoutWindows(): Promise<WebviewWindow[]> {
   return wins.filter((w) => w.label.startsWith(FLEX_POPOUT_PREFIX));
 }
 
+/**
+ * Logical CSS-px outer origin — same space as `window.screenX/Y` and the
+ * drag path (`outerPosition / scaleFactor`).
+ */
 async function outerLogicalPos(
   w: WebviewWindow,
 ): Promise<TauriOuterLogicalPos | null> {
   try {
-    const pos = await w.outerPosition();
     const scale = await w.scaleFactor();
+    const pos = await w.outerPosition();
+    const s = scale > 0 ? scale : 1;
     return {
       label: w.label,
-      x: pos.x / scale,
-      y: pos.y / scale,
+      x: pos.x / s,
+      y: pos.y / s,
     };
-  } catch {
+  } catch (err) {
+    console.error('[closeFlexPopoutShell] outerPosition failed', w.label, err);
     return null;
   }
 }
 
-/** Resolve the `flex-popout-*` handle for a popout browsing context (by position). */
+async function findByLabel(label: string): Promise<WebviewWindow | null> {
+  const flex = await listFlexPopoutWindows();
+  return flex.find((w) => w.label === label) ?? null;
+}
+
+export type FindFlexPopoutOptions = {
+  /** Panel component id — registry lookup before position matching. */
+  panelId?: string | null;
+  /**
+   * Drag init only: when exactly one live `flex-popout-*` exists, bind it.
+   * Close path must keep this false (W6: no any/first close).
+   */
+  allowSoleCandidate?: boolean;
+};
+
+/** Resolve the `flex-popout-*` handle for a popout browsing context. */
 export async function findFlexPopoutWebviewForDomWindow(
   domWin: Window,
+  options?: FindFlexPopoutOptions,
 ): Promise<WebviewWindow | null> {
+  const preferred = lookupFlexPopoutLabel(options?.panelId, domWin);
+  if (preferred) {
+    const byLabel = await findByLabel(preferred);
+    if (byLabel) return byLabel;
+    console.error(
+      '[flex-dock] registry label not live for DOM window',
+      preferred,
+      options?.panelId ?? null,
+    );
+    // Fall through to position / sole-candidate — stale registry must not
+    // permanently block drag.
+  }
+
   const flex = await listFlexPopoutWindows();
   if (flex.length === 0) return null;
 
+  // Prefer shells not yet claimed by another panel (2nd/3rd float).
+  const bound = listBoundFlexPopoutLabels();
+  const preferredLabel = lookupFlexPopoutLabel(options?.panelId, null);
+  if (preferredLabel) bound.delete(preferredLabel); // our own claim is fine
+  const unbound = flex.filter((w) => !bound.has(w.label));
+
+  if (options?.allowSoleCandidate) {
+    if (unbound.length === 1) return unbound[0]!;
+    if (flex.length === 1) return flex[0]!;
+  }
+
+  const pool = unbound.length > 0 ? unbound : flex;
   const positions: TauriOuterLogicalPos[] = [];
-  for (const w of flex) {
+  for (const w of pool) {
     const p = await outerLogicalPos(w);
     if (p) positions.push(p);
   }
@@ -87,35 +138,85 @@ export async function findFlexPopoutWebviewForDomWindow(
     { screenX: domWin.screenX, screenY: domWin.screenY },
     positions,
   );
-  if (!label) return null;
+  if (!label) {
+    // Last resort for drag/mount: newest unbound shell (highest flex-popout-N).
+    if (options?.allowSoleCandidate && unbound.length > 0) {
+      const sorted = [...unbound].sort((a, b) =>
+        a.label.localeCompare(b.label, undefined, { numeric: true }),
+      );
+      return sorted[sorted.length - 1]!;
+    }
+    console.error('[flex-dock] popout position match failed', {
+      panelId: options?.panelId ?? null,
+      domScreen: { x: domWin.screenX, y: domWin.screenY },
+      candidates: positions,
+      flexCount: flex.length,
+      unboundCount: unbound.length,
+    });
+    return null;
+  }
   return flex.find((w) => w.label === label) ?? null;
 }
 
-async function focusedFlexPopout(): Promise<WebviewWindow | null> {
-  const flex = await listFlexPopoutWindows();
-  for (const w of flex) {
-    try {
-      if (await w.isFocused()) return w;
-    } catch {
-      /* ignore */
-    }
-  }
-  return null;
-}
+export type CloseFlexPopoutOptions = {
+  /** Prefer this `flex-popout-*` label when closing. */
+  preferredLabel?: string | null;
+  /** Panel component id — looked up in the registry when label is unknown. */
+  panelId?: string | null;
+  /** Optional toast hook (W6 label-miss). */
+  onResolveFailed?: (message: string) => void;
+};
 
 /**
- * Close the OS shell for one popout. Prefer matching `domWin` by position.
- * Fallbacks (never close-all): sole flex-popout; or focused when no domWin was
- * given (chrome click already focused that shell). If position miss with 2+
- * popouts, leave Tauri alone rather than kill a sibling.
+ * Close the OS shell for one popout. Prefer explicit label / registry.
+ * W6: if a preferred label does not resolve, cancel — no any/first fallback.
  */
 export async function closeFlexPopoutShell(
   domWin?: Window | null,
+  options?: CloseFlexPopoutOptions,
 ): Promise<void> {
+  const preferred =
+    options?.preferredLabel ??
+    lookupFlexPopoutLabel(options?.panelId, domWin ?? null);
+
   let tauriWin: WebviewWindow | null = null;
 
+  if (preferred) {
+    tauriWin = await findByLabel(preferred);
+    if (!tauriWin) {
+      const msg = `Could not find popout window ${preferred}`;
+      console.error('[flex-dock] closeFlexPopoutShell: label unresolved', {
+        preferredLabel: preferred,
+        panelId: options?.panelId ?? null,
+      });
+      options?.onResolveFailed?.(msg);
+      try {
+        const { layoutStore } = await import('../../contexts/layoutStore');
+        layoutStore.setLayoutToast(msg);
+      } catch {
+        /* store optional during tests */
+      }
+      // Still try to close the DOM proxy so the portal unmounts.
+      if (domWin && !domWin.closed) {
+        try {
+          domWin.close();
+        } catch {
+          /* ignore */
+        }
+      }
+      return;
+    }
+  }
+
+  if (!tauriWin && domWin && !domWin.closed) {
+    tauriWin = await findFlexPopoutWebviewForDomWindow(domWin, {
+      panelId: options?.panelId,
+      // Never sole-candidate on close — would risk closing a sibling.
+      allowSoleCandidate: false,
+    });
+  }
+
   if (domWin && !domWin.closed) {
-    tauriWin = await findFlexPopoutWebviewForDomWindow(domWin);
     try {
       domWin.close();
     } catch {
@@ -124,15 +225,17 @@ export async function closeFlexPopoutShell(
   }
 
   if (!tauriWin) {
-    const flex = await listFlexPopoutWindows();
-    if (flex.length === 1) {
-      tauriWin = flex[0] ?? null;
-    } else if (!domWin) {
-      tauriWin = await focusedFlexPopout();
+    if (preferred || options?.panelId) {
+      const msg = 'Could not resolve floating panel window';
+      console.error('[flex-dock] closeFlexPopoutShell: unresolved', {
+        preferredLabel: preferred ?? null,
+        panelId: options?.panelId ?? null,
+      });
+      options?.onResolveFailed?.(msg);
     }
+    return;
   }
 
-  if (!tauriWin) return;
   try {
     await tauriWin.close();
   } catch (err) {

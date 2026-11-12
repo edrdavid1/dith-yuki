@@ -69,12 +69,31 @@ describe('flexPopoutWindowName', () => {
       __dirname,
       '../../../../node_modules/flexlayout-react/lib/view/FloatingWindow.js',
     );
-    try {
-      const src = readFileSync(installed, 'utf8');
-      expect(src).toMatch(/window\.open\(\s*url,\s*flexPopoutWindowName\(id\)/);
-      expect(src).not.toMatch(/window\.open\(\s*url,\s*id\s*,/);
-    } catch {
-      // Package absent in some CI slices — skip.
-    }
+    const src = readFileSync(installed, 'utf8');
+    expect(src).toMatch(/window\.open\(\s*url,\s*flexPopoutWindowName\(id\)/);
+    expect(src).not.toMatch(/window\.open\(\s*url,\s*id\s*,/);
+    expect(src).toContain('__FLEX_PATCH__');
+  });
+
+  it('patch marker exports expected W3 features (contract)', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require('../../../../node_modules/flexlayout-react/lib/view/FloatingWindow.js') as {
+      __FLEX_PATCH__?: { version: number; features: string[] };
+      flexPopoutWindowName: (id: string) => string;
+    };
+    expect(mod.__FLEX_PATCH__?.version).toBe(1);
+    expect(mod.__FLEX_PATCH__?.features).toEqual(
+      expect.arrayContaining([
+        'float-window',
+        'named-popout',
+        'edge-dock',
+        'center-band',
+      ]),
+    );
+    // Second float must not collapse to the same WKWebView name.
+    expect(mod.flexPopoutWindowName('#aaa')).not.toBe(
+      mod.flexPopoutWindowName('#bbb'),
+    );
+    expect(mod.flexPopoutWindowName('#aaa').includes('#')).toBe(false);
   });
 });

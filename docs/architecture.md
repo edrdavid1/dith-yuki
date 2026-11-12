@@ -74,7 +74,7 @@ dither-yuki-2/
 │       ├── worker.rs           # WorkerWake (Condvar) + tile_worker_loop
 │       ├── undo.rs             # UndoManager (Arc<Document> stacks)
 │       ├── dock_affinity.rs    # dock-zone hit-test (Flex redock complete = JS)
-│       ├── flexlayout_persistence.rs
+│       ├── shell_layout_persistence.rs  # layout.json envelope (W7/W10)
 │       ├── native_menu.rs / pattern_library.rs / recent_files.rs
 │       └── macos_*.rs / window_background.rs / …
 ├── crates/
@@ -331,8 +331,7 @@ pub struct AppState {
     pub pending_preview_refresh: Mutex<Option<PendingPreviewRefresh>>,
     pub ascii_preview: AtomicBool,   // Image|ASCII preview toggle (default true)
     pub full_document_busy: AtomicUsize, // “Rendering…” for ASCII / Riemersma
-    pub flexlayout_persistence: Mutex<FlexLayoutPersistence>,
-    pub flexlayout_left / right / center: Mutex<FlexLayoutPersistence>,
+    pub shell_layout: Mutex<ShellLayoutPersistence>, // W7/W10 layout.json envelope SoT
     pub ram_budget_source: RamBudgetSource,
     pub journal: Mutex<JournalRuntime>,
 }
@@ -480,7 +479,7 @@ loop {
 
 ### 3.7 Layout (FlexLayout)
 
-**Dockable panels** (`layers`, `effect`, `colorlab`) живут в двух FlexLayout `Model` (left / right). Persist: `flexlayout_left.json` / `flexlayout_right.json`. Float: `flex-popout-*` + JS `setPosition` (B4c). Preview — center FlexLayout Model (`flexlayout_center.json`). Preferences и Help — main-window dialogs (не FlexLayout). Affinity hit-test (`dock_affinity.rs` + `update_dock_zone`) — тонкий мост для redock Flex popout. Подробно: [FLEXLAYOUT_DOCKING.md](./FLEXLAYOUT_DOCKING.md).
+**Dockable panels** (`layers`, `effect`, `colorlab`) живут в двух FlexLayout `Model` (left / right); Preview — center Model. Persist (W7): single `layout.json` envelope via `ShellLayoutPersistence` / `layoutStore`. Float: `flex-popout-*` + JS `setPosition` (B4c). Preferences и Help — main-window dialogs (не FlexLayout). Affinity hit-test (`dock_affinity.rs` + `update_dock_zone`) — тонкий мост для redock Flex popout. Подробно: [FLEXLAYOUT_DOCKING.md](./FLEXLAYOUT_DOCKING.md).
 
 Старый `PanelManager` / `panel_state.json` / `panel-*` окна **удалены**.
 
@@ -516,8 +515,8 @@ loop {
 | `generate_ramp_palette` / `generate_harmony_palette` / `colors_to_oklab` / `get_palette_oklab` | Color Lab & Oklab conversion utilities |
 | `export_ascii` / `ascii_clipboard_text` / `set_ascii_preview` / `get_ascii_preview` | ASCII export, clipboard, Image\|ASCII preview |
 | `list_algorithms_for_category` / `get_algorithm_schema` | AlgorithmRegistry surface for Effect UI |
-| `save_layout_left` / `save_layout_right` / `save_layout_center` / `load_layout_*` | FlexLayout persist (per side + center Preview) |
-| `update_dock_zone` / `begin_float_drag` / `complete_float_drag` / `cancel_float_drag` | Affinity hit-test + JS redock complete |
+| `load_shell_layout` / `save_shell_layout` / `layout_flushed` | FlexLayout persist (single layout.json envelope) |
+| `update_dock_zone` / `begin_float_drag` / `bind_float_drag_window` / `complete_float_drag` / `cancel_float_drag` | Affinity hit-test + label-bound JS redock complete |
 
 ### 3.9 Welcome Screen и Recent Files (Track G)
 

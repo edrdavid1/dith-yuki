@@ -1,35 +1,43 @@
 /**
- * LayoutContext — provides three FlexLayout Model instances (left + right + center).
+ * LayoutContext — React bindings for the LayoutStore singleton (W4).
  *
- * Responsibilities:
- * - Load each side's JSON from disk via Tauri `load_layout_{left,right,center}`
- * - Parse JSON → Model.fromJson(); graceful fallback to side-specific default
- * - Cross-side panel moves (left↔right only — FlexLayout cannot drag across models)
- * - Center hosts Preview (canvas); float = flex-popout, dock = main canvas
- * - Expose models + setters + per-side loading flag
- *
- * Save-to-disk lives in FlexLayoutContainer (debounced 500 ms, per side).
+ * Models are owned by `layoutStore` (module-level, HMR-preserved).
+ * This provider only subscribes via useSyncExternalStore and exposes the
+ * public useLayoutContext() API unchanged.
  */
 
-import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
-import { Actions, DockLocation, Model, TabNode, TabSetNode } from 'flexlayout-react';
-import type { IJsonModel } from 'flexlayout-react';
-import {
-  DOCK_TABSET_MIN_HEIGHT,
-  DOCK_TABSET_MIN_WIDTH,
-  getDefaultFlexLayout,
-  getDefaultFlexLayoutJson,
-  LAYOUT_TOAST_MESSAGES,
-} from '../defaults/DefaultLayouts';
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useSyncExternalStore,
+} from 'react';
+import type { Model } from 'flexlayout-react';
+import type { FlexSide } from '../defaults/DefaultLayouts';
 export {
   maxDockedHorizontalSpan,
   sidebarWidthForHorizontalSpan,
 } from '../features/panels/horizontalDock';
-import type { FlexSide } from '../defaults/DefaultLayouts';
-import { isPanelOnFlexLayout } from '../factories/layoutPanelFactory';
-import { closeFlexPopoutShell } from '../features/panels/closeFlexPopoutShell';
+import { layoutStore } from './layoutStore';
+import { findTabByComponent } from './layoutModelOps';
+import { runFlexPopoutInvariantCheck } from '../features/panels/flexPopoutInvariants';
+
+// Re-export model helpers for existing imports / tests.
+export {
+  applyAppChromePolicy,
+  dockAllFloating,
+  emptySideJson,
+  findFirstTabSetId,
+  findTabByComponent,
+  listDockedFlexComponents,
+  listFlexComponents,
+  listFloatingFlexComponents,
+  modelForSide,
+  normalizeSideToVerticalStack,
+  rebalanceFloatingTabsets,
+  tabDisplayName,
+} from './layoutModelOps';
 
 // ─── Context type ─────────────────────────────────────────────────────────────
 
@@ -66,689 +74,79 @@ export interface LayoutContextType {
    * opposite = move + dock). Preview always returns to center.
    */
   redockFlexPanelToSide: (panelComponent: string, to: 'left' | 'right') => void;
+  /**
+   * W2: dock every floating tab on left/center/right (and close their OS shells).
+   * Used by Window → "Return all panels to dock" and recovery paths.
+   */
+  returnAllPanelsToDock: () => void;
 }
 
 const LayoutContext = createContext<LayoutContextType | undefined>(undefined);
 
-// ─── Model helpers ────────────────────────────────────────────────────────────
-
-export function findTabByComponent(model: Model, component: string): TabNode | null {
-  let found: TabNode | null = null;
-  model.visitNodes((node) => {
-    if (found) return;
-    if (node.getType() === TabNode.TYPE) {
-      const tab = node as TabNode;
-      if (tab.getComponent() === component) found = tab;
-    }
-  });
-  return found;
-}
-
-export function findFirstTabSetId(model: Model): string | null {
-  let id: string | null = null;
-  model.visitNodes((node) => {
-    if (id) return;
-    if (node.getType() === TabSetNode.TYPE) id = node.getId();
-  });
-  return id;
-}
-
-/** Component ids of FlexLayout tabs currently on this side (including floating). */
-export function listFlexComponents(model: Model | null): string[] {
-  if (!model) return [];
-  const ids: string[] = [];
-  model.visitNodes((node) => {
-    if (node.getType() !== TabNode.TYPE) return;
-    const c = (node as TabNode).getComponent();
-    if (c) ids.push(c);
-  });
-  return ids;
-}
-
-/** Component ids of tabs that are still docked in the sidebar (not OS-floated). */
-export function listDockedFlexComponents(model: Model | null): string[] {
-  if (!model) return [];
-  const ids: string[] = [];
-  model.visitNodes((node) => {
-    if (node.getType() !== TabNode.TYPE) return;
-    const tab = node as TabNode;
-    if (tab.isFloating()) return;
-    const c = tab.getComponent();
-    if (c) ids.push(c);
-  });
-  return ids;
-}
-
-/**
- * After float/dock: collapse ghost hosts so a remaining docked panel fills the column.
- *
- * Floating tabs must stay in the model (OS popouts), but a floating-only *tabset*
- * still occupies a stack slot — tiny weight still gets ~1px from FlexLayout's fill
- * loop, and the title strip paints as the residual gap. Parking floating tabs into
- * a docked sibling tabset lets `_tidy` delete the empty host so one tabset owns 100%.
- */
-export function rebalanceFloatingTabsets(model: Model): void {
-  if (rebalanceGuard > 0) return;
-  rebalanceGuard += 1;
-  try {
-    const tabsets: TabSetNode[] = [];
-    model.visitNodes((node) => {
-      if (node.getType() === TabSetNode.TYPE) tabsets.push(node as TabSetNode);
-    });
-
-    const dockedHosts: TabSetNode[] = [];
-    const floatingOnly: TabSetNode[] = [];
-    for (const ts of tabsets) {
-      let hasDocked = false;
-      let hasFloating = false;
-      for (const child of ts.getChildren()) {
-        if (child.getType() !== TabNode.TYPE) continue;
-        if ((child as TabNode).isFloating()) hasFloating = true;
-        else hasDocked = true;
-      }
-      if (hasDocked) dockedHosts.push(ts);
-      else if (hasFloating) floatingOnly.push(ts);
-    }
-
-    // Park floating-only hosts into a docked sibling — empty tabsets are tidied away.
-    if (dockedHosts.length > 0 && floatingOnly.length > 0) {
-      const hostId = dockedHosts[0]!.getId();
-      for (const ts of floatingOnly) {
-        // Snapshot — moveNode mutates children.
-        const movers = ts
-          .getChildren()
-          .filter(
-            (c) => c.getType() === TabNode.TYPE && (c as TabNode).isFloating(),
-          ) as TabNode[];
-        for (const tab of movers) {
-          model.doAction(
-            Actions.moveNode(tab.getId(), hostId, DockLocation.CENTER, -1),
-          );
-        }
-      }
-    }
-
-    // Refresh tabset list after parking/tidy; ensure a docked tab is selected.
-    const after: TabSetNode[] = [];
-    model.visitNodes((node) => {
-      if (node.getType() === TabSetNode.TYPE) after.push(node as TabSetNode);
-    });
-    for (const ts of after) {
-      const children = ts.getChildren();
-      let hasDocked = false;
-      let dockedTab: TabNode | null = null;
-      for (const child of children) {
-        if (child.getType() !== TabNode.TYPE) continue;
-        const tab = child as TabNode;
-        if (!tab.isFloating()) {
-          hasDocked = true;
-          if (!dockedTab) dockedTab = tab;
-        }
-      }
-      if (hasDocked && dockedTab) {
-        const selected = ts.getSelectedNode();
-        if (
-          !selected ||
-          selected.getType() !== TabNode.TYPE ||
-          (selected as TabNode).isFloating()
-        ) {
-          model.doAction(Actions.selectTab(dockedTab.getId()));
-        }
-      }
-      // Fallback for all-floating column (sidebar already visually collapsed):
-      // fixed height 0 so nothing reserves a titlebar strip.
-      // Do NOT reset weight on docked tabsets — that fights the splitter.
-      model.doAction(
-        Actions.updateNodeAttributes(
-          ts.getId(),
-          hasDocked
-            ? {
-                minHeight: DOCK_TABSET_MIN_HEIGHT,
-                // Hard floor for side-by-side splitter drag (≥240 each).
-                minWidth: DOCK_TABSET_MIN_WIDTH,
-                height: undefined,
-                enableTabStrip: true,
-              }
-            : {
-                weight: 0.01,
-                minHeight: 0,
-                minWidth: 0,
-                height: 0,
-                enableTabStrip: false,
-              },
-        ),
-      );
-    }
-  } finally {
-    rebalanceGuard -= 1;
-  }
-}
-
-/** Prevent re-entrant rebalance when moveNode/selectTab fires onModelChange. */
-let rebalanceGuard = 0;
-
-/**
- * WindowTitlebar chrome cannot share a tab strip — if a drop created peer
- * docked tabs in one tabset, stack the extras below. Horizontal (left/right)
- * splits into separate tabsets are left alone.
- */
-export function normalizeSideToVerticalStack(model: Model): boolean {
-  let changed = false;
-  // Snapshot ids first — visitNodes while mutating is unsafe.
-  const tabsetIds: string[] = [];
-  model.visitNodes((node) => {
-    if (node.getType() === TabSetNode.TYPE) tabsetIds.push(node.getId());
-  });
-
-  for (const tsId of tabsetIds) {
-    // Loop until this tabset has at most one docked tab.
-    for (;;) {
-      const ts = model.getNodeById(tsId);
-      if (!ts || ts.getType() !== TabSetNode.TYPE) break;
-      const docked = (ts as TabSetNode).getChildren().filter((c) => {
-        if (c.getType() !== TabNode.TYPE) return false;
-        return !(c as TabNode).isFloating();
-      }) as TabNode[];
-      if (docked.length <= 1) break;
-      const move = docked[docked.length - 1]!;
-      model.doAction(
-        Actions.moveNode(move.getId(), tsId, DockLocation.BOTTOM, -1),
-      );
-      changed = true;
-    }
-  }
-
-  if (changed) rebalanceFloatingTabsets(model);
-  return changed;
-}
-
-// ─── Helper: enforce app chrome policy on any loaded model ────────────────────
-
-/** Tab strip on (styled as WindowTitlebar); float via our menu, not FL toolbar. */
-function applyAppChromePolicy(model: Model): Model {
-  model.doAction(
-    Actions.updateModelAttributes({
-      tabSetEnableTabStrip: true,
-      tabSetEnableSingleTabStretch: true,
-      // Hide FlexLayout's float toolbar button (native browser tooltips).
-      // We still call Actions.floatTab from WindowTitlebar / undock drag.
-      tabEnableFloat: false,
-      tabEnableRename: false,
-      tabEnableClose: false,
-      tabSetEnableMaximize: false,
-      // Invisible overlap splitter — borders of stacked/side-by-side panels share one line.
-      splitterSize: 0,
-      splitterExtra: 4,
-      // Left/right edge drops create side-by-side tabsets inside the column.
-      enableEdgeDock: true,
-      // Titlebar-tall floor so stacked panels cannot cover each other's titles.
-      tabSetMinHeight: DOCK_TABSET_MIN_HEIGHT,
-      tabSetTabStripHeight: DOCK_TABSET_MIN_HEIGHT,
-      // Usable floor for side-by-side (and single) docked panels.
-      tabSetMinWidth: DOCK_TABSET_MIN_WIDTH,
-    })
-  );
-  normalizeSideToVerticalStack(model);
-  // Always rebalance — normalize may no-op on an already-vertical saved layout.
-  rebalanceFloatingTabsets(model);
-  return model;
-}
-
-// ─── Helper: load one side ────────────────────────────────────────────────────
-
-async function loadSideModel(side: FlexSide): Promise<Model> {
-  const command =
-    side === 'left'
-      ? 'load_layout_left'
-      : side === 'right'
-        ? 'load_layout_right'
-        : 'load_layout_center';
-  let json = getDefaultFlexLayout(side);
-
-  try {
-    json = await invoke<string>(command);
-  } catch {
-    // First run or Tauri unavailable — use default silently.
-  }
-
-  try {
-    return applyAppChromePolicy(Model.fromJson(JSON.parse(json) as IJsonModel));
-  } catch (err) {
-    console.warn(`[LayoutProvider] Model.fromJson failed for ${side}, using default:`, err);
-    return applyAppChromePolicy(Model.fromJson(getDefaultFlexLayoutJson(side)));
-  }
-}
-
-function persistSide(side: FlexSide, model: Model): void {
-  const command =
-    side === 'left'
-      ? 'save_layout_left'
-      : side === 'right'
-        ? 'save_layout_right'
-        : 'save_layout_center';
-  const json = JSON.stringify(model.toJson());
-  void invoke<void>(command, { json }).catch((err) => {
-    console.error(`[LayoutProvider] ${command} failed:`, err);
-  });
-}
-
-function tabDisplayName(component: string): string {
-  switch (component) {
-    case 'layers':
-      return 'Layers';
-    case 'effect':
-      return 'Effect Settings';
-    case 'colorlab':
-      return 'Color Lab';
-    case 'preview':
-      return 'Preview';
-    default:
-      return component;
-  }
-}
-
-function modelForSide(
-  side: FlexSide,
-  left: Model | null,
-  right: Model | null,
-  center: Model | null,
-): Model | null {
-  if (side === 'left') return left;
-  if (side === 'right') return right;
-  return center;
-}
-
-/** Empty but valid side layout (no tabs) — used after the last tab is moved away. */
-function emptySideJson(side: FlexSide): IJsonModel {
-  return {
-    global: { ...getDefaultFlexLayoutJson(side).global },
-    borders: [],
-    layout: {
-      type: 'row',
-      weight: 100,
-      children: [
-        {
-          type: 'tabset',
-          weight: 100,
-          children: [],
-        },
-      ],
-    },
-  };
-}
-
-/**
- * B4b: if Color Lab is missing from both side models (saved pre-B4b layout),
- * append it under the right column without replacing the user's Layers/Effect tree.
- */
-function ensureColorLabPresent(
-  left: Model,
-  right: Model,
-): { left: Model; right: Model; injected: boolean } {
-  if (findTabByComponent(left, 'colorlab') || findTabByComponent(right, 'colorlab')) {
-    return { left, right, injected: false };
-  }
-
-  const tabJson = {
-    type: 'tab',
-    name: 'Color Lab',
-    component: 'colorlab',
-    enableFloat: true,
-  };
-
-  const targetTabSetId = findFirstTabSetId(right);
-  if (!targetTabSetId) {
-    const seeded = applyAppChromePolicy(Model.fromJson(getDefaultFlexLayoutJson('right')));
-    return { left, right: seeded, injected: true };
-  }
-
-  try {
-    right.doAction(Actions.addNode(tabJson, targetTabSetId, DockLocation.BOTTOM, -1, true));
-  } catch (err) {
-    console.error('[LayoutProvider] failed to inject Color Lab tab:', err);
-    return { left, right, injected: false };
-  }
-
-  const rightNext = applyAppChromePolicy(Model.fromJson(right.toJson()));
-  return { left, right: rightNext, injected: true };
-}
-
-/**
- * B5: ensure Preview exists in the center model (first run / corrupt / pre-B5).
- */
-function ensurePreviewPresent(center: Model): { center: Model; injected: boolean } {
-  if (findTabByComponent(center, 'preview')) {
-    return { center, injected: false };
-  }
-  const seeded = applyAppChromePolicy(Model.fromJson(getDefaultFlexLayoutJson('center')));
-  return { center: seeded, injected: true };
-}
-
 // ─── Provider ────────────────────────────────────────────────────────────────
 
 export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [leftModel,  setLeftModelState]  = useState<Model | null>(null);
-  const [rightModel, setRightModelState] = useState<Model | null>(null);
-  const [centerModel, setCenterModelState] = useState<Model | null>(null);
-  const [leftLoading,  setLeftLoading]  = useState(true);
-  const [rightLoading, setRightLoading] = useState(true);
-  const [centerLoading, setCenterLoading] = useState(true);
-  const [layoutEpoch, setLayoutEpoch] = useState(0);
-  const [layoutToast, setLayoutToast] = useState<string | null>(null);
-
-  // Refs so move/float always see latest models without stale closures.
-  const leftRef = useRef<Model | null>(null);
-  const rightRef = useRef<Model | null>(null);
-  const centerRef = useRef<Model | null>(null);
-  leftRef.current = leftModel;
-  rightRef.current = rightModel;
-  centerRef.current = centerModel;
-
-  const redockFlexPanelToSideRef = useRef<
-    ((panelComponent: string, to: 'left' | 'right') => void) | null
-  >(null);
-  const dockPanelRef = useRef<((side: FlexSide, panelComponent: string) => void) | null>(null);
-
-  const bumpLayout = useCallback(() => {
-    setLayoutEpoch((n) => n + 1);
-  }, []);
-
-  const clearLayoutToast = useCallback(() => {
-    setLayoutToast(null);
-  }, []);
-
-  const setLeftModel = useCallback((m: Model) => {
-    setLeftModelState(m);
-    setLayoutEpoch((n) => n + 1);
-  }, []);
-  const setRightModel = useCallback((m: Model) => {
-    setRightModelState(m);
-    setLayoutEpoch((n) => n + 1);
-  }, []);
-  const setCenterModel = useCallback((m: Model) => {
-    setCenterModelState(m);
-    setLayoutEpoch((n) => n + 1);
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const [left, right, center] = await Promise.all([
-        loadSideModel('left'),
-        loadSideModel('right'),
-        loadSideModel('center'),
-      ]);
-      if (cancelled) return;
-
-      const ensured = ensureColorLabPresent(left, right);
-      const previewEnsured = ensurePreviewPresent(center);
-      setLeftModelState(ensured.left);
-      setRightModelState(ensured.right);
-      setCenterModelState(previewEnsured.center);
-      setLeftLoading(false);
-      setRightLoading(false);
-      setCenterLoading(false);
-
-      if (ensured.injected) {
-        persistSide('right', ensured.right);
-        setLayoutToast(LAYOUT_TOAST_MESSAGES.COLORLAB_ADDED);
-      } else if (previewEnsured.injected) {
-        persistSide('center', previewEnsured.center);
-        setLayoutToast(LAYOUT_TOAST_MESSAGES.PREVIEW_ADDED);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  // Drag-to-redock from FlexLayout OS popouts (Rust affinity → this event).
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | null = null;
-    void listen<{ panelId: string; side: 'left' | 'right' }>(
-      'flex-panel-dock-request',
-      (event) => {
-        if (cancelled) return;
-        const { panelId, side } = event.payload;
-        if (!isPanelOnFlexLayout(panelId)) return;
-        // Preview never joins a sidebar — affinity is disabled for it, but if a
-        // request arrives, always restore the canvas host.
-        if (panelId === 'preview') {
-          dockPanelRef.current?.('center', 'preview');
-        } else if (side === 'left' || side === 'right') {
-          redockFlexPanelToSideRef.current?.(panelId, side);
-        }
-        // dockPanel / movePanelBetweenSides close only this panel's popout.
-        // Closing every flex-popout-* here killed sibling detached windows.
-      },
-    ).then((fn) => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
-
-  const movePanelBetweenSides = useCallback((panelComponent: string, to: 'left' | 'right') => {
-    if (panelComponent === 'preview') return;
-    const from: 'left' | 'right' = to === 'left' ? 'right' : 'left';
-    const fromModel = from === 'left' ? leftRef.current : rightRef.current;
-    const toModel = to === 'left' ? leftRef.current : rightRef.current;
-    if (!fromModel || !toModel) {
-      console.warn('[LayoutContext] movePanelBetweenSides: model missing', { from, to });
-      return;
-    }
-
-    if (findTabByComponent(toModel, panelComponent)) return;
-
-    const tab = findTabByComponent(fromModel, panelComponent);
-    if (!tab) {
-      console.warn('[LayoutContext] movePanelBetweenSides: tab not found', panelComponent, 'on', from);
-      return;
-    }
-
-    // Fresh tab json — drop id/floating so the target model docks a new tab.
-    const raw = tab.toJson() as Record<string, unknown>;
-    const { id: _omitId, floating: _omitFloat, ...rest } = raw;
-    const json = {
-      ...rest,
-      type: 'tab',
-      name: (typeof rest.name === 'string' && rest.name) || tabDisplayName(panelComponent),
-      component: panelComponent,
-      enableFloat: true,
-    };
-
-    // Close this tab's OS popout before deleting it (siblings stay open).
-    if (tab.isFloating()) {
-      try {
-        void closeFlexPopoutShell(tab.getWindow?.() ?? null);
-      } catch {
-        /* ignore */
-      }
-    }
-
-    fromModel.doAction(Actions.deleteTab(tab.getId()));
-
-    let targetTabSetId = findFirstTabSetId(toModel);
-    if (!targetTabSetId) {
-      const seed = applyAppChromePolicy(
-        Model.fromJson({
-          global: getDefaultFlexLayoutJson(to).global,
-          borders: [],
-          layout: {
-            type: 'row',
-            weight: 100,
-            children: [
-              {
-                type: 'tabset',
-                weight: 100,
-                children: [json],
-              },
-            ],
-          },
-        } as IJsonModel)
-      );
-      const fromNext = applyAppChromePolicy(
-        Model.fromJson(
-          listFlexComponents(fromModel).length === 0
-            ? emptySideJson(from)
-            : fromModel.toJson()
-        )
-      );
-      if (to === 'left') {
-        setLeftModelState(seed);
-        setRightModelState(fromNext);
-      } else {
-        setRightModelState(seed);
-        setLeftModelState(fromNext);
-      }
-      persistSide(to, seed);
-      persistSide(from, fromNext);
-      return;
-    }
-
-    try {
-      // Stack below existing panels (Color Lab vertical dock), never as peer tabs.
-      toModel.doAction(Actions.addNode(json, targetTabSetId, DockLocation.BOTTOM, -1, true));
-    } catch (err) {
-      console.error('[LayoutContext] addNode failed', err);
-      return;
-    }
-
-    normalizeSideToVerticalStack(toModel);
-    normalizeSideToVerticalStack(fromModel);
-
-    const fromNext = applyAppChromePolicy(
-      Model.fromJson(
-        listFlexComponents(fromModel).length === 0
-          ? emptySideJson(from)
-          : fromModel.toJson()
-      )
-    );
-    const toNext = applyAppChromePolicy(Model.fromJson(toModel.toJson()));
-
-    if (from === 'left') {
-      setLeftModelState(fromNext);
-      setRightModelState(toNext);
-    } else {
-      setRightModelState(fromNext);
-      setLeftModelState(toNext);
-    }
-    persistSide(from, fromNext);
-    persistSide(to, toNext);
-  }, []);
-
-  const floatPanel = useCallback((side: FlexSide, panelComponent: string) => {
-    const model = modelForSide(side, leftRef.current, rightRef.current, centerRef.current);
-    if (!model) {
-      console.warn('[LayoutContext] floatPanel: model missing', side);
-      return;
-    }
-    const tab = findTabByComponent(model, panelComponent);
-    if (!tab) {
-      console.warn('[LayoutContext] floatPanel: tab not found', panelComponent);
-      return;
-    }
-    if (tab.isFloating()) return;
-    // Keep the SAME model instance — cloning kills FlexLayout's FloatingWindow.
-    model.doAction(Actions.floatTab(tab.getId()));
-    // FlexLayout already selects a non-floating sibling in the same tabset;
-    // collapse floating-only tabsets so a split sibling fills the dock.
-    normalizeSideToVerticalStack(model);
-    rebalanceFloatingTabsets(model);
-    persistSide(side, model);
-    // Model identity unchanged — bump so shell drops reserved dock width.
-    bumpLayout();
-  }, [bumpLayout]);
-
-  const dockPanel = useCallback((side: FlexSide, panelComponent: string) => {
-    const model = modelForSide(side, leftRef.current, rightRef.current, centerRef.current);
-    if (!model) {
-      console.warn('[LayoutContext] dockPanel: model missing', side);
-      return;
-    }
-    const tab = findTabByComponent(model, panelComponent);
-    if (!tab) {
-      console.warn('[LayoutContext] dockPanel: tab not found', panelComponent);
-      return;
-    }
-    if (!tab.isFloating()) return;
-
-    // Match+close this tab's flex-popout WebviewWindow (DOM Window.close alone
-    // leaves an empty Tauri shell). Must run while getWindow() is still set.
-    try {
-      void closeFlexPopoutShell(tab.getWindow?.() ?? null);
-    } catch {
-      /* ignore */
-    }
-
-    model.doAction(Actions.unFloatTab(tab.getId()));
-    normalizeSideToVerticalStack(model);
-    rebalanceFloatingTabsets(model);
-    persistSide(side, model);
-    bumpLayout();
-  }, [bumpLayout]);
-  dockPanelRef.current = dockPanel;
-
-  const redockFlexPanelToSide = useCallback(
-    (panelComponent: string, to: 'left' | 'right') => {
-      if (panelComponent === 'preview') {
-        dockPanel('center', 'preview');
-        return;
-      }
-      const leftM = leftRef.current;
-      const rightM = rightRef.current;
-      const onLeft = leftM ? findTabByComponent(leftM, panelComponent) : null;
-      const onRight = rightM ? findTabByComponent(rightM, panelComponent) : null;
-      const from: 'left' | 'right' | null = onLeft?.isFloating()
-        ? 'left'
-        : onRight?.isFloating()
-          ? 'right'
-          : null;
-      if (!from) return;
-
-      if (from === to) {
-        dockPanel(from, panelComponent);
-      } else {
-        // movePanelBetweenSides strips `floating` and docks into the target side.
-        movePanelBetweenSides(panelComponent, to);
-      }
-    },
-    [dockPanel, movePanelBetweenSides],
+  const snapshot = useSyncExternalStore(
+    layoutStore.subscribe,
+    layoutStore.getSnapshot,
+    layoutStore.getSnapshot,
   );
-  redockFlexPanelToSideRef.current = redockFlexPanelToSide;
 
-  const swapFlexSides = useCallback(() => {
-    const left = leftRef.current;
-    const right = rightRef.current;
-    if (!left || !right) {
-      console.warn('[LayoutContext] swapFlexSides: model missing');
+  useEffect(() => layoutStore.ensureInitialized(), []);
+
+  // W6: DEV registry ↔ window ↔ floating-tab invariants.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    if (snapshot.leftLoading || snapshot.rightLoading || snapshot.centerLoading) {
       return;
     }
-    // Exchange models as-is (including floating tabs / OS popouts).
-    leftRef.current = right;
-    rightRef.current = left;
-    setLeftModelState(right);
-    setRightModelState(left);
-    persistSide('left', right);
-    persistSide('right', left);
-    bumpLayout();
-  }, [bumpLayout]);
+    const t = window.setTimeout(() => {
+      void runFlexPopoutInvariantCheck({
+        left: snapshot.left,
+        center: snapshot.center,
+        right: snapshot.right,
+      });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [
+    snapshot.version,
+    snapshot.left,
+    snapshot.center,
+    snapshot.right,
+    snapshot.leftLoading,
+    snapshot.rightLoading,
+    snapshot.centerLoading,
+  ]);
 
-  const value: LayoutContextType = {
-    left:  { model: leftModel,  setModel: setLeftModel,  isLoading: leftLoading  },
-    right: { model: rightModel, setModel: setRightModel, isLoading: rightLoading },
-    center: { model: centerModel, setModel: setCenterModel, isLoading: centerLoading },
-    layoutEpoch,
-    layoutToast,
-    clearLayoutToast,
-    movePanelBetweenSides,
-    swapFlexSides,
-    floatPanel,
-    dockPanel,
-    redockFlexPanelToSide,
-  };
+  const value = useMemo<LayoutContextType>(
+    () => ({
+      left: {
+        model: snapshot.left,
+        setModel: (m) => layoutStore.setSideModel('left', m),
+        isLoading: snapshot.leftLoading,
+      },
+      right: {
+        model: snapshot.right,
+        setModel: (m) => layoutStore.setSideModel('right', m),
+        isLoading: snapshot.rightLoading,
+      },
+      center: {
+        model: snapshot.center,
+        setModel: (m) => layoutStore.setSideModel('center', m),
+        isLoading: snapshot.centerLoading,
+      },
+      layoutEpoch: snapshot.version,
+      layoutToast: snapshot.layoutToast,
+      clearLayoutToast: layoutStore.clearLayoutToast,
+      movePanelBetweenSides: layoutStore.movePanelBetweenSides,
+      swapFlexSides: layoutStore.swapFlexSides,
+      floatPanel: layoutStore.floatPanel,
+      dockPanel: layoutStore.dockPanel,
+      redockFlexPanelToSide: layoutStore.redockFlexPanelToSide,
+      returnAllPanelsToDock: layoutStore.returnAllPanelsToDock,
+    }),
+    [snapshot],
+  );
 
   return (
     <LayoutContext.Provider value={value}>

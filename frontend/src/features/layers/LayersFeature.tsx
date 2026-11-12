@@ -41,7 +41,23 @@ export default function LayersFeature({
   const effectLayer = useEffectLayer(imageSourceLayer?.id ?? null, selectedFilterId);
 
   const handleAddLayer = useCallback(() => {
+    // Clears selection so Effect Settings shows the inline chooser.
     void dispatch(setSelection({ layerId: null, filterId: null }));
+    // When Effect is floated, bring that OS window forward so the chooser
+    // is visible after a single click in the Layers popout.
+    void (async () => {
+      try {
+        const { lookupFlexPopoutLabel } = await import('../panels/flexPopoutRegistry');
+        const { getAllWebviewWindows } = await import('@tauri-apps/api/webviewWindow');
+        const label = lookupFlexPopoutLabel('effect');
+        if (!label) return;
+        const wins = await getAllWebviewWindows();
+        const w = wins.find((x) => x.label === label);
+        if (w) await w.setFocus();
+      } catch (err) {
+        console.warn('[flex-dock] focus effect popout after add-layer failed', err);
+      }
+    })();
   }, [dispatch]);
 
   useEffect(() => {

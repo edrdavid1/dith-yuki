@@ -2,16 +2,15 @@
  * FlexLayout OS popout shell — Figma `heder-of-window` floating variant
  * (close / minimize / zoom + ridges + title) via shared WindowTitlebar.
  *
- * B4c: titlebar drag is JS setPosition on the flex-popout WebviewWindow +
- * mouseup on the *popout* document window (portal from main — do not use
- * getCurrentWindow / main `window` for drag). Affinity via WindowEvent::Moved.
+ * W1/B4c: titlebar drag is pointer-capture + JS setPosition on the flex-popout
+ * WebviewWindow (portal from main — do not use getCurrentWindow / main
+ * `window` for drag). Affinity via WindowEvent::Moved.
  *
  * Shortcuts: keydown is relayed from the popout browsing context to the main
  * shortcut engine (portaled React still runs in main JS).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getAllWebviewWindows } from '@tauri-apps/api/webviewWindow';
 import type { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import {
   cancelFloatDrag,
@@ -22,22 +21,15 @@ import styles from './PanelWindow.module.css';
 import { bind } from '../../shared/ui/cn';
 import WindowTitlebar from '../../shared/ui/WindowTitlebar';
 import { useFlexPopoutJsDrag } from './useFlexPopoutJsDrag';
-import { closeFlexPopoutShell } from './closeFlexPopoutShell';
+import { closeFlexPopoutShell, findFlexPopoutWebviewForDomWindow } from './closeFlexPopoutShell';
+import {
+  forgetFlexPopoutLabel,
+  rememberFlexPopoutLabel,
+} from './flexPopoutRegistry';
+import { registerFlexPopoutDocument } from './flexPopoutStyleSync';
+import { useOwnerWindow } from './useOwnerDocument';
 
 const cn = bind(styles);
-
-async function focusedFlexPopout(): Promise<WebviewWindow | null> {
-  const wins = await getAllWebviewWindows();
-  const flex = wins.filter((w) => w.label.startsWith('flex-popout-'));
-  for (const w of flex) {
-    try {
-      if (await w.isFocused()) return w;
-    } catch {
-      /* ignore */
-    }
-  }
-  return flex[flex.length - 1] ?? null;
-}
 
 export default function FlexPopoutChrome({
   title,
@@ -54,22 +46,58 @@ export default function FlexPopoutChrome({
   children: React.ReactNode;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const shellRef = useRef<WebviewWindow | null>(null);
   const [affinityArmed, setAffinityArmed] = useState(false);
-  const { onTitlebarMouseDown, cancelActiveDrag } = useFlexPopoutJsDrag(panelId);
+  const { onTitlebarPointerDown, cancelActiveDrag } = useFlexPopoutJsDrag(panelId);
+  const ownerWindow = useOwnerWindow(rootRef);
+
+  // W5: mirror main <head> / theme into this popout document.
+  useEffect(() => {
+    const doc = rootRef.current?.ownerDocument;
+    if (!doc || doc === document) return;
+    return registerFlexPopoutDocument(doc);
+  }, [ownerWindow]);
+
+  // Resolve + remember this chrome's flex-popout label for close/minimize/drag.
+  useEffect(() => {
+    let cancelled = false;
+    const view = ownerWindow;
+    if (!view || view === window) return;
+    const bind = () => {
+      void findFlexPopoutWebviewForDomWindow(view, {
+        panelId,
+        allowSoleCandidate: true,
+      }).then((w) => {
+        if (cancelled || !w) return;
+        shellRef.current = w;
+        rememberFlexPopoutLabel(panelId, w.label, view);
+      });
+    };
+    bind();
+    // Tauri may create the shell a tick after the portal mounts — retry once.
+    const retry = window.setTimeout(bind, 50);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(retry);
+    };
+  }, [panelId, ownerWindow]);
 
   const handleClose = useCallback(() => {
     cancelActiveDrag();
-    void cancelFloatDrag();
+    const preferredLabel = shellRef.current?.label ?? null;
+    void cancelFloatDrag(preferredLabel);
+    setAffinityArmed(false);
     // Capture this popout's browsing context before unfloat unmounts the portal.
-    const view = rootRef.current?.ownerDocument.defaultView ?? null;
+    const view = ownerWindow !== window ? ownerWindow : null;
     onDockBack();
+    forgetFlexPopoutLabel(panelId);
     // dockPanel also closes via tab.getWindow(); this covers the chrome path
     // when the user clicks close on this shell (siblings stay open).
-    void closeFlexPopoutShell(view);
-  }, [onDockBack, cancelActiveDrag]);
+    void closeFlexPopoutShell(view, { preferredLabel, panelId });
+  }, [onDockBack, cancelActiveDrag, panelId, ownerWindow]);
 
-  const handleTitlebarMouseDown = useCallback(
-    (e: React.MouseEvent) => {
+  const handleTitlebarPointerDown = useCallback(
+    (e: React.PointerEvent) => {
       // Double-click titlebar = dock back (discoverable return for Preview).
       if (e.detail === 2) {
         e.preventDefault();
@@ -77,25 +105,28 @@ export default function FlexPopoutChrome({
         handleClose();
         return;
       }
-      onTitlebarMouseDown(e);
+      onTitlebarPointerDown(e);
     },
-    [handleClose, onTitlebarMouseDown],
+    [handleClose, onTitlebarPointerDown],
   );
 
   const handleMinimize = useCallback(() => {
-    void focusedFlexPopout()
-      .then((w) => w?.minimize())
+    const w = shellRef.current;
+    if (!w) return;
+    void w
+      .minimize()
       .catch((err) => console.error('[FlexPopoutChrome] minimize failed:', err));
   }, []);
 
   const handleMaximize = useCallback(() => {
-    void focusedFlexPopout()
-      .then(async (w) => {
-        if (!w) return;
-        if (await w.isMaximized()) await w.unmaximize();
-        else await w.maximize();
-      })
-      .catch((err) => console.error('[FlexPopoutChrome] maximize failed:', err));
+    const w = shellRef.current;
+    if (!w) return;
+    void (async () => {
+      if (await w.isMaximized()) await w.unmaximize();
+      else await w.maximize();
+    })().catch((err) =>
+      console.error('[FlexPopoutChrome] maximize failed:', err),
+    );
   }, []);
 
   useEffect(() => {
@@ -117,8 +148,9 @@ export default function FlexPopoutChrome({
   }, [panelId]);
 
   // Relay popout keydowns → main shortcut engine; Escape cancels drag.
+  // W5: listen on the popout owner window, never assume main `window`.
   useEffect(() => {
-    const view = rootRef.current?.ownerDocument.defaultView;
+    const view = ownerWindow;
     if (!view) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -134,7 +166,7 @@ export default function FlexPopoutChrome({
 
     view.addEventListener('keydown', onKeyDown, true);
     return () => view.removeEventListener('keydown', onKeyDown, true);
-  }, [cancelActiveDrag]);
+  }, [cancelActiveDrag, ownerWindow]);
 
   return (
     <div
@@ -147,7 +179,7 @@ export default function FlexPopoutChrome({
         variant="floating"
         title={title}
         className={affinityArmed ? cn('panel-window-titlebar-affinity') : undefined}
-        onMouseDown={handleTitlebarMouseDown}
+        onPointerDown={handleTitlebarPointerDown}
         onClose={handleClose}
         onMinimize={handleMinimize}
         onMaximize={handleMaximize}

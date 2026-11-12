@@ -161,6 +161,15 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
     let patterns_menu =
         Submenu::with_items(app, "Patterns", true, &[&export_pattern, &import_pattern])?;
 
+    let return_all_panels = MenuItem::with_id(
+        app,
+        "return-all-panels-to-dock",
+        "Return All Panels to Dock",
+        true,
+        None::<&str>,
+    )?;
+    let window_menu = Submenu::with_items(app, "Window", true, &[&return_all_panels])?;
+
     let help_item = MenuItem::with_id(app, "help", "Dither Yuki Help", true, None::<&str>)?;
     let help_updates = MenuItem::with_id(
         app,
@@ -178,6 +187,7 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
             &file_menu,
             &edit_menu,
             &patterns_menu,
+            &window_menu,
             &help_menu,
         ],
     )

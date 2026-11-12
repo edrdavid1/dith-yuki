@@ -9,6 +9,9 @@ import { useAppShortcuts } from '../features/shortcuts/useAppShortcuts';
 import { LayoutProvider } from '../contexts/LayoutContext';
 import { PatternsUiProvider } from '../features/patterns/PatternsUiContext';
 import { WorkspaceProvider } from '../features/workspace/WorkspaceContext';
+import FlexPatchMissingOverlay from '../features/panels/FlexPatchMissingOverlay';
+import { isFlexPatchApplied } from '../features/panels/flexlayoutPatchGate';
+import { startFlexPopoutStyleSync } from '../features/panels/flexPopoutStyleSync';
 
 function ShortcutEngine() {
   useAppShortcuts();
@@ -28,6 +31,17 @@ export function Providers({ children }: { children: ReactNode }) {
     return suppressBrowserChrome();
   }, []);
 
+  useEffect(() => {
+    if (!isFlexPatchApplied()) {
+      console.error(
+        '[flex-dock] flexlayout-react __FLEX_PATCH__ missing — float disabled',
+      );
+    }
+  }, []);
+
+  // W5: HMR / theme head mutations → open flex-popout documents.
+  useEffect(() => startFlexPopoutStyleSync(), []);
+
   return (
     <Provider store={store}>
       <ShellProvider>
@@ -38,6 +52,7 @@ export function Providers({ children }: { children: ReactNode }) {
               <LayoutProvider>
                 {children}
               </LayoutProvider>
+              <FlexPatchMissingOverlay />
             </ShortcutsProvider>
           </PatternsUiProvider>
         </WorkspaceProvider>

@@ -126,14 +126,9 @@ export function getPanelDisplayName(panelId: string): string {
   }
 }
 
-/** Returns true if the panel is allowed inside a sidebar FlexLayout. */
-export function isPanelDockable(panelId: string): boolean {
-  return panelId === 'layers' || panelId === 'effect' || panelId === 'colorlab';
-}
-
 /**
- * Returns true if the panel is currently rendered by FlexLayout.
- * B3: Layers. B4a: Effect. B4b: Color Lab. B5: Preview (center model).
+ * Returns true if the panel is rendered by FlexLayout (sidebar or center).
+ * W10: all product panels are flex-only — no legacy DockedSidebar path.
  */
 export function isPanelOnFlexLayout(panelId: string): boolean {
   return (

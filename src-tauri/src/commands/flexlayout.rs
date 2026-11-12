@@ -1,155 +1,77 @@
-//! FlexLayout layout persistence commands.
+//! FlexLayout shell persistence commands (W7/W10).
 //!
-//! Provides IPC commands for saving/loading/resetting the FlexLayout Model JSON.
-//! These commands are called from the React frontend when the layout changes or
-//! at startup/shutdown to persist layout state to disk.
+//! SoT is `load_shell_layout` / `save_shell_layout` (single `layout.json`).
+//! Legacy per-side and `flexlayout_state` commands were removed in W10.
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use tauri::State;
 
 use crate::commands::AppState;
-use crate::flexlayout_persistence::{FlexLayoutPersistence, LayoutPersistenceError};
+use crate::shell_layout_persistence::{LayoutEnvelope, LAYOUT_VERSION};
 
+/// Load the v1 layout.json envelope (migrates legacy side files when needed).
 #[tauri::command]
-pub fn save_layout(state: State<Arc<AppState>>, json: String) -> Result<(), String> {
-    let persistence = state
-        .flexlayout_persistence
-        .lock()
-        .map_err(|e| format!("Failed to lock persistence: {}", e))?;
-
-    persistence.save(&json).map_err(|e| match e {
-        LayoutPersistenceError::InvalidJson(msg) => format!("Invalid layout JSON: {}", msg),
-        LayoutPersistenceError::WriteError(msg) => {
-            format!("Failed to save layout: {}", msg)
-        }
-        LayoutPersistenceError::DirectoryError(msg) => {
-            format!("Failed to create layout directory: {}", msg)
-        }
-        _ => "Failed to save layout".to_string(),
-    })
-}
-
-/// Load layout JSON from disk.
-///
-/// Called from React on app startup to restore the persisted layout.
-/// If the layout file is missing or corrupt, returns the default v3 layout.
-/// If v2 layout file is detected (old system), returns default v3 layout
-/// and shows migration toast to the user.
-///
-/// # Returns
-/// - `Ok(json)` with layout JSON string (either persisted or default)
-/// - `Err(String)` only on unrecoverable disk I/O errors
-#[tauri::command]
-pub fn load_layout(state: State<Arc<AppState>>) -> Result<String, String> {
-    let persistence = state
-        .flexlayout_persistence
-        .lock()
-        .map_err(|e| format!("Failed to lock persistence: {}", e))?;
-
-    persistence.load().map_err(|e| match e {
-        LayoutPersistenceError::ReadError(msg) => {
-            format!("Failed to read layout file: {}", msg)
-        }
-        _ => "Failed to load layout".to_string(),
-    })
-}
-
-/// Reset layout to default v3.
-///
-/// Called when user explicitly requests "Reset Layout to Default" action.
-/// Does not modify the persisted file — the React component is responsible
-/// for calling `save_layout()` after this if it wants to persist the reset.
-///
-/// # Returns
-/// - `Ok(json)` with default v3 layout JSON
-#[tauri::command]
-pub fn reset_layout_to_default(state: State<Arc<AppState>>) -> Result<String, String> {
-    // Verify we can lock persistence (good practice, though default doesn't require it)
-    let _persistence = state
-        .flexlayout_persistence
-        .lock()
-        .map_err(|e| format!("Failed to lock persistence: {}", e))?;
-
-    Ok(FlexLayoutPersistence::default_layout_json())
-}
-
-// ─── B4a: per-side commands ───────────────────────────────────────────────────
-
-#[tauri::command]
-pub fn load_layout_left(state: State<Arc<AppState>>) -> Result<String, String> {
+pub fn load_shell_layout(state: State<Arc<AppState>>) -> Result<String, String> {
     let p = state
-        .flexlayout_left
+        .shell_layout
         .lock()
-        .map_err(|e| format!("Failed to lock left persistence: {}", e))?;
-    p.load()
-        .map_err(|e| format!("Failed to load left layout: {:?}", e))
+        .map_err(|e| format!("Failed to lock shell layout: {e}"))?;
+    let env = p
+        .load()
+        .map_err(|e| format!("Failed to load shell layout: {e}"))?;
+    serde_json::to_string(&env).map_err(|e| format!("serialize envelope: {e}"))
 }
 
+/// Save the full left/center/right envelope atomically.
 #[tauri::command]
-pub fn save_layout_left(state: State<Arc<AppState>>, json: String) -> Result<(), String> {
+pub fn save_shell_layout(state: State<Arc<AppState>>, json: String) -> Result<(), String> {
+    let mut env: LayoutEnvelope = serde_json::from_str(&json)
+        .map_err(|e| format!("Invalid shell layout JSON: {e}"))?;
+    if env.version == 0 {
+        env.version = LAYOUT_VERSION;
+    }
     let p = state
-        .flexlayout_left
+        .shell_layout
         .lock()
-        .map_err(|e| format!("Failed to lock left persistence: {}", e))?;
-    p.save(&json)
-        .map_err(|e| format!("Failed to save left layout: {:?}", e))
+        .map_err(|e| format!("Failed to lock shell layout: {e}"))?;
+    p.save(&env)
+        .map_err(|e| format!("Failed to save shell layout: {e}"))
 }
 
+/// FE ack after handling `flush-layout` (W7 close flush).
 #[tauri::command]
-pub fn load_layout_right(state: State<Arc<AppState>>) -> Result<String, String> {
-    let p = state
-        .flexlayout_right
-        .lock()
-        .map_err(|e| format!("Failed to lock right persistence: {}", e))?;
-    p.load()
-        .map_err(|e| format!("Failed to load right layout: {:?}", e))
-}
-
-#[tauri::command]
-pub fn save_layout_right(state: State<Arc<AppState>>, json: String) -> Result<(), String> {
-    let p = state
-        .flexlayout_right
-        .lock()
-        .map_err(|e| format!("Failed to lock right persistence: {}", e))?;
-    p.save(&json)
-        .map_err(|e| format!("Failed to save right layout: {:?}", e))
-}
-
-#[tauri::command]
-pub fn load_layout_center(state: State<Arc<AppState>>) -> Result<String, String> {
-    let p = state
-        .flexlayout_center
-        .lock()
-        .map_err(|e| format!("Failed to lock center persistence: {}", e))?;
-    p.load()
-        .map_err(|e| format!("Failed to load center layout: {:?}", e))
-}
-
-#[tauri::command]
-pub fn save_layout_center(state: State<Arc<AppState>>, json: String) -> Result<(), String> {
-    let p = state
-        .flexlayout_center
-        .lock()
-        .map_err(|e| format!("Failed to lock center persistence: {}", e))?;
-    p.save(&json)
-        .map_err(|e| format!("Failed to save center layout: {:?}", e))
+pub fn layout_flushed(state: State<Arc<AppState>>) -> Result<(), String> {
+    state.layout_flush_ack.store(true, Ordering::SeqCst);
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
-    fn default_layout_json_matches_static_version() {
-        let default1 = FlexLayoutPersistence::default_layout_json();
-        let default2 = FlexLayoutPersistence::default_layout_json();
-        assert_eq!(default1, default2);
-    }
-
-    #[test]
-    fn default_layout_is_valid_json() {
-        let json = FlexLayoutPersistence::default_layout_json();
-        serde_json::from_str::<serde_json::Value>(&json)
-            .expect("default layout must be valid JSON");
+    fn shell_commands_are_the_only_layout_ipc() {
+        // W10: deprecated save_layout / load_layout_* must not reappear as commands.
+        // Strip the test module so the banned-name list here cannot false-positive.
+        let src = include_str!("flexlayout.rs");
+        let prod = src.split("#[cfg(test)]").next().unwrap_or(src);
+        for banned in [
+            "pub fn save_layout(",
+            "pub fn load_layout(",
+            "pub fn reset_layout_to_default(",
+            "pub fn load_layout_left(",
+            "pub fn save_layout_left(",
+            "pub fn load_layout_right(",
+            "pub fn save_layout_right(",
+            "pub fn load_layout_center(",
+            "pub fn save_layout_center(",
+        ] {
+            assert!(
+                !prod.contains(banned),
+                "deprecated layout command must stay removed: {banned}"
+            );
+        }
+        assert!(prod.contains("pub fn load_shell_layout("));
+        assert!(prod.contains("pub fn save_shell_layout("));
+        assert!(prod.contains("pub fn layout_flushed("));
     }
 }

@@ -3,12 +3,12 @@
  *
  * | File | Commands | Args from archive? | Verdict |
  * |---|---|---|---|
- * | `contexts/LayoutContext.tsx` | `load_layout_left/right`, `save_layout_left/right` | No — hardcoded names; JSON from FlexLayout model | Safe; baseline |
- * | `components/FlexLayoutContainer.tsx` | `save_layout_left/right` | No — same | Safe; baseline |
+ * | `contexts/layoutStore.ts` | `load_shell_layout`, `save_shell_layout`, `layout_flushed` | No — hardcoded names; JSON from FlexLayout models | Safe; W7 SoT |
  * | `spikes/PopoutTestWindow.tsx` | commented `is_release_build` | N/A | Safe; baseline |
  *
- * Debt: migrate these to `shared/ipc/flexlayout.ts` (or similar) later.
- * Until then `noRawInvoke.test.ts` allowlists exactly these paths so **new**
- * raw invokes fail CI.
+ * Debt: optional wrappers in `shared/ipc/flexlayout.ts`.
+ * `noRawInvoke.test.ts` allowlists exactly these paths so **new**
+ * raw invokes fail CI. Legacy `save_layout_*` / `load_layout_*` are banned
+ * from product src by `noLegacyLayoutSave.test.ts`.
  */
 export {};

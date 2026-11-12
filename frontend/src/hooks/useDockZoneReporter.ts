@@ -1,6 +1,10 @@
 import { useEffect, useRef } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { updateDockZone, type DockZonePayload } from '../shared/ipc/panels';
+import {
+  cssRectToPhysicalScreen,
+  physicalEdgeStrip,
+} from '../features/panels/dockZoneCoords';
 
 export interface UseDockZoneReporterOptions {
   /** Expanded sidebar element (may be display:none when collapsed). */
@@ -29,12 +33,13 @@ export interface UseDockZoneReporterOptions {
 
 /**
  * Reports sidebar screen geometry + slot midpoints to Rust for dock affinity.
- * Coalesces updates to one IPC call per animation frame.
+ * W6: physical screen pixels + monotonic seq; at most one IPC per animation frame.
  */
 export function useDockZoneReporter(options: UseDockZoneReporterOptions): void {
   const latestRef = useRef(options);
   latestRef.current = options;
   const rafRef = useRef<number | null>(null);
+  const seqRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -63,8 +68,8 @@ export function useDockZoneReporter(options: UseDockZoneReporterOptions): void {
       if (!hasTargets && !reportEmptyEdge) {
         try {
           await updateDockZone(side, null);
-        } catch {
-          /* ignore */
+        } catch (err) {
+          console.error('[useDockZoneReporter] clear zone failed', err);
         }
         return;
       }
@@ -72,19 +77,21 @@ export function useDockZoneReporter(options: UseDockZoneReporterOptions): void {
       try {
         const win = getCurrentWindow();
         const scale = await win.scaleFactor();
+        // Physical origin of the webview client area.
         const innerPos = await win.innerPosition();
         const innerSize = await win.innerSize();
-        const innerLogicalX = innerPos.x / scale;
-        const innerLogicalY = innerPos.y / scale;
-        const innerW = innerSize.width / scale;
-        const innerH = innerSize.height / scale;
+        const origin = {
+          physicalX: innerPos.x,
+          physicalY: innerPos.y,
+          dpr: scale,
+        };
 
-        // Prefer empty-edge rail when vacant; else collapsed strip / expanded sidebar.
         const el = !hasTargets
           ? emptyEdge?.current ?? null
           : collapsed
             ? col?.current ?? null
             : sb.current;
+
         let x: number;
         let y: number;
         let width: number;
@@ -93,41 +100,65 @@ export function useDockZoneReporter(options: UseDockZoneReporterOptions): void {
 
         if (el) {
           const rect = el.getBoundingClientRect();
-          // display:none → zero rect; fall back to geometry estimate.
           if (rect.width > 0 && rect.height > 0) {
-            x = innerLogicalX + rect.left;
-            y = innerLogicalY + rect.top;
-            width = rect.width;
-            height = rect.height;
+            const phys = cssRectToPhysicalScreen(
+              {
+                left: rect.left,
+                top: rect.top,
+                width: rect.width,
+                height: rect.height,
+              },
+              origin,
+            );
+            x = phys.x;
+            y = phys.y;
+            width = phys.width;
+            height = phys.height;
             el.querySelectorAll<HTMLElement>('[data-panel-id]').forEach((panelEl) => {
               const pr = panelEl.getBoundingClientRect();
               if (pr.height <= 0) return;
-              const top = innerLogicalY + pr.top;
-              const bottom = top + pr.height;
-              slots.push({ midY: top + pr.height / 2, top, bottom });
+              const p = cssRectToPhysicalScreen(
+                {
+                  left: pr.left,
+                  top: pr.top,
+                  width: pr.width,
+                  height: pr.height,
+                },
+                origin,
+              );
+              slots.push({
+                midY: p.y + p.height / 2,
+                top: p.y,
+                bottom: p.y + p.height,
+              });
             });
           } else {
-            const stripW = !hasTargets
-              ? 64
-              : collapsed
-                ? 40
-                : Math.max(40, widthPref);
-            width = stripW;
-            height = innerH;
-            y = innerLogicalY;
-            x = side === 'right' ? innerLogicalX + innerW - stripW : innerLogicalX;
+            const stripW = !hasTargets ? 64 : collapsed ? 40 : Math.max(40, widthPref);
+            const strip = physicalEdgeStrip(
+              side,
+              origin,
+              innerSize.width,
+              innerSize.height,
+              stripW,
+            );
+            x = strip.x;
+            y = strip.y;
+            width = strip.width;
+            height = strip.height;
           }
         } else {
-          // Ref not ready / empty side — estimate edge strip for affinity.
-          const stripW = !hasTargets
-            ? 64
-            : collapsed
-              ? 40
-              : Math.max(40, widthPref);
-          width = stripW;
-          height = innerH;
-          y = innerLogicalY;
-          x = side === 'right' ? innerLogicalX + innerW - stripW : innerLogicalX;
+          const stripW = !hasTargets ? 64 : collapsed ? 40 : Math.max(40, widthPref);
+          const strip = physicalEdgeStrip(
+            side,
+            origin,
+            innerSize.width,
+            innerSize.height,
+            stripW,
+          );
+          x = strip.x;
+          y = strip.y;
+          width = strip.width;
+          height = strip.height;
           if (retryTimer == null && (hasTargets || reportEmptyEdge)) {
             retryTimer = setTimeout(() => {
               retryTimer = null;
@@ -136,6 +167,7 @@ export function useDockZoneReporter(options: UseDockZoneReporterOptions): void {
           }
         }
 
+        seqRef.current += 1;
         const payload: DockZonePayload = {
           x,
           y,
@@ -144,10 +176,11 @@ export function useDockZoneReporter(options: UseDockZoneReporterOptions): void {
           scaleFactor: scale,
           side,
           slots,
+          seq: seqRef.current,
         };
         await updateDockZone(side, payload);
       } catch (err) {
-        console.warn('[useDockZoneReporter] update_dock_zone failed', err);
+        console.error('[useDockZoneReporter] update_dock_zone failed', err);
       }
     };
 
@@ -173,7 +206,6 @@ export function useDockZoneReporter(options: UseDockZoneReporterOptions): void {
       if (target) ro?.observe(target);
     };
     observeEl();
-    // Refs can populate a tick later.
     const observeTimer = setTimeout(observeEl, 50);
 
     window.addEventListener('resize', schedule);
@@ -211,13 +243,10 @@ export function useDockZoneReporter(options: UseDockZoneReporterOptions): void {
       unlistenRefresh.current?.();
       unlistenMoved?.();
       unlistenResized?.();
-      // Do NOT clear zone here — Strict Mode / dep churn was wiping the zone
-      // before the next flush, leaving affinity permanently disarmed.
     };
   }, [
     options.sidebarSide,
     options.sidebarCollapsed,
-    // width is read from latestRef; ResizeObserver covers live drag without rebinding.
     options.hasDockTargets,
     options.reportEmptyEdge,
   ]);

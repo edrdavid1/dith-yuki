@@ -12,12 +12,12 @@ import {
   Layout,
   Actions,
   Action,
+  TabNode,
+  TabSetNode,
   type Model,
-  type TabNode,
   type ITabRenderValues,
   I18nLabel,
 } from 'flexlayout-react';
-import { invoke } from '@tauri-apps/api/core';
 import {
   listDockedFlexComponents,
   normalizeSideToVerticalStack,
@@ -25,13 +25,14 @@ import {
   useLayoutContext,
   useSideLayout,
 } from '../contexts/LayoutContext';
+import { layoutStore } from '../contexts/layoutStore';
 import { layoutPanelFactory } from '../factories/layoutPanelFactory';
 import {
   SIDEBAR_EXPANDED_MAX_WIDTH,
   type FlexSide,
 } from '../defaults/DefaultLayouts';
 import { classifyDropOutlineAxis } from '../features/panels/dropOutlineAxis';
-import { shouldBlockFloatingTabMove } from '../features/panels/flexFloatDragGuard';
+import { filterLayoutAction } from '../features/panels/titlebarGestureController';
 import {
   canAcceptHorizontalDrop,
   maxDockedHorizontalSpan,
@@ -39,7 +40,8 @@ import {
 } from '../features/panels/horizontalDock';
 import { useShell } from '../app/shell/ShellContext';
 import WindowTitlebar from '../shared/ui/WindowTitlebar';
-import { useFlexTitlebarUndock } from '../features/panels/useFlexTitlebarUndock';
+import { useTitlebarGestureController } from '../features/panels/useTitlebarGestureController';
+import { floatUiAllowed } from '../features/panels/flexlayoutPatchGate';
 import { useDockZoneReporter } from '../hooks/useDockZoneReporter';
 import {
   dockBottomCornerFromEdges,
@@ -56,8 +58,7 @@ export interface FlexLayoutContainerProps {
   side: FlexSide;
   /**
    * App-window edges this column surface touches (e.g. bottom+right).
-   * Omit when the FlexLayout stack is not flush with the app edge
-   * (e.g. mixed layout: flex on top, legacy panels below).
+   * Omit when the FlexLayout stack is not flush with the app edge.
    */
   appEdges?: string;
   /** Extra CSS class for the wrapper div */
@@ -83,22 +84,27 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
     setSidebarCollapsed,
     setSidebarWidth,
   } = useShell();
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { model: leftModel } = useSideLayout('left');
+  const { model: rightModel } = useSideLayout('right');
   const columnRef = useRef<HTMLDivElement>(null);
   const isCenter = side === 'center';
   const sidebarPrefs = side === 'left' ? leftSidebar : rightSidebar;
   const otherSidebarPrefs = side === 'left' ? rightSidebar : leftSidebar;
   const dockedCount = listDockedFlexComponents(model).length;
-  const dropBudgetRef = useRef({
+  const otherColumns = maxDockedHorizontalSpan(
+    side === 'left' ? rightModel : leftModel,
+  );
+  const dropBudget = {
     sidebarWidth: sidebarPrefs.width,
     otherSidebarWidth: otherSidebarPrefs.collapsed ? 40 : otherSidebarPrefs.width,
     viewportWidth: typeof window !== 'undefined' ? window.innerWidth : 1280,
-  });
-  dropBudgetRef.current = {
-    sidebarWidth: sidebarPrefs.width,
-    otherSidebarWidth: otherSidebarPrefs.collapsed ? 40 : otherSidebarPrefs.width,
-    viewportWidth: typeof window !== 'undefined' ? window.innerWidth : 1280,
+    side: (isCenter ? 'left' : side) as 'left' | 'right',
+    otherColumns,
+    thisSideCollapsed: sidebarPrefs.collapsed,
+    otherSideCollapsed: otherSidebarPrefs.collapsed,
   };
+  const dropBudgetRef = useRef(dropBudget);
+  dropBudgetRef.current = dropBudget;
 
   useDockZoneReporter({
     sidebarRef: columnRef,
@@ -110,14 +116,6 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
     reportEmptyEdge: !isCenter,
     disabled: isCenter,
   });
-
-  useEffect(() => {
-    return () => {
-      if (saveTimerRef.current !== null) {
-        clearTimeout(saveTimerRef.current);
-      }
-    };
-  }, []);
 
   // Strip FlexLayout native `title=` browser tooltips (float/overflow/helpText).
   useEffect(() => {
@@ -289,28 +287,10 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
     };
   }, [model]);
 
-  const saveCommand =
-    side === 'left'
-      ? 'save_layout_left'
-      : side === 'right'
-        ? 'save_layout_right'
-        : 'save_layout_center';
-
-  const scheduleSave = useCallback(
-    (m: Model) => {
-      if (saveTimerRef.current !== null) {
-        clearTimeout(saveTimerRef.current);
-      }
-      saveTimerRef.current = setTimeout(() => {
-        saveTimerRef.current = null;
-        const json = JSON.stringify(m.toJson());
-        invoke<void>(saveCommand, { json }).catch((err) => {
-          console.error(`[FlexLayoutContainer:${side}] ${saveCommand} failed:`, err);
-        });
-      }, 500);
-    },
-    [saveCommand, side],
-  );
+  // W7: debounced envelope save lives in layoutStore (single layout.json).
+  const scheduleSave = useCallback((_m: Model) => {
+    layoutStore.schedulePersist();
+  }, []);
 
   const normalizingRef = useRef(false);
 
@@ -391,8 +371,9 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
       ) {
         return action;
       }
-      if (model && shouldBlockFloatingTabMove(model, action)) {
-        return undefined;
+      {
+        const gated = filterLayoutAction(model, action);
+        if (gated === undefined) return undefined;
       }
       const loc = action.data?.location as string | undefined;
       if (loc === 'center') {
@@ -416,6 +397,8 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
     [model, isCenter],
   );
 
+  const canFloat = floatUiAllowed();
+
   const factory = useCallback(
     (node: TabNode): React.ReactNode => {
       const component = node.getComponent() ?? '';
@@ -427,20 +410,21 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
               movePanelBetweenSides(component, target);
               setSidebarCollapsed(target, false);
             },
-        onPopOut: () => floatPanel(side, component),
+        onPopOut: canFloat ? () => floatPanel(side, component) : undefined,
         onDockBack: () => dockPanel(side, component),
         welcome,
       });
     },
-    [side, isCenter, movePanelBetweenSides, setSidebarCollapsed, floatPanel, dockPanel, welcome],
+    [side, isCenter, movePanelBetweenSides, setSidebarCollapsed, floatPanel, dockPanel, welcome, canFloat],
   );
 
   // Latest float target for undock-drag (set in onRenderTab per tab).
   const undockComponentRef = useRef<string>('');
-  const onUndockDrag = useFlexTitlebarUndock({
+  const onUndockDrag = useTitlebarGestureController({
     columnRef,
     mode: isCenter ? 'anyDirection' : 'sidebar',
     onUndock: () => {
+      if (!canFloat) return;
       const component = undockComponentRef.current;
       if (component) floatPanel(side, component);
     },
@@ -463,10 +447,14 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
           title={node.getName()}
           className="flex-dock-titlebar"
           dockSide={side === 'left' || side === 'right' ? side : undefined}
-          onMouseDown={(e) => {
-            undockComponentRef.current = component;
-            onUndockDrag(e);
-          }}
+          onMouseDown={
+            canFloat
+              ? (e) => {
+                  undockComponentRef.current = component;
+                  onUndockDrag(e);
+                }
+              : undefined
+          }
           onMoveToSide={
             isCenter
               ? undefined
@@ -475,14 +463,14 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
                   setSidebarCollapsed(target, false);
                 }
           }
-          onPopOut={() => floatPanel(side, component)}
+          onPopOut={canFloat ? () => floatPanel(side, component) : undefined}
         />
       );
     },
-    [side, isCenter, movePanelBetweenSides, setSidebarCollapsed, floatPanel, onUndockDrag],
+    [side, isCenter, movePanelBetweenSides, setSidebarCollapsed, floatPanel, onUndockDrag, canFloat],
   );
 
-  const onRenderTabSet = useCallback((_node: unknown, renderValues: {
+  const onRenderTabSet = useCallback((node: TabSetNode, renderValues: {
     stickyButtons: React.ReactNode[];
     buttons: React.ReactNode[];
     headerButtons: React.ReactNode[];
@@ -491,6 +479,22 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
     renderValues.stickyButtons = [];
     renderValues.buttons = [];
     renderValues.headerButtons = [];
+
+    // Marker for CSS: floating-only tabsets still mount a strip that can leave
+    // a residual gap after rebalanceFloatingTabsets collapses height to 0.
+    const kids = node.getChildren();
+    let hasDocked = false;
+    let hasFloating = false;
+    for (const child of kids) {
+      if (child.getType() !== TabNode.TYPE) continue;
+      if ((child as TabNode).isFloating()) hasFloating = true;
+      else hasDocked = true;
+    }
+    if (hasFloating && !hasDocked) {
+      renderValues.stickyButtons = [
+        <span key="flex-float-host" data-flex-float-host hidden />,
+      ];
+    }
   }, []);
 
   // No dock placeholder — floated panels free the column; redock via drag or titlebar.

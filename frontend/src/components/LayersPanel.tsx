@@ -26,6 +26,7 @@ import {
   sliderThumbLeftCss,
 } from '../shared/ui/retroSliderGeometry';
 import { isGlitchFamilyFilter } from '../types/effects';
+import { activateOnPrimaryPress } from '../shared/ui/activateOnPrimaryPress';
 const cn = bind({ ...styles, ...retroSlider, ...layerControls });
 
 /** Same end inset as effect Sliders (see RETRO_SLIDER_END_INSET_PX). */
@@ -727,13 +728,7 @@ export default function LayersPanel({
             <button
               type="button"
               className={cn('lp-list-add')}
-              onPointerDown={(e) => {
-                if (e.button !== 0) return;
-                e.preventDefault();
-                e.stopPropagation();
-                onAddLayer();
-              }}
-              onClick={(e) => e.preventDefault()}
+              {...activateOnPrimaryPress(onAddLayer)}
               aria-label={labelWithShortcut('Add effect', shortcuts.newLayer)}
               title={labelWithShortcut('Add effect', shortcuts.newLayer)}
             >
@@ -746,13 +741,9 @@ export default function LayersPanel({
           {filters.length === 0 && !imageSourceLayer && (
             <div
               className={cn("lp-add-placeholder")}
-              onPointerDown={(e) => {
-                if (e.button !== 0) return;
-                e.preventDefault();
-                e.stopPropagation();
-                onAddLayer();
-              }}
-              onClick={(e) => e.preventDefault()}
+              {...activateOnPrimaryPress(onAddLayer)}
+              role="button"
+              tabIndex={0}
             >
               <span>add layer</span>
             </div>
@@ -766,13 +757,7 @@ export default function LayersPanel({
         <Tooltip label={labelWithShortcut('Add effect', shortcuts.newLayer)}>
           <button
             className={cn("lp-footer-btn")}
-            onPointerDown={(e) => {
-              if (e.button !== 0) return;
-              e.preventDefault();
-              e.stopPropagation();
-              onAddLayer();
-            }}
-            onClick={(e) => e.preventDefault()}
+            {...activateOnPrimaryPress(onAddLayer)}
             aria-label={labelWithShortcut('Add effect', shortcuts.newLayer)}
           >
             <Icon name="plus" width={14} height={14} />

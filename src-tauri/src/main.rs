@@ -15,7 +15,8 @@ mod dock_affinity;
 mod document_session;
 mod ed_progress;
 mod file_log;
-mod flexlayout_persistence;
+mod flex_popout_lifecycle;
+mod shell_layout_persistence;
 #[cfg(test)]
 mod fs_ed_b1_merge_tests;
 #[cfg(test)]
@@ -74,7 +75,7 @@ use std::sync::Arc;
 use commands::AppState;
 use engine_project::layer::LayerNode;
 use engine_tiles::{Priority, RecomputeTask, TileCoord, TileKey, TILE_SIZE};
-use tauri::webview::{NewWindowResponse, WebviewWindowBuilder};
+use tauri::webview::{NewWindowResponse, PageLoadEvent, WebviewWindowBuilder};
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 use tile_protocol::{parse_tile_url, LayerTarget};
 
@@ -180,18 +181,20 @@ fn main() {
                 WindowEvent::Moved(_) if is_flex_popout => {
                     let app_handle = window.app_handle().clone();
                     let state = app_handle.state::<Arc<AppState>>();
-                    if let (Ok(pos), Ok(size), Ok(scale)) = (
-                        window.outer_position(),
-                        window.outer_size(),
-                        window.scale_factor(),
-                    ) {
-                        let logical = dock_affinity::Rect {
-                            x: pos.x as f64 / scale,
-                            y: pos.y as f64 / scale,
-                            width: size.width as f64 / scale,
-                            height: size.height as f64 / scale,
+                    // W6: physical screen pixels (same space as dock zones).
+                    if let (Ok(pos), Ok(size)) = (window.outer_position(), window.outer_size()) {
+                        let physical = dock_affinity::Rect {
+                            x: pos.x as f64,
+                            y: pos.y as f64,
+                            width: size.width as f64,
+                            height: size.height as f64,
                         };
-                        commands::panels::handle_panel_moved(&app_handle, state.inner(), logical);
+                        commands::panels::handle_panel_moved(
+                            &app_handle,
+                            state.inner(),
+                            physical,
+                            &label,
+                        );
                     }
                 }
                 // Attention only — never show from here (finishBoot owns reveal).
@@ -199,10 +202,46 @@ fn main() {
                     #[cfg(target_os = "macos")]
                     macos_dock_bounce::stop(window.app_handle());
                 }
+                // W2: OS / crash close of a flex popout → frontend docks the tab.
+                WindowEvent::Destroyed if is_flex_popout => {
+                    let app_handle = window.app_handle().clone();
+                    eprintln!("[flex-dock] flex-popout destroyed label={label}");
+                    let _ = app_handle.emit(
+                        "flex-popout-destroyed",
+                        serde_json::json!({ "label": label }),
+                    );
+                }
+                // W5: main close / crash — tear down every flex-popout shell.
+                // W7: emit flush-layout; FE persists and acks via layout_flushed (1s wait).
+                WindowEvent::CloseRequested { .. } if label == "main" => {
+                    flex_popout_lifecycle::close_all_flex_popouts(window.app_handle());
+                    let app_handle = window.app_handle().clone();
+                    let state = app_handle.state::<Arc<AppState>>().inner().clone();
+                    state.layout_flush_ack.store(false, Ordering::SeqCst);
+                    let _ = app_handle.emit("flush-layout", ());
+                    std::thread::spawn(move || {
+                        let deadline =
+                            std::time::Instant::now() + std::time::Duration::from_millis(1000);
+                        while std::time::Instant::now() < deadline {
+                            if state.layout_flush_ack.load(Ordering::SeqCst) {
+                                eprintln!("[flex-dock] layout-flushed ack received");
+                                return;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(20));
+                        }
+                        eprintln!("[flex-dock] flush-layout timed out after 1000ms");
+                    });
+                }
+                WindowEvent::Destroyed if label == "main" => {
+                    flex_popout_lifecycle::close_all_flex_popouts(window.app_handle());
+                }
                 _ => {}
             }
         })
         .setup(move |app| {
+            // W5: scrub leftover flex-popout-* before (re)creating main.
+            flex_popout_lifecycle::close_orphan_flex_popouts_at_startup(app.handle());
+
             // Slow cold starts: bounce the Dock icon until the window is ready.
             #[cfg(target_os = "macos")]
             macos_dock_bounce::start(app.handle());
@@ -238,6 +277,11 @@ fn main() {
                 webview_debug::apply(WebviewWindowBuilder::from_config(app, &main_conf)?)
                     .background_color(window_background::THEME_BG)
                     .on_page_load(|window, payload| {
+                        // W5: Cmd/Ctrl+R (and any main navigation) orphans portals —
+                        // close flex-popout-* before the new document mounts.
+                        if payload.event() == PageLoadEvent::Started {
+                            flex_popout_lifecycle::close_all_flex_popouts(window.app_handle());
+                        }
                         window_background::reapply_after_load(&window, payload.event());
                     })
                     .on_new_window(move |url, features| {
@@ -278,8 +322,14 @@ fn main() {
                                     .map(|s| s.height.round().max(200.0) as u32)
                                     .unwrap_or(500);
 
+                                // Cascade each new popout so siblings are not stacked
+                                // on the exact same origin (2nd/3rd float looked stuck).
+                                let cascade = (n as i32).saturating_mul(32);
                                 let (x, y) = match req_pos {
-                                    Some(p) => (p.x.round() as i32, p.y.round() as i32),
+                                    Some(p) => (
+                                        p.x.round() as i32 + cascade,
+                                        p.y.round() as i32 + cascade,
+                                    ),
                                     None => {
                                         // Fall back beside the main window.
                                         if let Some(main) =
@@ -288,14 +338,18 @@ fn main() {
                                             if let (Ok(pos), Ok(scale)) =
                                                 (main.outer_position(), main.scale_factor())
                                             {
-                                                let lx = (pos.x as f64 / scale).round() as i32 + 40;
-                                                let ly = (pos.y as f64 / scale).round() as i32 + 60;
+                                                let lx = (pos.x as f64 / scale).round() as i32
+                                                    + 40
+                                                    + cascade;
+                                                let ly = (pos.y as f64 / scale).round() as i32
+                                                    + 60
+                                                    + cascade;
                                                 (lx, ly)
                                             } else {
-                                                (80, 80)
+                                                (80 + cascade, 80 + cascade)
                                             }
                                         } else {
-                                            (80, 80)
+                                            (80 + cascade, 80 + cascade)
                                         }
                                     }
                                 };
@@ -306,8 +360,11 @@ fn main() {
                                     width,
                                     height,
                                 };
+                                // Neutral panel id — window.open features already
+                                // carry the requested size; do not clamp every
+                                // popout as if it were Layers.
                                 let fixed = commands::panels::resolve_undock_bounds(
-                                    "layers",
+                                    "flex-popout",
                                     Some(raw),
                                     &monitors,
                                     primary.as_ref(),
@@ -360,37 +417,13 @@ fn main() {
                 *slot = Some(app_handle.clone());
             }
 
-            // Initialize FlexLayout persistence with real app_data_dir (B3)
+            // W7/W10: single layout.json envelope
             if let Ok(app_data_dir) = app_handle.path().app_data_dir() {
-                let new_persistence =
-                    crate::flexlayout_persistence::FlexLayoutPersistence::new(app_data_dir.clone());
-                if let Ok(mut persistence_slot) = state.flexlayout_persistence.lock() {
-                    *persistence_slot = new_persistence;
-                }
-                // B4a: per-side persistence
-                let left_persistence =
-                    crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
-                        app_data_dir.clone(),
-                        "flexlayout_left.json",
-                    );
-                let right_persistence =
-                    crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
-                        app_data_dir.clone(),
-                        "flexlayout_right.json",
-                    );
-                let center_persistence =
-                    crate::flexlayout_persistence::FlexLayoutPersistence::with_filename(
-                        app_data_dir.clone(),
-                        "flexlayout_center.json",
-                    );
-                if let Ok(mut slot) = state.flexlayout_left.lock() {
-                    *slot = left_persistence;
-                }
-                if let Ok(mut slot) = state.flexlayout_right.lock() {
-                    *slot = right_persistence;
-                }
-                if let Ok(mut slot) = state.flexlayout_center.lock() {
-                    *slot = center_persistence;
+                let shell = crate::shell_layout_persistence::ShellLayoutPersistence::new(
+                    app_data_dir.clone(),
+                );
+                if let Ok(mut slot) = state.shell_layout.lock() {
+                    *slot = shell;
                 }
 
                 // Crash-recovery journal root: {app_data}/recovery/
@@ -571,19 +604,14 @@ fn main() {
             // Flex float-drag / dock affinity
             commands::panels::update_dock_zone,
             commands::panels::begin_float_drag,
+            commands::panels::bind_float_drag_window,
             commands::panels::cancel_float_drag,
             commands::panels::complete_float_drag,
             // FlexLayout commands
-            commands::flexlayout::save_layout,
-            commands::flexlayout::load_layout,
-            commands::flexlayout::reset_layout_to_default,
-            // B4a: per-side FlexLayout commands
-            commands::flexlayout::load_layout_left,
-            commands::flexlayout::save_layout_left,
-            commands::flexlayout::load_layout_right,
-            commands::flexlayout::save_layout_right,
-            commands::flexlayout::load_layout_center,
-            commands::flexlayout::save_layout_center,
+            // W7/W10: single layout.json envelope
+            commands::flexlayout::load_shell_layout,
+            commands::flexlayout::save_shell_layout,
+            commands::flexlayout::layout_flushed,
             // Workspace / AppConfig
             commands::get_app_config,
             commands::get_ui_visibility,

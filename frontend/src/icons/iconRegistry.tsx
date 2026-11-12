@@ -88,6 +88,7 @@ export type IconName =
   | 'sidebar-swap'
   | 'focus-mode'
   | 'copy-x'
+  | 'return-panels'
   | 'arrow-left'
   | 'arrow-right'
   ;
@@ -152,6 +153,8 @@ const PIXEL_ICONS: Record<string, PixelIcon> = {
   'sidebar-swap': FlipHorizontal2,
   'focus-mode': Monitor,
   'copy-x': CopyXSharp,
+  /** Return floated OS panels to the dock. */
+  'return-panels': Reload,
   'arrow-left': ArrowLeft,
   'arrow-right': ArrowRight,
 };
