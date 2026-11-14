@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use super::gpu_dither_cpu::{
     blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, palette_rgba8_blue_noise,
-    with_pixel_size_blocks, PaletteRgb, Rgba8, CORE, DEFAULT_SPREAD, PAD,
+    expand_block_lattice, with_pixel_size_blocks, PaletteRgb, Rgba8, CORE, DEFAULT_SPREAD,
+    PAD,
 };
 
 /// Frozen until geometry pick / first external ship (Part A §3.8).
@@ -606,6 +607,7 @@ fn run_cpu_case(case: &MiniCase) -> Result<Vec<u8>, Box<MismatchReport>> {
         case.width,
         case.height,
         case.pixel_size,
+        false, // selftest compares RGB kernels; soft alpha expand is covered elsewhere
         |small, sw, sh| match case.algo {
             Algo::BlockedFs => blocked_fs_cpu(small, sw, sh, &case.palette, CORE, CORE, PAD),
             Algo::BlueNoise => blue_noise_cpu(
@@ -686,24 +688,17 @@ fn run_gpu_case(
     }
     .map_err(|e| e.to_string())?;
 
-    if ps <= 1 {
-        Ok(gpu.rgba8)
-    } else {
-        let dithered = bytes_to_rgba8(&gpu.rgba8);
-        let bw = tw as usize;
-        let w = case.width as usize;
-        let h = case.height as usize;
-        let mut out = vec![Rgba8::new(0, 0, 0, 0); w * h];
-        for y in 0..h {
-            for x in 0..w {
-                let by = y / ps as usize;
-                let bx = x / ps as usize;
-                let p = dithered[by * bw + bx];
-                out[y * w + x] = Rgba8::new(p.r, p.g, p.b, case.pixels[y * w + x].a);
-            }
-        }
-        Ok(rgba8_to_bytes(&out))
-    }
+    let dithered = bytes_to_rgba8(&gpu.rgba8);
+    let out = expand_block_lattice(
+        &dithered,
+        &case.pixels,
+        case.width,
+        case.height,
+        ps,
+        false,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(rgba8_to_bytes(&out))
 }
 
 fn compare_bytes(

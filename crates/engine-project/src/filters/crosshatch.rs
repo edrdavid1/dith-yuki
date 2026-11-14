@@ -113,20 +113,18 @@ pub fn apply_crosshatch_into(
             let darkness = 1.0 - lum;
             let ink = crosshatch_ink(gx, gy, darkness, spacing, base_angle, thickness);
             let v = if ink { 0.0 } else { 1.0 };
-
-            dst.set(x, y, 0, v);
-            dst.set(x, y, 1, v);
-            dst.set(x, y, 2, v);
-            dst.set(
-                x,
-                y,
-                3,
-                if params.dither_alpha && a <= 0.0 {
-                    0.0
-                } else {
-                    a
-                },
-            );
+            let a_out = params.map_alpha(a, 0.5);
+            if params.dither_alpha && a_out <= 0.0 {
+                dst.set(x, y, 0, 0.0);
+                dst.set(x, y, 1, 0.0);
+                dst.set(x, y, 2, 0.0);
+                dst.set(x, y, 3, 0.0);
+            } else {
+                dst.set(x, y, 0, v);
+                dst.set(x, y, 1, v);
+                dst.set(x, y, 2, v);
+                dst.set(x, y, 3, a_out);
+            }
         }
     }
     Ok(())

@@ -267,14 +267,102 @@ fn read_clamped(input: &[Rgba8], w: usize, h: usize, x: i32, y: i32) -> Rgba8 {
 /// ED-style mega-pixel grid: sample the top-left of each `ps×ps` block, then
 /// expand the dithered block grid back to full resolution.
 ///
+/// Map soft coverage to 0/255 when `dither_alpha` (threshold ½, same as ED).
+#[inline]
+pub fn map_alpha_u8(src_a: u8, dither_alpha: bool) -> u8 {
+    if !dither_alpha {
+        return src_a;
+    }
+    if src_a == 0 {
+        0
+    } else if src_a == 255 || src_a > 127 {
+        255
+    } else {
+        0
+    }
+}
+
+/// Expand a block-lattice dither result back to full resolution.
+///
+/// - `dither_alpha == false`: RGB from the lattice cell; alpha from the source
+///   pixel (legacy soft PNG edges).
+/// - `dither_alpha == true`: every cell is fully opaque or fully transparent
+///   from the block-rep alpha (binarized). Punched cells clear RGB so PNG AA
+///   fringe cannot show as a silhouette contour.
+pub fn expand_block_lattice(
+    dithered: &[Rgba8],
+    input: &[Rgba8],
+    width: u32,
+    height: u32,
+    pixel_size: u32,
+    dither_alpha: bool,
+) -> Result<Vec<Rgba8>, EngineError> {
+    let ps = pixel_size.max(1);
+    let w = width as usize;
+    let h = height as usize;
+    if input.len() != w * h {
+        return Err(EngineError::invalid_filter_params(
+            "expand_block_lattice: input size",
+        ));
+    }
+    if ps <= 1 {
+        if dithered.len() != w * h {
+            return Err(EngineError::invalid_filter_params(
+                "expand_block_lattice: dither size",
+            ));
+        }
+        if !dither_alpha {
+            return Ok(dithered.to_vec());
+        }
+        let mut out = Vec::with_capacity(w * h);
+        for p in dithered {
+            let a = map_alpha_u8(p.a, true);
+            if a == 0 {
+                out.push(Rgba8::new(0, 0, 0, 0));
+            } else {
+                out.push(Rgba8::new(p.r, p.g, p.b, a));
+            }
+        }
+        return Ok(out);
+    }
+
+    let bw = width.div_ceil(ps) as usize;
+    let bh = height.div_ceil(ps) as usize;
+    if dithered.len() != bw * bh {
+        return Err(EngineError::invalid_filter_params(
+            "expand_block_lattice: lattice size",
+        ));
+    }
+    let mut out = Vec::with_capacity(w * h);
+    for y in 0..h {
+        let by = (y as u32 / ps) as usize;
+        for x in 0..w {
+            let bx = (x as u32 / ps) as usize;
+            let p = dithered[by * bw + bx];
+            if dither_alpha {
+                let a = map_alpha_u8(p.a, true);
+                if a == 0 {
+                    out.push(Rgba8::new(0, 0, 0, 0));
+                } else {
+                    out.push(Rgba8::new(p.r, p.g, p.b, a));
+                }
+            } else {
+                out.push(Rgba8::new(p.r, p.g, p.b, input[y * w + x].a));
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Matches `docs/tile-pipeline.md` §6 (“Block representative”). Does **not**
 /// change tile warm-up / Q8.8 arithmetic — only the sampling lattice.
-/// `ps <= 1` is a no-op (bit-identical to running `f` on `input`).
+/// `ps <= 1` runs `f` on `input`, then applies [`expand_block_lattice`].
 pub fn with_pixel_size_blocks<F>(
     input: &[Rgba8],
     width: u32,
     height: u32,
     pixel_size: u32,
+    dither_alpha: bool,
     f: F,
 ) -> Result<Vec<Rgba8>, EngineError>
 where
@@ -289,7 +377,8 @@ where
         ));
     }
     if ps <= 1 {
-        return f(input, width, height);
+        let dithered = f(input, width, height)?;
+        return expand_block_lattice(&dithered, input, width, height, 1, dither_alpha);
     }
     let bw = width.div_ceil(ps);
     let bh = height.div_ceil(ps);
@@ -302,23 +391,14 @@ where
         }
     }
     let dithered = f(&small, bw, bh)?;
-    if dithered.len() != (bw * bh) as usize {
-        return Err(EngineError::invalid_filter_params(
-            "pixel_size blocks: dither size mismatch",
-        ));
-    }
-    let mut out = Vec::with_capacity(w * h);
-    for y in 0..h {
-        let by = (y as u32 / ps) as usize;
-        for x in 0..w {
-            let bx = (x as u32 / ps) as usize;
-            let p = dithered[by * (bw as usize) + bx];
-            // Alpha comes from the source pixel (ED keeps alpha; block color from rep).
-            let src = input[y * w + x];
-            out.push(Rgba8::new(p.r, p.g, p.b, src.a));
-        }
-    }
-    Ok(out)
+    expand_block_lattice(
+        &dithered,
+        input,
+        width,
+        height,
+        ps,
+        dither_alpha,
+    )
 }
 
 /// Approximate blocked Floyd–Steinberg with left/top warm-up.
@@ -925,6 +1005,35 @@ mod tests {
         let pal = [PaletteRgb { r: 0, g: 0, b: 0 }];
         let out = blue_noise_cpu(&input, 16, 16, &pal, blue_noise_ranks(), 128).unwrap();
         assert_eq!(out[3].a, 77);
+    }
+
+    #[test]
+    fn expand_dither_alpha_pixelates_soft_silhouette() {
+        // Full-res source has a soft yellow fringe; lattice RGB is already blocky.
+        let mut input = vec![Rgba8::new(0, 0, 0, 0); 16];
+        for y in 0..4 {
+            input[y * 4] = Rgba8::new(200, 200, 200, 255);
+            input[y * 4 + 1] = Rgba8::new(255, 220, 80, 90); // soft AA fringe
+        }
+        let dithered = vec![
+            Rgba8::new(180, 180, 180, 255),
+            Rgba8::new(0, 0, 0, 0),
+            Rgba8::new(180, 180, 180, 255),
+            Rgba8::new(0, 0, 0, 0),
+        ];
+        let soft = expand_block_lattice(&dithered, &input, 4, 4, 2, false).unwrap();
+        assert_eq!(soft[1].a, 90, "legacy expand keeps per-pixel soft alpha");
+
+        let hard = expand_block_lattice(&dithered, &input, 4, 4, 2, true).unwrap();
+        for p in &hard {
+            assert!(p.a == 0 || p.a == 255, "expected binary alpha, got {}", p.a);
+            if p.a == 0 {
+                assert_eq!((p.r, p.g, p.b), (0, 0, 0));
+            }
+        }
+        // Fringe pixel joins the opaque left block — no translucent yellow edge.
+        assert_eq!(hard[1].a, 255);
+        assert_eq!((hard[1].r, hard[1].g, hard[1].b), (180, 180, 180));
     }
 
     #[test]

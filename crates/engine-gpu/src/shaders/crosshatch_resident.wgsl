@@ -81,7 +81,19 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let v = select(1.0, 0.0, ink);
     var out = vec4<f32>(v, v, v, rgba.a);
-    if (dither_a && rgba.a <= 0.0) {
+    if (dither_a) {
+        // Match CPU map_alpha(..., 0.5): soft PNG edges → hard silhouette.
+        if (rgba.a <= 0.0) {
+            out.a = 0.0;
+        } else if (rgba.a >= 1.0) {
+            out.a = 1.0;
+        } else if (rgba.a > 0.5) {
+            out.a = 1.0;
+        } else {
+            out.a = 0.0;
+        }
+    }
+    if (dither_a && out.a <= 0.0) {
         out = vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
     textureStore(tile_out, vec2<i32>(px, py), out);

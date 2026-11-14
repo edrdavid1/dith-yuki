@@ -16,14 +16,65 @@
 //!
 //! # Downsampling Algorithm
 //!
-//! The `downsample_tile` function implements a simple 1:2 box filter:
+//! The `downsample_tile` function implements a 1:2 box filter over associated
+//! RGBA (Composite coverage-weighted RGB):
 //! - For each output pixel (x, y), average its 2×2 neighborhood from the input
-//! - Applied per-channel (RGBA)
+//! - Soft alpha (any mid-coverage sample) keeps the channel average
+//! - Binary silhouettes (`dither_alpha` 0/1 edges) snap back to opaque or
+//!   transparent so zoom-out preview does not paint a soft fringe over the
+//!   canvas background
 //! - Deterministic and reproducible
 
 use crate::{tile_fresh, CacheStage, PixelTile, TileCache, TileCoord, TileKey, HALO, TILE_SIZE};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+
+#[inline]
+fn is_binary_alpha(a: f32) -> bool {
+    a <= 1e-6 || (a - 1.0).abs() <= 1e-6
+}
+
+/// Box-filter one associated RGBA 2×2 into an output sample.
+///
+/// When every contributing alpha is already binary (0 or 1), snap the average
+/// coverage back to opaque or transparent and unassociate RGB at full coverage.
+/// Soft mid-alpha sources keep a plain channel average.
+#[inline]
+fn downsample_associated_rgba(
+    samples: &[[f32; 4]],
+) -> [f32; 4] {
+    debug_assert!(!samples.is_empty());
+    let n = samples.len() as f32;
+    let mut sum_r = 0.0f32;
+    let mut sum_g = 0.0f32;
+    let mut sum_b = 0.0f32;
+    let mut sum_a = 0.0f32;
+    let mut binary = true;
+    for s in samples {
+        sum_r += s[0];
+        sum_g += s[1];
+        sum_b += s[2];
+        sum_a += s[3];
+        binary &= is_binary_alpha(s[3]);
+    }
+    let avg_r = sum_r / n;
+    let avg_g = sum_g / n;
+    let avg_b = sum_b / n;
+    let avg_a = sum_a / n;
+    if !binary {
+        return [avg_r, avg_g, avg_b, avg_a];
+    }
+    if avg_a >= 0.5 {
+        // a=1 ⇒ associated RGB equals straight display RGB.
+        if avg_a > 1e-6 {
+            [avg_r / avg_a, avg_g / avg_a, avg_b / avg_a, 1.0]
+        } else {
+            [0.0, 0.0, 0.0, 1.0]
+        }
+    } else {
+        [0.0, 0.0, 0.0, 0.0]
+    }
+}
 
 /// Four child coords that box-filter into `parent` (level must be > 0).
 pub fn pyramid_child_coords(parent: TileCoord) -> [TileCoord; 4] {
@@ -224,21 +275,44 @@ pub fn downsample_tile(parent: &PixelTile) -> PixelTile {
     // Process the main tile region: output_size × output_size output pixels
     for y in 0..output_size {
         for x in 0..output_size {
-            for c in 0..4 {
-                // Parent coordinates for 2×2 neighborhood
-                // Since both parent and child use the same absolute coordinate system (with halo),
-                // we read from parent's main region (HALO..HALO+TILE_SIZE)
-                let p00 = parent.at(2 * x + HALO, 2 * y + HALO, c);
-                let p10 = parent.at(2 * x + 1 + HALO, 2 * y + HALO, c);
-                let p01 = parent.at(2 * x + HALO, 2 * y + 1 + HALO, c);
-                let p11 = parent.at(2 * x + 1 + HALO, 2 * y + 1 + HALO, c);
-
-                // Box filter: average of 2×2 neighborhood
-                let avg = (p00 + p10 + p01 + p11) * 0.25;
-
-                // Write to child at halo-offset position
-                child.set(x + HALO, y + HALO, c, avg);
-            }
+            // Parent coordinates for 2×2 neighborhood
+            // Since both parent and child use the same absolute coordinate system (with halo),
+            // we read from parent's main region (HALO..HALO+TILE_SIZE)
+            let x0 = 2 * x + HALO;
+            let y0 = 2 * y + HALO;
+            let samples = [
+                [
+                    parent.at(x0, y0, 0),
+                    parent.at(x0, y0, 1),
+                    parent.at(x0, y0, 2),
+                    parent.at(x0, y0, 3),
+                ],
+                [
+                    parent.at(x0 + 1, y0, 0),
+                    parent.at(x0 + 1, y0, 1),
+                    parent.at(x0 + 1, y0, 2),
+                    parent.at(x0 + 1, y0, 3),
+                ],
+                [
+                    parent.at(x0, y0 + 1, 0),
+                    parent.at(x0, y0 + 1, 1),
+                    parent.at(x0, y0 + 1, 2),
+                    parent.at(x0, y0 + 1, 3),
+                ],
+                [
+                    parent.at(x0 + 1, y0 + 1, 0),
+                    parent.at(x0 + 1, y0 + 1, 1),
+                    parent.at(x0 + 1, y0 + 1, 2),
+                    parent.at(x0 + 1, y0 + 1, 3),
+                ],
+            ];
+            let rgba = downsample_associated_rgba(&samples);
+            let ox = x + HALO;
+            let oy = y + HALO;
+            child.set(ox, oy, 0, rgba[0]);
+            child.set(ox, oy, 1, rgba[1]);
+            child.set(ox, oy, 2, rgba[2]);
+            child.set(ox, oy, 3, rgba[3]);
         }
     }
 
@@ -387,30 +461,36 @@ pub fn generate_pyramid_tile(
             let src_local_x = (out_x - HALO) * 2;
             let src_local_y = (out_y - HALO) * 2;
 
-            // Average 2x2 block from the appropriate child tiles per channel
-            for c in 0..4u32 {
-                let mut sum = 0.0f32;
-                let mut count = 0u32;
+            let mut samples = [[0.0f32; 4]; 4];
+            let mut count = 0usize;
 
-                for dy in 0..2u32 {
-                    for dx in 0..2u32 {
-                        let px = src_local_x + dx;
-                        let py = src_local_y + dy;
-                        // Which child tile? (0=TL, 1=TR, 2=BL, 3=BR)
-                        let child_idx = (py / TILE_SIZE) * 2 + (px / TILE_SIZE);
-                        let local_x = (px % TILE_SIZE) + HALO;
-                        let local_y = (py % TILE_SIZE) + HALO;
+            for dy in 0..2u32 {
+                for dx in 0..2u32 {
+                    let px = src_local_x + dx;
+                    let py = src_local_y + dy;
+                    // Which child tile? (0=TL, 1=TR, 2=BL, 3=BR)
+                    let child_idx = (py / TILE_SIZE) * 2 + (px / TILE_SIZE);
+                    let local_x = (px % TILE_SIZE) + HALO;
+                    let local_y = (py % TILE_SIZE) + HALO;
 
-                        if let Some(ref tile) = child_tiles[child_idx as usize] {
-                            sum += tile.at(local_x, local_y, c);
-                            count += 1;
-                        }
+                    if let Some(ref tile) = child_tiles[child_idx as usize] {
+                        samples[count] = [
+                            tile.at(local_x, local_y, 0),
+                            tile.at(local_x, local_y, 1),
+                            tile.at(local_x, local_y, 2),
+                            tile.at(local_x, local_y, 3),
+                        ];
+                        count += 1;
                     }
                 }
+            }
 
-                if count > 0 {
-                    result.set(out_x, out_y, c, sum / count as f32);
-                }
+            if count > 0 {
+                let rgba = downsample_associated_rgba(&samples[..count]);
+                result.set(out_x, out_y, 0, rgba[0]);
+                result.set(out_x, out_y, 1, rgba[1]);
+                result.set(out_x, out_y, 2, rgba[2]);
+                result.set(out_x, out_y, 3, rgba[3]);
             }
         }
     }
@@ -506,6 +586,58 @@ mod tests {
     }
 
     #[test]
+    fn downsample_hardens_binary_silhouette_edges() {
+        // Associated white (1,1,1,1) next to transparent (0,0,0,0) must not become
+        // mid-alpha white — that paints a light fringe over the preview background.
+        let mut parent = PixelTile::new();
+        for y in HALO..(HALO + TILE_SIZE) {
+            for x in HALO..(HALO + TILE_SIZE) {
+                let opaque = (x - HALO) < TILE_SIZE / 2;
+                if opaque {
+                    parent.set(x, y, 0, 1.0);
+                    parent.set(x, y, 1, 1.0);
+                    parent.set(x, y, 2, 1.0);
+                    parent.set(x, y, 3, 1.0);
+                }
+            }
+        }
+
+        let child = downsample_tile(&parent);
+        let output_size = TILE_SIZE / 2;
+        // Last fully-opaque output column (covers parent x in [TILE_SIZE/2-2, TILE_SIZE/2)).
+        let edge_x = HALO + output_size / 2 - 1;
+        let clear_x = HALO + output_size / 2;
+        for y in HALO..(HALO + output_size) {
+            assert!((child.at(edge_x, y, 3) - 1.0).abs() < 1e-6);
+            assert!((child.at(edge_x, y, 0) - 1.0).abs() < 1e-6);
+            assert!(child.at(clear_x, y, 3).abs() < 1e-6);
+            assert!(child.at(clear_x, y, 0).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn downsample_keeps_soft_alpha_average() {
+        let mut parent = PixelTile::new();
+        for y in HALO..(HALO + TILE_SIZE) {
+            for x in HALO..(HALO + TILE_SIZE) {
+                // Associated mid coverage: straight white * 0.5
+                parent.set(x, y, 0, 0.5);
+                parent.set(x, y, 1, 0.5);
+                parent.set(x, y, 2, 0.5);
+                parent.set(x, y, 3, 0.5);
+            }
+        }
+        let child = downsample_tile(&parent);
+        let output_size = TILE_SIZE / 2;
+        for y in HALO..(HALO + output_size) {
+            for x in HALO..(HALO + output_size) {
+                assert!((child.at(x, y, 3) - 0.5).abs() < 1e-6);
+                assert!((child.at(x, y, 0) - 0.5).abs() < 1e-6);
+            }
+        }
+    }
+
+    #[test]
     fn downsample_preserves_channel_independence() {
         let mut parent = PixelTile::new();
 
@@ -538,16 +670,18 @@ mod tests {
         let mut parent = PixelTile::new();
 
         // Set specific 2×2 blocks in parent and verify downsampling
-        // Block at (HALO, HALO) in parent should downsample to (HALO, HALO) in child
-        parent.set(HALO, HALO, 0, 0.0); // p00
-        parent.set(HALO + 1, HALO, 0, 1.0); // p10
-        parent.set(HALO, HALO + 1, 0, 2.0); // p01
-        parent.set(HALO + 1, HALO + 1, 0, 3.0); // p11
+        // Block at (HALO, HALO) in parent should downsample to (HALO, HALO) in child.
+        // Opaque alpha so binary snap keeps coverage and does not clear RGB.
+        for (dx, dy, r) in [(0u32, 0u32, 0.0), (1, 0, 1.0), (0, 1, 2.0), (1, 1, 3.0)] {
+            parent.set(HALO + dx, HALO + dy, 0, r);
+            parent.set(HALO + dx, HALO + dy, 3, 1.0);
+        }
 
         let child = downsample_tile(&parent);
 
         // Child at (HALO, HALO) should be average of above: (0 + 1 + 2 + 3) / 4 = 1.5
         assert!((child.at(HALO, HALO, 0) - 1.5).abs() < 1e-6);
+        assert!((child.at(HALO, HALO, 3) - 1.0).abs() < 1e-6);
     }
 
     // --- generate_pyramid_tile tests ---
