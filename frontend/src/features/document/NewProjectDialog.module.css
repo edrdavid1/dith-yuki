@@ -100,7 +100,10 @@
   font-size: 13px;
   line-height: 1.4;
   font-family: var(--font-family);
-  color: var(--text-color);
+  color: var(--color-black);
+  opacity: 1;
+  -webkit-text-stroke: 0;
+  paint-order: normal;
 }
 
 .new-project-path {

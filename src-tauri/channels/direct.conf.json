@@ -1,0 +1,31 @@
+{
+  // Updater ACL is inlined here on purpose — do NOT move it to
+  // capabilities/updater.json. Every file under capabilities/ is validated
+  // at build time against installed plugins; store channels omit
+  // tauri-plugin-updater, so a sibling capability file with updater:default
+  // fails cargo check / tauri build for mas and msstore even when that
+  // capability is not selected. Inlining keeps the permission direct-only.
+  "app": {
+    "security": {
+      "capabilities": [
+        "main",
+        {
+          "identifier": "updater",
+          "windows": ["main"],
+          "permissions": ["updater:default"]
+        }
+      ]
+    }
+  },
+  "bundle": {
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMzN0YzQjUyQzU3QjVDM0YKUldRL1hIdkZVanQvdzE4TU1xcU1lWjdqV1VZSm5UUmYxeUI4YVBqeXI3aURSTVVsakkyc21FY0YK",
+      "endpoints": [
+        "https://github.com/edrdavid1/dith-yuki/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}

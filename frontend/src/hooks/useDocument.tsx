@@ -547,6 +547,7 @@ export function useDocument() {
     saving: state.saving,
     error: state.error,
     notification: state.notification,
+    notificationEpoch: state.notificationEpoch,
     hasDocument: state.hasDocument,
     projectPath: state.projectPath,
     sourcePath: state.sourcePath,

@@ -31,16 +31,24 @@ jobs:
 
       - name: cargo clippy
         # Gate engine crates + the `dither` shell bin with -D warnings.
+        # `dither` requires an explicit channel feature (see git-vers-spec).
         run: >
           cargo clippy
           -p engine-core -p engine-tiles -p engine-color -p engine-io
           -p engine-project -p engine-gpu -p engine-registry -p engine-ascii
           -p dither-zip-safe -p dither-thumb -p dither-thumb-ffi
-          -p dither --bins
+          -- -D warnings
+
+      - name: cargo clippy (dither / channel-direct)
+        run: >
+          cargo clippy -p dither --bins --features channel-direct
           -- -D warnings
 
       - name: cargo test
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude dither
+
+      - name: cargo test (dither / channel-direct)
+        run: cargo test -p dither --features channel-direct
 
       - name: Z9 H4 harnesses (sequential)
         # Ignored stress tests must never run in parallel (shared AppState / GPU).
@@ -53,7 +61,7 @@ jobs:
             z9_slow_be_12mp_stale_retry
           do
             echo "::group::Z9 $t"
-            cargo test -p dither --release "$t" -- --ignored --nocapture --test-threads=1
+            cargo test -p dither --features channel-direct --release "$t" -- --ignored --nocapture --test-threads=1
             echo "::endgroup::"
           done
 
@@ -157,3 +165,40 @@ jobs:
         run: >
           cargo test
           -p engine-project -p engine-tiles -p engine-color
+
+  channels:
+    name: Channel matrix (${{ matrix.channel }} / ${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, channel: direct }
+          - { os: macos-latest, channel: mas }
+          - { os: windows-latest, channel: direct }
+          - { os: windows-latest, channel: msstore }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+
+      - name: cargo check
+        run: cargo check --features channel-${{ matrix.channel }}
+
+      - name: cargo test
+        run: cargo test --features channel-${{ matrix.channel }}
+
+      - name: Store binaries contain no direct dependencies
+        if: matrix.channel != 'direct'
+        shell: bash
+        run: |
+          ! cargo tree -e normal --features channel-${{ matrix.channel }} \
+            | grep -E "tauri-plugin-updater|ed25519-dalek|machine-uid"

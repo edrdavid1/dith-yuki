@@ -137,14 +137,24 @@
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.02em;
-  color: var(--color-dark-gray);
+  color: var(--text-label);
 }
 
 .effect-palette-hint {
   margin: 0;
   font-size: 13px;
   line-height: 1.35;
-  color: var(--color-dark-gray);
+  color: var(--color-black);
+  /* Body fakes GranaPadano weight with a stroke. Hints stay the real Medium cut. */
+  -webkit-text-stroke: 0;
+  paint-order: normal;
+}
+
+/* Section label, not hint copy. Keep the shared UI stroke. */
+summary.effect-palette-hint {
+  color: var(--text-label);
+  -webkit-text-stroke: 0.48px currentColor;
+  paint-order: stroke fill;
 }
 
 .threshold-map-row {

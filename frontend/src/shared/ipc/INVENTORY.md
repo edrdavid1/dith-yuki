@@ -8,6 +8,8 @@ wrappers over raw `@tauri-apps/api` `invoke` outside this folder.
 | Module | Domain |
 |---|---|
 | `app.ts` | App-level helpers |
+| `boot.ts` | Splash teardown and stage text |
+| `channel.ts` | Distribution channel and license |
 | `appIcon.ts` | Custom app icon |
 | `ascii.ts` | ASCII export / clipboard / preview mode |
 | `dialogs.ts` | Native open/save dialogs |
@@ -28,8 +30,7 @@ wrappers over raw `@tauri-apps/api` `invoke` outside this folder.
 | `updates.ts` | In-app updater |
 | `viewport.ts` | Viewport / pan-zoom |
 
-Compat barrels (re-exports only): `frontend/src/ipc/commands.ts`,
-`frontend/src/ipc/panelCommands.ts`.
+The old `frontend/src/ipc/*` re-export barrels are gone. Callers use these modules.
 
 Window chrome (`getCurrentWindow`) and `lib/platform.ts` may call non-domain
 Tauri APIs directly. Raw-invoke allowlist / remaining debt:

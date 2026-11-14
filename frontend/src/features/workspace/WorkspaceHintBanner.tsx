@@ -1,12 +1,12 @@
 /**
- * Behavioral workspace hint (FR-9 / §6.3). Non-blocking shell toast; auto-dismiss 30s.
+ * Behavioral workspace hint (FR-9 / §6.3). Non-blocking shell toast; auto-dismiss 10s.
  * Shown when Batch (or tile export) runs in General — offers Switch → Gamedev.
  */
 
 import Notification from '../../components/common/Notification';
 import { useWorkspace } from './WorkspaceContext';
 
-const AUTO_MS = 30_000;
+const AUTO_MS = 10_000;
 
 const HINT_MESSAGE =
   "You're working with tiles. Enable Gamedev workspace for seamless preview and tiling tools.";

@@ -49,7 +49,8 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost https://asset.localhost blob: data: tile: http://tile.localhost; connect-src ipc: http://ipc.localhost https://api.web3forms.com; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost https://asset.localhost blob: data: tile: http://tile.localhost; connect-src ipc: http://ipc.localhost https://api.web3forms.com; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'",
+      "capabilities": ["main"]
     }
   },
   "bundle": {
@@ -111,15 +112,6 @@
       "minimumSystemVersion": "10.15",
       "signingIdentity": null,
       "hardenedRuntime": false
-    },
-    "createUpdaterArtifacts": true
-  },
-  "plugins": {
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMzN0YzQjUyQzU3QjVDM0YKUldRL1hIdkZVanQvdzE4TU1xcU1lWjdqV1VZSm5UUmYxeUI4YVBqeXI3aURSTVVsakkyc21FY0YK",
-      "endpoints": [
-        "https://github.com/edrdavid1/dith-yuki/releases/latest/download/latest.json"
-      ]
     }
   }
 }

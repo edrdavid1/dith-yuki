@@ -1,6 +1,6 @@
 /** Boot lifecycle: splash is feedback only; main shows as soon as UI can paint. */
 
-import { invoke } from '@tauri-apps/api/core';
+import { notifyBootFinished, setBootStage } from '../shared/ipc/boot';
 
 let ready = false;
 
@@ -54,22 +54,15 @@ export async function finishBoot(): Promise<void> {
     // Browser / non-Tauri — nothing to show.
   }
 
-  try {
-    // Fire-and-forget teardown; main is already visible.
-    void invoke('boot_finished');
-  } catch (e) {
+  // Fire-and-forget teardown; main is already visible.
+  void notifyBootFinished().catch((e) => {
     console.error('[boot] boot_finished failed', e);
-  }
+  });
 }
 
 /** Optional stage text on the splash (`window.setStage` via Rust eval). */
 export function bootStage(text: string): void {
-  invoke('boot_stage', { text }).catch((e) =>
-    console.debug('[boot] boot_stage failed', e),
-  );
-}
-
-/** @deprecated Prefer {@link finishBoot}; kept for any stray callers. */
-export function dismissBootScreen(): void {
-  void finishBoot();
+  void setBootStage(text).catch((e) => {
+    console.debug('[boot] boot_stage failed', e);
+  });
 }

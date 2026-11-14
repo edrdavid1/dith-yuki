@@ -20,9 +20,12 @@ import {
 } from '../../shared/ipc';
 import { openDialog, saveDialog } from '../../shared/ipc/dialogs';
 import { DialogTitlebar } from '../../shared/ui/WindowTitlebar';
+import Icon from '../../icons/iconRegistry';
 import overlayStyles from '../document/NewProjectDialog.module.css';
 import styles from './PatternManagerDialog.module.css';
 import { bind } from '../../shared/ui/cn';
+import InterfaceHint from '../../shared/ui/InterfaceHint';
+import Tooltip from '../../shared/ui/Tooltip';
 import type { PatternManagerIntent } from './PatternsUiContext';
 
 const cn = bind({ ...overlayStyles, ...styles });
@@ -386,7 +389,7 @@ export default function PatternManagerDialog({
 
             <div className={cn('pattern-detail-col')}>
               <label className={cn('pattern-field')}>
-                <span>{saveMode ? 'Save as' : 'Name'}</span>
+                <span>Name</span>
                 <input
                   ref={nameInputRef}
                   type="text"
@@ -410,51 +413,69 @@ export default function PatternManagerDialog({
                   }}
                 />
               </label>
-              <p className={cn('pattern-hint')}>
-                {saveMode
-                  ? 'Enter a name and press Save to store the active layer stack as a pattern.'
-                  : 'Edit the name to rename the selected pattern. Save stores the active layer stack.'}
-              </p>
+              <InterfaceHint>
+                <p className={cn('pattern-hint')}>
+                  Edit the name to rename the selected pattern. Save stores the active layer stack.
+                </p>
+              </InterfaceHint>
+
               <div className={cn('pattern-btn-row')}>
+                <Tooltip label="Delete">
+                  <button
+                    type="button"
+                    className={cn('pattern-btn', 'pattern-btn-icon')}
+                    disabled={!selected || busy}
+                    aria-label="Delete"
+                    onClick={() => void handleDelete()}
+                  >
+                    <Icon name="trash" width={16} height={16} />
+                  </button>
+                </Tooltip>
                 <button
                   type="button"
-                  className={cn('pattern-btn', 'pattern-btn-primary')}
-                  disabled={!selected || busy || docId == null || targetLayerId == null}
-                  onClick={() => void handleApply()}
-                >
-                  Apply
-                </button>
-                <button
-                  type="button"
-                  className={cn('pattern-btn', 'pattern-btn-primary', saveMode && 'pattern-btn-emphasis')}
+                  className={cn('pattern-btn', 'pattern-btn-grow')}
                   disabled={busy || docId == null || targetLayerId == null || !nameTrimmed}
                   onClick={() => void handleSave()}
                 >
                   Save
                 </button>
+              </div>
+
+              <div className={cn('pattern-btn-row')}>
                 <button
                   type="button"
-                  className={cn('pattern-btn')}
-                  disabled={!selected || busy}
-                  onClick={() => void handleDelete()}
+                  className={cn('pattern-btn', 'pattern-btn-grow')}
+                  disabled={busy}
+                  onClick={() => void handleImport()}
                 >
-                  Delete
+                  Import
                 </button>
                 <button
                   type="button"
-                  className={cn('pattern-btn')}
+                  className={cn('pattern-btn', 'pattern-btn-grow')}
                   disabled={!selected || busy}
                   onClick={() => void handleExport()}
                 >
                   Export
                 </button>
+              </div>
+
+              <div className={cn('pattern-btn-row', 'pattern-btn-footer')}>
                 <button
                   type="button"
-                  className={cn('pattern-btn')}
+                  className={cn('pattern-btn', 'pattern-btn-grow')}
                   disabled={busy}
-                  onClick={() => void handleImport()}
+                  onClick={onClose}
                 >
-                  Import
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className={cn('pattern-btn', 'pattern-btn-grow')}
+                  disabled={!selected || busy || docId == null || targetLayerId == null}
+                  onClick={() => void handleApply()}
+                >
+                  Apply
                 </button>
               </div>
             </div>

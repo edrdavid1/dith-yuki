@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { check } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
+import { IS_DIRECT } from '../../channel/flags';
 import { formatIpcError } from './errors';
 import { allowAppExit } from './app';
 
@@ -32,6 +33,9 @@ export async function isReleaseBuild(): Promise<boolean> {
 }
 
 export async function checkForAppUpdate(): Promise<UpdateCheckResult> {
+  if (!IS_DIRECT) {
+    return { status: 'error', message: 'Updates are not available in this build.' };
+  }
   try {
     const found = await check();
     if (!found) return { status: 'none' };

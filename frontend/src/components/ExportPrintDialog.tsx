@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import styles from '../features/document/NewProjectDialog.module.css';
 import { bind } from '../shared/ui/cn';
+import InterfaceHint from '../shared/ui/InterfaceHint';
 import { DialogTitlebar } from '../shared/ui/WindowTitlebar';
 import {
   proofGetConfig,
@@ -150,9 +151,11 @@ export default function ExportPrintDialog({
             onExport(config);
           }}
         >
-          <p className={cn('new-project-hint')} style={{ margin: 0, opacity: 0.85 }}>
-            Screen ≠ print. Soft proof does not change this file — check a press proof at the shop.
-          </p>
+          <InterfaceHint>
+            <p className={cn('new-project-hint')} style={{ margin: 0 }}>
+              Screen ≠ print. Soft proof does not change this file — check a press proof at the shop.
+            </p>
+          </InterfaceHint>
 
           <fieldset className={cn('new-project-field')}>
             <legend>Format</legend>

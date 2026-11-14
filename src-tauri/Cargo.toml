@@ -8,6 +8,17 @@ license = "LicenseRef-LNDBL-Software-1.0"
 homepage = "https://github.com/edrdavid1/dith-yuki"
 repository = "https://github.com/edrdavid1/dith-yuki"
 
+[features]
+default = []
+channel-direct = [
+    "dep:tauri-plugin-updater",
+    "dep:reqwest",
+    "dep:ed25519-dalek",
+    "dep:machine-uid",
+]
+channel-mas = []
+channel-msstore = []
+
 [dependencies]
 # `devtools` is compiled in so `DITHER_DEVTOOLS=1` can open the inspector.
 # Windows leave DevTools off by default (see `webview_debug.rs`).
@@ -15,7 +26,7 @@ tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-os = "2"
 tauri-plugin-opener = "2"
-tauri-plugin-updater = "2"
+tauri-plugin-updater = { version = "2", optional = true }
 tauri-plugin-process = "2"
 tauri-plugin-clipboard-manager = "2"
 # macOS Taptic Engine; builds on all targets (isSupported/perform no-op off-macOS).
@@ -23,6 +34,7 @@ tauri-macos-haptics = "4"
 tokio = { version = "1", features = ["full"] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
+async-trait = "0.1"
 log = { version = "0.4", features = ["std"] }
 http = "1"
 thiserror = "1"
@@ -40,6 +52,9 @@ rayon = "1.7"
 sysinfo = "0.33"
 sha2 = "0.10"
 blake3 = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+ed25519-dalek = { version = "2", optional = true }
+machine-uid = { version = "0.5", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"

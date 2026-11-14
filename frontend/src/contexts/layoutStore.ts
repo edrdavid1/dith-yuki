@@ -50,6 +50,7 @@ export interface LayoutStoreSnapshot {
   rightLoading: boolean;
   centerLoading: boolean;
   layoutToast: string | null;
+  layoutToastEpoch: number;
 }
 
 type Listener = () => void;
@@ -86,6 +87,7 @@ export class LayoutStore {
   private rightLoading = true;
   private centerLoading = true;
   private layoutToast: string | null = null;
+  private layoutToastEpoch = 0;
 
   private listeners = new Set<Listener>();
   private loadPromise: Promise<void> | null = null;
@@ -303,6 +305,7 @@ export class LayoutStore {
         : normalized.changes.some((c) => c.startsWith('injected preview'))
           ? LAYOUT_TOAST_MESSAGES.PREVIEW_ADDED
           : null);
+    if (this.layoutToast != null) this.layoutToastEpoch += 1;
 
     // Persist normalized envelope when migration / recovery / inject happened.
     if (notice || normalized.changes.length > 0) {
@@ -344,6 +347,7 @@ export class LayoutStore {
   /** One-shot shell toast (W6 label-miss, recovery notices). */
   setLayoutToast = (message: string | null): void => {
     this.layoutToast = message;
+    if (message != null) this.layoutToastEpoch += 1;
     this.bump();
   };
 
@@ -593,6 +597,7 @@ export class LayoutStore {
       rightLoading: this.rightLoading,
       centerLoading: this.centerLoading,
       layoutToast: this.layoutToast,
+      layoutToastEpoch: this.layoutToastEpoch,
     };
   }
 

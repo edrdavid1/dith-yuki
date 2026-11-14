@@ -35,7 +35,7 @@ jobs:
 
       - name: Z9 ×50 soak (sequential)
         run: >
-          cargo test -p dither --release
+          cargo test -p dither --features channel-direct --release
           z9_rapid_param_50_series
           -- --ignored --nocapture --test-threads=1
 

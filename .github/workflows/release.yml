@@ -119,6 +119,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # Sign only — do NOT set APPLE_ID / PASSWORD / TEAM_ID (would attempt notarization).
           APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+          VITE_CHANNEL: direct
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Dither Yuki ${{ github.ref_name }}${{ steps.meta.outputs.title_suffix }}
@@ -154,7 +155,7 @@ jobs:
             See [docs/RELEASE.md](https://github.com/edrdavid1/dith-yuki/blob/main/docs/RELEASE.md).
           releaseDraft: false
           prerelease: false
-          args: --bundles app,dmg
+          args: --features channel-direct --config src-tauri/channels/direct.conf.json --bundles app,dmg
 
       - name: Build and publish (macOS, Apple notarized)
         id: tauri_apple
@@ -168,6 +169,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          VITE_CHANNEL: direct
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Dither Yuki ${{ github.ref_name }}${{ steps.meta.outputs.title_suffix }}
@@ -201,7 +203,7 @@ jobs:
             See [docs/RELEASE.md](https://github.com/edrdavid1/dith-yuki/blob/main/docs/RELEASE.md).
           releaseDraft: false
           prerelease: false
-          args: --bundles app,dmg
+          args: --features channel-direct --config src-tauri/channels/direct.conf.json --bundles app,dmg
 
   # ── Windows (second wave; same release) ────────────────────────────────────
   windows:
@@ -259,10 +261,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          VITE_CHANNEL: direct
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Dither Yuki ${{ github.ref_name }}
           releaseId: ${{ needs.macos.outputs.release_id }}
           releaseDraft: false
           prerelease: false
-          args: --bundles nsis
+          args: --features channel-direct --config src-tauri/channels/direct.conf.json --bundles nsis

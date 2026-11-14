@@ -1,69 +1,116 @@
 .help-dialog {
   width: 460px;
+  max-height: min(80vh, 720px);
 }
 
 .help-body {
   display: flex;
   flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 16px 14px 12px;
+  box-sizing: border-box;
+  font-family: var(--font-family);
+  color: var(--text-color);
+}
+
+.help-brand {
+  display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 16px 16px 14px;
+  justify-content: center;
+  gap: 53px;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 40px 14px 8px;
   box-sizing: border-box;
 }
 
 .help-logo {
   display: block;
-  width: 148px;
-  height: auto;
+  width: 120px;
+  height: 120px;
+  flex-shrink: 0;
+  object-fit: contain;
   image-rendering: pixelated;
 }
 
-.help-app-name {
-  margin: 4px 0 0;
-  font-family: var(--font-family);
-  font-size: 20px;
-  font-weight: 800;
-  color: var(--color-black);
-  text-align: center;
+.help-brand-text {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 0 1 auto;
+  max-width: 260px;
 }
 
-.help-tagline {
+.help-app-name {
   margin: 0;
-  max-width: 360px;
   font-family: var(--font-family);
-  font-size: 13px;
-  line-height: 1.4;
-  color: #555;
-  text-align: center;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.05;
+  color: var(--color-black);
+  text-align: left;
 }
 
 .help-version {
   margin: 0;
   font-family: var(--font-family);
-  font-size: 14px;
-  color: #808080;
-  text-align: center;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.2;
+  color: var(--text-label);
+  text-align: left;
 }
 
 .help-developer {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  margin: 2px 0 4px;
+  justify-content: flex-start;
+  gap: 8px;
+  margin: 2px 0 0;
   font-family: var(--font-family);
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 1;
   color: var(--color-black);
+}
+
+.help-developer-label {
+  font-weight: 800;
+  flex-shrink: 0;
 }
 
 .help-developer-mark {
   display: block;
-  height: 20px;
+  height: 22px;
   width: auto;
+  max-width: 118px;
+  flex-shrink: 1;
+  min-width: 0;
+  object-fit: contain;
+}
+
+.help-section {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.help-section-label {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--text-label);
+  border-bottom: var(--border);
+  padding-bottom: 4px;
 }
 
 .help-license {
   width: 100%;
+  height: 240px;
   box-sizing: border-box;
   background: var(--color-white);
   border: var(--border);
@@ -88,7 +135,7 @@
 .help-license-copy {
   margin: 0 0 10px;
   font-size: 13px;
-  color: #555;
+  color: var(--text-label);
 }
 
 .help-agreement-body {
@@ -107,22 +154,68 @@
 .help-actions {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
+  justify-content: stretch;
   gap: 8px;
-  margin-top: 6px;
+  width: 100%;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: var(--border);
+  box-sizing: border-box;
 }
 
-.help-update-btn {
-  min-width: 128px;
-  height: 28px;
-  padding: 0 16px;
+.help-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 30px;
+  margin: 0;
+  padding: 0 12px;
+  border: none;
+  border-radius: 0;
+  background: var(--bg-window);
+  color: var(--text-color);
   font-family: var(--font-family);
   font-size: 14px;
-  color: var(--color-black);
-  background: var(--bg-window);
-  border: var(--border);
+  font-weight: 800;
   cursor: pointer;
   box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.help-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.help-btn:active:not(:disabled) {
+  box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light);
+}
+
+.help-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Shared by Bug Report (same chrome). */
+.help-update-btn {
+  min-width: 128px;
+  height: 30px;
+  margin: 0;
+  padding: 0 12px;
+  font-family: var(--font-family);
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text-color);
+  background: var(--bg-window);
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+  box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
 }
 
 .help-update-btn:hover:not(:disabled) {
@@ -134,6 +227,6 @@
 }
 
 .help-update-btn:disabled {
-  opacity: 0.4;
+  opacity: 0.45;
   cursor: not-allowed;
 }

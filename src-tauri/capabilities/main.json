@@ -1,0 +1,43 @@
+{
+  "identifier": "main",
+  "description": "Default permissions (no updater). Do not add updater:* here or in a capabilities/*.json sibling — see the comment in channels/direct.conf.json (inline ACL is required for store builds).",
+  "windows": [
+    "main",
+    "splash",
+    "panel-*",
+    "flex-popout-*",
+    "*"
+  ],
+  "permissions": [
+    "core:default",
+    "core:app:allow-version",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-position",
+    "core:window:allow-minimize",
+    "core:window:allow-close",
+    "core:window:allow-set-focus",
+    "core:window:allow-set-title",
+    "core:window:allow-outer-position",
+    "core:window:allow-outer-size",
+    "core:window:allow-inner-position",
+    "core:window:allow-inner-size",
+    "core:window:allow-is-maximized",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-destroy",
+    "core:window:allow-scale-factor",
+    "dialog:default",
+    "os:default",
+    "process:allow-restart",
+    "clipboard-manager:allow-write-text",
+    "tauri-macos-haptics:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "https://edrdavid1.github.io/dith-yuki/*" },
+        { "url": "https://github.com/edrdavid1/*" },
+        { "url": "https://ditheryuki.com/*" }
+      ]
+    }
+  ]
+}

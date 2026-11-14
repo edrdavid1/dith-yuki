@@ -4,15 +4,17 @@
  *
  * Scene mapping (locked Track L): X = a, Y = L (up), Z = b.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { colorsToOklab, logIpcError } from '../../shared/ipc';
 import type { OklabPointDto } from '../../shared/ipc';
 import type { ColorEntry } from './types';
 import gamutMesh from './assets/srgb-gamut-oklab.json';
+import ColorLabSection from './ColorLabSection';
 import styles from './PaletteVolumeViewer.module.css';
 import { bind } from '../../shared/ui/cn';
+import InterfaceHint from '../../shared/ui/InterfaceHint';
 
 const cn = bind(styles);
 
@@ -110,7 +112,6 @@ export default function PaletteVolumeViewer({
   const onSelectRef = useRef(onSelectIndex);
   const cloudRef = useRef<CloudPoint[]>([]);
   const pointsGroupRef = useRef<THREE.Group | null>(null);
-  const [sectionOpen, setSectionOpen] = useState(true);
   selectedRef.current = selectedIndex;
   onSelectRef.current = onSelectIndex;
 
@@ -264,12 +265,7 @@ export default function PaletteVolumeViewer({
   if (validCount === 0) return null;
 
   return (
-    <details
-      className={cn('volume-section')}
-      open={sectionOpen}
-      onToggle={(e) => setSectionOpen((e.target as HTMLDetailsElement).open)}
-    >
-      <summary className={cn('volume-summary')}>oklab volume</summary>
+    <ColorLabSection title="oklab volume">
       <div
         ref={wrapRef}
         className={cn('volume-canvas-wrap', compact && 'volume-canvas-wrap-compact')}
@@ -280,7 +276,9 @@ export default function PaletteVolumeViewer({
           aria-label="Oklab palette volume"
         />
       </div>
-      <div className={cn('volume-hint')}>Y = L · click a point to select</div>
-    </details>
+      <InterfaceHint>
+        <div className={cn('volume-hint')}>Y = L · click a point to select</div>
+      </InterfaceHint>
+    </ColorLabSection>
   );
 }

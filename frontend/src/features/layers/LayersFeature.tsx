@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from 'react';
-import LayersPanel from '../../components/LayersPanel';
+import LayersPanel from './LayersPanel';
 import { useAppDispatch, useAppSelector } from '../../app/hooks';
 import {
   patchLayerProps,

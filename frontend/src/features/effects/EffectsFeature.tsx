@@ -14,7 +14,7 @@ import type { EffectType } from '../../types/effects';
 import type { FilterInfo } from '../../types';
 import type { PanelChromeProps } from '../panels/PanelChrome';
 import { usePatternsUi } from '../patterns/PatternsUiContext';
-import TileGenStressPanel from '../../diagnostics/TileGenStressPanel';
+import StressHarnessSlot from '../../diagnostics/StressHarnessSlot';
 import { unwrapFilterParams } from '../../shared/unwrapFilterParams';
 
 function findLayerById(
@@ -401,7 +401,7 @@ export default function EffectsFeature({
           onLoadPattern={() => openPatternManager('browse')}
         />
       </div>
-      <TileGenStressPanel
+      <StressHarnessSlot
         baseParams={stressBaseParams}
         updateParams={(params) => {
           effectLayer.updateParams(params);

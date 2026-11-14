@@ -28,7 +28,7 @@ export function Providers({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    return suppressBrowserChrome();
+    return suppressBrowserChrome(document, import.meta.env.DEV);
   }, []);
 
   useEffect(() => {

@@ -72,8 +72,17 @@ function ensureFlexlayoutFloatPatch(): Plugin {
   }
 }
 
+const channel = process.env.VITE_CHANNEL ?? 'direct'
+if (!['direct', 'mas', 'msstore'].includes(channel)) {
+  throw new Error(`Invalid VITE_CHANNEL=${channel}`)
+}
+
 export default defineConfig({
   plugins: [react(), ensureFlexlayoutFloatPatch()],
+
+  define: {
+    __CHANNEL__: JSON.stringify(channel),
+  },
 
   // Не затирать вывод cargo при перезапуске dev-сервера
   clearScreen: false,

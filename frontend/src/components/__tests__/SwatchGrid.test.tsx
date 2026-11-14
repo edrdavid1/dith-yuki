@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import SwatchGrid from '../SwatchGrid';
 
 // Mock the IPC commands
-vi.mock('../../ipc/commands', () => ({
+vi.mock('../../shared/ipc/palettes', () => ({
   addColorToPalette: vi.fn(),
   updatePaletteColor: vi.fn(),
   removePaletteColor: vi.fn(),
@@ -15,7 +15,7 @@ import {
   updatePaletteColor,
   removePaletteColor,
   reorderPaletteColor,
-} from '../../ipc/commands';
+} from '../../shared/ipc/palettes';
 
 const mockedAdd = vi.mocked(addColorToPalette);
 const mockedUpdate = vi.mocked(updatePaletteColor);

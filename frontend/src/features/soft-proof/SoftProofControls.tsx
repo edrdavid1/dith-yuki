@@ -16,7 +16,9 @@ import { onDocumentChanged } from '../../shared/ipc/events';
 import styles from './SoftProofControls.module.css';
 import paramStyles from '../../shared/ui/ParamControls.module.css';
 import buttonStyles from '../color-lab/ColorLabButtons.module.css';
+import ColorLabSection from '../color-lab/ColorLabSection';
 import { bind } from '../../shared/ui/cn';
+import InterfaceHint from '../../shared/ui/InterfaceHint';
 
 const cn = bind({ ...styles, ...paramStyles, ...buttonStyles });
 
@@ -163,26 +165,26 @@ export default function SoftProofControls({
   }, [proofProfiles]);
 
   if (layout === 'panel') {
+    const toggle = (
+      <Tooltip label="Simulate print CMYK appearance on the Preview (display only)">
+        <button
+          type="button"
+          className={cn(
+            'color-lab-button',
+            'sp-toggle-btn',
+            softProof.enabled && 'sp-toggle-btn-active',
+          )}
+          aria-pressed={softProof.enabled}
+          disabled={disabled}
+          onClick={() => void applySoftProof({ ...softProof, enabled: !softProof.enabled })}
+        >
+          {softProof.enabled ? 'On' : 'Off'}
+        </button>
+      </Tooltip>
+    );
+
     return (
-      <section className={cn('sp-section')} aria-label="Soft proof">
-        <div className={cn('sp-section-head')}>
-          <span className={cn('sp-section-title')}>Soft proof</span>
-          <Tooltip label="Simulate print CMYK appearance on the Preview (display only)">
-            <button
-              type="button"
-              className={cn(
-                'color-lab-button',
-                'sp-toggle-btn',
-                softProof.enabled && 'sp-toggle-btn-active',
-              )}
-              aria-pressed={softProof.enabled}
-              disabled={disabled}
-              onClick={() => void applySoftProof({ ...softProof, enabled: !softProof.enabled })}
-            >
-              {softProof.enabled ? 'On' : 'Off'}
-            </button>
-          </Tooltip>
-        </div>
+      <ColorLabSection title="Soft proof" defaultOpen summaryExtra={toggle}>
         {softProof.enabled && (
           <div className={cn('sp-chip')} title={softProofChipLabel(softProof, proofProfiles)}>
             {softProofChipLabel(softProof, proofProfiles)}
@@ -228,10 +230,12 @@ export default function SoftProofControls({
             />
             <span>BPC</span>
           </label>
-          <p className={cn('sp-caveat')}>
-            Soft proof assumes an sRGB display. Wide-gamut WebViews may not match print
-            soft-proofing on calibrated hardware.
-          </p>
+          <InterfaceHint>
+            <p className={cn('sp-caveat')}>
+              Soft proof assumes an sRGB display. Wide-gamut WebViews may not match print
+              soft-proofing on calibrated hardware.
+            </p>
+          </InterfaceHint>
           {missingProfileToast && <div className={cn('sp-warn')}>{missingProfileToast}</div>}
           {loadError && <div className={cn('sp-error')}>{loadError}</div>}
           <div className={cn('sp-actions')}>
@@ -245,7 +249,7 @@ export default function SoftProofControls({
             </button>
           </div>
         </div>
-      </section>
+      </ColorLabSection>
     );
   }
 

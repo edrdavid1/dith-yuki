@@ -5,16 +5,18 @@ use tauri::{App, AppHandle, Emitter, Runtime};
 
 const EVENT: &str = "native-menu";
 
-pub fn install(app: &App) -> tauri::Result<()> {
+pub fn install(app: &App, can_self_update: bool) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
     {
         suppress_system_edit_injections();
-        match build(app).and_then(|menu| app.set_menu(menu).map(|_| ())) {
+        match build(app, can_self_update).and_then(|menu| app.set_menu(menu).map(|_| ())) {
             Ok(()) => strip_system_edit_items(),
             Err(err) => log::error!("native macOS menu failed: {err}"),
         }
         observe_edit_menu_for_system_items();
     }
+    #[cfg(not(target_os = "macos"))]
+    let _ = can_self_update;
     Ok(())
 }
 
@@ -27,7 +29,7 @@ pub fn emit_event<R: Runtime>(app: &AppHandle<R>, event: &MenuEvent) {
 }
 
 #[cfg(target_os = "macos")]
-fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
+fn build(app: &App, can_self_update: bool) -> tauri::Result<Menu<tauri::Wry>> {
     let about = MenuItem::with_id(app, "about", "About Dither Yuki", true, None::<&str>)?;
     let preferences = MenuItem::with_id(
         app,
@@ -43,24 +45,50 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
         true,
         None::<&str>,
     )?;
+    let sep_prefs = PredefinedMenuItem::separator(app)?;
+    let sep_before_hide = PredefinedMenuItem::separator(app)?;
+    let hide = PredefinedMenuItem::hide(app, None)?;
+    let hide_others = PredefinedMenuItem::hide_others(app, None)?;
+    let show_all = PredefinedMenuItem::show_all(app, None)?;
+    let sep_quit = PredefinedMenuItem::separator(app)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Dither Yuki", true, Some("CmdOrCtrl+Q"))?;
 
-    let app_menu = Submenu::with_items(
-        app,
-        "Dither Yuki",
-        true,
-        &[
-            &about,
-            &PredefinedMenuItem::separator(app)?,
-            &preferences,
-            &check_updates,
-            &PredefinedMenuItem::separator(app)?,
-            &PredefinedMenuItem::hide(app, None)?,
-            &PredefinedMenuItem::hide_others(app, None)?,
-            &PredefinedMenuItem::show_all(app, None)?,
-            &PredefinedMenuItem::separator(app)?,
-            &MenuItem::with_id(app, "quit", "Quit Dither Yuki", true, Some("CmdOrCtrl+Q"))?,
-        ],
-    )?;
+    let app_menu = if can_self_update {
+        Submenu::with_items(
+            app,
+            "Dither Yuki",
+            true,
+            &[
+                &about,
+                &sep_prefs,
+                &preferences,
+                &check_updates,
+                &sep_before_hide,
+                &hide,
+                &hide_others,
+                &show_all,
+                &sep_quit,
+                &quit,
+            ],
+        )?
+    } else {
+        Submenu::with_items(
+            app,
+            "Dither Yuki",
+            true,
+            &[
+                &about,
+                &sep_prefs,
+                &preferences,
+                &sep_before_hide,
+                &hide,
+                &hide_others,
+                &show_all,
+                &sep_quit,
+                &quit,
+            ],
+        )?
+    };
 
     let new_project = MenuItem::with_id(
         app,
@@ -178,7 +206,11 @@ fn build(app: &App) -> tauri::Result<Menu<tauri::Wry>> {
         true,
         None::<&str>,
     )?;
-    let help_menu = Submenu::with_items(app, "Help", true, &[&help_item, &help_updates])?;
+    let help_menu = if can_self_update {
+        Submenu::with_items(app, "Help", true, &[&help_item, &help_updates])?
+    } else {
+        Submenu::with_items(app, "Help", true, &[&help_item])?
+    };
 
     Menu::with_items(
         app,

@@ -4,6 +4,8 @@
   /* ─── Core palette ─── */
   --color-gray: #CDCDCD;
   --color-dark-gray: #999;
+  /* Secondary captions. Exact mid-gray, separate from the chrome gray. */
+  --color-interface-label: #555555;
   --color-black: #000;
   --color-white: #FFF;
   --color-primary: #8181FF;
@@ -15,7 +17,7 @@
   --bg-slider-track: var(--color-dark-gray);
   --border-color: var(--color-black);
   --text-color: var(--color-black);
-  --text-label: var(--color-black);
+  --text-label: var(--color-interface-label);
 
   /* ─── Hover ─── */
   --bg-hover: var(--color-gray);

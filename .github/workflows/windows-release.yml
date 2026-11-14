@@ -84,10 +84,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          VITE_CHANNEL: direct
         with:
           tagName: ${{ steps.release.outputs.tag }}
           releaseName: Dither Yuki ${{ steps.release.outputs.tag }}
           releaseId: ${{ steps.release.outputs.release_id }}
           releaseDraft: false
           prerelease: false
-          args: --bundles nsis
+          args: --features channel-direct --config src-tauri/channels/direct.conf.json --bundles nsis

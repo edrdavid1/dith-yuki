@@ -87,7 +87,7 @@
   font-family: var(--font-family);
   font-size: 12px;
   font-weight: 800;
-  color: var(--color-dark-gray);
+  color: var(--text-label);
   text-transform: lowercase;
   pointer-events: none;
 }

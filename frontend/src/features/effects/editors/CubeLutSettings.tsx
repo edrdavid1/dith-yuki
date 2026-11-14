@@ -7,6 +7,7 @@ import inputStyles from '../../../shared/ui/ParamInput.module.css';
 import sliderStyles from '../../../shared/ui/Slider.module.css';
 import buttonStyles from '../../../shared/ui/FilterButtons.module.css';
 import { bind } from '../../../shared/ui/cn';
+import InterfaceHint from '../../../shared/ui/InterfaceHint';
 
 const cn = bind({
   ...panelStyles,
@@ -80,9 +81,11 @@ function CubeLutSettings({ params, onUpdate }: CubeLutSettingsProps) {
             Browse
           </button>
         </div>
-        <p className={cn('effect-palette-hint')}>
-          Adobe `.cube` 3D LUT (size ≤65). Embedded into the project on save.
-        </p>
+        <InterfaceHint>
+          <p className={cn('effect-palette-hint')}>
+            Adobe `.cube` 3D LUT (size ≤65). Embedded into the project on save.
+          </p>
+        </InterfaceHint>
       </div>
       <Slider
         label="Amount"

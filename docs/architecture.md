@@ -1179,8 +1179,6 @@ graph TD
         useEffectLayer
         useAppUpdates
         useUnsavedGuard
-        useUndoShortcuts
-        usePanels
     end
 
     AppLayout --> Hooks
@@ -1230,16 +1228,12 @@ Crash recovery (atomic Save, debounce journal, clean-exit marker, session roster
 | `useRecentFiles` | `get_recent_files` on mount; `{ entries, refresh }` |
 | `useWelcomeScreen` | One Recent source + New Project dialog + refresh-after-open/save (per window) |
 | `useViewport` | Zoom/pan state, debounced set_viewport IPC, fitToView |
-| `usePan` | Middle-mouse / Space+click panning, cursor management |
-| `useLayers` | Layer CRUD, selection, get_layer_tree refresh |
 | `useEffectLayer` | Filter CRUD, active filter, debounced param updates (100ms) |
-| `usePanels` | Panel state subscription (panel-state-changed event) |
-| `usePanelDrag` | Panel header drag → reorder in sidebar |
-| `useSelectionState` | Layer/filter selection coordination |
-| `useAppUpdates` | Track O: launch check, Help/About, download+relaunch + Restart_Guard |
-| `useUnsavedGuard` | Track P: one modal for close / New / Open / updates |
-| `useUndoShortcuts` | ⌘Z / Ctrl+Z → undo/redo IPC |
-| `useCloseRequested` | Window close handling (floating panels) |
+| `useAppUpdates` | Launch check, Help/About, download+relaunch |
+| `useUnsavedGuard` | One modal for close / New / Open / updates |
+| `useMainWindowLifetime` | Window title, tab refresh, quit and close flush |
+| `useDockFrame` | Sidebar widths and FlexLayout host flags |
+| `useSessionCommands` | Native menu and shortcut command registry |
 
 ### 7.6 Docking (FlexLayout)
 

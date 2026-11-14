@@ -44,6 +44,25 @@ describe('Notification (shared shell)', () => {
     expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 
+  it('re-shows when showId bumps with the same message', () => {
+    const onDismiss = vi.fn();
+    const { rerender } = render(
+      <Notification message="Copied" showId={1} duration={1000} onDismiss={onDismiss} />
+    );
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    rerender(
+      <Notification message="Copied" showId={2} duration={1000} onDismiss={onDismiss} />
+    );
+    expect(screen.getByRole('status')).toHaveTextContent('Copied');
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(onDismiss).toHaveBeenCalledTimes(2);
+  });
+
   it('shows action button when provided', () => {
     const onAction = vi.fn();
     render(

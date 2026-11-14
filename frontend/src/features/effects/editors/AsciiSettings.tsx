@@ -5,6 +5,7 @@ import panelStyles from '../EffectSettingsPanel.module.css';
 import paramStyles from '../../../shared/ui/ParamControls.module.css';
 import sliderStyles from '../../../shared/ui/Slider.module.css';
 import { bind } from '../../../shared/ui/cn';
+import InterfaceHint from '../../../shared/ui/InterfaceHint';
 const cn = bind({ ...panelStyles, ...paramStyles, ...sliderStyles });
 
 interface AsciiSettingsProps {
@@ -51,10 +52,12 @@ function AsciiSettings({ params, onUpdate }: AsciiSettingsProps) {
 
   return (
     <div className={cn('effect-settings-content')}>
-      <p className={cn('effect-palette-hint')}>
-        ASCII is a full-image job — preview updates after the grid is ready. Place grade
-        under it or stylize above deliberately; it is not a progressive tile scrub.
-      </p>
+      <InterfaceHint>
+        <p className={cn('effect-palette-hint')}>
+          ASCII is a full-image job — preview updates after the grid is ready. Place grade
+          under it or stylize above deliberately; it is not a progressive tile scrub.
+        </p>
+      </InterfaceHint>
       <DropdownMenu
         label="Font"
         value={font}

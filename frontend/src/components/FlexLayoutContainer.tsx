@@ -14,6 +14,8 @@ import {
   Action,
   TabNode,
   TabSetNode,
+  BorderNode,
+  type ITabSetRenderValues,
   type Model,
   type ITabRenderValues,
   I18nLabel,
@@ -470,11 +472,7 @@ export const FlexLayoutContainer: React.FC<FlexLayoutContainerProps> = ({
     [side, isCenter, movePanelBetweenSides, setSidebarCollapsed, floatPanel, onUndockDrag, canFloat],
   );
 
-  const onRenderTabSet = useCallback((node: TabSetNode, renderValues: {
-    stickyButtons: React.ReactNode[];
-    buttons: React.ReactNode[];
-    headerButtons: React.ReactNode[];
-  }) => {
+  const onRenderTabSet = useCallback((node: TabSetNode | BorderNode, renderValues: ITabSetRenderValues) => {
     // Drop any FL chrome before the library appends float/overflow controls.
     renderValues.stickyButtons = [];
     renderValues.buttons = [];

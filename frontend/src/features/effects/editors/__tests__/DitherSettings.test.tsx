@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import DitherSettings from '../DitherSettings';
+import { ShellContext } from '../../../../app/shell/ShellContext';
 import { StoreProvider } from '../../../../app/__tests__/testStore';
 
 vi.mock('../../../../shared/ipc', async (importOriginal) => {
@@ -89,6 +90,25 @@ describe('DitherSettings algorithm selector', () => {
     ).toBeInTheDocument();
     const banner = screen.getByText(/Palette is controlled in Color Lab/);
     expect(banner.textContent).toMatch(/^Palette is controlled in Color Lab/);
+  });
+
+  it('hides the palette banner when tooltips are off', () => {
+    render(
+      <ShellContext.Provider
+        value={{ tooltipsEnabled: false } as React.ContextType<typeof ShellContext>}
+      >
+        <StoreProvider>
+          <DitherSettings
+            params={{ mode: 'floyd_steinberg', levels: 4, threshold_scale: 1, pixel_size: 1 }}
+            onUpdate={vi.fn()}
+          />
+        </StoreProvider>
+      </ShellContext.Provider>,
+    );
+    expect(screen.queryByText(/Palette is controlled in Color Lab/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Tone Steps slider below/)).not.toBeInTheDocument();
+    expect(screen.getByText('Palette dither')).toBeInTheDocument();
+    expect(screen.getByText('Tone Steps')).toBeInTheDocument();
   });
 
   it('selector change updates mode via onUpdate', () => {

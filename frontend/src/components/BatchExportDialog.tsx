@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import styles from '../features/document/NewProjectDialog.module.css';
+import overlayStyles from '../features/document/NewProjectDialog.module.css';
+import styles from './BatchExportDialog.module.css';
 import { bind } from '../shared/ui/cn';
 import { DialogTitlebar } from '../shared/ui/WindowTitlebar';
+import InterfaceHint from '../shared/ui/InterfaceHint';
 import { openDialog } from '../shared/ipc/dialogs';
 import {
   batchExportCancel,
@@ -15,7 +17,7 @@ import {
 import { usePatternsUi } from '../features/patterns/PatternsUiContext';
 import { useWorkspaceOptional } from '../features/workspace/WorkspaceContext';
 
-const cn = bind(styles);
+const cn = bind({ ...overlayStyles, ...styles });
 
 export interface BatchExportDialogProps {
   isOpen: boolean;
@@ -124,6 +126,15 @@ export default function BatchExportDialog({
       : running
         ? 'Starting…'
         : null;
+  const progressPct =
+    progress && progress.total > 0
+      ? Math.min(100, Math.round((progress.done / progress.total) * 100))
+      : running
+        ? 0
+        : null;
+  const currentFile = progress?.current_input
+    ? progress.current_input.split(/[/\\]/).pop()
+    : null;
 
   return createPortal(
     <div
@@ -132,42 +143,46 @@ export default function BatchExportDialog({
       data-testid="batch-export-overlay"
     >
       <div
-        className={cn('new-project-dialog', 'new-project-dialog-wide')}
+        className={cn('new-project-dialog', 'batch-dialog')}
         role="dialog"
         aria-modal="true"
-        aria-label="Batch Export"
-        style={{ width: 420 }}
+        aria-labelledby="batch-export-title"
       >
-        <DialogTitlebar title="Batch Export" onClose={handleCancel} />
-        <div className={cn('new-project-body')} style={{ padding: '14px 12px 12px' }}>
-          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.4 }}>
-            Apply this document’s filter stack and palettes to every image in a folder.
-            Save or reuse a named recipe via Pattern Manager (export format stays here).
-          </p>
+        <DialogTitlebar
+          title="Batch Export"
+          titleId="batch-export-title"
+          onClose={handleCancel}
+        />
+        <div className={cn('batch-body')}>
+          <InterfaceHint>
+            <p className={cn('batch-intro')}>
+              Apply this document’s filter stack and palettes to every image in a folder. Save or
+              reuse a named recipe via Pattern Manager (export format stays here).
+            </p>
+          </InterfaceHint>
+
           <button
             type="button"
-            className={cn('new-project-btn')}
+            className={cn('batch-btn', 'batch-btn-block')}
             disabled={running}
             onClick={() => openPatternManager('browse')}
-            style={{ alignSelf: 'flex-start' }}
           >
             Pattern Manager…
           </button>
 
-          <div className={cn('new-project-field')}>
+          <div className={cn('batch-field')}>
             <label htmlFor="batch-input-dir">Input folder</label>
-            <div style={{ display: 'flex', gap: 6 }}>
+            <div className={cn('batch-path-row')}>
               <input
                 id="batch-input-dir"
-                className={cn('new-project-input')}
-                style={{ flex: 1 }}
+                className={cn('batch-input')}
                 value={inputDir}
                 readOnly
                 placeholder="Choose a folder…"
               />
               <button
                 type="button"
-                className={cn('new-project-btn')}
+                className={cn('batch-btn')}
                 onClick={() => void pickInput()}
                 disabled={running}
               >
@@ -176,20 +191,19 @@ export default function BatchExportDialog({
             </div>
           </div>
 
-          <div className={cn('new-project-field')}>
+          <div className={cn('batch-field')}>
             <label htmlFor="batch-output-dir">Output folder</label>
-            <div style={{ display: 'flex', gap: 6 }}>
+            <div className={cn('batch-path-row')}>
               <input
                 id="batch-output-dir"
-                className={cn('new-project-input')}
-                style={{ flex: 1 }}
+                className={cn('batch-input')}
                 value={outputDir}
                 readOnly
                 placeholder="Choose a folder…"
               />
               <button
                 type="button"
-                className={cn('new-project-btn')}
+                className={cn('batch-btn')}
                 onClick={() => void pickOutput()}
                 disabled={running}
               >
@@ -198,45 +212,49 @@ export default function BatchExportDialog({
             </div>
           </div>
 
-          <div className={cn('new-project-field')}>
+          <div className={cn('batch-field')}>
             <label htmlFor="batch-name-template">Filename template</label>
             <input
               id="batch-name-template"
-              className={cn('new-project-input')}
+              className={cn('batch-input')}
               value={nameTemplate}
               onChange={(e) => setNameTemplate(e.target.value)}
               disabled={running}
             />
-            <span style={{ fontSize: 13, opacity: 0.7 }}>
-              Use {'{name}'} and {'{ext}'} from the source file.
-            </span>
+            <InterfaceHint>
+              <p className={cn('batch-hint')}>
+                Use {'{name}'} and {'{ext}'} from the source file.
+              </p>
+            </InterfaceHint>
           </div>
 
-          <fieldset className={cn('new-project-field')}>
+          <fieldset className={cn('batch-field')}>
             <legend>Format</legend>
-            <label className={cn('new-project-radio')}>
-              <input
-                type="radio"
-                name="batch-format"
-                checked={format === 'png'}
-                onChange={() => setFormat('png')}
-                disabled={running}
-              />
-              PNG RGBA
-            </label>
-            <label className={cn('new-project-radio')}>
-              <input
-                type="radio"
-                name="batch-format"
-                checked={format === 'png8'}
-                onChange={() => setFormat('png8')}
-                disabled={running}
-              />
-              PNG8 (indexed)
-            </label>
+            <div className={cn('batch-radio-stack')}>
+              <label className={cn('batch-radio')}>
+                <input
+                  type="radio"
+                  name="batch-format"
+                  checked={format === 'png'}
+                  onChange={() => setFormat('png')}
+                  disabled={running}
+                />
+                PNG RGBA
+              </label>
+              <label className={cn('batch-radio')}>
+                <input
+                  type="radio"
+                  name="batch-format"
+                  checked={format === 'png8'}
+                  onChange={() => setFormat('png8')}
+                  disabled={running}
+                />
+                PNG8 (indexed)
+              </label>
+            </div>
           </fieldset>
 
-          <label className={cn('new-project-radio')}>
+          <label className={cn('batch-check')}>
             <input
               type="checkbox"
               checked={lockPhase}
@@ -247,30 +265,34 @@ export default function BatchExportDialog({
           </label>
 
           {progressLabel && (
-            <div style={{ fontSize: 14 }}>
-              Progress: {progressLabel}
-              {progress?.current_input
-                ? ` — ${progress.current_input.split(/[/\\]/).pop()}`
-                : ''}
-              {progress?.last_error ? (
-                <div style={{ color: 'var(--color-danger, #a00)', marginTop: 4 }}>
-                  Last error: {progress.last_error}
+            <div className={cn('batch-progress')}>
+              {progressPct != null && (
+                <div className={cn('batch-progress-track')} aria-hidden>
+                  <div
+                    className={cn('batch-progress-fill')}
+                    style={{ width: `${progressPct}%` }}
+                  />
                 </div>
+              )}
+              <div className={cn('batch-progress-meta')}>
+                Progress: {progressLabel}
+                {currentFile ? ` — ${currentFile}` : ''}
+              </div>
+              {progress?.last_error ? (
+                <p className={cn('batch-warn')}>Last error: {progress.last_error}</p>
               ) : null}
             </div>
           )}
 
-          {error && (
-            <div style={{ fontSize: 14, color: 'var(--color-danger, #a00)' }}>{error}</div>
-          )}
+          {error && <p className={cn('batch-error')}>{error}</p>}
 
-          <div className={cn('new-project-footer')}>
-            <button type="button" className={cn('new-project-btn')} onClick={handleCancel}>
+          <div className={cn('batch-footer')}>
+            <button type="button" className={cn('batch-btn')} onClick={handleCancel}>
               {running ? 'Cancel' : 'Close'}
             </button>
             <button
               type="button"
-              className={cn('new-project-btn', 'new-project-btn-primary')}
+              className={cn('batch-btn', 'batch-btn-primary')}
               onClick={() => void handleStart()}
               disabled={running || !inputDir || !outputDir || docId == null}
             >
