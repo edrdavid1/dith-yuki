@@ -223,9 +223,16 @@ fn geometry_cpu_timing_and_seams() {
                 let mut last = Vec::new();
                 for i in 0..20 {
                     let t0 = Instant::now();
-                    let out = with_pixel_size_blocks(&input, w, h, ps, |small, sw, sh| {
-                        blocked_fs_cpu(small, sw, sh, &pals, g.core_w, g.core_h, g.pad)
-                    })
+                    let out = with_pixel_size_blocks(
+                        &input,
+                        w,
+                        h,
+                        ps,
+                        false,
+                        |small, sw, sh| {
+                            blocked_fs_cpu(small, sw, sh, &pals, g.core_w, g.core_h, g.pad)
+                        },
+                    )
                     .expect("cpu");
                     let ms = t0.elapsed().as_secs_f64() * 1000.0;
                     if i > 0 {

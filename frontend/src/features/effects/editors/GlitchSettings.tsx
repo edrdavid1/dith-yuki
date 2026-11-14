@@ -11,6 +11,7 @@ import paramStyles from '../../../shared/ui/ParamControls.module.css';
 import sliderStyles from '../../../shared/ui/Slider.module.css';
 import buttonStyles from '../../../shared/ui/FilterButtons.module.css';
 import { bind } from '../../../shared/ui/cn';
+import InterfaceHint from '../../../shared/ui/InterfaceHint';
 const cn = bind({ ...panelStyles, ...paramStyles, ...sliderStyles, ...buttonStyles });
 
 const SEED_MIN = 0;
@@ -222,11 +223,13 @@ function GlitchSettings({
       <div className={cn('effect-settings-content')}>
         {typePicker}
 
-        <p className={cn('effect-palette-hint')}>
-          {toneStepsSelected
-            ? 'Raw tone selected in Color Lab — the Tone Steps slider below sets how many shades each channel can use.'
-            : `Palette #${paletteId} (Color Lab) chooses the output colours.`}
-        </p>
+        <InterfaceHint>
+          <p className={cn('effect-palette-hint')}>
+            {toneStepsSelected
+              ? 'Raw tone selected in Color Lab — the Tone Steps slider below sets how many shades each channel can use.'
+              : `Palette #${paletteId} (Color Lab) chooses the output colours.`}
+          </p>
+        </InterfaceHint>
 
         {toneStepsSelected && (
           <>
@@ -241,11 +244,13 @@ function GlitchSettings({
                 onUpdate({ levels: clampParam(Math.round(v), 2, 256) })
               }
             />
-            <p className={cn('effect-palette-hint')}>
-              Each RGB channel snaps to this many evenly spaced values before
-              error diffusion fills the gaps as a pattern. 2 = stark
-              black/white per channel; higher = smoother, less posterized.
-            </p>
+            <InterfaceHint>
+              <p className={cn('effect-palette-hint')}>
+                Each RGB channel snaps to this many evenly spaced values before
+                error diffusion fills the gaps as a pattern. 2 = stark
+                black/white per channel; higher = smoother, less posterized.
+              </p>
+            </InterfaceHint>
           </>
         )}
 

@@ -4,6 +4,7 @@ import overlayStyles from '../features/document/NewProjectDialog.module.css';
 import helpStyles from './HelpDialog.module.css';
 import styles from './BugReportDialog.module.css';
 import { bind } from '../shared/ui/cn';
+import InterfaceHint from '../shared/ui/InterfaceHint';
 import { DialogTitlebar } from '../shared/ui/WindowTitlebar';
 import {
   gatherBugReportEnv,
@@ -102,9 +103,11 @@ export default function BugReportDialog({ isOpen, onClose }: BugReportDialogProp
       >
         <DialogTitlebar title="Report a bug" titleId="bug-report-title" onClose={onClose} />
         <form className={cn('bug-report-body')} onSubmit={(e) => void onSubmit(e)}>
-          <p className={cn('bug-report-lede')}>
-            Sent to the developer by email. No account needed.
-          </p>
+          <InterfaceHint>
+            <p className={cn('bug-report-lede')}>
+              Sent to the developer by email. No account needed.
+            </p>
+          </InterfaceHint>
           <p className={cn('bug-report-env')}>
             <span className={cn('bug-report-env-label')}>Will send:</span>
             {env?.summary ?? '…'}
@@ -167,6 +170,14 @@ export default function BugReportDialog({ isOpen, onClose }: BugReportDialogProp
           </label>
 
           <div className={cn('bug-report-actions')}>
+            <button
+              type="button"
+              className={cn('help-update-btn')}
+              disabled={sending}
+              onClick={onClose}
+            >
+              Cancel
+            </button>
             <button
               type="submit"
               className={cn('help-update-btn')}

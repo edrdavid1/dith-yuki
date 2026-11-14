@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { registerPreviewCommands } from '../shortcuts/commandRegistry';
 import { flushSync } from 'react-dom';
-import PreviewWindow from '../../components/PreviewWindow';
+import PreviewWindow from './PreviewWindow';
 import EmptyState from '../../components/EmptyState';
 import { useAppSelector } from '../../app/hooks';
 import { useShell } from '../../app/shell/ShellContext';

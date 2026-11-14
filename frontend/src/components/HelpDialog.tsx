@@ -15,8 +15,6 @@ import {
   USER_AGREEMENT_BODY,
   USER_AGREEMENT_TITLE,
 } from '../shared/userAgreement';
-import { useWorkspaceOptional } from '../features/workspace/WorkspaceContext';
-import { openUrl } from '@tauri-apps/plugin-opener';
 
 const cn = bind({ ...overlayStyles, ...styles });
 
@@ -36,7 +34,6 @@ export default function HelpDialog({
   onCheckForUpdates,
 }: HelpDialogProps) {
   const [reportOpen, setReportOpen] = useState(false);
-  const workspace = useWorkspaceOptional()?.workspace ?? 'general';
   const handleOverlayClick = useCallback(
     (e: React.MouseEvent) => {
       if (e.target === e.currentTarget) onClose();
@@ -74,48 +71,38 @@ export default function HelpDialog({
               >
                 <DialogTitlebar title="Help" titleId="help-title" onClose={onClose} />
                 <div className={cn('help-body')}>
-                  <img className={cn('help-logo')} src="/img/dith.png" alt="" />
-                  <h2 className={cn('help-app-name')}>{APP_NAME}</h2>
-
-                  <p className={cn('help-version')}>version {version || '…'}</p>
-                  <p className={cn('help-developer')}>
-                    <span>Developer:</span>
-                    <img
-                      className={cn('help-developer-mark')}
-                      src="/icons/developer-icon.svg"
-                      alt={APP_DEVELOPER}
-                    />
-                  </p>
-                  <SimpleBar className={cn('help-license')} style={{ height: '280px' }}>
-                    <div className={cn('help-license-inner')}>
-                      <p className={cn('help-license-title')}>{USER_AGREEMENT_TITLE}</p>
-                      <p className={cn('help-license-copy')}>{APP_COPYRIGHT}</p>
-                      <pre className={cn('help-agreement-body')}>{USER_AGREEMENT_BODY}</pre>
+                  <div className={cn('help-brand')}>
+                    <img className={cn('help-logo')} src="/img/dith.png" alt="" />
+                    <div className={cn('help-brand-text')}>
+                      <h2 className={cn('help-app-name')}>{APP_NAME}</h2>
+                      <p className={cn('help-version')}>version {version || '…'}</p>
+                      <p className={cn('help-developer')}>
+                        <span className={cn('help-developer-label')}>Developer:</span>
+                        <img
+                          className={cn('help-developer-mark')}
+                          src="/icons/vasdas-icon.svg"
+                          alt={APP_DEVELOPER}
+                        />
+                      </p>
                     </div>
-                  </SimpleBar>
-                  <p className={cn('help-developer')}>
-                    Guides:{' '}
-                    <button
-                      type="button"
-                      className={cn('help-update-btn')}
-                      onClick={() => {
-                        const path =
-                          workspace === 'gamedev'
-                            ? 'docs/help/gamedev/README.md'
-                            : 'docs/help/general/README.md';
-                        void openUrl(
-                          `https://github.com/edrdavid1/dith-yuki/blob/main/${path}`,
-                        ).catch(() => undefined);
-                      }}
-                    >
-                      {workspace === 'gamedev' ? 'Gamedev guide' : 'General guide'}
-                    </button>
-                  </p>
+                  </div>
+
+                  <div className={cn('help-section')}>
+                    <div className={cn('help-section-label')}>License</div>
+                    <SimpleBar className={cn('help-license')}>
+                      <div className={cn('help-license-inner')}>
+                        <p className={cn('help-license-title')}>{USER_AGREEMENT_TITLE}</p>
+                        <p className={cn('help-license-copy')}>{APP_COPYRIGHT}</p>
+                        <pre className={cn('help-agreement-body')}>{USER_AGREEMENT_BODY}</pre>
+                      </div>
+                    </SimpleBar>
+                  </div>
+
                   <div className={cn('help-actions')}>
                     {onCheckForUpdates && (
                       <button
                         type="button"
-                        className={cn('help-update-btn')}
+                        className={cn('help-btn')}
                         disabled={checking}
                         onClick={onCheckForUpdates}
                       >
@@ -124,13 +111,16 @@ export default function HelpDialog({
                     )}
                     <button
                       type="button"
-                      className={cn('help-update-btn')}
+                      className={cn('help-btn')}
                       onClick={() => {
                         onClose();
                         setReportOpen(true);
                       }}
                     >
                       Report a bug
+                    </button>
+                    <button type="button" className={cn('help-btn')} onClick={onClose}>
+                      Close
                     </button>
                   </div>
                 </div>

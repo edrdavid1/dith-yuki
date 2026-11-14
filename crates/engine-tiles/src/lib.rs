@@ -13,6 +13,9 @@ pub use coords::*;
 pub mod block_cache;
 pub use block_cache::*;
 
+pub mod block_reduce;
+pub use block_reduce::*;
+
 pub mod tile;
 pub use tile::*;
 

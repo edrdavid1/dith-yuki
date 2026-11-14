@@ -2,8 +2,8 @@ use engine_gpu::{
     apply_blocked_fs_gpu_opts, apply_blue_noise_gpu_opts, BlockedFsGpuOpts, BlueNoiseGpuOpts,
 };
 use engine_project::algorithms::gpu_dither_cpu::{
-    blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, palette_rgba8_blue_noise,
-    with_pixel_size_blocks, PaletteRgb, Rgba8, CORE, PAD,
+    blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, expand_block_lattice,
+    palette_rgba8_blue_noise, with_pixel_size_blocks, PaletteRgb, Rgba8, CORE, PAD,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -135,19 +135,29 @@ fn run_cpu(case: &ParityCase, input: &[Rgba8]) -> Result<Vec<u8>, String> {
                 case.params.pad
             };
             // GPU warm-up is fixed at PAD=8; non-default pad is CPU-only.
-            let out =
-                with_pixel_size_blocks(input, case.width, case.height, ps, |small, sw, sh| {
-                    blocked_fs_cpu(small, sw, sh, &pal, CORE, CORE, pad)
-                })
-                .map_err(|e| e.to_string())?;
+            let out = with_pixel_size_blocks(
+                input,
+                case.width,
+                case.height,
+                ps,
+                false,
+                |small, sw, sh| blocked_fs_cpu(small, sw, sh, &pal, CORE, CORE, pad),
+            )
+            .map_err(|e| e.to_string())?;
             Ok(to_bytes(&out))
         }
         Algorithm::BlueNoise => {
-            let out =
-                with_pixel_size_blocks(input, case.width, case.height, ps, |small, sw, sh| {
+            let out = with_pixel_size_blocks(
+                input,
+                case.width,
+                case.height,
+                ps,
+                false,
+                |small, sw, sh| {
                     blue_noise_cpu(small, sw, sh, &pal, blue_noise_ranks(), case.params.spread)
-                })
-                .map_err(|e| e.to_string())?;
+                },
+            )
+            .map_err(|e| e.to_string())?;
             Ok(to_bytes(&out))
         }
     }
@@ -219,22 +229,9 @@ fn run_gpu(
             )?
         }
     };
-    if ps <= 1 {
-        return Ok(gpu.rgba8);
-    }
     let dithered = from_bytes(&gpu.rgba8);
-    let bw = tw as usize;
-    let w = case.width as usize;
-    let h = case.height as usize;
-    let mut out = Vec::with_capacity(w * h);
-    for y in 0..h {
-        let by = (y as u32 / ps) as usize;
-        for x in 0..w {
-            let bx = (x as u32 / ps) as usize;
-            let p = dithered[by * bw + bx];
-            out.push(Rgba8::new(p.r, p.g, p.b, input[y * w + x].a));
-        }
-    }
+    let out = expand_block_lattice(&dithered, &input, case.width, case.height, ps, false)
+        .map_err(|e| e.to_string())?;
     Ok(to_bytes(&out))
 }
 

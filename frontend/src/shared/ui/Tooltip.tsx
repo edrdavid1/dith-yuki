@@ -2,14 +2,13 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  useContext,
   type MouseEvent,
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { ShellContext } from '../../app/shell/ShellContext';
 import styles from './Tooltip.module.css';
 import { bind } from './cn';
+import { useTooltipsEnabled } from './useTooltipsEnabled';
 
 const cn = bind(styles);
 
@@ -87,8 +86,7 @@ export default function Tooltip({
   const sizeRef = useRef<Size>({ width: 0, height: 0 });
   const cursorRef = useRef<Point>({ x: 0, y: 0 });
   const [open, setOpen] = useState(false);
-  const shell = useContext(ShellContext);
-  const tooltipsEnabled = shell?.tooltipsEnabled ?? true;
+  const tooltipsEnabled = useTooltipsEnabled();
 
   const writePosition = () => {
     const tip = tipRef.current;

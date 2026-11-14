@@ -1,0 +1,10 @@
+{
+  "bundle": {
+    "macOS": {
+      "entitlements": "entitlements/mas.entitlements",
+      "files": {
+        "embedded.provisionprofile": "certs/DitherYuki_MAS.provisionprofile"
+      }
+    }
+  }
+}

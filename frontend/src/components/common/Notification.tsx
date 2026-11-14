@@ -5,6 +5,7 @@ import { bind } from '../../shared/ui/cn';
 
 const cn = bind(styles);
 
+/** Visible hold time before auto-dismiss (fade is separate CSS). */
 const DEFAULT_DURATION_MS = 5000;
 
 export interface NotificationProps {
@@ -18,6 +19,11 @@ export interface NotificationProps {
    * (busy / in-flight states).
    */
   duration?: number | null;
+  /**
+   * Bump to re-show / restart the timer even when `message` text is unchanged
+   * (same action triggered again).
+   */
+  showId?: number | string;
   /** Pulse indicator; toast is non-interactive (no close / action). */
   busy?: boolean;
   /** When false, hide the × (defaults to !busy). */
@@ -35,6 +41,7 @@ function Notification({
   onAction,
   onDismiss,
   duration = DEFAULT_DURATION_MS,
+  showId = 0,
   busy = false,
   dismissible,
   testId,
@@ -54,7 +61,7 @@ function Notification({
       onDismiss?.();
     }, duration);
     return () => clearTimeout(timer);
-  }, [message, duration, onDismiss]);
+  }, [message, showId, duration, onDismiss]);
 
   if (!visible || !message) return null;
 
@@ -65,6 +72,7 @@ function Notification({
 
   return createPortal(
     <div
+      key={`${showId}-${message}`}
       className={cn('notification', busy && 'notification-busy')}
       role="status"
       aria-live="polite"

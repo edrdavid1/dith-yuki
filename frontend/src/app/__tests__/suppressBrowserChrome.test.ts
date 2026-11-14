@@ -41,4 +41,24 @@ describe('suppressBrowserChrome', () => {
     document.dispatchEvent(e);
     expect(e.defaultPrevented).toBe(true);
   });
+
+  it('leaves Inspect available when devtools are unlocked', () => {
+    cleanup?.();
+    cleanup = suppressBrowserChrome(document, true);
+
+    const key = new KeyboardEvent('keydown', {
+      key: 'F12',
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(key);
+    expect(key.defaultPrevented).toBe(false);
+
+    const menu = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(menu);
+    expect(menu.defaultPrevented).toBe(false);
+  });
 });

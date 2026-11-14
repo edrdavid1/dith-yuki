@@ -1,0 +1,246 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import LayersPanel from '../LayersPanel';
+import type { LayersPanelProps } from '../LayersPanel';
+import type { FilterInfo } from '../../../types';
+import type { LayerNodeDto } from '../../../shared/types/layers';
+import { resetFilterUiForTests } from '../filterUiState';
+
+const layer: LayerNodeDto = {
+  id: 1,
+  name: 'Image Source',
+  kind: 'raster',
+  blend_mode: 'Multiply',
+  opacity: 0.5,
+  visible: true,
+};
+
+const filter: FilterInfo = {
+  id: 'filter-1',
+  kind: 'DitherV2',
+  params: {
+    type: 'DitherV2',
+    mode: 'floyd_steinberg',
+    levels: 4,
+    threshold_scale: 1,
+    pixel_size: 1,
+    color_mode: 'rgb',
+    palette_id: null,
+  } as FilterInfo['params'],
+  enabled: true,
+  opacity: 0.4,
+  blend_mode: 'Overlay',
+};
+
+function renderLayers(overrides: Partial<LayersPanelProps> = {}) {
+  const props: LayersPanelProps = {
+    layers: [layer],
+    selectedLayerId: 1,
+    filters: [filter],
+    selectedFilterId: null,
+    onSelect: vi.fn(),
+    onSelectFilter: vi.fn(),
+    onAddLayer: vi.fn(),
+    onRemoveFilter: vi.fn(),
+    onReorderFilter: vi.fn(),
+    onToggleVisibility: vi.fn(),
+    onToggleFilterEnabled: vi.fn(),
+    onBlendModeChange: vi.fn(),
+    onOpacityChange: vi.fn(),
+    onFilterBlendChange: vi.fn(),
+    ...overrides,
+  };
+  return { ...render(<LayersPanel {...props} />), props };
+}
+
+describe('LayersPanel blend/opacity', () => {
+  beforeEach(() => {
+    resetFilterUiForTests();
+  });
+
+  it('edits the raster layer when Image Source is selected', () => {
+    const { props } = renderLayers({ selectedFilterId: null, selectedLayerId: 1 });
+    expect(screen.getByRole('button', { name: 'Multiply' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Opacity')).toHaveValue('50%');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Multiply' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Screen' }));
+    expect(props.onBlendModeChange).toHaveBeenCalledWith(1, 'Screen');
+    expect(props.onFilterBlendChange).not.toHaveBeenCalled();
+  });
+
+  it('edits the selected filter with the same controls', () => {
+    const { props } = renderLayers({ selectedFilterId: 'filter-1', selectedLayerId: 1 });
+    expect(screen.getByRole('button', { name: 'Overlay' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Opacity')).toHaveValue('40%');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Overlay' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Screen' }));
+    expect(props.onFilterBlendChange).toHaveBeenCalledWith({ blend_mode: 'Screen' });
+    expect(props.onBlendModeChange).not.toHaveBeenCalled();
+  });
+
+  it('disables Opacity for Strict dither with a bound palette', () => {
+    const strict: FilterInfo = {
+      ...filter,
+      opacity: 0.4,
+      params: {
+        ...(filter.params as object),
+        palette_id: 7,
+        palette_dither_mode: 'strict',
+      } as FilterInfo['params'],
+    };
+    const { props } = renderLayers({
+      filters: [strict],
+      selectedFilterId: 'filter-1',
+      selectedLayerId: 1,
+    });
+    const input = screen.getByLabelText('Opacity');
+    expect(input).toBeDisabled();
+    expect(input).toHaveValue('100%');
+    expect(screen.getByRole('button', { name: 'Open opacity slider' })).toBeDisabled();
+    expect(props.onFilterBlendChange).toHaveBeenCalledWith({ opacity: 1 });
+  });
+
+  it('keeps Opacity editable for Guided dither with a bound palette', () => {
+    const guided: FilterInfo = {
+      ...filter,
+      opacity: 0.4,
+      params: {
+        ...(filter.params as object),
+        palette_id: 7,
+        palette_dither_mode: { guided: { channel_levels: 4 } },
+      } as FilterInfo['params'],
+    };
+    renderLayers({
+      filters: [guided],
+      selectedFilterId: 'filter-1',
+      selectedLayerId: 1,
+    });
+    expect(screen.getByLabelText('Opacity')).not.toBeDisabled();
+    expect(screen.getByLabelText('Opacity')).toHaveValue('40%');
+  });
+
+  it('toggles effect visibility from the eye button', () => {
+    const { props } = renderLayers();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide effect' }));
+    expect(props.onToggleFilterEnabled).toHaveBeenCalledWith('filter-1');
+    expect(props.onToggleVisibility).not.toHaveBeenCalled();
+  });
+
+  it('lists later stack filters above earlier ones, Image Source at the bottom', () => {
+    const adjust: FilterInfo = {
+      id: 'filter-adjust',
+      kind: 'Adjust',
+      params: {
+        type: 'Adjust',
+        contrast: 0,
+        brightness: 0,
+        saturation: 0,
+        blur: 0,
+        sharpness: 0,
+        noise: 0,
+      } as FilterInfo['params'],
+      enabled: true,
+      opacity: 1,
+      blend_mode: 'Normal',
+    };
+    renderLayers({ filters: [filter, adjust], selectedFilterId: null });
+    const names = screen.getAllByRole('treeitem').map((el) => el.textContent ?? '');
+    expect(names[0]).toContain('Dithering');
+    expect(names[1]).toContain('Adjust');
+    expect(names[names.length - 1]).toContain('Image Source');
+  });
+
+  it('isolates effect # numbering per open document', () => {
+    const filterB: FilterInfo = {
+      ...filter,
+      id: 'filter-b',
+    };
+    const { rerender, props } = renderLayers({
+      docId: 1,
+      filters: [filter],
+      selectedFilterId: null,
+    });
+
+    expect(screen.getByRole('treeitem', { name: /#1 Dithering/ })).toBeInTheDocument();
+
+    rerender(
+      <LayersPanel
+        {...props}
+        docId={2}
+        filters={[filterB]}
+        selectedFilterId={null}
+      />
+    );
+    expect(screen.getByRole('treeitem', { name: /#1 Dithering/ })).toBeInTheDocument();
+    expect(screen.queryByRole('treeitem', { name: /#2 / })).not.toBeInTheDocument();
+
+    rerender(
+      <LayersPanel
+        {...props}
+        docId={1}
+        filters={[filter]}
+        selectedFilterId={null}
+      />
+    );
+    expect(screen.getByRole('treeitem', { name: /#1 Dithering/ })).toBeInTheDocument();
+  });
+
+  it('does not let stale filters from the previous doc consume the new doc counter', () => {
+    const filterB: FilterInfo = {
+      ...filter,
+      id: 'filter-b',
+    };
+    const { rerender, props } = renderLayers({
+      docId: 1,
+      filters: [filter],
+      selectedFilterId: null,
+    });
+    expect(screen.getByRole('treeitem', { name: /#1 Dithering/ })).toBeInTheDocument();
+
+    // Race: docId already advanced, Redux still holds the previous project's filters.
+    rerender(
+      <LayersPanel
+        {...props}
+        docId={2}
+        filters={[filter]}
+        selectedFilterId={null}
+      />
+    );
+
+    rerender(
+      <LayersPanel
+        {...props}
+        docId={2}
+        filters={[filterB]}
+        selectedFilterId={null}
+      />
+    );
+    expect(screen.getByRole('treeitem', { name: /#1 Dithering/ })).toBeInTheDocument();
+    expect(screen.queryByRole('treeitem', { name: /#2 / })).not.toBeInTheDocument();
+  });
+
+  it('keeps a custom effect name after the panel unmounts', () => {
+    const { unmount } = renderLayers({ selectedFilterId: 'filter-1' });
+    fireEvent.doubleClick(screen.getByText('#1 Dithering'));
+    fireEvent.change(screen.getByLabelText('Rename layer'), { target: { value: 'Grain' } });
+    fireEvent.keyDown(screen.getByLabelText('Rename layer'), { key: 'Enter' });
+    expect(screen.getByText('#1 Grain')).toBeInTheDocument();
+    unmount();
+    renderLayers({ selectedFilterId: 'filter-1' });
+    expect(screen.getByText('#1 Grain')).toBeInTheDocument();
+  });
+
+  it('hints that Add Layer chooses a type in Effect Settings', () => {
+    renderLayers();
+    const addLayer = screen.getByRole('button', {
+      name: /Select the layer type in Effect Setting window/,
+    });
+    expect(addLayer).toHaveTextContent('add layer');
+    fireEvent.mouseEnter(addLayer, { clientX: 40, clientY: 20 });
+    expect(screen.getByRole('tooltip')).toHaveTextContent(
+      'Select the layer type in Effect Setting window',
+    );
+  });
+});

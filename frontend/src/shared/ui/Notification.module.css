@@ -15,7 +15,7 @@
   color: var(--color-black);
   font-family: var(--font-family);
   font-size: 14px;
-  animation: fadeIn 0.2s ease;
+  animation: fadeIn 0.1s ease-out;
 }
 
 .notification-busy {
@@ -76,7 +76,7 @@
 @keyframes fadeIn {
   from {
     opacity: 0;
-    transform: translateX(-50%) translateY(8px);
+    transform: translateX(-50%) translateY(4px);
   }
   to {
     opacity: 1;

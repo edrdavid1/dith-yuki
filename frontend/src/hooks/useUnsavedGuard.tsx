@@ -142,7 +142,7 @@ export function useUnsavedGuard() {
         return true;
       }
 
-      // Don’t Save — flush journal (often already on disk), close, offer Restore ~12s.
+      // Don’t Save — flush journal (often already on disk), close, offer Restore ~10s.
       try {
         const info = await prepareSoftDiscard(current.id);
         setSoftDiscard(info);

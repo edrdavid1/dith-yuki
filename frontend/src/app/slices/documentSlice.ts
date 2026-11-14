@@ -27,6 +27,8 @@ export interface DocumentState {
   /** True while a save / share-copy write is in flight (UI busy indicator). */
   saving: boolean;
   notification: string | null;
+  /** Bumps each time a notification is shown so identical messages can re-toast. */
+  notificationEpoch: number;
   error: string | null;
   layerId: number | null;
   /** Remembered `.dyproj` path after Save As / Open Project (UI hint only). */
@@ -39,6 +41,11 @@ export interface DocumentState {
   documentEpoch: number;
 }
 
+function pushNotification(state: DocumentState, message: string) {
+  state.notification = message;
+  state.notificationEpoch += 1;
+}
+
 const initialState: DocumentState = {
   docId: null,
   width: 0,
@@ -48,6 +55,7 @@ const initialState: DocumentState = {
   loading: false,
   saving: false,
   notification: null,
+  notificationEpoch: 0,
   error: null,
   layerId: null,
   projectPath: null,
@@ -284,7 +292,10 @@ const documentSlice = createSlice({
         >
       >
     ) {
-      Object.assign(state, action.payload);
+      const { notification, ...rest } = action.payload;
+      Object.assign(state, rest);
+      if (notification != null) pushNotification(state, notification);
+      else if ('notification' in action.payload) state.notification = null;
     },
     setDirty(state, action: PayloadAction<boolean>) {
       state.dirty = action.payload;
@@ -377,7 +388,7 @@ const documentSlice = createSlice({
       })
       .addCase(saveImage.fulfilled, (state, action) => {
         state.saving = false;
-        state.notification = action.payload;
+        pushNotification(state, action.payload);
         state.error = null;
       })
       .addCase(saveImage.rejected, (state, action) => {
@@ -414,7 +425,7 @@ const documentSlice = createSlice({
       })
       .addCase(saveProject.fulfilled, (state, action) => {
         state.saving = false;
-        state.notification = action.payload.notification;
+        pushNotification(state, action.payload.notification);
         state.projectPath = action.payload.projectPath;
         state.dirty = false;
         state.error = null;
@@ -430,7 +441,7 @@ const documentSlice = createSlice({
       })
       .addCase(saveProjectAs.fulfilled, (state, action) => {
         state.saving = false;
-        state.notification = action.payload.notification;
+        pushNotification(state, action.payload.notification);
         state.projectPath = action.payload.projectPath;
         state.dirty = false;
         state.error = null;
@@ -441,7 +452,7 @@ const documentSlice = createSlice({
         state.notification = null;
       })
       .addCase(exportPattern.fulfilled, (state, action) => {
-        state.notification = action.payload;
+        pushNotification(state, action.payload);
         state.error = null;
       })
       .addCase(exportPattern.rejected, (state, action) => {
@@ -449,7 +460,7 @@ const documentSlice = createSlice({
         state.notification = null;
       })
       .addCase(importPattern.fulfilled, (state, action) => {
-        state.notification = action.payload.notification;
+        pushNotification(state, action.payload.notification);
         state.error = null;
       })
       .addCase(importPattern.rejected, (state, action) => {

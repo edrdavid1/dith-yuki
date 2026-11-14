@@ -1,4 +1,6 @@
 export * from './app';
+export * from './boot';
+export * from './channel';
 export * from './document';
 export * from './project';
 export * from './recent';

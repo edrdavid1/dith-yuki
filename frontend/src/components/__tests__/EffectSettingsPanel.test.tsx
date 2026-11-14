@@ -1,15 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import type { ReactElement } from 'react';
-import EffectSettingsPanel from '../EffectSettingsPanel';
-import type { LayerWithFilters } from '../EffectSettingsPanel';
+import EffectSettingsPanel from '../../features/effects/EffectSettingsPanel';
+import type { LayerWithFilters } from '../../features/effects/EffectSettingsPanel';
 import type { FilterInfo } from '../../types';
 import { StoreProvider, createTestStore } from '../../app/__tests__/testStore';
-
-// Mock listPalettes IPC call
-vi.mock('../../ipc/commands', () => ({
-  listPalettes: vi.fn().mockResolvedValue([]),
-}));
 
 const openDialogMock = vi.fn();
 

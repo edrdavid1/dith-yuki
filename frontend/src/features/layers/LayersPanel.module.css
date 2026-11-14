@@ -246,6 +246,11 @@
 }
 
 /* In-list add — light gray text + plus icon under image source */
+.lp-layers-list > :global([data-tooltip-host]) {
+  display: flex;
+  width: 100%;
+}
+
 .lp-list-add {
   display: flex;
   align-items: center;

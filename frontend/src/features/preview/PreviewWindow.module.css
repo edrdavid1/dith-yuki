@@ -2,8 +2,10 @@
 
 .preview-undocked-placeholder {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 12px;
   width: 100%;
   height: 100%;
   background: #444;
@@ -11,6 +13,28 @@
   font-family: var(--font-family);
   font-size: 15px;
   user-select: none;
+}
+
+.preview-undocked-return-btn {
+  height: 32px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 0;
+  background: var(--bg-window);
+  color: var(--text-color);
+  font-family: var(--font-family);
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+}
+
+.preview-undocked-return-btn:hover {
+  background: var(--bg-hover);
+}
+
+.preview-undocked-return-btn:active {
+  box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light);
 }
 
 .preview-window {

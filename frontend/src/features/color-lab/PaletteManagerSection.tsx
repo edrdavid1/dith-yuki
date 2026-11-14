@@ -3,6 +3,7 @@ import DropdownMenu, { type DropdownOption } from '../../components/common/Dropd
 import Icon from '../../icons/iconRegistry';
 import type { BuiltinPaletteDto, PaletteDto } from '../../shared/ipc';
 import { toHex } from '../../types/effects';
+import ColorLabSection from './ColorLabSection';
 import styles from './ColorLabWindow.module.css';
 import buttonStyles from './ColorLabButtons.module.css';
 import { bind } from '../../shared/ui/cn';
@@ -222,8 +223,7 @@ export default function PaletteManagerSection({
         : 'new';
 
   return (
-    <div className={cn('color-lab-column', 'builtin-presets')}>
-      <div className={cn('color-lab-section-title')}>palettes</div>
+    <ColorLabSection title="palettes" defaultOpen className={cn('builtin-presets')}>
       <DropdownMenu
         value={value}
         options={options}
@@ -297,6 +297,6 @@ export default function PaletteManagerSection({
         onExportSaved={onExportSaved}
         onImport={onImport}
       />
-    </div>
+    </ColorLabSection>
   );
 }

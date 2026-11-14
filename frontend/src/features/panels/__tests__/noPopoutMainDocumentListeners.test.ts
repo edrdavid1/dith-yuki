@@ -13,7 +13,7 @@ const SRC = join(__dirname, '../../..');
 const POPOUT_FILES = [
   'features/panels/FlexPopoutChrome.tsx',
   'features/panels/useFlexPopoutJsDrag.ts',
-  'components/PreviewWindow.tsx',
+  'features/preview/PreviewWindow.tsx',
 ];
 
 describe('W5 popout listener ownership', () => {

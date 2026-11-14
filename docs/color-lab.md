@@ -113,7 +113,6 @@ Legacy `FilterParams::Dither` мигрирует в V2 с `palette_id: None`.
 ### UI эффектов ↔ Color Lab
 
 - Новый filter с пустым/`None` `palette_id` получает `palettesSlice.lastCreatedId` при создании (`layersSlice.addLayerWithEffect`).
-- `PaletteSelector`: при обязательном выборе и пустом id показывает `lastCreatedId`.
 - Редактор **Dither** (`features/effects`): локального селектора палитры нет — `palette_id` синхронизируется с `lastCreatedId` (`EffectsFeature` + подсказка в `DitherSettings`).
 
 ---
@@ -265,7 +264,6 @@ frontend/src/app/shell/ShellContext.tsx   # autoExtractPalettes pref
 frontend/src/app/slices/colorLabSlice.ts
 frontend/src/app/slices/palettesSlice.ts
 frontend/src/shared/ipc/palettes.ts
-frontend/src/components/PaletteSelector.tsx
 frontend/src/features/effects/EffectsFeature.tsx
 ```
 

@@ -35,7 +35,6 @@ describe('W7/W10 legacy layout IPC ban', () => {
     for (const file of walk(SRC_ROOT)) {
       const rel = relative(SRC_ROOT, file).replace(/\\/g, '/');
       if (rel.includes('.test.') || rel.includes('__tests__')) continue;
-      if (rel.startsWith('spikes/')) continue;
 
       const text = readFileSync(file, 'utf8')
         .replace(/\/\*[\s\S]*?\*\//g, '')

@@ -25,6 +25,7 @@ import inputStyles from '../../../shared/ui/ParamInput.module.css';
 import sliderStyles from '../../../shared/ui/Slider.module.css';
 import buttonStyles from '../../../shared/ui/FilterButtons.module.css';
 import { bind } from '../../../shared/ui/cn';
+import InterfaceHint from '../../../shared/ui/InterfaceHint';
 
 const cn = bind({
   ...panelStyles,
@@ -356,13 +357,15 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
 
   return (
     <div className={cn('effect-settings-content')}>
-      <p className={cn('effect-palette-hint')}>
-        Palette is controlled in Color Lab
-        {boundPaletteId != null
-          ? ` (palette #${boundPaletteId}). Output colours come from the palette`
-          : ' — Raw tone selected: channel shades use the Tone Steps slider below, or pick a palette to lock output to swatches'}
-        .
-      </p>
+      <InterfaceHint>
+        <p className={cn('effect-palette-hint')}>
+          Palette is controlled in Color Lab
+          {boundPaletteId != null
+            ? ` (palette #${boundPaletteId}). Output colours come from the palette`
+            : ' — Raw tone selected: channel shades use the Tone Steps slider below, or pick a palette to lock output to swatches'}
+          .
+        </p>
+      </InterfaceHint>
 
       <AlgorithmSelector
         value={algorithmSelection}
@@ -370,22 +373,25 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
       />
 
       {visibility?.showEdTemporalWarning && (
-        <p className={cn('effect-palette-hint')} title="Temporal stability for animation frames">
-          {ANIMATION_STABLE_MODES.has(simpleMode)
-            ? 'Suitable for animation — pattern stays stable across frames.'
-            : 'May flicker between frames — error diffusion is not temporally stable.'}
-        </p>
+        <InterfaceHint>
+          <p className={cn('effect-palette-hint')} title="Temporal stability for animation frames">
+            {ANIMATION_STABLE_MODES.has(simpleMode)
+              ? 'Suitable for animation — pattern stays stable across frames.'
+              : 'May flicker between frames — error diffusion is not temporally stable.'}
+          </p>
+        </InterfaceHint>
       )}
 
       {visibility?.showSeamlessPreview &&
         seamlessLines.map((line) => (
-          <p
-            key={line.slice(0, 48)}
-            className={cn('effect-palette-hint')}
-            title="Seamless / tileable texture check"
-          >
-            {line}
-          </p>
+          <InterfaceHint key={line.slice(0, 48)}>
+            <p
+              className={cn('effect-palette-hint')}
+              title="Seamless / tileable texture check"
+            >
+              {line}
+            </p>
+          </InterfaceHint>
         ))}
 
       {simpleMode === 'custom_png' && (
@@ -411,17 +417,21 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
               Browse
             </button>
           </div>
-          <p className={cn('effect-palette-hint')}>
-            PNG ≤4096×4096 (color → luminance). Embedded into the project on save.
-          </p>
+          <InterfaceHint>
+            <p className={cn('effect-palette-hint')}>
+              PNG ≤4096×4096 (color → luminance). Embedded into the project on save.
+            </p>
+          </InterfaceHint>
         </div>
       )}
 
       {simpleMode === 'riemersma' && (
-        <p className={cn('effect-palette-hint')}>
-          Riemersma runs as a full-document pass — preview updates after the
-          whole layer finishes, not tile-by-tile.
-        </p>
+        <InterfaceHint>
+          <p className={cn('effect-palette-hint')}>
+            Riemersma runs as a full-document pass — preview updates after the
+            whole layer finishes, not tile-by-tile.
+          </p>
+        </InterfaceHint>
       )}
 
       {/* Always visible — was gated on paletteBound, so the menu vanished whenever
@@ -528,11 +538,13 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
             decimals={0}
             onChange={(v) => emit({ levels: clampParam(Math.round(v), 2, 256) })}
           />
-          <p className={cn('effect-palette-hint')}>
-            Each RGB channel snaps to this many evenly spaced values before
-            dithering paints the in-betweens. 2 = high contrast; higher =
-            smoother greys.
-          </p>
+          <InterfaceHint>
+            <p className={cn('effect-palette-hint')}>
+              Each RGB channel snaps to this many evenly spaced values before
+              dithering paints the in-betweens. 2 = high contrast; higher =
+              smoother greys.
+            </p>
+          </InterfaceHint>
         </>
       )}
 
@@ -554,9 +566,11 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
           data-testid="tiling-section"
         >
           <summary className={cn('effect-palette-hint')}>Tiling</summary>
-          <p className={cn('effect-palette-hint')}>
-            Use the preview 3×3 toggle to inspect tile seams.
-          </p>
+          <InterfaceHint>
+            <p className={cn('effect-palette-hint')}>
+              Use the preview 3×3 toggle to inspect tile seams.
+            </p>
+          </InterfaceHint>
           {visibility.showAdvancedToggle && (
             <label className={cn('param-checkbox-row')}>
               <input
@@ -585,9 +599,11 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
                 />
                 Approximate wrap-padding
               </label>
-              <p className={cn('effect-palette-hint')} title={WRAP_PADDING_TOOLTIP}>
-                {WRAP_PADDING_HINT}
-              </p>
+              <InterfaceHint>
+                <p className={cn('effect-palette-hint')} title={WRAP_PADDING_TOOLTIP}>
+                  {WRAP_PADDING_HINT}
+                </p>
+              </InterfaceHint>
               {!wrapPaddingFits && (
                 <p className={cn('effect-palette-hint')} role="status">
                   {WRAP_PADDING_OVERSIZE_BANNER}

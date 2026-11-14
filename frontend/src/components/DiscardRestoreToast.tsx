@@ -1,7 +1,7 @@
 import Notification from './common/Notification';
 import type { SoftDiscardInfo } from '../shared/ipc/recovery';
 
-const RESTORE_MS = 12_000;
+const RESTORE_MS = 10_000;
 
 export interface DiscardRestoreToastProps {
   info: SoftDiscardInfo | null;

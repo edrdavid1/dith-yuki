@@ -1,8 +1,10 @@
 import Icon from '../../icons/iconRegistry';
 import Tooltip from '../../shared/ui/Tooltip';
+import ColorLabSection from './ColorLabSection';
 import styles from './ColorLabWindow.module.css';
 import buttonStyles from './ColorLabButtons.module.css';
 import { bind } from '../../shared/ui/cn';
+import InterfaceHint from '../../shared/ui/InterfaceHint';
 
 const cn = bind({ ...styles, ...buttonStyles });
 
@@ -18,14 +20,12 @@ export default function ImportExportSection({
   onExport,
 }: ImportExportSectionProps) {
   return (
-    <div className={cn("color-lab-column")}>
-      <div className={cn("color-lab-section-title")}>import / export</div>
-
+    <ColorLabSection title="import / export">
       <Tooltip label="Import palette file">
         <button
           type="button"
           onClick={onImport}
-          className={cn("color-lab-button")}
+          className={cn('color-lab-button')}
           style={{ height: '36px' }}
           aria-label="Import palette file"
         >
@@ -38,7 +38,7 @@ export default function ImportExportSection({
           type="button"
           onClick={() => onExport('gpl')}
           disabled={!canExport}
-          className={cn("color-lab-button")}
+          className={cn('color-lab-button')}
           style={{ height: '36px' }}
           aria-label="Export palette file"
         >
@@ -46,7 +46,9 @@ export default function ImportExportSection({
         </button>
       </Tooltip>
 
-      <div className={cn("color-lab-hint")}>formats: ASE, GPL, HEX, JASC/PAL, JSON</div>
-    </div>
+      <InterfaceHint>
+        <div className={cn('color-lab-hint')}>formats: ASE, GPL, HEX, JASC/PAL, JSON</div>
+      </InterfaceHint>
+    </ColorLabSection>
   );
 }

@@ -74,8 +74,11 @@
 
 .preferences-hint {
   margin: 0 0 4px;
-  opacity: 0.75;
+  color: var(--color-black);
+  opacity: 1;
   line-height: 1.45;
+  -webkit-text-stroke: 0;
+  paint-order: normal;
 }
 
 .preferences-hint + .preferences-btn-row,

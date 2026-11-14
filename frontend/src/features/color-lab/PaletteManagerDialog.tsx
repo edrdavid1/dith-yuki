@@ -4,9 +4,12 @@ import SimpleBar from 'simplebar-react';
 import type { BuiltinPaletteDto, PaletteDto } from '../../shared/ipc';
 import { toHex } from '../../types/effects';
 import { DialogTitlebar } from '../../shared/ui/WindowTitlebar';
+import Tooltip from '../../shared/ui/Tooltip';
+import Icon from '../../icons/iconRegistry';
 import dialogStyles from '../document/NewProjectDialog.module.css';
 import styles from './PaletteManagerDialog.module.css';
 import { bind } from '../../shared/ui/cn';
+import InterfaceHint from '../../shared/ui/InterfaceHint';
 import {
   buildPaletteList,
   currentPaletteKey,
@@ -220,23 +223,21 @@ export default function PaletteManagerDialog({
           </SimpleBar>
 
           <div className={cn('pm-actions')}>
-            <button
-              type="button"
-              className={cn('pm-action', 'pm-action-primary')}
-              disabled={!focused}
-              onClick={() => focused && applyEntry(focused)}
-            >
-              Select
-            </button>
-            <button
-              type="button"
-              className={cn('pm-action')}
-              disabled={!canDelete}
-              onClick={() => {
-                if (focused?.kind === 'saved') onDeleteSaved(focused.id);
-              }}
-            >
-              Delete
+            <Tooltip label="Delete">
+              <button
+                type="button"
+                className={cn('pm-action', 'pm-action-icon')}
+                disabled={!canDelete}
+                aria-label="Delete"
+                onClick={() => {
+                  if (focused?.kind === 'saved') onDeleteSaved(focused.id);
+                }}
+              >
+                <Icon name="trash" width={16} height={16} />
+              </button>
+            </Tooltip>
+            <button type="button" className={cn('pm-action')} onClick={onImport}>
+              Import
             </button>
             <button
               type="button"
@@ -248,14 +249,21 @@ export default function PaletteManagerDialog({
             >
               Export
             </button>
-            <button type="button" className={cn('pm-action')} onClick={onImport}>
-              Import
+            <button
+              type="button"
+              className={cn('pm-action', 'pm-action-select')}
+              disabled={!focused}
+              onClick={() => focused && applyEntry(focused)}
+            >
+              Select
             </button>
           </div>
-          <p className={cn('pm-hint')}>
-            Raw tone is what dithering and glitching use with no palette bound. Arrow keys move the
-            selection. Built-in palettes cannot be deleted. Double-click or Select to apply.
-          </p>
+          <InterfaceHint>
+            <p className={cn('pm-hint')}>
+              Raw tone is what dithering and glitching use with no palette bound. Arrow keys move the
+              selection. Built-in palettes cannot be deleted. Double-click or Select to apply.
+            </p>
+          </InterfaceHint>
         </div>
       </div>
     </div>,

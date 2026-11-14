@@ -21,8 +21,6 @@ const SRC_ROOT = join(__dirname, '../../..'); // frontend/src
 const BASELINE_ALLOWLIST = new Set([
   // W4/W7: layout load/save + dock-request listen live in the store.
   'contexts/layoutStore.ts',
-  // Spike: invoke is commented out; import may remain during experiments.
-  'spikes/PopoutTestWindow.tsx',
 ]);
 
 function walk(dir: string): string[] {

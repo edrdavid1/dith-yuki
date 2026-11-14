@@ -1,6 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { listen } from '@tauri-apps/api/event';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { useCallback, useEffect, useState } from 'react';
 import MenuBar from '../components/MenuBar';
 import DocumentTabBar from '../features/document/DocumentTabBar';
 import { WindowShell } from '../components/WindowShell';
@@ -14,51 +12,17 @@ import WorkspacePromptDialog from '../features/workspace/WorkspacePromptDialog';
 import WorkspaceHintBanner from '../features/workspace/WorkspaceHintBanner';
 import { useWorkspaceOptional } from '../features/workspace/WorkspaceContext';
 import { useWelcomeScreen } from '../hooks/useWelcomeScreen';
-import { registerDocumentCommands, registerLayoutCommands } from '../features/shortcuts/commandRegistry';
+import { ChannelGates, IS_DIRECT } from '../channel';
 import { useAppUpdates } from '../hooks/useAppUpdates';
 import { useAppDispatch, useAppSelector } from './hooks';
-import { refreshFilters } from './slices/filtersSlice';
-import { addLayerWithPreset, refreshLayers } from './slices/layersSlice';
-import { refreshDocument, setDocumentMeta } from './slices/documentSlice';
-import { redo as redoDocument, undo as undoDocument } from './slices/undoSlice';
+import { addLayerWithPreset } from './slices/layersSlice';
+import { setDocumentMeta } from './slices/documentSlice';
 import { setSelection } from './slices/selectionSlice';
-import { refreshTabs, tabsChanged } from './slices/tabsSlice';
-import { useShell } from './shell/ShellContext';
+import { redo as redoDocument, undo as undoDocument } from './slices/undoSlice';
 import { previewBackgroundStyle } from '../features/preview/previewBackground';
-import {
-  onDockAffinity,
-  onNativeMenu,
-  onAppQuitRequested,
-  onTabsChanged,
-  allowAppExit,
-  confirmAppQuit,
-  type DockAffinityEvent,
-} from '../shared/ipc';
 import SidebarCollapseStrip from '../features/panels/SidebarCollapseStrip';
 import FlexLayoutContainer from '../components/FlexLayoutContainer';
 import ResizeHandle from '../components/common/ResizeHandle';
-import { isPanelOnFlexLayout } from '../factories/layoutPanelFactory';
-import {
-  isPreviewFloating,
-  listDockedFlexComponents,
-  listFlexComponents,
-  listFloatingFlexComponents,
-  useLayoutContext,
-} from '../contexts/LayoutContext';
-import {
-  lookupPanelIdByLabel,
-  forgetFlexPopoutLabelByWindowLabel,
-} from '../features/panels/flexPopoutRegistry';
-import {
-  SIDEBAR_COLLAPSE_WIDTH,
-  SIDEBAR_EXPANDED_MAX_WIDTH,
-  SIDEBAR_EXPANDED_MIN_WIDTH,
-} from '../defaults/DefaultLayouts';
-import { maxDockedHorizontalSpan } from '../features/panels/horizontalDock';
-import { computeShellWidths } from '../features/panels/computeShellWidths';
-import type { DockSide, PanelId } from '../types/panels';
-import { appEdgesAttr } from '../shared/ui/appEdges';
-import { isMacOS } from '../lib/platform';
 import styles from './AppLayout.module.css';
 import menuStyles from '../features/document/MenuBar.module.css';
 import previewStyles from '../features/preview/Preview.module.css';
@@ -71,11 +35,15 @@ import Tooltip from '../shared/ui/Tooltip';
 import Icon from '../icons/iconRegistry';
 import { labelWithShortcut } from '../features/shortcuts/bindings';
 import { useShortcutBindings } from '../features/shortcuts/ShortcutsContext';
+import { useMainWindowLifetime } from './useMainWindowLifetime';
+import { useDockFrame } from './useDockFrame';
+import { useSessionCommands } from './useSessionCommands';
 
 const cn = bind({ ...styles, ...menuStyles, ...previewStyles, ...previewWindowStyles, ...resizeStyles });
 
 /**
  * Main shell layout: menubar + optional left sidebar | canvas | optional right sidebar.
+ * Quit, dock geometry, and native-menu commands live in the hooks beside this file.
  */
 export default function AppLayout() {
   const dispatch = useAppDispatch();
@@ -120,7 +88,7 @@ export default function AppLayout() {
   }, [dispatch, docId, layerTree]);
 
   const updates = useAppUpdates({
-    autoCheckOnLaunch: true,
+    autoCheckOnLaunch: IS_DIRECT,
     confirmRestart: confirmQuit,
     fileError: doc.error,
     onStatus: (message, kind) => {
@@ -135,120 +103,9 @@ export default function AppLayout() {
     clearFileError: () => dispatch(setDocumentMeta({ error: null })),
   });
 
-  const allowCloseRef = useRef(false);
-  const quitInFlightRef = useRef(false);
-  const confirmQuitRef = useRef(confirmQuit);
-  confirmQuitRef.current = confirmQuit;
-
-  const requestQuit = useCallback(async () => {
-    if (quitInFlightRef.current) return;
-    quitInFlightRef.current = true;
-    try {
-      const ok = await confirmQuitRef.current();
-      if (!ok) return;
-      allowCloseRef.current = true;
-      await confirmAppQuit();
-    } catch (err) {
-      console.error('Quit failed:', err);
-    } finally {
-      quitInFlightRef.current = false;
-    }
-  }, []);
-
-  useEffect(() => {
-    const title = windowChromeTitle({
-      dirty: doc.dirty,
-      hasDocument: doc.hasDocument,
-      projectPath: doc.projectPath,
-      sourcePath: doc.sourcePath,
-      workspace,
-    });
-    void getCurrentWindow()
-      .setTitle(title)
-      .catch(() => {
-        /* panel webviews may lack set-title; main title is enough */
-      });
-  }, [doc.dirty, doc.hasDocument, doc.projectPath, doc.sourcePath, workspace]);
-
-  useEffect(() => {
-    void dispatch(refreshTabs());
-    let cancelled = false;
-    let unlisten: (() => void) | null = null;
-    void onTabsChanged((event) => {
-      dispatch(tabsChanged(event.payload));
-      void dispatch(refreshDocument());
-      void dispatch(refreshLayers(event.payload.active_id));
-      void dispatch(refreshFilters());
-    }).then((fn) => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [dispatch]);
-
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | null = null;
-    const win = getCurrentWindow();
-    void win
-      .onCloseRequested(async (event) => {
-        if (allowCloseRef.current) return;
-        event.preventDefault();
-        const ok = await confirmQuitRef.current();
-        if (!ok) return;
-        allowCloseRef.current = true;
-        // W7: flush shell layout before destroy (also handles flush-layout from Rust).
-        try {
-          const { layoutStore } = await import('../contexts/layoutStore');
-          await layoutStore.flushForClose();
-        } catch (err) {
-          console.error('[flex-dock] close flush failed:', err);
-        }
-        try {
-          await allowAppExit();
-        } catch {
-          /* still try to close */
-        }
-        await win.destroy();
-      })
-      .then((fn) => {
-        if (cancelled) fn();
-        else unlisten = fn;
-      });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | null = null;
-    void onAppQuitRequested(() => {
-      void requestQuit();
-    }).then((fn) => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [requestQuit]);
-
-  const {
-    leftSidebar,
-    rightSidebar,
-    setSidebarCollapsed,
-    setSidebarWidth,
-    swapSidebars,
-    previewBackground,
-  } = useShell();
-  const projectPath = useAppSelector((s) => s.document.projectPath);
-  const sourcePath = useAppSelector((s) => s.document.sourcePath);
+  const { requestQuit } = useMainWindowLifetime(doc, workspace, confirmQuit);
+  const projectPath = doc.projectPath;
+  const sourcePath = doc.sourcePath;
 
   useEffect(() => {
     const name = projectPath || sourcePath;
@@ -258,20 +115,6 @@ export default function AppLayout() {
       filename: name.split(/[/\\]/).pop() ?? name,
     });
   }, [projectPath, sourcePath, workspaceApi]);
-
-  const {
-    left: leftLayout,
-    right: rightLayout,
-    center: centerLayout,
-    layoutEpoch,
-    swapFlexSides,
-    layoutToast,
-    clearLayoutToast,
-    dockPanel,
-    returnAllPanelsToDock,
-  } = useLayoutContext();
-  // layoutEpoch: re-read docked vs floating after in-place float/dock mutations.
-  void layoutEpoch;
 
   const [dismissedError, setDismissedError] = useState<string | null>(null);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
@@ -284,142 +127,38 @@ export default function AppLayout() {
     closePatternManager,
   } = usePatternsUi();
   const [focusMode, setFocusMode] = useState(false);
-  const [affinity, setAffinity] = useState<DockAffinityEvent | null>(null);
-  const leftHitRef = useRef<HTMLElement | null>(null);
-  const rightHitRef = useRef<HTMLElement | null>(null);
 
-  // Flex panel sides come from FlexLayout models (source of truth).
-  const leftFlexIds = listFlexComponents(leftLayout.model).filter(
-    (id): id is PanelId => isPanelOnFlexLayout(id)
-  );
-  const rightFlexIds = listFlexComponents(rightLayout.model).filter(
-    (id): id is PanelId => isPanelOnFlexLayout(id)
-  );
-  const leftDockedFlexIds = listDockedFlexComponents(leftLayout.model).filter(
-    (id): id is PanelId => isPanelOnFlexLayout(id)
-  );
-  const rightDockedFlexIds = listDockedFlexComponents(rightLayout.model).filter(
-    (id): id is PanelId => isPanelOnFlexLayout(id)
-  );
-  const previewFloating = isPreviewFloating(centerLayout.model);
-
-  // Any flex tab (incl. floating) keeps Layout mounted so OS popouts stay alive.
-  const leftHasFlex  = leftFlexIds.length > 0;
-  const rightHasFlex = rightFlexIds.length > 0;
-  // Only docked flex panels reserve sidebar width — floated-away panels free the dock.
-  const leftHasDockedFlex  = leftDockedFlexIds.length > 0;
-  const rightHasDockedFlex = rightDockedFlexIds.length > 0;
-  const leftFlexOnly  = leftHasDockedFlex;
-  const rightFlexOnly = rightHasDockedFlex;
-  // Floated-only side: keep a zero-width Layout host + empty drop edge for redock.
-  const leftFloatHostOnly  = leftHasFlex  && !leftHasDockedFlex;
-  const rightFloatHostOnly = rightHasFlex && !rightHasDockedFlex;
-
-  const [viewportW, setViewportW] = useState(
-    () => (typeof window !== 'undefined' ? window.innerWidth : 1280),
-  );
-  useEffect(() => {
-    const onResize = () => setViewportW(window.innerWidth);
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
-
-  // W8: pure shell solver — preview ≥320, soft 240 / hard 200, emergency strip.
-  const leftSpan = maxDockedHorizontalSpan(leftLayout.model);
-  const rightSpan = maxDockedHorizontalSpan(rightLayout.model);
-  const shell = computeShellWidths({
-    viewportWidth: viewportW,
-    prefs: { leftWidth: leftSidebar.width, rightWidth: rightSidebar.width },
-    columnsLeft: leftHasDockedFlex && !focusMode ? leftSpan : 0,
-    columnsRight: rightHasDockedFlex && !focusMode ? rightSpan : 0,
-    collapsed: {
-      left: focusMode || !leftHasDockedFlex || leftSidebar.collapsed,
-      right: focusMode || !rightHasDockedFlex || rightSidebar.collapsed,
-    },
-  });
-  const leftW = focusMode ? 0 : shell.leftWidth;
-  const rightW = focusMode ? 0 : shell.rightWidth;
-  // Emergency collapse is visual only — never written to sidebar prefs.
-  const leftVisuallyCollapsed =
-    focusMode || leftSidebar.collapsed || shell.emergencyCollapseLeft;
-  const rightVisuallyCollapsed =
-    focusMode || rightSidebar.collapsed || shell.emergencyCollapseRight;
-
-  // macOS only — Windows OS chrome differs by version; we don't version-gate.
-  const leftAppEdges = isMacOS() ? appEdgesAttr('bottom', 'left') : undefined;
-  const rightAppEdges = isMacOS() ? appEdgesAttr('bottom', 'right') : undefined;
-  const previewAppEdges = isMacOS()
-    ? appEdgesAttr('bottom', leftW === 0 && 'left', rightW === 0 && 'right')
-    : undefined;
-
-  useEffect(() => {
-    void dispatch(refreshLayers(doc.docId));
-    if (doc.docId !== null) {
-      void dispatch(refreshFilters());
-    }
-  }, [dispatch, doc.docId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | null = null;
-    onDockAffinity((event) => {
-      if (cancelled) return;
-      const payload = event.payload;
-      if (!payload.armed) {
-        setAffinity(null);
-        return;
-      }
-      setAffinity(payload);
-    }).then((fn) => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
-
-  // Expand the sidebar a FlexLayout popout redocks onto.
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | null = null;
-    void listen<{ panelId: string; side: 'left' | 'right' }>(
-      'flex-panel-dock-request',
-      (event) => {
-        if (cancelled) return;
-        const { side } = event.payload;
-        if (side === 'left' || side === 'right') {
-          setSidebarCollapsed(side, false);
-        }
-      },
-    ).then((fn) => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [setSidebarCollapsed]);
-
-  const resizeColumnWidth = useCallback(
-    (side: DockSide, delta: number, allowCollapse: boolean) => {
-      setSidebarWidth(side, (w) => {
-        const signedDelta = side === 'right' ? -delta : delta;
-        const newW = w + signedDelta;
-        if (allowCollapse && newW < SIDEBAR_COLLAPSE_WIDTH) {
-          requestAnimationFrame(() => setSidebarCollapsed(side, true));
-          return w;
-        }
-        return Math.min(
-          SIDEBAR_EXPANDED_MAX_WIDTH,
-          Math.max(SIDEBAR_EXPANDED_MIN_WIDTH, newW),
-        );
-      });
-    },
-    [setSidebarWidth, setSidebarCollapsed]
-  );
+  const {
+    affinity,
+    leftHitRef,
+    rightHitRef,
+    leftDockedFlexIds,
+    rightDockedFlexIds,
+    previewFloating,
+    leftFlexOnly,
+    rightFlexOnly,
+    leftFloatHostOnly,
+    rightFloatHostOnly,
+    leftW,
+    rightW,
+    leftVisuallyCollapsed,
+    rightVisuallyCollapsed,
+    leftAppEdges,
+    rightAppEdges,
+    previewAppEdges,
+    previewBackground,
+    setSidebarCollapsed,
+    swapSidebars,
+    swapFlexSides,
+    layoutToast,
+    layoutToastEpoch,
+    clearLayoutToast,
+    dockPanel,
+    returnAllPanelsToDock,
+    resizeColumnWidth,
+    hasFloatingPanels,
+    gridTemplateColumns,
+  } = useDockFrame(focusMode);
 
   const handleOpenPreferences = useCallback(() => {
     setHelpOpen(false);
@@ -439,158 +178,6 @@ export default function AppLayout() {
     setHelpOpen(true);
   }, [closePatternManager]);
 
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | null = null;
-    void onNativeMenu((id) => {
-      switch (id) {
-        case 'new-project':
-          welcome.onNewProject();
-          break;
-        case 'open-image':
-          welcome.onOpenImage();
-          break;
-        case 'open-project':
-          welcome.onOpenProject();
-          break;
-        case 'save-project':
-          if (doc.hasDocument) onSaveProject();
-          break;
-        case 'save-project-as':
-          if (doc.hasDocument) onSaveProjectAs();
-          break;
-        case 'share-project-copy':
-          if (doc.hasDocument) onShareProjectCopy();
-          break;
-        case 'save-export':
-          if (doc.hasDocument) onSaveImage();
-          break;
-        case 'export-ascii':
-          if (doc.hasDocument) void doc.exportAscii();
-          break;
-        case 'batch-export':
-          if (doc.hasDocument) onBatchExport();
-          break;
-        case 'undo':
-          if (canUndo && doc.docId != null) void dispatch(undoDocument(doc.docId));
-          break;
-        case 'redo':
-          if (canRedo && doc.docId != null) void dispatch(redoDocument(doc.docId));
-          break;
-        case 'copy-ascii-text':
-          if (doc.hasDocument) void doc.copyAsciiText('txt');
-          break;
-        case 'copy-ascii-ansi':
-          if (doc.hasDocument) void doc.copyAsciiText('ansi');
-          break;
-        case 'export-pattern':
-          if (doc.hasDocument) void doc.exportPattern();
-          break;
-        case 'import-pattern':
-          if (doc.hasDocument) void doc.importPattern();
-          break;
-        case 'preferences':
-          handleOpenPreferences();
-          break;
-        case 'return-all-panels-to-dock':
-          returnAllPanelsToDock();
-          break;
-        case 'about':
-        case 'help':
-          handleOpenHelp();
-          break;
-        case 'help-check-updates':
-        case 'check-updates':
-          void updates.checkForUpdates();
-          break;
-        case 'quit':
-          void requestQuit();
-          break;
-        default:
-          break;
-      }
-    }).then((fn) => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [
-    canRedo,
-    canUndo,
-    dispatch,
-    doc,
-    handleOpenHelp,
-    handleOpenPreferences,
-    onSaveImage,
-    onExportPrint,
-    onBatchExport,
-    onSaveProject,
-    onSaveProjectAs,
-    onShareProjectCopy,
-    requestQuit,
-    returnAllPanelsToDock,
-    updates,
-    welcome,
-  ]);
-
-  // W2: OS-closed flex-popout → dock the matching floating tab.
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | null = null;
-    void listen<{ label: string }>('flex-popout-destroyed', (event) => {
-      if (cancelled) return;
-      const label = event.payload?.label;
-      if (!label) return;
-      const panelId = lookupPanelIdByLabel(label);
-      forgetFlexPopoutLabelByWindowLabel(label);
-      if (!panelId || !isPanelOnFlexLayout(panelId)) {
-        console.warn('[flex-dock] flex-popout-destroyed: no panel for', label);
-        return;
-      }
-      console.info('[flex-dock] flex-popout-destroyed → dock', panelId, label);
-      if (panelId === 'preview') {
-        dockPanel('center', 'preview');
-        return;
-      }
-      const onLeft = listFloatingFlexComponents(leftLayout.model).includes(panelId);
-      const onRight = listFloatingFlexComponents(rightLayout.model).includes(panelId);
-      if (onLeft) dockPanel('left', panelId);
-      else if (onRight) dockPanel('right', panelId);
-      else {
-        // Model may already have unfloated via close-poll — still bump via dock no-op.
-        console.info('[flex-dock] destroyed panel already non-floating', panelId);
-      }
-    }).then((fn) => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [dockPanel, leftLayout.model, rightLayout.model]);
-
-  useEffect(() => {
-    return registerDocumentCommands({
-      newProject: welcome.onNewProject,
-      openImage: welcome.onOpenImage,
-      openProject: welcome.onOpenProject,
-      saveProject: onSaveProject,
-      saveProjectAs: onSaveProjectAs,
-      openPreferences: handleOpenPreferences,
-    });
-  }, [
-    welcome.onNewProject,
-    welcome.onOpenImage,
-    welcome.onOpenProject,
-    onSaveProject,
-    onSaveProjectAs,
-    handleOpenPreferences,
-  ]);
-
   const handleSwapSidebars = useCallback(() => {
     try {
       swapSidebars();
@@ -600,15 +187,25 @@ export default function AppLayout() {
     }
   }, [swapSidebars, swapFlexSides]);
 
-  useEffect(() => {
-    return registerLayoutCommands({
-      toggleFocusMode: () => setFocusMode((on) => !on),
-      swapSidebars: () => void handleSwapSidebars(),
-      copyPreviewImage: () => {
-        if (doc.hasDocument) void doc.copyPreviewImage();
-      },
-    });
-  }, [doc.copyPreviewImage, doc.hasDocument, handleSwapSidebars]);
+  useSessionCommands({
+    welcome,
+    doc,
+    canUndo,
+    canRedo,
+    onSaveProject,
+    onSaveProjectAs,
+    onShareProjectCopy,
+    onSaveImage,
+    onBatchExport,
+    handleOpenPreferences,
+    handleOpenHelp,
+    returnAllPanelsToDock,
+    requestQuit,
+    checkForUpdates: updates.checkForUpdates,
+    directChannel: IS_DIRECT,
+    setFocusMode,
+    handleSwapSidebars,
+  });
 
   const shortcuts = useShortcutBindings();
 
@@ -616,16 +213,8 @@ export default function AppLayout() {
   const toastError =
     currentError && !isTooNewFileError(currentError) ? currentError : null;
   const displayError = toastError && toastError !== dismissedError ? toastError : null;
-  // Welcome screen has its own Opening…; with a document open, show a toast.
   const openingToast =
     doc.loading && doc.hasDocument ? 'Opening…' : null;
-
-  const gridTemplateColumns = `${leftW}px 1fr ${rightW}px`;
-
-  const hasFloatingPanels =
-    listFloatingFlexComponents(leftLayout.model).length > 0 ||
-    listFloatingFlexComponents(rightLayout.model).length > 0 ||
-    listFloatingFlexComponents(centerLayout.model).length > 0;
 
   return (
     <WindowShell
@@ -863,8 +452,8 @@ export default function AppLayout() {
             <span>Preview is in a separate window</span>
             <button
               type="button"
+              className={cn('preview-undocked-return-btn')}
               onClick={() => dockPanel('center', 'preview')}
-              style={{ marginTop: 12 }}
             >
               Return to canvas
             </button>
@@ -951,10 +540,12 @@ export default function AppLayout() {
       />
       <Notification
         message={doc.notification}
+        showId={doc.notificationEpoch}
         onDismiss={doc.clearNotification}
       />
       <Notification
         message={layoutToast}
+        showId={layoutToastEpoch}
         onDismiss={clearLayoutToast}
       />
       <NewProjectDialog
@@ -975,10 +566,13 @@ export default function AppLayout() {
         version={updates.version}
         checking={updates.checking}
         onClose={() => setHelpOpen(false)}
-        onCheckForUpdates={() => void updates.checkForUpdates()}
+        onCheckForUpdates={
+          IS_DIRECT ? () => void updates.checkForUpdates() : undefined
+        }
       />
       {unsavedDialog}
-      {updates.dialogs}
+      {IS_DIRECT ? updates.dialogs : null}
+      <ChannelGates />
       {doc.svgDialog}
     </div>
     </WindowShell>

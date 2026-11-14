@@ -6,26 +6,28 @@
 .bug-report-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px 14px;
+  gap: 10px;
+  padding: 12px;
   box-sizing: border-box;
   overflow: auto;
+  font-family: var(--font-family);
+  color: var(--text-color);
 }
 
 .bug-report-lede {
   margin: 0;
-  font-family: var(--font-family);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.4;
-  color: #555;
+  color: var(--color-black);
+  -webkit-text-stroke: 0;
+  paint-order: normal;
 }
 
 .bug-report-env {
-  margin: 0 0 4px;
+  margin: 0;
   padding: 8px 10px;
   border: var(--border);
   background: var(--color-white);
-  font-family: var(--font-family);
   font-size: 13px;
   line-height: 1.35;
   color: var(--color-black);
@@ -35,21 +37,28 @@
   display: block;
   font-weight: 800;
   margin-bottom: 2px;
+  font-size: 13px;
+  color: var(--text-label);
 }
 
 .bug-report-field {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   margin: 0;
-  font-family: var(--font-family);
   font-size: 14px;
-  color: var(--color-black);
+  color: var(--text-color);
+}
+
+.bug-report-field > span {
+  font-weight: 800;
+  font-size: 13px;
+  color: var(--text-label);
 }
 
 .bug-report-optional {
   font-weight: 800;
-  color: #808080;
+  color: var(--color-dark-gray);
   font-size: 13px;
 }
 
@@ -57,7 +66,7 @@
 .bug-report-textarea {
   width: 100%;
   box-sizing: border-box;
-  padding: 4px 6px;
+  padding: 0 6px;
   border: var(--border);
   border-radius: 0;
   background: var(--bg-input);
@@ -67,10 +76,11 @@
 }
 
 .bug-report-input {
-  height: 24px;
+  height: 30px;
 }
 
 .bug-report-textarea {
+  padding: 6px;
   resize: vertical;
   min-height: 64px;
   line-height: 1.35;
@@ -89,15 +99,17 @@
 .bug-report-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
   margin-top: 4px;
+  padding-top: 8px;
+  border-top: var(--border);
 }
 
 .bug-report-status {
   min-height: 1.1em;
   margin: 0;
-  font-family: var(--font-family);
   font-size: 13px;
-  color: #808080;
+  color: var(--text-label);
 }
 
 .bug-report-status.is-ok {
@@ -106,6 +118,6 @@
 }
 
 .bug-report-status.is-err {
-  color: #8a1f1f;
+  color: var(--color-hover-danger);
   font-weight: 800;
 }

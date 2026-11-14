@@ -108,15 +108,22 @@
 }
 
 .pm-actions {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  display: flex;
+  align-items: stretch;
   gap: 6px;
 }
 
+.pm-actions :global([data-tooltip-host]) {
+  flex: 0 0 30px;
+  width: 30px;
+}
+
 .pm-action {
+  flex: 0 0 auto;
   height: 30px;
+  min-width: 96px;
   margin: 0;
-  padding: 0 6px;
+  padding: 0 12px;
   border: none;
   background: var(--bg-window);
   color: var(--text-color);
@@ -125,6 +132,20 @@
   font-weight: 800;
   cursor: pointer;
   box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+}
+
+.pm-action-icon {
+  flex: 0 0 30px;
+  width: 30px;
+  min-width: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pm-action-select {
+  margin-left: auto;
 }
 
 .pm-action:hover:not(:disabled) {
@@ -140,5 +161,7 @@
   margin: 0;
   font-size: 12px;
   line-height: 1.4;
-  color: var(--color-dark-gray);
+  color: var(--color-black);
+  -webkit-text-stroke: 0;
+  paint-order: normal;
 }

@@ -5,7 +5,7 @@ import {
   updatePaletteColor,
   removePaletteColor,
   reorderPaletteColor,
-} from '../ipc/commands';
+} from '../shared/ipc/palettes';
 import styles from './SwatchGrid.module.css';
 import { bind } from '../shared/ui/cn';
 const cn = bind(styles);

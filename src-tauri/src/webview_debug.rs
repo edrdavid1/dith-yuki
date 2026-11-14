@@ -1,7 +1,7 @@
-//! Diagnosis helpers — opt-in only.
+//! Diagnosis helpers.
 //!
-//! DevTools / Inspect are **off** by default so the product does not look like
-//! a browser. Set `DITHER_DEVTOOLS=1` when you need the inspector.
+//! DevTools / Inspect are on for debug builds (`tauri dev`). Release stays off
+//! so the product does not look like a browser, unless `DITHER_DEVTOOLS=1`.
 //! Optional WebView2 remote debugging: `DITHER_REMOTE_DEVTOOLS=1`
 //! → Chrome on another machine can open `http://<windows-ip>:9222`.
 
@@ -9,7 +9,7 @@ use tauri::webview::WebviewWindowBuilder;
 use tauri::{Manager, Runtime};
 
 fn wants_devtools() -> bool {
-    std::env::var_os("DITHER_DEVTOOLS").is_some()
+    cfg!(debug_assertions) || std::env::var_os("DITHER_DEVTOOLS").is_some()
 }
 
 /// Apply diagnosis options shared by every window (main, panels, flex popouts).

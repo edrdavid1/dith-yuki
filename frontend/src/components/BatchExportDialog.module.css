@@ -1,0 +1,192 @@
+.batch-dialog {
+  width: 420px;
+  max-height: min(80vh, 720px);
+}
+
+.batch-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  min-height: 0;
+  box-sizing: border-box;
+  font-family: var(--font-family);
+  color: var(--text-color);
+}
+
+.batch-intro {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-black);
+  -webkit-text-stroke: 0;
+  paint-order: normal;
+}
+
+.batch-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  font-size: 14px;
+  line-height: 1.35;
+  color: var(--text-color);
+}
+
+.batch-field legend {
+  padding: 0;
+  margin-bottom: 4px;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.batch-field > label:first-child,
+.batch-field > span:first-child {
+  font-weight: 800;
+  font-size: 13px;
+  color: var(--text-label);
+}
+
+.batch-path-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 0;
+}
+
+.batch-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 30px;
+  padding: 0 6px;
+  border: var(--border);
+  border-radius: 0;
+  background: var(--bg-input);
+  color: var(--text-color);
+  font-size: 14px;
+  font-family: var(--font-family);
+  box-sizing: border-box;
+}
+
+.batch-input:focus {
+  outline: none;
+}
+
+.batch-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-black);
+  -webkit-text-stroke: 0;
+  paint-order: normal;
+}
+
+.batch-check,
+.batch-radio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  line-height: 1.35;
+  font-family: var(--font-family);
+  cursor: pointer;
+}
+
+.batch-radio-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.batch-btn {
+  height: 30px;
+  margin: 0;
+  padding: 0 12px;
+  border: none;
+  border-radius: 0;
+  background: var(--bg-window);
+  color: var(--text-color);
+  font-family: var(--font-family);
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.batch-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.batch-btn:active:not(:disabled) {
+  box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light);
+}
+
+.batch-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.batch-btn-block {
+  align-self: flex-start;
+}
+
+.batch-btn-primary {
+  background: var(--color-primary);
+  color: var(--color-white);
+  min-width: 96px;
+}
+
+.batch-btn-primary:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--color-hover);
+}
+
+.batch-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.batch-progress-track {
+  height: 8px;
+  border: var(--border);
+  background: var(--bg-input);
+  overflow: hidden;
+}
+
+.batch-progress-fill {
+  height: 100%;
+  background: var(--color-black);
+}
+
+.batch-progress-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.batch-warn,
+.batch-error {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--color-hover-danger);
+}
+
+.batch-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: var(--border);
+}

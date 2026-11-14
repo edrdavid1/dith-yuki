@@ -26,7 +26,8 @@ use crate::filters::context::FilterContext;
 
 use super::gpu_dither_cpu::{
     blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, levels_palette, palette_rgba8_blue_noise,
-    with_pixel_size_blocks, PaletteRgb, Rgba8, CORE, DEFAULT_SPREAD, PAD,
+    expand_block_lattice, with_pixel_size_blocks, PaletteRgb, Rgba8, CORE, DEFAULT_SPREAD,
+    PAD,
 };
 use super::scratch::scratch_src;
 
@@ -596,8 +597,13 @@ fn run_cpu(
     palette: &[PaletteRgb],
 ) -> Result<Vec<Rgba8>, FilterError> {
     let ps = params.pixel_size.max(1) as u32;
-    with_pixel_size_blocks(input, width, height, ps, |small, sw, sh| {
-        match params.mode {
+    with_pixel_size_blocks(
+        input,
+        width,
+        height,
+        ps,
+        params.dither_alpha,
+        |small, sw, sh| match params.mode {
             DitherModeV2::BlockedFs => blocked_fs_cpu(small, sw, sh, palette, CORE, CORE, PAD),
             DitherModeV2::BlueNoise => blue_noise_cpu(
                 small,
@@ -610,8 +616,8 @@ fn run_cpu(
             _ => Err(crate::error::EngineError::invalid_filter_params(
                 "gpu_dither: unexpected mode",
             )),
-        }
-    })
+        },
+    )
     .map_err(FilterError::from_engine)
 }
 
@@ -693,26 +699,17 @@ fn try_gpu_timed(
     }?;
 
     let t = Instant::now();
-    let out_bytes = if ps <= 1 {
-        gpu.rgba8
-    } else {
-        let dithered = bytes_to_rgba8(&gpu.rgba8);
-        let bw = tw as usize;
-        let w = width as usize;
-        let h = height as usize;
-        let mut out = vec![Rgba8::new(0, 0, 0, 0); w * h];
-        crate::pixel_pool::install(|| {
-            out.par_iter_mut().enumerate().for_each(|(i, px)| {
-                let y = i / w;
-                let x = i % w;
-                let by = (y as u32 / ps) as usize;
-                let bx = (x as u32 / ps) as usize;
-                let p = dithered[by * bw + bx];
-                *px = Rgba8::new(p.r, p.g, p.b, input[y * w + x].a);
-            });
-        });
-        rgba8_to_bytes_par(&out)
-    };
+    let dithered = bytes_to_rgba8(&gpu.rgba8);
+    let out = expand_block_lattice(
+        &dithered,
+        input,
+        width,
+        height,
+        ps,
+        params.dither_alpha,
+    )
+    .map_err(|e| e.to_string())?;
+    let out_bytes = rgba8_to_bytes_par(&out);
     *expand_ps_ms = ms_since(t);
 
     Ok((out_bytes, backend, gpu.strips, gpu.timing))

@@ -34,8 +34,8 @@ function isBrowserInspectKey(e: KeyboardEvent): boolean {
   return false;
 }
 
-function onKeyDown(e: KeyboardEvent) {
-  if (isBrowserInspectKey(e)) {
+function onKeyDown(e: KeyboardEvent, devtools: boolean) {
+  if (!devtools && isBrowserInspectKey(e)) {
     e.preventDefault();
     e.stopPropagation();
     return;
@@ -46,18 +46,24 @@ function onKeyDown(e: KeyboardEvent) {
   }
 }
 
-function onContextMenu(e: MouseEvent) {
+function onContextMenu(e: MouseEvent, devtools: boolean) {
   // Allow OS edit menus in fields; block WebView Reload / Inspect elsewhere.
-  if (isEditableKeyboardTarget(e.target)) return;
+  // Dev mode leaves the menu so Inspect Element can open.
+  if (devtools || isEditableKeyboardTarget(e.target)) return;
   e.preventDefault();
 }
 
-/** Install once per document. Returns cleanup. */
-export function suppressBrowserChrome(doc: Document = document): () => void {
-  doc.addEventListener('keydown', onKeyDown, true);
-  doc.addEventListener('contextmenu', onContextMenu, true);
+/** Install once per document. Returns cleanup. `devtools` unlocks Inspect. */
+export function suppressBrowserChrome(
+  doc: Document = document,
+  devtools = false,
+): () => void {
+  const keydown = (e: KeyboardEvent) => onKeyDown(e, devtools);
+  const contextmenu = (e: MouseEvent) => onContextMenu(e, devtools);
+  doc.addEventListener('keydown', keydown, true);
+  doc.addEventListener('contextmenu', contextmenu, true);
   return () => {
-    doc.removeEventListener('keydown', onKeyDown, true);
-    doc.removeEventListener('contextmenu', onContextMenu, true);
+    doc.removeEventListener('keydown', keydown, true);
+    doc.removeEventListener('contextmenu', contextmenu, true);
   };
 }

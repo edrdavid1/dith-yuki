@@ -60,6 +60,8 @@ export interface LayoutContextType {
   layoutEpoch: number;
   /** One-shot layout migration / recovery message for the shell toast. */
   layoutToast: string | null;
+  /** Bumps when a layout toast is shown so identical messages can re-toast. */
+  layoutToastEpoch: number;
   clearLayoutToast: () => void;
   /** Move a FlexLayout tab (by component id) from one sidebar model to the other. */
   movePanelBetweenSides: (panelComponent: string, to: 'left' | 'right') => void;
@@ -137,6 +139,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       },
       layoutEpoch: snapshot.version,
       layoutToast: snapshot.layoutToast,
+      layoutToastEpoch: snapshot.layoutToastEpoch,
       clearLayoutToast: layoutStore.clearLayoutToast,
       movePanelBetweenSides: layoutStore.movePanelBetweenSides,
       swapFlexSides: layoutStore.swapFlexSides,

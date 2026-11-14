@@ -3,6 +3,7 @@ import Slider from '../../components/common/Slider';
 import Icon from '../../icons/iconRegistry';
 import Tooltip from '../../shared/ui/Tooltip';
 import type { ExtractMethod } from './types';
+import ColorLabSection from './ColorLabSection';
 import styles from './ColorLabWindow.module.css';
 import buttonStyles from './ColorLabButtons.module.css';
 import { bind } from '../../shared/ui/cn';
@@ -94,9 +95,7 @@ export default function AutoExtractSection({
   }
 
   return (
-    <div className={cn('color-lab-column')}>
-      <div className={cn('color-lab-section-title')}>auto extract</div>
-
+    <ColorLabSection title="auto extract" defaultOpen>
       <DropdownMenu
         value={extractMethod}
         options={[
@@ -157,6 +156,6 @@ export default function AutoExtractSection({
           </button>
         </Tooltip>
       </div>
-    </div>
+    </ColorLabSection>
   );
 }

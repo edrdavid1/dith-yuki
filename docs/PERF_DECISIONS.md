@@ -11,7 +11,6 @@ Checked against Tauri **2.11.5**, wry **0.55.1**, tao **0.35.3** (crate sources 
 | Main (`main`) | `tauri.conf.json` (`create: false`) then `WebviewWindowBuilder::from_config` in `src-tauri/src/main.rs` | Config `backgroundColor` `#000000` (window and webview). macOS then overwrote the NSWindow with `#CDCDCD`. `index.html` painted `html, body, #root` `#000` | `#CDCDCD` on the config, the builder, `set_background_color` (both layers), macOS `underPageBackgroundColor`, and `html, body, #root` |
 | Flex popout (`flex-popout-*`) | `on_new_window` in `main.rs`, opened by the patched `FloatingWindow` via `window.open` | No Tauri color. macOS NSWindow `#CDCDCD` after build. `popout.html` and the FloatingWindow patch already paint `#CDCDCD` | Same HTML. Builder `background_color` plus `set_background_color` and macOS under-page color at creation |
 | Preferences, Help, New Project, bug report, Color Lab, pattern manager | React dialogs inside the main window (`AppLayout` and feature dialogs). Not `WebviewWindowBuilder` | Dialog CSS uses `--bg-window` (`#CDCDCD`). They share the main OS window | No separate OS window. Covered by the main window |
-| Spike routes (`PopoutTestWindow`, `FlexLayoutPopoutTest`) | Frontend pages only. Not built as app windows | — | Not shipped windows |
 
 No other `WebviewWindowBuilder` call sites.
 

@@ -1,4 +1,5 @@
 import AutoExtractSection from './AutoExtractSection';
+import ColorLabSection from './ColorLabSection';
 import HarmonySection from './HarmonySection';
 import ImportExportSection from './ImportExportSection';
 import PaletteManualEditor from './PaletteManualEditor';
@@ -91,6 +92,48 @@ export default function ColorLabBody(props: ColorLabBodyProps) {
           .map((c) => [c.r, c.g, c.b] as [number, number, number])}
       />
 
+      <ColorLabSection title="manual edit" defaultOpen>
+        <input
+          type="text"
+          className={cn('color-lab-name-input')}
+          value={props.name}
+          onChange={(e) => props.onNameChange(e.target.value)}
+          placeholder={PLACEHOLDER}
+          aria-label="Palette name"
+        />
+
+        <PaletteManualEditor
+          colors={props.colors}
+          canAddColor={props.canAddColor}
+          compact={isSidebar}
+          showSectionTitle={false}
+          selectedIndex={props.selectedColorIndex}
+          onSelect={props.onSelectColor}
+          onChange={props.onColorChange}
+          onDelete={props.onDeleteColor}
+          onAdd={props.onAddColor}
+          onOpenPicker={props.onOpenPicker}
+        />
+
+        {(props.error || props.successMessage) && (
+          <>
+            {props.error && <div className={cn('color-lab-error')}>{props.error}</div>}
+            {props.successMessage && (
+              <div className={cn('color-lab-success')}>{props.successMessage}</div>
+            )}
+          </>
+        )}
+
+        <ColorLabFooter
+          cancelLabel="Reset"
+          onSort={props.onSort}
+          canAutoInterpolate={props.canAutoInterpolate}
+          onAutoInterpolate={props.onAutoInterpolate}
+          onCancel={props.onReset}
+          onApply={props.onApply}
+        />
+      </ColorLabSection>
+
       <AutoExtractSection
         extractMethod={props.extractMethod}
         extractCount={props.extractCount}
@@ -104,58 +147,17 @@ export default function ColorLabBody(props: ColorLabBodyProps) {
         onExtractActual={props.onExtractActual}
       />
 
-      <input
-        type="text"
-        className={cn('color-lab-name-input')}
-        value={props.name}
-        onChange={(e) => props.onNameChange(e.target.value)}
-        placeholder={PLACEHOLDER}
-        aria-label="Palette name"
+      <RampGeneratorSection
+        onInsert={props.onInsertGeneratedColors}
+        onError={props.onGeneratorError}
       />
 
-      <PaletteManualEditor
-        colors={props.colors}
-        canAddColor={props.canAddColor}
-        compact={isSidebar}
-        showSectionTitle
-        selectedIndex={props.selectedColorIndex}
-        onSelect={props.onSelectColor}
-        onChange={props.onColorChange}
-        onDelete={props.onDeleteColor}
-        onAdd={props.onAddColor}
-        onOpenPicker={props.onOpenPicker}
-      />
-
-      {(props.error || props.successMessage) && (
-        <>
-          {props.error && <div className={cn('color-lab-error')}>{props.error}</div>}
-          {props.successMessage && (
-            <div className={cn('color-lab-success')}>{props.successMessage}</div>
-          )}
-        </>
-      )}
-
-      <ColorLabFooter
-        cancelLabel="Reset"
-        onSort={props.onSort}
-        canAutoInterpolate={props.canAutoInterpolate}
-        onAutoInterpolate={props.onAutoInterpolate}
-        onCancel={props.onReset}
-        onApply={props.onApply}
+      <HarmonySection
+        onInsert={props.onInsertGeneratedColors}
+        onError={props.onGeneratorError}
       />
 
       <SoftProofControls docId={props.docId} layout="panel" showStrictWarn />
-
-      <div className={cn('color-lab-stack')}>
-        <RampGeneratorSection
-          onInsert={props.onInsertGeneratedColors}
-          onError={props.onGeneratorError}
-        />
-        <HarmonySection
-          onInsert={props.onInsertGeneratedColors}
-          onError={props.onGeneratorError}
-        />
-      </div>
 
       <PaletteVolumeViewer
         colors={props.colors}

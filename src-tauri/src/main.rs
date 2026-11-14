@@ -5,6 +5,7 @@
 // Legacy cocoa/objc until objc2 migration — deprecation + macro cfg noise.
 #![cfg_attr(target_os = "macos", allow(deprecated, unexpected_cfgs))]
 
+mod channel;
 mod commands;
 mod config;
 mod delayed_requeue;
@@ -43,6 +44,8 @@ mod memory_budget;
 mod native_menu;
 mod pattern_library;
 mod pending_tiles;
+#[allow(dead_code)]
+mod platform;
 mod preview_diag;
 #[cfg(test)]
 mod preview_latency_diag;
@@ -145,11 +148,10 @@ fn main() {
     // Wrap in Arc for sharing between Tauri state and worker threads
     let state = Arc::new(app_state);
 
-    let app = tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_macos_haptics::init())
@@ -157,7 +159,14 @@ fn main() {
         .manage(splash::SplashState::new())
         .manage(Arc::new(commands::QuitGuard {
             allow_exit: AtomicBool::new(false),
-        }))
+        }));
+
+    #[cfg(feature = "channel-direct")]
+    {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
+
+    let app = builder
         .on_menu_event(|app, event| {
             native_menu::emit_event(app, &event);
         })
@@ -241,6 +250,10 @@ fn main() {
             }
         })
         .setup(move |app| {
+            let shared = channel::current(app.handle());
+            let can_self_update = shared.info().can_self_update;
+            app.manage(shared);
+
             // W5: scrub leftover flex-popout-* before (re)creating main.
             flex_popout_lifecycle::close_orphan_flex_popouts_at_startup(app.handle());
 
@@ -401,7 +414,7 @@ fn main() {
                     .visible(false)
                     .build()?;
 
-            native_menu::install(app)?;
+            native_menu::install(app, can_self_update)?;
             let app_handle = app.handle().clone();
             if let Ok(mut slot) = state.app_handle.lock() {
                 *slot = Some(app_handle.clone());
@@ -489,6 +502,14 @@ fn main() {
             handle_tile_request(&state, request)
         })
         .invoke_handler(tauri::generate_handler![
+            // Distribution channel / license / updates
+            channel::commands::channel_info,
+            channel::commands::entitlement,
+            channel::commands::activate_license,
+            channel::commands::deactivate_license,
+            channel::commands::refresh_license,
+            channel::commands::check_update,
+            channel::commands::install_update,
             // Boot / splash
             splash::boot_finished,
             splash::boot_stage,

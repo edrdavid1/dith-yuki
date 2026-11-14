@@ -28,6 +28,7 @@ import type { Workspace } from '../../shared/workspace/visibility';
 import styles from './PreferencesPanel.module.css';
 import paramStyles from '../../shared/ui/ParamControls.module.css';
 import { bind } from '../../shared/ui/cn';
+import InterfaceHint from '../../shared/ui/InterfaceHint';
 
 const cn = bind({ ...styles, ...paramStyles });
 
@@ -152,8 +153,10 @@ export default function PreferencesPanel() {
               />
               <span>
                 <strong>{opt.label}</strong>
-                <br />
-                <span className={cn('preferences-hint')}>{opt.desc}</span>
+                <InterfaceHint>
+                  <br />
+                  <span className={cn('preferences-hint')}>{opt.desc}</span>
+                </InterfaceHint>
               </span>
             </label>
           ))}
@@ -226,9 +229,11 @@ export default function PreferencesPanel() {
         </summary>
 
         <p className={cn('preferences-label')}>Preview background</p>
-        <p className={cn('preferences-hint')}>
-          Fill behind the image in the preview canvas.
-        </p>
+        <InterfaceHint>
+          <p className={cn('preferences-hint')}>
+            Fill behind the image in the preview canvas.
+          </p>
+        </InterfaceHint>
         <div className={cn('preferences-swatch-row')} role="group" aria-label="Preview background">
           {PREVIEW_BACKGROUNDS.map((preset) => {
             const selected = previewBackground === preset.id;
@@ -324,10 +329,12 @@ export default function PreferencesPanel() {
         <summary id="prefs-keys-heading" className={cn('preferences-section-title')}>
           Keyboard shortcuts
         </summary>
-        <p className={cn('preferences-hint')}>
-          Defaults match Photoshop. Click a shortcut, then press the new keys.
-          Escape cancels. Conflicts are taken from the other command.
-        </p>
+        <InterfaceHint>
+          <p className={cn('preferences-hint')}>
+            Defaults match Photoshop. Click a shortcut, then press the new keys.
+            Escape cancels. Conflicts are taken from the other command.
+          </p>
+        </InterfaceHint>
         <div className={cn('preferences-shortcut-list')} role="list">
           {SHORTCUT_IDS.map((id) => {
             const chords = bindings[id];

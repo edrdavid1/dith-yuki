@@ -20,7 +20,7 @@ function filterKindToEffect(kind: string): EffectType | null {
     case 'Curves':
       return 'Curves';
     case 'Levels':
-      return 'RGB channels';
+      return 'Levels';
     case 'Glow':
       return 'Glow';
     case 'Crt':

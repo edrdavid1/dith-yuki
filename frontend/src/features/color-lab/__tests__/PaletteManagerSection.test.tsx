@@ -149,6 +149,17 @@ describe('PaletteManagerSection', () => {
 
     fireEvent.click(screen.getByLabelText('Open palette manager'));
     expect(screen.getByRole('dialog', { name: 'Palette Manager' })).toBeInTheDocument();
+
+    const actions = ['Delete', 'Import', 'Export', 'Select'].map((name) =>
+      screen.getByRole('button', { name })
+    );
+    for (let i = 1; i < actions.length; i++) {
+      expect(
+        actions[i - 1]!.compareDocumentPosition(actions[i]!) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy();
+    }
+    expect(actions[0]!.querySelector('svg')).toBeTruthy();
+    expect(actions[0]!.textContent).not.toMatch(/Delete/);
   });
 
   it('steps from a saved palette to the next browsable entry', () => {

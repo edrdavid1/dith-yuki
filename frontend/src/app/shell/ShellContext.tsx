@@ -69,7 +69,7 @@ export type ShellState = {
   appIconId: string;
   /** macOS slider / UI tactile feedback (Taptic Engine). Default on. */
   hapticFeedback: boolean;
-  /** Cursor-following UI tooltips. Default on. */
+  /** Hover tooltips and inline interface hints. Default on. */
   tooltipsEnabled: boolean;
   setSidebarWidth: (side: DockSide, width: number | ((prev: number) => number)) => void;
   setSidebarCollapsed: (side: DockSide, collapsed: boolean) => void;
