@@ -10,7 +10,7 @@ describe('sliderHaptics (value-change + throttle)', () => {
     expect(MIN_INTERVAL_MS).toBe(40);
   });
 
-  it('fires LevelChange when value changes and throttle allows', () => {
+  it('fires Alignment when value changes and throttle allows', () => {
     const state = createHapticMotionState(0);
     const d = evaluateSliderHaptic({
       prev: 0,
@@ -22,7 +22,7 @@ describe('sliderHaptics (value-change + throttle)', () => {
     });
     expect(d).toEqual({
       trigger: true,
-      pattern: 'levelChange',
+      pattern: 'alignment',
       state: { lastHapticValue: 1, lastHapticTime: 1000 },
     });
   });
@@ -51,7 +51,7 @@ describe('sliderHaptics (value-change + throttle)', () => {
     expect(d.trigger).toBe(false);
   });
 
-  it('throttles LevelChange to MIN_INTERVAL_MS without advancing lastHapticValue', () => {
+  it('throttles Alignment to MIN_INTERVAL_MS without advancing lastHapticValue', () => {
     const state = { lastHapticValue: 0, lastHapticTime: 1000 };
     const d = evaluateSliderHaptic({
       prev: 0,
@@ -73,7 +73,7 @@ describe('sliderHaptics (value-change + throttle)', () => {
       state: d.state,
     });
     expect(d2.trigger).toBe(true);
-    expect(d2.pattern).toBe('levelChange');
+    expect(d2.pattern).toBe('alignment');
     expect(d2.state.lastHapticValue).toBe(2);
   });
 
@@ -92,7 +92,7 @@ describe('sliderHaptics (value-change + throttle)', () => {
     expect(d.state.lastHapticValue).toBe(100);
   });
 
-  it('fires one LevelChange per distinct unit when spaced ≥ 40 ms', () => {
+  it('fires one Alignment per distinct unit when spaced ≥ 40 ms', () => {
     let state = createHapticMotionState(0);
     let now = 1000;
     for (let v = 1; v <= 5; v++) {
@@ -105,7 +105,7 @@ describe('sliderHaptics (value-change + throttle)', () => {
         state,
       });
       expect(d.trigger).toBe(true);
-      expect(d.pattern).toBe('levelChange');
+      expect(d.pattern).toBe('alignment');
       state = d.state;
       now += MIN_INTERVAL_MS;
     }

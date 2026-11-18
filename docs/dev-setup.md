@@ -47,7 +47,7 @@ See [RELEASE.md](./RELEASE.md). Quick checks:
 npm run release:verify
 ```
 
-Cut a beta with a pre-release tag (`v1.0.5-beta`, …). Feedback goes through the [bug report template](../.github/ISSUE_TEMPLATE/bug_report.yml).
+Cut a beta with a pre-release tag (`v2.0.6-beta`, …). Feedback goes through the [bug report template](../.github/ISSUE_TEMPLATE/bug_report.yml).
 
 ## Commits
 

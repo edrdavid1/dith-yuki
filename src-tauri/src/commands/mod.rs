@@ -1,5 +1,7 @@
 pub mod diagnostics;
 pub use diagnostics::*;
+pub mod haptics;
+pub use haptics::*;
 pub mod flexlayout;
 pub mod panels;
 pub mod selection;

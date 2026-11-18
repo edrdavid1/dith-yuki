@@ -15,6 +15,7 @@ mod dither_profile_host;
 mod dock_affinity;
 mod document_session;
 mod ed_progress;
+mod file_bookmarks;
 mod file_log;
 mod flex_popout_lifecycle;
 mod shell_layout_persistence;
@@ -148,13 +149,12 @@ fn main() {
     // Wrap in Arc for sharing between Tauri state and worker threads
     let state = Arc::new(app_state);
 
-    let mut builder = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_macos_haptics::init())
         .manage(state.clone())
         .manage(splash::SplashState::new())
         .manage(Arc::new(commands::QuitGuard {
@@ -162,9 +162,12 @@ fn main() {
         }));
 
     #[cfg(feature = "channel-direct")]
-    {
-        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
-    }
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
+    // `dep:tauri-macos-haptics` alone does not set this cfg — Cargo.toml must
+    // list the optional-dep feature name (`tauri-macos-haptics`) on the channel.
+    #[cfg(any(feature = "tauri-macos-haptics", feature = "channel-direct", feature = "channel-msstore"))]
+    let builder = builder.plugin(tauri_macos_haptics::init());
 
     let app = builder
         .on_menu_event(|app, event| {
@@ -271,6 +274,7 @@ fn main() {
 
             // Custom Dock/Finder icon before the main window appears (no flash).
             macos_app_icon::reapply_on_startup(app.handle());
+            file_bookmarks::activate_stored(app.handle());
 
             // Main window is create:false in tauri.conf — build here so we can
             // allow FlexLayout's window.open() popouts (denied by default in Tauri).
@@ -576,6 +580,7 @@ fn main() {
             commands::export_pattern_from_library,
             recent_files::get_recent_files,
             recent_files::clear_recent_files,
+            file_bookmarks::remember_user_file,
             macos_app_icon::list_app_icons,
             macos_app_icon::get_app_icon,
             macos_app_icon::set_app_icon,
@@ -621,6 +626,8 @@ fn main() {
             commands::panels::bind_float_drag_window,
             commands::panels::cancel_float_drag,
             commands::panels::complete_float_drag,
+            // Main-thread slider haptics (plugin perform is async / off-thread)
+            commands::perform_slider_haptic,
             // FlexLayout commands
             // W7/W10: single layout.json envelope
             commands::flexlayout::load_shell_layout,

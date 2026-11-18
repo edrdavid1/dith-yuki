@@ -15,13 +15,16 @@ channel-direct = [
     "dep:reqwest",
     "dep:ed25519-dalek",
     "dep:machine-uid",
+    # Use the optional-dep feature name (not `dep:…`) so
+    # `cfg(feature = "tauri-macos-haptics")` is set and the plugin registers.
+    "tauri-macos-haptics",
 ]
 channel-mas = []
-channel-msstore = []
+channel-msstore = ["tauri-macos-haptics"]
 
 [dependencies]
-# `devtools` is compiled in so `DITHER_DEVTOOLS=1` can open the inspector.
-# Windows leave DevTools off by default (see `webview_debug.rs`).
+# `devtools` stays compiled so local direct builds can open the inspector.
+# Store channels ignore the env override (see `webview_debug.rs`).
 tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-os = "2"
@@ -29,8 +32,8 @@ tauri-plugin-opener = "2"
 tauri-plugin-updater = { version = "2", optional = true }
 tauri-plugin-process = "2"
 tauri-plugin-clipboard-manager = "2"
-# macOS Taptic Engine; builds on all targets (isSupported/perform no-op off-macOS).
-tauri-macos-haptics = "4"
+# macOS Taptic Engine. Omitted from the Mac App Store build (private AppKit API).
+tauri-macos-haptics = { version = "4", optional = true }
 tokio = { version = "1", features = ["full"] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }

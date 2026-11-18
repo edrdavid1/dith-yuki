@@ -21,6 +21,7 @@
     "tauri:build": "node scripts/tauri.mjs build direct",
     "build:direct": "node scripts/tauri.mjs build direct",
     "build:mas": "node scripts/tauri.mjs build mas",
+    "package:mas": "bash scripts/package-mas.sh",
     "build:msstore": "node scripts/tauri.mjs build msstore",
     "clean": "rm -rf frontend/dist frontend/node_modules/.vite && cargo clean -p dither",
     "clean:rust": "cargo clean",

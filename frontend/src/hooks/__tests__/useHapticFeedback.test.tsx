@@ -3,6 +3,10 @@ import { renderHook, act } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { ShellProvider } from '../../app/shell/ShellContext';
 
+const { mockPerformSliderHaptic } = vi.hoisted(() => ({
+  mockPerformSliderHaptic: vi.fn(),
+}));
+
 vi.mock('tauri-macos-haptics-api', () => ({
   isSupported: vi.fn(),
   perform: vi.fn(),
@@ -11,10 +15,17 @@ vi.mock('tauri-macos-haptics-api', () => ({
   HapticError: class HapticError extends Error {},
 }));
 
-import { isSupported, perform } from 'tauri-macos-haptics-api';
+vi.mock('../../shared/ipc', async () => {
+  const actual = await vi.importActual<typeof import('../../shared/ipc')>('../../shared/ipc');
+  return {
+    ...actual,
+    performSliderHaptic: mockPerformSliderHaptic,
+  };
+});
+
+import { perform } from 'tauri-macos-haptics-api';
 import { useHapticFeedback } from '../useHapticFeedback';
 
-const mockIsSupported = vi.mocked(isSupported);
 const mockPerform = vi.mocked(perform);
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -30,33 +41,24 @@ async function flushHaptic() {
 
 describe('useHapticFeedback', () => {
   beforeEach(() => {
-    mockIsSupported.mockReset();
     mockPerform.mockReset();
-    mockIsSupported.mockResolvedValue(true);
+    mockPerformSliderHaptic.mockReset();
     mockPerform.mockResolvedValue(undefined);
+    mockPerformSliderHaptic.mockResolvedValue(undefined);
     localStorage.clear();
   });
 
-  it('calls perform when supported (fire-and-forget)', async () => {
+  it('fires main-thread command and plugin perform', async () => {
     const { result } = renderHook(() => useHapticFeedback(), { wrapper });
     act(() => {
-      result.current.triggerHaptic('levelChange');
+      result.current.triggerHaptic('alignment');
     });
     await flushHaptic();
+    expect(mockPerformSliderHaptic).toHaveBeenCalledWith(0);
     expect(mockPerform).toHaveBeenCalledWith(
       expect.anything(),
-      1 // PerformanceTime.Now in the mock enum
+      1 // PerformanceTime.Now
     );
-  });
-
-  it('no-ops when isSupported is false', async () => {
-    mockIsSupported.mockResolvedValue(false);
-    const { result } = renderHook(() => useHapticFeedback(), { wrapper });
-    act(() => {
-      result.current.triggerHaptic('levelChange');
-    });
-    await flushHaptic();
-    expect(mockPerform).not.toHaveBeenCalled();
   });
 
   it('no-ops when preference is off', async () => {
@@ -80,15 +82,16 @@ describe('useHapticFeedback', () => {
     const { result } = renderHook(() => useHapticFeedback(), { wrapper });
     expect(result.current.prefEnabled).toBe(false);
     act(() => {
-      result.current.triggerHaptic('levelChange');
+      result.current.triggerHaptic('alignment');
     });
     await flushHaptic();
+    expect(mockPerformSliderHaptic).not.toHaveBeenCalled();
     expect(mockPerform).not.toHaveBeenCalled();
   });
 
-  it('does not serialize rapid calls behind await perform', async () => {
+  it('does not serialize rapid calls', async () => {
     let release!: () => void;
-    mockPerform.mockImplementation(
+    mockPerformSliderHaptic.mockImplementation(
       () =>
         new Promise<void>((resolve) => {
           release = resolve;
@@ -96,12 +99,12 @@ describe('useHapticFeedback', () => {
     );
     const { result } = renderHook(() => useHapticFeedback(), { wrapper });
     act(() => {
-      result.current.triggerHaptic('levelChange');
-      result.current.triggerHaptic('levelChange');
-      result.current.triggerHaptic('levelChange');
+      result.current.triggerHaptic('alignment');
+      result.current.triggerHaptic('alignment');
+      result.current.triggerHaptic('alignment');
     });
     await flushHaptic();
-    expect(mockPerform).toHaveBeenCalledTimes(3);
+    expect(mockPerformSliderHaptic).toHaveBeenCalledTimes(3);
     release();
   });
 });

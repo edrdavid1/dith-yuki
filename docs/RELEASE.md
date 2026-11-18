@@ -104,6 +104,20 @@ git push origin v1.0.0-beta
 
 Self-signed as **L'eco non di Bergamo**. With Apple Developer secrets + notarization, this prompt goes away.
 
+## Mac App Store
+
+The direct DMG above is a different build from the store pkg. Account fields that cannot live in git are listed in [legal/STORE_ACCOUNT.md](./legal/STORE_ACCOUNT.md).
+
+```bash
+export APPLE_TEAM_ID=XXXXXXXXXX
+# Place the Mac App Store profile at src-tauri/certs/DitherYuki_MAS.provisionprofile
+npm run build:mas
+export APPLE_INSTALLER_IDENTITY="<Mac Installer Distribution name from Keychain>"
+npm run package:mas
+```
+
+Upload the pkg with Transporter. The script does not upload it. Quick Look is not inside this `.app` bundle; the direct DMG build still includes it.
+
 ## Feedback
 
 - Issues: [bug report template](../.github/ISSUE_TEMPLATE/bug_report.yml)

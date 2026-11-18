@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { open } from '@tauri-apps/plugin-dialog';
+import { openDialog as open } from '../../shared/ipc/dialogs';
 import DropdownMenu from '../../components/common/DropdownMenu';
 import Tooltip from '../../shared/ui/Tooltip';
 import {

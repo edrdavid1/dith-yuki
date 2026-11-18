@@ -617,7 +617,8 @@ grapheme-aware trim is a follow-up if product requires it.
 
 - In-repo app version: `0.3.0-alpha.6` (`src-tauri/Cargo.toml`).
 - Public releases documented from **0.2.0** (self-update), **0.3.0-alpha.\*** tags,
-  and current **1.0.x-beta** channel (`docs/RELEASE.md`, README).
+  and the then-current **1.0.x-beta** channel (`docs/RELEASE.md`, README).
+  The app channel is **2.0.x-beta** as of November 2026; this paragraph is the September record.
 - On-disk format for both `.dyproj` and `.dyuki` is still **`format_version = 1`** only (`SUPPORTED_DYPROJ_VERSION` / `SUPPORTED_DYUKI_VERSION`).
 
 ### Manifest deserialize behavior (current code)

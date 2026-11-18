@@ -1,6 +1,8 @@
-# What to do next: don't start P4 blindly
+# Post levers — shipped record (P4 deferred)
 
-P4 will give the biggest effect, but it's the most expensive step. Before it there are three cheap levers, and **the decision on P4 should be made based on the numbers you already have from P0**.
+**Status:** Levers below shipped. Rust/wgpu P4 is deferred (2026-11-11) on [post-lever-measurement.md](./post-lever-measurement.md). This file is the behavior record, not an open task list. Tests in `crates/engine-project` cite it.
+
+P4 would be the largest change and the most expensive one. The cheap levers came first, and the P4 decision uses the P0 numbers.
 
 ## Step 1. Cheap levers (1–3 days, no GPU)
 

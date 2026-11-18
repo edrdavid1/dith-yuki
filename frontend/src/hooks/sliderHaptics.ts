@@ -3,8 +3,9 @@
  *
  * Trigger when `newValue !== lastHapticValue` (every distinct snapped unit).
  * The only overload guard is MIN_INTERVAL_MS via performance.now().
- * LevelChange for the stream; Generic for min/max (boundaries ignore throttle).
- * Always PerformanceTime.Now — no DrawCompleted, no speed-adaptive threshold.
+ * Alignment for the stream (discrete ticks while dragging); Generic for
+ * min/max. Do not use LevelChange here — AppKit reserves that for Force Click
+ * multilevel accelerators, and it is silent during a normal HTML slider drag.
  */
 
 export type SliderHapticPattern = 'alignment' | 'levelChange' | 'generic';
@@ -39,7 +40,7 @@ export function createHapticMotionState(value: number): HapticMotionState {
 /**
  * Decide whether a drag sample should pulse.
  * Boundaries (min/max) always fire Generic when newly hit, ignoring throttle.
- * Stream pulses LevelChange when the value changed and ≥ MIN_INTERVAL_MS elapsed.
+ * Stream pulses Alignment when the value changed and ≥ MIN_INTERVAL_MS elapsed.
  */
 export function evaluateSliderHaptic(args: {
   prev: number;
@@ -91,7 +92,7 @@ export function evaluateSliderHaptic(args: {
 
   return {
     trigger: true,
-    pattern: 'levelChange',
+    pattern: 'alignment',
     state: { lastHapticValue: next, lastHapticTime: now },
   };
 }

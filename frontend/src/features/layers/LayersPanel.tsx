@@ -289,6 +289,9 @@ export default function LayersPanel({
   const handleDragMouseDown = useCallback((e: React.MouseEvent, filterId: string) => {
     // Only left mouse button
     if (e.button !== 0) return;
+    // Popout portals run in the main JS realm. `window` is the main window,
+    // so a drag inside the Layers popout never sees move/up there.
+    const view = e.currentTarget.ownerDocument.defaultView ?? window;
     dragStartY.current = e.clientY;
     isDragging.current = false;
     dragFilterIdRef.current = filterId;
@@ -317,8 +320,8 @@ export default function LayersPanel({
     };
 
     const handleMouseUp = () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+      view.removeEventListener('mousemove', handleMouseMove);
+      view.removeEventListener('mouseup', handleMouseUp);
 
       const currentDragId = dragFilterIdRef.current;
       const currentDropIdx = dropTargetIndexRef.current;
@@ -345,8 +348,8 @@ export default function LayersPanel({
       setDropTargetIndex(null);
     };
 
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    view.addEventListener('mousemove', handleMouseMove);
+    view.addEventListener('mouseup', handleMouseUp);
   }, [displayFilters, filters, onReorderFilter]);
 
   useEffect(() => {
@@ -357,13 +360,14 @@ export default function LayersPanel({
 
   useEffect(() => {
     if (!isOpacityPopupOpen) return;
+    const doc = opacityPopupRef.current?.ownerDocument ?? document;
     const handleClickOutside = (event: MouseEvent) => {
       if (!opacityPopupRef.current?.contains(event.target as Node)) {
         setIsOpacityPopupOpen(false);
       }
     };
-    window.addEventListener('mousedown', handleClickOutside);
-    return () => window.removeEventListener('mousedown', handleClickOutside);
+    doc.addEventListener('mousedown', handleClickOutside);
+    return () => doc.removeEventListener('mousedown', handleClickOutside);
   }, [isOpacityPopupOpen]);
 
   useEffect(() => {
@@ -541,13 +545,14 @@ export default function LayersPanel({
                       setOpacityText(`${val}%`);
                     };
                     updateFromMouse(e.clientX);
+                    const doc = track.ownerDocument;
                     const onMove = (ev: MouseEvent) => updateFromMouse(ev.clientX);
                     const onUp = () => {
-                      document.removeEventListener('mousemove', onMove);
-                      document.removeEventListener('mouseup', onUp);
+                      doc.removeEventListener('mousemove', onMove);
+                      doc.removeEventListener('mouseup', onUp);
                     };
-                    document.addEventListener('mousemove', onMove);
-                    document.addEventListener('mouseup', onUp);
+                    doc.addEventListener('mousemove', onMove);
+                    doc.addEventListener('mouseup', onUp);
                   }}
                 >
                   <div

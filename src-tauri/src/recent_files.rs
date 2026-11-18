@@ -86,15 +86,32 @@ pub fn try_record_recent_file(file: &Path, path: &str, kind: RecentFileKind) {
 }
 
 pub fn record_from_app(app: &tauri::AppHandle, path: &str, kind: RecentFileKind) {
+    crate::file_bookmarks::remember(app, path);
     let file = recent_files_path(app);
     try_record_recent_file(&file, path, kind);
 }
 
-/// Prune dead paths on read. Rewrite errors are logged; the IPC call never fails.
+/// Prune dead paths on read. A security-scoped bookmark counts as reachable
+/// when the sandbox hides the path from `exists()`.
 #[tauri::command]
 pub fn get_recent_files(app_handle: tauri::AppHandle) -> Vec<RecentFileEntry> {
     let path = recent_files_path(&app_handle);
-    load_prune_and_maybe_rewrite(&path)
+    let loaded = load_recent_files(&path);
+    let before = loaded.len();
+    let kept: Vec<RecentFileEntry> = loaded
+        .into_iter()
+        .filter(|e| crate::file_bookmarks::path_reachable(&app_handle, &e.path))
+        .collect();
+    if kept.len() != before {
+        if let Err(e) = save_recent_files(&path, &kept) {
+            log::warn!(
+                "Failed to rewrite recent files after prune at {}: {}",
+                path.display(),
+                e
+            );
+        }
+    }
+    kept
 }
 
 /// Wipe the Recent list on disk (empty JSON array).
@@ -105,6 +122,8 @@ pub fn clear_recent_files(app_handle: tauri::AppHandle) -> Result<(), String> {
 }
 
 /// Drop entries whose `path` no longer exists on disk.
+/// Production reads go through `get_recent_files`, which also keeps bookmarked paths.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn prune_missing(entries: Vec<RecentFileEntry>) -> (Vec<RecentFileEntry>, bool) {
     let before = entries.len();
     let kept: Vec<RecentFileEntry> = entries
@@ -116,7 +135,8 @@ pub fn prune_missing(entries: Vec<RecentFileEntry>) -> (Vec<RecentFileEntry>, bo
 }
 
 /// Load, prune dead paths, rewrite if anything was dropped. Rewrite errors are logged;
-/// the filtered in-memory list is still returned.
+/// the filtered in-memory list is still returned. Tests cover the exists()-only prune.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn load_prune_and_maybe_rewrite(file: &Path) -> Vec<RecentFileEntry> {
     let loaded = load_recent_files(file);
     let (kept, dropped) = prune_missing(loaded);

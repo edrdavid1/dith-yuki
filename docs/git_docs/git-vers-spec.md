@@ -1,4 +1,6 @@
-Since there's no release yet, we're doing this fully, not step by step. Below is the complete skeleton: Rust, capabilities, configs, frontend, scripts, CI, and the license server contract. Substitute your own file names and identifiers — I can't see your repository.
+> **Status (2026-11-17):** The in-repo channel skeleton is `src-tauri/src/channel` (`channel-direct` / `channel-mas` / `channel-msstore`). The app already ships **2.0.x-beta** on the direct channel, so the “no release yet” framing below is stale. This file is still the only write-up of the store and license contract, and it has not been re-audited against the module. Do not treat it as as-built.
+
+Below is the channel skeleton: Rust, capabilities, configs, frontend, scripts, CI, and the license server contract.
 
 ## 0. Principles everything rests on
 

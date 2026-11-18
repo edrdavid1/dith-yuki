@@ -1,1 +1,14 @@
-{}
+{
+  "app": {
+    "security": {
+      "capabilities": [
+        "main",
+        {
+          "identifier": "haptics",
+          "windows": ["main", "splash", "panel-*", "flex-popout-*", "*"],
+          "permissions": ["tauri-macos-haptics:default"]
+        }
+      ]
+    }
+  }
+}

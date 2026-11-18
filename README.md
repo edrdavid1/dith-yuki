@@ -32,19 +32,19 @@ A focused **dither / palette studio** — not a paint app, not a print pipeline.
 - Dockable panels (Layers, Effect, Color Lab, Preview)
 - Finder / Explorer thumbnails and preview pane for project files
 - macOS slider tactile feedback (Preferences toggle)
-- In-app updates from GitHub Releases (from 0.2.0; current channel **1.0.x-beta**)
+- In-app updates from GitHub Releases (from 0.2.0; current channel **2.0.x-beta**)
 
 Tile-based preview keeps large documents responsive.
 
 ### Beta scope
 
-No paint tools, ICC / print pipeline, or video / batch export. Linux is not a supported platform.
+No paint tools and no video. Linux is not a supported platform. Soft proof (display ICC) and CMYK TIFF print export are in the beta; they are not a PDF/X press pipeline, and there are no bundled FOGRA/PSO profiles. Batch export is in the File menu.
 
 **UI:** Layers, Effect, Color Lab, and Preview use FlexLayout docking; Preferences remains a dialog.
 
 **Performance (honest):**
-- GPU auto-dispatch accelerates warm-viewport pattern dithering and some palette modes. Error Diffusion always runs on CPU; far from the document origin it stays sequential (wavefront fill).
-- Riemersma, ASCII, and similar full-document algorithms do not progressive-tile the preview — they show a “Rendering…” state until the whole pass finishes.
+- GPU auto-dispatch accelerates warm-viewport pattern dithering, GPU-eligible grade and spatial effects, and some palette modes. Exact error diffusion (Floyd–Steinberg and siblings) stays on CPU and fills from the document origin. Approximate GPU families `blocked_fs` and `blue_noise` are separate and on by default (see [docs/adr/gpu-dither-families.md](./docs/adr/gpu-dither-families.md)).
+- Riemersma, ASCII, and similar full-document algorithms do not progressive-tile the preview. The full “Rendering…” overlay is only before the first preview frame; later passes use the recomputing chip.
 - An adaptive RAM tile-cache budget is in the build; it is **not** proven as a 4K/8K fix yet (diagnostics incomplete).
 
 **Platforms:** macOS is the primary QA surface. Windows ships and is usable, but newer and less battle-tested — please file bugs. Beta DMGs are self-signed (Gatekeeper → Open Anyway) unless Apple Developer ID notarization secrets are present in CI.
@@ -52,7 +52,7 @@ No paint tools, ICC / print pipeline, or video / batch export. Linux is not a su
 ### Install
 
 1. Get the latest build from [Releases](https://github.com/edrdavid1/dith-yuki/releases/latest) (macOS DMG, Windows NSIS) or the [website](https://ditheryuki.com/).
-2. After **0.2.0**, use **Help → Check for Updates** (Minisign-verified). Current releases are **1.0.x-beta**.
+2. After **0.2.0**, use **Help → Check for Updates** (Minisign-verified). Current releases are **2.0.x-beta**.
 
 #### macOS Gatekeeper
 

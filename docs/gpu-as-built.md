@@ -8,7 +8,7 @@
 
 ## 1. Overview & Core Architecture
 
-Dither Yuki **1.0.x** features the **Path B Resident GPU Executor** (`crates/engine-gpu`). Unlike legacy per-tile GPU dispatch (Path A v1, which uploaded and downloaded tile data over the PCIe bus on every individual filter pass), Path B maintains intermediate tile data **GPU-resident** in VRAM across the entire filter graph.
+The current beta features the **Path B Resident GPU Executor** (`crates/engine-gpu`). Unlike legacy per-tile GPU dispatch (Path A v1, which uploaded and downloaded tile data over the PCIe bus on every individual filter pass), Path B maintains intermediate tile data **GPU-resident** in VRAM across the entire filter graph.
 
 ```
 CPU TileCache (RAM) ──(Upload on Miss)──► GpuTileCache (VRAM Array)
@@ -64,7 +64,7 @@ Not all filters run on the GPU. The pipeline uses explicit **`CpuCheckpointKind`
 | **CUBE LUT** | GPU Pass (`cube_lut_resident`) | Tetrahedral sample of Adobe `.cube` |
 | **Palette Quantize / Guided** | GPU Pass (`palette_*.rs`) | LUT / distance pass in WGSL |
 | **Nearest Color (Oklab)** | Same as Palette Quantize | brightness / sRGB stay CPU |
-| **Error Diffusion (ED)** (FS, JJN, Stucki, Atkinson) | **`CpuCheckpointKind::ErrorDiffusion`** | Cross-pixel error propagation is strictly sequential; ED always falls back to CPU |
+| **Error Diffusion (ED)** (FS, JJN, Stucki, Atkinson) | **`CpuCheckpointKind::ErrorDiffusion`** | Cross-pixel error propagation is strictly sequential; exact ED falls back to CPU. Approximate `blocked_fs` / `blue_noise` are a separate path ([adr/gpu-dither-families.md](./adr/gpu-dither-families.md)), on by default since 2.0.3-beta, and not bit-identical to this family |
 | **`pixel_size > 1`** (Block Granularity) | **`CpuCheckpointKind::BlockGranularity`** | **Permanent Non-goal (Option a)**. Block-representative compute routes to CPU |
 
 ---
@@ -84,10 +84,10 @@ Performance was evaluated using an industrial statistical harness ($n=20$, relea
 
 ### R1 Rollout Verdict: `OPT_IN_ONLY`
 
-GPU acceleration is **NOT default-on** in Dither Yuki **1.0.x** for the following architectural reasons:
+GPU acceleration is **not default-on** for the following architectural reasons:
 
 1. **Cold Path Penalty (E3):** First-touch navigation and panning into uncached tiles is ~3× slower on GPU than CPU (~30.9 ms vs ~10.4 ms).
-2. **ED Checkpoint Tax:** Any document pipeline containing Error Diffusion (a primary feature of Dither Yuki) requires falling back to CPU, eliminating GPU gains.
+2. **Exact ED checkpoint:** Floyd–Steinberg and its siblings force a CPU checkpoint, which drops Path B gains for that stack. Approximate `blocked_fs` / `blue_noise` do not use that checkpoint.
 3. **Composite Median (E1):** On standard multi-layer composite frames, the CPU multi-threaded pool is equal to or faster than GPU readback overhead.
 
 ---
@@ -101,3 +101,11 @@ Per **Task T9**, all legacy per-tile v1 GPU code (`dispatch_rgba32`, `gpu_bridge
 - **Palette (A7):** `compile_layer_graph_with_palettes` emits Guided/Mixed/PaletteQuantize GPU nodes from the session `PaletteLutCache`. Strict/Simple ordered palette dither stays CPU.
 - **Safety Guarantee:** CPU path remains the bit-exact source of truth and default for cold tiles. A2 may fill VRAM slots in the background (`DITHER_GPU_WARMUP=0` to disable).
 - **A8:** Atlas occupancy harness only. Full-doc GPU fill saturates (expected). Do not start f16 until *preview* peak stays ~100% on a real file.
+
+## 6. Deferred (effects pack follow-ups)
+
+Shipped in the eligible-pack work and recorded on the rows above: pointwise grade ops, Cube LUT, in-halo Glow / BlurNoise / Detail, and Glitch neighbor sampling on CPU. Still open, and not part of that pack:
+
+- Glow gather past the tile halo
+- BlurNoise / Detail adapter parity soak
+- GPU Post-from-Dithered after an exact ED barrier (P4). Measured and deferred — [post-lever-measurement.md](./post-lever-measurement.md)
