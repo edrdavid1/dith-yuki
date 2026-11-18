@@ -10,7 +10,6 @@ const { mockTriggerHaptic } = vi.hoisted(() => ({
 vi.mock('../../hooks/useHapticFeedback', () => ({
   useHapticFeedback: () => ({
     triggerHaptic: mockTriggerHaptic,
-    checkSupport: vi.fn(),
     prefEnabled: true,
   }),
 }));

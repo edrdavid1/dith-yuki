@@ -1,7 +1,9 @@
 # Архитектура Dither Yuki 2
 
-> Комплексный архитектурный документ. As-built **1.0.5-beta**.
-> Последнее обновление: 30 сентября 2026.
+> As-built. Версия приложения **2.0.6-beta** (`src-tauri/tauri.conf.json`).
+> Сверено с кодом **17 ноября 2026**: сессии, бюджет кэша, Post barrier,
+> GPU families, export, точка входа, ключи палитр.
+> Подробности — в профильных as-built (GPU, soft proof, печать, Post, FlexLayout, вкладки).
 >
 > Оптимизация: начинать с **§13** (стоимость тайла / где теряется время) и
 > [tile-pipeline.md](./tile-pipeline.md) §11. Не трогать фильтры, пока не ясно,
@@ -18,6 +20,9 @@
 > - [FLEXLAYOUT_DOCKING.md](./FLEXLAYOUT_DOCKING.md) — Layers / Effect / Color Lab / Preview
 > - [color-lab.md](./color-lab.md) — цвет, палитры, Color Lab
 > - [palette-dither.md](./palette-dither.md) — Strict / Guided / Mixed / Simple
+> - [soft-proof-cmyk.md](./soft-proof-cmyk.md) — soft proof (display ICC)
+> - [print-export-cmyk.md](./print-export-cmyk.md) — CMYK TIFF
+> - [adr/gpu-dither-families.md](./adr/gpu-dither-families.md) — approximate `blocked_fs` / `blue_noise`
 > - [HOW_TO_ADD_ALGORITHM.md](./HOW_TO_ADD_ALGORITHM.md) — новый `FilterAlgorithm`
 
 ---
@@ -59,13 +64,15 @@ dither-yuki-2/
 ├── Cargo.toml                  # Workspace root (resolver = "2")
 ├── ALGORITHM_ID_REGISTRY.txt   # Stable AlgorithmId list (CI parity)
 ├── src-tauri/                  # Tauri backend (IPC, workers, panels, tile protocol)
-│   ├── tauri.conf.json         # version 1.0.5-beta, updater pubkey, icons, file assoc
+│   ├── tauri.conf.json         # version 2.0.6-beta, updater pubkey, icons, file assoc
 │   └── src/
 │       ├── main.rs             # Entry, tile://, GpuContext, plugins (incl. haptics), worker spawn
 │       ├── commands/           # IPC modules (document / filters / registry / ascii / …)
 │       ├── services/           # document / viewport / layer / filter / palette / undo
-│       ├── state/              # AppState assembly
-│       ├── journal/            # crash-recovery journals
+│       ├── state/              # TileState, HistoryState, UiState (AppState itself is commands/mod.rs)
+│       ├── journal/            # crash-recovery journals (per session recovery_id)
+│       ├── splash.rs           # splash window until boot_finished; 15s watchdog
+│       ├── channel/            # channel-direct | channel-mas | channel-msstore
 │       ├── document_session.rs # multi-doc registry
 │       ├── memory_budget.rs    # adaptive RAM tile-cache budget
 │       ├── tile_protocol.rs / tile_serve.rs
@@ -334,6 +341,10 @@ pub struct AppState {
     pub shell_layout: Mutex<ShellLayoutPersistence>, // W7/W10 layout.json envelope SoT
     pub ram_budget_source: RamBudgetSource,
     pub journal: Mutex<JournalRuntime>,
+    pub proof: Mutex<Option<Arc<ProofService>>>, // shared ICC catalog
+    pub print_export_cancel: Mutex<Option<Arc<AtomicBool>>>,
+    pub batch_export_cancel: Mutex<Option<Arc<AtomicBool>>>,
+    pub config: Arc<ConfigStore>,        // Workspace + preferences, not per document
 }
 
 pub struct DocumentSession {
@@ -381,7 +392,7 @@ pub struct DocumentHandle {
 
 ### 3.2.1 Undo / Redo (Track N)
 
-`UndoManager` живёт на `AppState` (`src-tauri/src/undo.rs`), не внутри `DocumentHandle`.
+`UndoManager` живёт в `DocumentSession.history` (`state/history_state.rs`), не на `AppState` и не внутри `DocumentHandle`. Хелперы — `src-tauri/src/undo.rs` (`with_document_undo` берёт **active** session).
 История — bounded стек `Arc<Document>` (`max_depth = 50`), не command/diff.
 
 - Все document-мутации Tauri идут через `with_document_undo`: снимок `before` до mutate, push на успех, на `Err` стеки не трогаются.
@@ -392,7 +403,7 @@ pub struct DocumentHandle {
 
 ### 3.2.2 Dirty flag (Track P)
 
-`saved_snapshot` is the live `Arc<Document>` at the last clean point (successful save, or `clear_history` after open / load / create). Dirty is `!Arc::ptr_eq(live, saved_mark)` — not `Document.revision`. Empty / welcome (no layers) is not dirty. Frontend title: `{• }{basename | Untitled} — Dither Engine`. One Unsaved_Guard (Save / Don’t Save / Cancel) on main-window close and File New/Open. GPU: auto-dispatch (warm download + A2); cold compute `DITHER_GPU_PREVIEW=1`; force CPU `DITHER_FORCE_CPU=1`. In-app updates ship from **0.2.0** onward (`tauri-plugin-updater` + GitHub `latest.json`); **0.1.0 cannot self-update** — install a ≥0.2.0 build once. Current beta tags are **1.0.x-beta**. Minisign pubkey is in `tauri.conf.json`; the private key is a CI secret, never git. Apple notarization is wired in CI when Apple secrets are present; without them Gatekeeper may warn on first DMG open (beta OK). See [RELEASE.md](./RELEASE.md). macOS slider haptics: [haptics-as-built.md](./haptics-as-built.md). File → Import Image as Layer places at origin, clips, no scale.
+`saved_snapshot` is the live `Arc<Document>` at the last clean point (successful save, or `clear_history` after open / load / create). Dirty is `!Arc::ptr_eq(live, saved_mark)` — not `Document.revision`. Empty / welcome (no layers) is not dirty. Frontend title: `{• }{basename | Untitled} — Dither Engine`. Unsaved guard is per tab: closing one dirty tab prompts for that tab; File New/Open does not block because another tab is dirty; quitting walks every dirty tab (Cancel aborts quit). See [multi-doc-tabs.md](./multi-doc-tabs.md). GPU: auto-dispatch (warm download + A2); cold compute `DITHER_GPU_PREVIEW=1`; force CPU `DITHER_FORCE_CPU=1`. In-app updates ship from **0.2.0** onward (`tauri-plugin-updater` + GitHub `latest.json`); **0.1.0 cannot self-update** — install a ≥0.2.0 build once. Current beta tags are **2.0.x-beta**. Minisign pubkey is in `tauri.conf.json`; the private key is a CI secret, never git. Apple notarization is wired in CI when Apple secrets are present; without them Gatekeeper may warn on first DMG open (beta OK). See [RELEASE.md](./RELEASE.md). macOS slider haptics: [haptics-as-built.md](./haptics-as-built.md). File → Import Image as Layer places at origin, clips, no scale.
 
 ### 3.3 Tile Protocol Handler (tile://)
 
@@ -409,7 +420,9 @@ tile://localhost/doc/{doc_id}/layer/{layer_id|composite}/stage/{raw|processed|co
 | 200 | Тайл готов: 262,144 bytes (RGBA8, 256×256×4) |
 | 202 | Тайл pending: enqueue Immediate task, empty body |
 | 400 | Malformed URL |
-| 404 | Document/layer/coordinate не найдены |
+| 404 | Document/layer/coordinate не найдены (в том числе закрытая сессия — active не подставляется) |
+
+`stage` в URL — только `raw` | `processed` | `composite`. `Dithered` в протокол не отдаётся. Готовность: чистый тайл и `generation >= content_gen`. Ответ 202 штампует поколение **тела**, не живой `content_gen`.
 
 **Логика:**
 1. Парсинг URL → валидация document/layer/bounds
@@ -477,6 +490,8 @@ loop {
 
 **Inline Processed:** если при композитинге Processed тайл отсутствует — вычисляется inline.
 
+**Post barrier:** если верхний дорогой фильтр (exact ED, ASCII, full-document) включён, префикс до него кэшируется как `CacheStage::Dithered`. Правка **выше** барьера двигает `post_gen` и не пересчитывает дизер (`DITHER_POST_CACHE` включён по умолчанию, `=0` выключает). Правка на барьере или ниже — полный сброс. Контракт: [post-barrier-roadmap.md](./post-barrier-roadmap.md).
+
 ### 3.7 Layout (FlexLayout)
 
 **Dockable panels** (`layers`, `effect`, `colorlab`) живут в двух FlexLayout `Model` (left / right); Preview — center Model. Persist (W7): single `layout.json` envelope via `ShellLayoutPersistence` / `layoutStore`. Float: `flex-popout-*` + JS `setPosition` (B4c). Preferences и Help — main-window dialogs (не FlexLayout). Affinity hit-test (`dock_affinity.rs` + `update_dock_zone`) — тонкий мост для redock Flex popout. Подробно: [FLEXLAYOUT_DOCKING.md](./FLEXLAYOUT_DOCKING.md).
@@ -496,6 +511,9 @@ loop {
 | `save_project` / `save_project_as` | Write `.dyproj`; record Recent (Project) |
 | `export_pattern` / `import_pattern` | `.dyuki` pack/unpack (Track F) |
 | `export_image` | Full-res composite → PNG/JPEG encode → fs::write |
+| `print_export_run` / `print_export_cancel` | CMYK TIFF (lcms2). As-built: [print-export-cmyk.md](./print-export-cmyk.md) |
+| `batch_export_run` / `batch_export_cancel` | Folder batch export |
+| `proof_get_config` / `proof_set_config` / `proof_import_profile` | Per-document soft proof; shared ICC catalog. [soft-proof-cmyk.md](./soft-proof-cmyk.md) |
 | `is_release_build` | Launch auto-check skip in debug |
 | `is_release_build` | Check release profile status for diagnostics |
 | `set_viewport` | Update viewport → schedule dirty tiles |
@@ -787,7 +805,7 @@ Legacy `(DitherMode, color_depth)` автоматически мигрирует
 
 ### 4.3 engine-color
 
-Цвет, палитры, KD-tree, threshold maps, OkLCH-генераторы. Подробный as-built flow UI — `color-lab.md`.
+Цвет, палитры, KD-tree, threshold maps, OkLCH-генераторы. Подробный as-built flow UI — `color-lab.md`. Soft proof на экране считает **moxcms**; печатный CMYK TIFF — **lcms2**. Профили FOGRA/PSO в поставку не входят: [soft-proof-cmyk.md](./soft-proof-cmyk.md), [print-export-cmyk.md](./print-export-cmyk.md).
 
 #### Oklab (oklab.rs)
 
@@ -819,12 +837,15 @@ Tauri: `generate_ramp_palette` / `generate_harmony_palette` возвращают
 #### PaletteKdCache (palette_cache.rs)
 
 ```rust
+pub type PaletteCacheKey = (u32 /* runtime doc */, PaletteId);
+
 pub struct PaletteKdCache {
-    entries: DashMap<PaletteId, (u64 /* revision */, Arc<KdTree>)>,
+    entries: DashMap<PaletteCacheKey, (u64 /* revision */, Arc<KdTree>)>,
 }
 ```
 
-- `get_or_build(palette)` → `Arc<KdTree>` — lock-free read из DashMap shards
+- `get_or_build(doc_id, palette)` → `Arc<KdTree>` — lock-free read из DashMap shards
+- Ключ включает runtime `doc_id`: два файла с `palette_id = 1` не делят дерево
 - Revision-based invalidation (не hash палитры — дешевле)
 - Один физический KD-tree на палитру для всех worker threads
 - Last-writer-wins на concurrent builds
@@ -843,13 +864,13 @@ pub struct PaletteLut3D {
 }
 
 pub struct PaletteLutCache {
-    entries: DashMap<PaletteId, (u64 /* revision */, Arc<PaletteLut3D>)>,
+    entries: DashMap<(u32 /* doc */, PaletteId), (u64 /* revision */, Arc<PaletteLut3D>)>,
 }
 ```
 
 - `PaletteLut3D::build` queries `KdTree::nearest` at each cell center (once per revision)
 - `nearest_index(lab)` — clamp into ranges, flat index, no tree walk
-- `PaletteLutCache::get_or_build(palette, kd_cache, size)` — same revision invalidation as KD cache
+- `PaletteLutCache::get_or_build(doc_id, palette, kd_cache, size)` — same revision invalidation as KD cache
 - Held beside `PaletteKdCache` in `AppState`; both evicted on palette remove
 - Default `size = 64` (512 KiB): lookup ~23× faster than KD; 32³ had ~29% boundary disagreement on dense K=64 palettes
 - Fallback policy: always LUT in production hot paths (no K-threshold); KD remains for build + tests
@@ -913,7 +934,7 @@ pub fn resolve_user_path(raw: &str, allowed_ext: &[&str]) -> Result<PathBuf, San
 | Env | `DITHER_FORCE_CPU=1`; `DITHER_GPU_PREVIEW=1` (cold compute). No Preferences toggle (A4). `DITHER_GPU=1` aliases preview-enabled. |
 
 **Eligible:** Bayer / Clustered / Dispersed / VAC (ps=1, Track H bias/angle), Halftone angled, Line Screen, Crosshatch, Wave, CRT, Glow (`r×softness ≤ HALO`), BlurNoise / Detail (clamp path), Invert / Threshold / Posterize / Levels / Curves / CubeLut / Adjust (pointwise, no spatial knobs), Palette Guided/Mixed/Quantize (A7 LUT), NearestColor (Oklab only).  
-**Never GPU:** ED, CustomPng, stipple, `pixel_size>1`. Kill-switches: `DITHER_POINTWISE_GPU=0`, `DITHER_SPATIAL_GPU=0`. Large Glow → `Cpu(AdjustBlur)` until gather (PR-E B).  
+**Never GPU:** exact ED (Floyd–Steinberg and siblings), CustomPng, stipple, `pixel_size>1`. Approximate `blocked_fs` / `blue_noise` are a separate path and are on by default — [adr/gpu-dither-families.md](./adr/gpu-dither-families.md). Kill-switches: `DITHER_POINTWISE_GPU=0`, `DITHER_SPATIAL_GPU=0`. Large Glow → CPU until the radius fits the halo.  
 **Parity:** Bayer exact; Halftone/CRT/pointwise ≤ `1/255`. As-built: [gpu-as-built.md](./gpu-as-built.md).
 
 ### 4.6 engine-core (Phase 0 stub)
@@ -1021,7 +1042,7 @@ SIMD-ускорение: `levels_row_simd` (wide f32x4) для batch processing 
   если dirty/missing (на всех pyramid levels)
 - `requires_full_row = true`
 - При смене params: `error_residuals.clear()`
-- **Не GPU.** Wavefront сериализует тайлы — главный анти-параллелизм viewport'а
+- **Exact ED не на GPU.** Wavefront сериализует тайлы — главный анти-параллелизм viewport'а. Приближённые `blocked_fs` и `blue_noise` — отдельное семейство, не этот путь ([adr/gpu-dither-families.md](./adr/gpu-dither-families.md))
 
 **Color modes:** RGB per-channel / Grayscale luminance.
 
@@ -1047,7 +1068,7 @@ SIMD-ускорение: `levels_row_simd` (wide f32x4) для batch processing 
 - **RGBShift:** хроматическая аберрация (X-only channel shift)
 - **BlockDisplace:** блочное смещение (16px, origin = `floor(gx/16)*16` в глобальных пикселях)
 - Детерминистический XorShift64; ключ PRNG = `seed XOR f(global_x, global_y, level)` для dest-пикселя (RGB) или dest-block origin (Block Displace) — не `TileCoord`
-- Координаты через `GlobalCoordSigned`; v1 `|offset| ≤ HALO` (как Glow radius)
+- Координаты через `GlobalCoordSigned`. Если Post-neighborhood собран, Glitch берёт соседние `Dithered` тайлы; иначе clamp внутри тайла (halo)
 
 ### 5.7 CRT / Glow
 
@@ -1063,7 +1084,7 @@ Portable SIMD через `wide` crate (stable Rust):
 
 ### 5.9 GPU path (optional)
 
-See §4.5 `engine-gpu`. Pattern filters only; same cache keys / generations as CPU.
+See §4.5 `engine-gpu`. Eligible pattern, pointwise, and in-halo spatial filters share cache keys and generations with CPU. Exact ED stays a CPU checkpoint.
 **Default routing is CPU for cold tiles.** Warm resident slots download on GPU without a UI toggle. Cold GPU compute stays env opt-in (`DITHER_GPU_PREVIEW=1`).
 
 ---
@@ -1112,13 +1133,14 @@ flowchart TD
 **Ключевое решение:** `schedule_dirty_viewport_tiles` ставит **только** Composite tasks.
 Processed tiles вычисляются inline внутри `compute_composite_tile` если dirty/missing.
 
+Исключение — правка **Post** (выше барьера) при включённом `DITHER_POST_CACHE`: `Dithered` не сбрасывается, дизер не бежит, двигается `post_gen`. Слайдер Curves/Levels/Adjust над ED — этот путь, не полная инвалидация на диаграмме выше.
+
 ### 6.3 Export Pipeline
 
-- Без viewport ограничений — рендерит все тайлы документа
-- Full-resolution, no downscale
-- PNG (RGBA8) или JPEG (RGB8, quality 1–100)
-- JPEG: конверсия RGBA → RGB (drop alpha)
-- Результат → `fs::write(path)`
+- RGB export (`export_image`): все тайлы документа, без viewport. PNG (RGBA8) или JPEG (RGB8, quality 1–100, alpha отбрасывается) → `fs::write`
+- Soft proof на экспорт **не** влияет
+- CMYK TIFF — отдельная команда `print_export_run` (lcms2, пользовательский ICC). [print-export-cmyk.md](./print-export-cmyk.md)
+- Batch — `batch_export_run`, один cancel-флаг на процесс
 
 ---
 
@@ -1126,14 +1148,9 @@ Processed tiles вычисляются inline внутри `compute_composite_ti
 
 ### 7.1 Entry Point и маршрутизация
 
-```tsx
-// main.tsx
-const panelId = new URLSearchParams(window.location.search).get('panel')
-const isPanel = panelId !== null && KNOWN_PANELS.includes(panelId)
+`main.tsx` монтирует одно дерево `<App />`. Отдельного `?panel=` / `PanelWindow` больше нет: float — тот же React-root в окне `flex-popout-*` ([FLEXLAYOUT_DOCKING.md](./FLEXLAYOUT_DOCKING.md)).
 
-// Main window → <App />
-// Floating panel → <PanelWindow panelId={panelId} />
-```
+Старт: окно `splash` видно сразу, `main` скрыт. Frontend зовёт `boot_finished` после первого кадра; Rust показывает `main` и уничтожает splash. Если фронт молчит, watchdog через **15 с** открывает `main` всё равно (`src-tauri/src/splash.rs`). Минимальной задержки показа splash в коде нет.
 
 ### 7.2 Компонентная архитектура
 
@@ -1627,6 +1644,8 @@ Composite-задачи **не** stale-discard (см. §3.5). Processed-зада�
 При быстром drag воркеры могут досчитать устаревший Composite; следующий кадр
 перекроет. Это сознательный trade-off «последний кадр важнее, чем не считать лишнее».
 
+Если правка выше барьера и Post-cache включён, этот путь **не** помечает весь Processed dirty и **не** чистит residuals: крутится `post_gen`, `Dithered` остаётся. Отмена Post — между тайлами, не только между кадрами ([post-processing-levers.md](./post-processing-levers.md)).
+
 ### 13.2 Память и копии одного тайла
 
 | Буфер | Размер | Когда |
@@ -1635,14 +1654,14 @@ Composite-задачи **не** stale-discard (см. §3.5). Processed-зада�
 | GPU core (256²×4 f32) | 1.00 MB | `extract_core` / `write_core` |
 | Protocol RGBA8 (256²×4 u8) | 256 KB | `tile://` 200 |
 
-Кэш 512 MiB ≈ **~500 тайлов** всех стадий; на большой машине потолок до 4 GiB.
-Viewport 40 Composite + 40 Processed + 40 Raw уже ~120 MB на один слой без пирамиды.
+Бюджет адаптивный: 25% RAM, clamp 512 MiB–4 GiB (`memory_budget.rs`). 512 MiB ≈ **~500 тайлов**; 4 GiB — верхний clamp, не «всегда 4 GiB».
+Viewport 40 Composite + 40 Processed + 40 Raw уже ~120 MB на один слой без пирамиды. `Dithered` — ещё ~1.03 MB на тайл и **не** входит в pressure drop-order (см. [multi-doc-tabs.md](./multi-doc-tabs.md)).
 
 **Два разных бюджета (не путать):**
 
 | | Cache footprint | Compute temps |
 |--|-----------------|---------------|
-| Что считает | `Arc<PixelTile>` в `TileCache` (Raw/Processed/Composite) | Одновременно живые owned `PixelTile` на worker apply |
+| Что считает | `Arc<PixelTile>` в `TileCache` (Raw/Dithered/Processed/Composite) | Одновременно живые owned `PixelTile` на worker apply |
 | Рычаг | adaptive budget / eviction | In-place + park (as-built) |
 
 **Аллокации на один Processed (один Dither, opacity=1, Normal, CPU) — as-built after in-place:**
@@ -1669,7 +1688,7 @@ tax **до и после** шейдера.
 
 | Участок | Почему дорого | Уже сделано | Рычаг |
 |---------|---------------|-------------|--------|
-| **Error diffusion** | Последовательный L→R T→B; cross-tile wavefront (left/top/diag recurse); не SIMD | IncomingErrorBuffer, LUT nearest | Не GPU. Можно: меньше работы на halo, block `pixel_size`, не считать за viewport |
+| **Exact error diffusion** | Последовательный L→R T→B; cross-tile wavefront (left/top/diag recurse); не SIMD | IncomingErrorBuffer, LUT nearest | Не этот GPU-путь. `blocked_fs` / `blue_noise` — приближение, не замена FS |
 | **Oklab на пиксель** | `linear_to_oklab` до LUT, даже когда nearest O(1) | LUT 64³ (~23× vs KD) | Квантовать в linear RGB без Oklab, когда палитра маленькая; SIMD Oklab |
 | **Ordered dither 260²** | Полный halo, per-pixel GlobalCoord + threshold | GlobalCoord helpers | SIMD Bayer; не ходить halo если фильтр его не читает |
 | **Копии PixelTile** | 1.03 MB × (1 + N filters + blend) historically | In-place `*_into` + worker park (peak temps ≤2/3) | f16 stages; Adjust blur via park |
@@ -1687,8 +1706,8 @@ busy-wait воркеров; отсутствие SIMD на blend/levels/u8.
 GPU ускорение работает исключительно через **Path B Resident Executor**. Холодный compute — `DITHER_GPU_PREVIEW=1`; auto-dispatch без UI-тоггла. Устаревший v1 потайловый `dispatch_rgba32` полностью удалён (задача T9).
 
 1. **Резидентный VRAM-атлас (`GpuTileCache`)**: Память выделяется под граф вычислений слоя без перенарезки и повторного создания буферов на каждый тайл.
-2. **Границы (E4)**: Ускоряются Bayer, Halftone, CRT и палитровые фильтры на прогретом видовом окне. Слои с Error Diffusion (ED) и `pixel_size > 1` всегда рассчитываются на CPU.
-3. **Причина cold opt-in (R1)**: первое касание новых тайлов на GPU медленнее CPU (~30.9 ms vs ~10.4 ms); ED всегда CPU. Auto-dispatch (A1–A4) качает уже тёплые слоты без UI-тоггла. См. [gpu-as-built.md](./gpu-as-built.md).
+2. **Границы:** на прогретом окне ускоряются ordered-паттерны, pointwise grade (Invert, Levels, Curves, …) и spatial в пределах halo (Glow, BlurNoise, Detail). Exact ED и `pixel_size > 1` остаются на CPU. `blocked_fs` / `blue_noise` — отдельный приближённый GPU-путь.
+3. **Причина cold opt-in (R1)**: первое касание новых тайлов на GPU медленнее CPU (~30.9 ms vs ~10.4 ms). Auto-dispatch (A1–A4) качает уже тёплые слоты без UI-тоггла. См. [gpu-as-built.md](./gpu-as-built.md).
 
 ### 13.5 Параллелизм и что его ломает
 
@@ -1745,7 +1764,7 @@ Halftone/CRT ≤ 1/255), debounce undo = 100ms в `useEffectLayer`.
 |-------------|---------|
 | Multi-doc | Вкладки + runtime `DocumentId`; один viewport = active session |
 | Max 8192×8192 | Больше — reject |
-| GPU cold opt-in | Warm download + A2 default; cold compute `DITHER_GPU_PREVIEW=1`; ED / ps>1 always CPU |
+| GPU cold opt-in | Warm download + A2 default; cold compute `DITHER_GPU_PREVIEW=1`; exact ED and `pixel_size > 1` stay CPU. Approximate `blocked_fs` / `blue_noise` are a separate path |
 | ED wavefront | `EdFrontier` + row-major deps; still sequential across tiles |
 | Oklab = sRGB primaries | RGB→LMS под Rec.709 |
 | No mask editing UI | `MaskRef` + `apply_mask` есть, UI нет |
@@ -1770,9 +1789,12 @@ Halftone/CRT ≤ 1/255), debounce undo = 100ms в `useEffectLayer`.
 - [x] Undo/redo snapshot (Track N); paint-aware out of scope
 - [x] WorkerWake Condvar (не sleep 1ms)
 - [x] PaletteLut3D 64³ (Track B1)
-- [x] `engine-gpu` Bayer/Halftone/CRT (Track D); ED CPU-only
+- [x] `engine-gpu` Path B (Bayer/Halftone/CRT, pointwise, in-halo spatial). Exact ED stays CPU. Approximate `blocked_fs` / `blue_noise` shipped — [adr/gpu-dither-families.md](./adr/gpu-dither-families.md)
+- [x] Soft proof (display ICC, user profiles) and CMYK TIFF print export. Not PDF/X
+- [x] Batch export
 - [ ] ASCII GPU + optional `CacheStage::Ascii`
-- [ ] Video / ICC / batch export
+- [ ] Video
+- [ ] PDF/X
 - [ ] Proper Luminance via Oklab L*
 ---
 
@@ -1901,5 +1923,5 @@ cargo bench -p engine-project
 
 ---
 
-**Last Updated:** 30 September 2026
-**Version:** 1.0.5-beta
+**Checked against the tree:** 17 November 2026
+**App version:** 2.0.6-beta

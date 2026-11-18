@@ -1,11 +1,11 @@
 /**
  * In-app User Agreement (Help dialog).
- * Keep in sync with the EULA portion of `docs/legal/INSTALLER_ACCEPTANCE.txt`
- * (and `docs/legal/USER_AGREEMENT.txt` — text before the `====` appendix).
+ * Keep in sync with `docs/legal/USER_AGREEMENT.txt` and the EULA half of
+ * `docs/legal/INSTALLER_ACCEPTANCE.txt` (text before the `====` appendix).
  */
 export const USER_AGREEMENT_TITLE = 'User Agreement';
 
-export const USER_AGREEMENT_BODY = `Last updated: October 10, 2026
+export const USER_AGREEMENT_BODY = `Last updated: 17 November 2026
 
 This End User License Agreement ("Agreement") is between you and David Murashka, an independent developer operating under the name "L'eco non di Bergamo" ("we", "us"), and governs your use of the Dither Yuki application ("the Software"), including beta versions.
 
@@ -20,6 +20,8 @@ Subject to this Agreement, we grant you a personal, non-exclusive, non-transfera
 The source code of the Software, where made available, is licensed separately under the L'eco non di Bergamo Software License (see LICENSE file). This Agreement governs your use of the compiled application.
 
 You are fully authorized to use the Software to create commercial products. However, you are strictly prohibited from selling, renting, repackaging, or monetizing the Software itself or its underlying source code.
+
+Copies obtained from the Mac App Store or the Microsoft Store are sold by that store. Payment, tax, and refunds for those copies are handled by the store under its own terms. The license to use the Software remains with David Murashka, operating as L'eco non di Bergamo. Store copies do not use a license key and do not include the in-app GitHub updater. The price paid to the store is the license for that copy.
 
 3. BETA SOFTWARE
 
@@ -41,7 +43,11 @@ You retain all rights, copyright, and ownership to images, projects, media, and 
 
 Sprites, textures and other images you create with Dither Yuki may be used in commercial games and products without restriction or royalties.
 
-We respect your privacy. The Software operates locally. We do not access, collect, transmit, or store your files, project data, or personal usage analytics (telemetry) unless you explicitly opt-in to use a specific feature that requires it (e.g., submitting a voluntary crash report or feedback).
+We respect your privacy. The Software does not collect usage analytics.
+
+Copies from the Mac App Store and the Microsoft Store do not send files, project data, or bug reports. Those copies have no network client for that purpose. A link you choose to open, such as the project website, is handed to your browser.
+
+The direct download can send a bug report only when you choose Report a bug. That report contains the text you type, an optional email address, the app version, and the operating system. It is sent through Web3Forms so we can read it. It does not include your images or project files.
 
 7. FEEDBACK
 

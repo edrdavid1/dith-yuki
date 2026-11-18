@@ -13,6 +13,11 @@
           "identifier": "updater",
           "windows": ["main"],
           "permissions": ["updater:default"]
+        },
+        {
+          "identifier": "haptics",
+          "windows": ["main", "splash", "panel-*", "flex-popout-*", "*"],
+          "permissions": ["tauri-macos-haptics:default"]
         }
       ]
     }

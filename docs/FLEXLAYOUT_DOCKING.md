@@ -342,7 +342,7 @@ ADR — целевое состояние после **полной** мигра
 
 ### Float / redock stabilization (2026-11)
 
-Identity + drag lag + ghost chrome were fixed without a layout rewrite. Spec: [`layaut-fix.md`](./layaut-fix.md).
+Identity + drag lag + ghost chrome were fixed without a layout rewrite. The work-item outcomes are the tables below.
 
 | Seam | Fix |
 |------|-----|

@@ -22,3 +22,4 @@ export * from './ascii';
 export * from './proof';
 export * from './patternLibrary';
 export * from './batchExport';
+export * from './haptics';

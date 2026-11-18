@@ -64,6 +64,7 @@ function Slider({
   const [editing, setEditing] = useState(false);
   const trackRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
+  const activePointerIdRef = useRef<number | null>(null);
   const hapticMotionRef = useRef<HapticMotionState>(createHapticMotionState(value));
   const { triggerHaptic } = useHapticFeedback();
   const [trackWidth, setTrackWidth] = useState(0);
@@ -95,7 +96,7 @@ function Slider({
     }
   }, [value, decimals, editing]);
 
-  // Use refs so the mousemove closure always has fresh values
+  // Use refs so the move closure always has fresh values
   const minRef = useRef(min);
   const maxRef = useRef(max);
   const stepRef = useRef(step);
@@ -133,8 +134,8 @@ function Slider({
     }
   }, []);
 
-  // Compute value from mouse X — end inset set by RETRO_SLIDER_END_INSET_PX.
-  const valueFromMouseX = useCallback((clientX: number): number => {
+  // Compute value from pointer X — end inset set by RETRO_SLIDER_END_INSET_PX.
+  const valueFromClientX = useCallback((clientX: number): number => {
     const track = trackRef.current;
     if (!track) return localValue;
     const rect = track.getBoundingClientRect();
@@ -148,33 +149,73 @@ function Slider({
     );
   }, [localValue]);
 
-  // Mouse down on track or thumb — start drag
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    draggingRef.current = true;
+  const endDrag = useCallback((el?: HTMLElement | null, pointerId?: number | null) => {
+    if (!draggingRef.current && activePointerIdRef.current == null) return;
+    const id = pointerId ?? activePointerIdRef.current;
+    draggingRef.current = false;
+    activePointerIdRef.current = null;
+    if (
+      el &&
+      id != null &&
+      typeof el.hasPointerCapture === 'function' &&
+      el.hasPointerCapture(id) &&
+      typeof el.releasePointerCapture === 'function'
+    ) {
+      try {
+        el.releasePointerCapture(id);
+      } catch {
+        /* already released */
+      }
+    }
+    notePointerUp();
+  }, []);
 
-    const from = lastEmittedRef.current;
-    hapticMotionRef.current = createHapticMotionState(from);
-    const newVal = valueFromMouseX(e.clientX);
-    applyUserValue(from, newVal);
+  useEffect(() => () => endDrag(trackRef.current, activePointerIdRef.current), [endDrag]);
 
-    const handleMouseMove = (ev: MouseEvent) => {
+  // Pointer capture keeps move/up on the track even inside a flex-popout
+  // document (main `document` never sees those events).
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      const track = e.currentTarget;
+      endDrag(track, activePointerIdRef.current);
+      draggingRef.current = true;
+      activePointerIdRef.current = e.pointerId;
+      if (typeof track.setPointerCapture === 'function') {
+        track.setPointerCapture(e.pointerId);
+      }
+
+      const from = lastEmittedRef.current;
+      hapticMotionRef.current = createHapticMotionState(from);
+      applyUserValue(from, valueFromClientX(e.clientX));
+    },
+    [applyUserValue, endDrag, valueFromClientX],
+  );
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!draggingRef.current) return;
+      if (activePointerIdRef.current != null && e.pointerId !== activePointerIdRef.current) {
+        return;
+      }
       const prev = lastEmittedRef.current;
-      const val = valueFromMouseX(ev.clientX);
-      applyUserValue(prev, val);
-    };
+      applyUserValue(prev, valueFromClientX(e.clientX));
+    },
+    [applyUserValue, valueFromClientX],
+  );
 
-    const handleMouseUp = () => {
-      draggingRef.current = false;
-      notePointerUp();
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-  }, [applyUserValue, valueFromMouseX]);
+  const handlePointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (activePointerIdRef.current != null && e.pointerId !== activePointerIdRef.current) {
+        return;
+      }
+      endDrag(e.currentTarget, e.pointerId);
+    },
+    [endDrag],
+  );
 
   const ratio01 = max > min ? (localValue - min) / (max - min) : 0;
   const endPad = sliderEndPadRatio(trackWidth);
@@ -238,7 +279,10 @@ function Slider({
         <div
           className={cn("retro-slider-track")}
           ref={trackRef}
-          onMouseDown={handleMouseDown}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
         >
           <div
             className={cn("retro-slider-thumb")}

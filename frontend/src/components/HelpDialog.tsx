@@ -15,6 +15,7 @@ import {
   USER_AGREEMENT_BODY,
   USER_AGREEMENT_TITLE,
 } from '../shared/userAgreement';
+import { IS_DIRECT } from '../channel/flags';
 
 const cn = bind({ ...overlayStyles, ...styles });
 
@@ -109,16 +110,18 @@ export default function HelpDialog({
                         {checking ? 'Checking…' : 'Check update'}
                       </button>
                     )}
-                    <button
-                      type="button"
-                      className={cn('help-btn')}
-                      onClick={() => {
-                        onClose();
-                        setReportOpen(true);
-                      }}
-                    >
-                      Report a bug
-                    </button>
+                    {IS_DIRECT && (
+                      <button
+                        type="button"
+                        className={cn('help-btn')}
+                        onClick={() => {
+                          onClose();
+                          setReportOpen(true);
+                        }}
+                      >
+                        Report a bug
+                      </button>
+                    )}
                     <button type="button" className={cn('help-btn')} onClick={onClose}>
                       Close
                     </button>

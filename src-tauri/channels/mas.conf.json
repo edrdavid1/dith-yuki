@@ -1,7 +1,8 @@
 {
   "bundle": {
     "macOS": {
-      "entitlements": "entitlements/mas.entitlements",
+      "entitlements": "entitlements/mas.generated.entitlements",
+      "hardenedRuntime": true,
       "files": {
         "embedded.provisionprofile": "certs/DitherYuki_MAS.provisionprofile"
       }

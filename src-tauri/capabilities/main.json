@@ -30,7 +30,6 @@
     "os:default",
     "process:allow-restart",
     "clipboard-manager:allow-write-text",
-    "tauri-macos-haptics:default",
     {
       "identifier": "opener:allow-open-url",
       "allow": [

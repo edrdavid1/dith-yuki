@@ -20,7 +20,7 @@ Working agent specs stay local only (not in this repo on GitHub).
 | Doc | Contents |
 |---|---|
 | [architecture.md](./architecture.md) | Stack, crates, IPC, preview, cost model |
-| [product-snapshot.md](./product-snapshot.md) | What’s real vs still beta (1.0.x) |
+| [product-snapshot.md](./product-snapshot.md) | What’s real vs still beta (2.0.x) |
 | [multi-doc-tabs.md](./multi-doc-tabs.md) | Tabs, sessions, shared cache, save/export |
 | [crash-recovery.md](./crash-recovery.md) | Atomic save, journals, clean-exit, soft discard, roster |
 | [tile-pipeline.md](./tile-pipeline.md) | 256×256 tiles, coords, ED, GPU routing |
@@ -33,10 +33,10 @@ Working agent specs stay local only (not in this repo on GitHub).
 | [soft-proof-cmyk.md](./soft-proof-cmyk.md) | Soft proof: ICC CMYK preview, BPC, encode path |
 | [print-export-cmyk.md](./print-export-cmyk.md) | CMYK TIFF print export (lcms2, pure-K, gamut report) |
 | [gamedev-toolkit.md](./gamedev-toolkit.md) | Pattern Manager, ED wrap-padding, hex/jasc fuzz |
-| [gamedev-workspace-work-report.md](./gamedev-workspace-work-report.md) | Full work report: Workspace + wrap-padding (PR #55) |
 | [help/general/](./help/general/) | End-user General workspace guide |
 | [help/gamedev/](./help/gamedev/) | End-user Gamedev workspace guide (tiling) |
 | [adr/ed-wrap-padding.md](./adr/ed-wrap-padding.md) | ADR: approximate ED wrap-padding |
+| [adr/gpu-dither-families.md](./adr/gpu-dither-families.md) | ADR: approximate `blocked_fs` / `blue_noise` |
 
 ## Formats, previews, security
 
@@ -56,15 +56,16 @@ Working agent specs stay local only (not in this repo on GitHub).
 | Doc | Contents |
 |---|---|
 | [PERF_DECISIONS.md](./PERF_DECISIONS.md) | Perf ADRs |
-| [PERF_RESIZE_BASELINE.md](./PERF_RESIZE_BASELINE.md) | Live-resize baseline |
-| [effects-correction-spec.md](./effects-correction-spec.md) | Non-dither effects: GPU Eligible pack, seams, PR slices |
-| [post-barrier-roadmap.md](./post-barrier-roadmap.md) | Dithered cache / Post barrier |
-| [post-processing-levers.md](./post-processing-levers.md) | Post scrub levers vs P4 GPU |
+| [PERF_RESIZE_BASELINE.md](./PERF_RESIZE_BASELINE.md) | Windows live-resize procedure. Not run |
+| [post-barrier-roadmap.md](./post-barrier-roadmap.md) | Shipped Dithered-cache / Post barrier contract |
+| [post-processing-levers.md](./post-processing-levers.md) | Shipped Post scrub levers; P4 GPU deferred |
+| [post-lever-measurement.md](./post-lever-measurement.md) | Measurement that deferred P4 |
 
 ## Legal
 
 | Doc | Contents |
 |---|---|
 | [legal/USER_AGREEMENT.txt](./legal/USER_AGREEMENT.txt) | End-user agreement |
+| [legal/STORE_ACCOUNT.md](./legal/STORE_ACCOUNT.md) | Account data for a Mac App Store upload |
 | [legal/INSTALLER_ACCEPTANCE.txt](./legal/INSTALLER_ACCEPTANCE.txt) | Installer acceptance text |
 | [legal/flexlayout-license-snapshot.md](./legal/flexlayout-license-snapshot.md) | MIT snapshot for flexlayout-react 0.7.15 |
