@@ -116,3 +116,25 @@ fn blue_noise_gpu_path_matches_cpu_path_hash() {
     );
     eprintln!("blue_noise sha256={hg} gpu_backend={gpu_backend}");
 }
+
+#[test]
+fn dot_diffusion_gpu_path_matches_cpu_path_hash() {
+    if engine_gpu::cached_blocked_fs_device().is_none() {
+        eprintln!("skip: no GPU adapter");
+        return;
+    }
+    let (gpu_px, gpu_path, gpu_backend) = run_path("gpu", DitherModeV2::DotDiffusion);
+    assert_eq!(
+        gpu_path, "GPU",
+        "expected GPU path, got {gpu_path} ({gpu_backend})"
+    );
+    let (cpu_px, cpu_path, _) = run_path("cpu", DitherModeV2::DotDiffusion);
+    assert_eq!(cpu_path, "CPU");
+    let hg = sha256_hex(&gpu_px);
+    let hc = sha256_hex(&cpu_px);
+    assert_eq!(
+        hg, hc,
+        "DITHER_GPU_PATH=gpu vs cpu hash mismatch — breaks the main promise"
+    );
+    eprintln!("dot_diffusion sha256={hg} gpu_backend={gpu_backend}");
+}

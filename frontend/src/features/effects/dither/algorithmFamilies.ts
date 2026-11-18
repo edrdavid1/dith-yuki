@@ -28,6 +28,7 @@ export type AlgorithmVariantId =
   // gpu_ed — available when experimental.gpu_dither_families is on
   | 'blocked_fs'
   | 'blue_noise'
+  | 'dot_diffusion'
   // ordered / matrix / pattern
   | 'bayer_2x2'
   | 'bayer_4x4'
@@ -117,6 +118,13 @@ export const ALGORITHM_FAMILIES: AlgorithmFamily[] = [
           'Threshold-shift blue-noise dither (Ulichney void-and-cluster 128×128). GPU when available; CPU reference otherwise.',
         available: true,
       },
+      {
+        id: 'dot_diffusion',
+        label: 'Dot diffusion',
+        tooltip:
+          'Knuth 8×8 class-matrix diffusion. Orthogonal neighbors weigh 2, diagonals 1. GPU when available; CPU reference otherwise.',
+        available: true,
+      },
     ],
   },
   {
@@ -152,7 +160,11 @@ export function setGpuDitherFamiliesAvailable(available: boolean): void {
   if (!family) return;
   family.available = available;
   for (const variant of family.variants) {
-    if (variant.id === 'blocked_fs' || variant.id === 'blue_noise') {
+    if (
+      variant.id === 'blocked_fs' ||
+      variant.id === 'blue_noise' ||
+      variant.id === 'dot_diffusion'
+    ) {
       variant.available = available;
     }
   }

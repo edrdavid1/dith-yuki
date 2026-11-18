@@ -32,6 +32,8 @@ import {
   formatIpcError,
   importBuiltinPalette,
   importPalette,
+  importPalettePack,
+  isPalettePackPath,
   listBuiltinPalettes,
   listPalettes,
   logIpcError,
@@ -268,12 +270,37 @@ export default function ColorLabFeature({
       const filePath = await openDialog({
         multiple: false,
         filters: [
-          { name: 'Palettes', extensions: ['ase', 'aco', 'gpl', 'pal', 'hex', 'csv', 'json'] },
+          {
+            name: 'Palettes',
+            extensions: ['ase', 'aco', 'gpl', 'pal', 'hex', 'csv', 'json', 'zip'],
+          },
         ],
       });
       if (!filePath) return;
       const path = Array.isArray(filePath) ? filePath[0] : filePath;
       if (typeof path !== 'string' || !path) return;
+      if (isPalettePackPath(path)) {
+        const imported = await importPalettePack(docId, path);
+        const dto = imported[0];
+        if (!dto) {
+          dispatch(setError('ZIP contained no supported palette files.'));
+          return;
+        }
+        dispatch(setColors(dto.colors.map(([r, g, b]) => createColorEntry(toHex(r, g, b)))));
+        if (dto.name) dispatch(setName(dto.name));
+        dispatch(setSelectedPaletteId(dto.id ?? null));
+        dispatch(bumpVersion({ lastCreatedId: dto.id }));
+        publishPaletteBinding(dto.id ?? null);
+        void emitPaletteChanged();
+        dispatch(setError(null));
+        dispatch(
+          setSuccessMessage(
+            `Imported pack: ${imported.length} palette${imported.length === 1 ? '' : 's'} (selected “${dto.name || 'palette'}”).`,
+          ),
+        );
+        window.setTimeout(() => dispatch(setSuccessMessage(null)), 3000);
+        return;
+      }
       const dto = await importPalette(docId, path);
       dispatch(setColors(dto.colors.map(([r, g, b]) => createColorEntry(toHex(r, g, b)))));
       if (dto.name) dispatch(setName(dto.name));

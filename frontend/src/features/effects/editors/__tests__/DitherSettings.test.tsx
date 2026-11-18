@@ -126,4 +126,71 @@ describe('DitherSettings algorithm selector', () => {
     const payload = onUpdate.mock.calls[0][0] as { mode: string };
     expect(payload.mode).toBe('atkinson');
   });
+
+  it('shows Batch E knobs for crosshatch / line / voronoi / random', () => {
+    const { rerender } = renderSettings(
+      <DitherSettings
+        params={{
+          mode: 'crosshatch_dither',
+          threshold_scale: 1,
+          pixel_size: 1,
+          wave_wavelength: 8,
+          pattern_angle: 45,
+        }}
+        onUpdate={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('Spacing')).toBeInTheDocument();
+    expect(screen.getByText('Base Angle')).toBeInTheDocument();
+    expect(screen.getByText('Line Thickness')).toBeInTheDocument();
+
+    rerender(
+      <StoreProvider>
+        <DitherSettings
+          params={{
+            mode: 'line_screen',
+            threshold_scale: 1,
+            pixel_size: 1,
+            halftone_cell_size: 8,
+            pattern_angle: 45,
+          }}
+          onUpdate={vi.fn()}
+        />
+      </StoreProvider>,
+    );
+    expect(screen.getByText('Pitch')).toBeInTheDocument();
+    expect(screen.getByText('Angle')).toBeInTheDocument();
+
+    rerender(
+      <StoreProvider>
+        <DitherSettings
+          params={{
+            mode: 'voronoi_stipple',
+            threshold_scale: 1,
+            pixel_size: 2,
+            halftone_cell_size: 8,
+          }}
+          onUpdate={vi.fn()}
+        />
+      </StoreProvider>,
+    );
+    expect(screen.getByText('Spacing')).toBeInTheDocument();
+    expect(screen.getByText('Dot Size')).toBeInTheDocument();
+    expect(screen.getByText('Density')).toBeInTheDocument();
+
+    rerender(
+      <StoreProvider>
+        <DitherSettings
+          params={{
+            mode: 'random_dot_stipple',
+            threshold_scale: 1,
+            pixel_size: 1,
+          }}
+          onUpdate={vi.fn()}
+        />
+      </StoreProvider>,
+    );
+    expect(screen.getByText('Dot Size')).toBeInTheDocument();
+    expect(screen.getByText('Density')).toBeInTheDocument();
+  });
 });

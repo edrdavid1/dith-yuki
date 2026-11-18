@@ -72,7 +72,8 @@ function debounceMsForParams(params: FilterParams | null): number {
     (kind === 'DitherV2' || kind === 'Dither') &&
     (record.mode === 'riemersma' ||
       record.mode === 'blocked_fs' ||
-      record.mode === 'blue_noise')
+      record.mode === 'blue_noise' ||
+      record.mode === 'dot_diffusion')
   ) {
     return record.mode === 'riemersma'
       ? FULL_DOCUMENT_DEBOUNCE_MS

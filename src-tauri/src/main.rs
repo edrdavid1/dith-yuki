@@ -603,6 +603,7 @@ fn main() {
             commands::colors_to_oklab,
             commands::get_palette_oklab,
             commands::import_palette,
+            commands::import_palette_pack,
             commands::add_palette,
             commands::replace_palette,
             commands::generate_palette,

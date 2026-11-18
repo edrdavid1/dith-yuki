@@ -179,6 +179,7 @@ fn min_version_for_dither_mode(mode: &DitherModeV2) -> Option<&'static str> {
         | DitherModeV2::Wave
         | DitherModeV2::BlockedFs
         | DitherModeV2::BlueNoise
+        | DitherModeV2::DotDiffusion
         | DitherModeV2::ModulatedDiffuseY
         | DitherModeV2::ModulatedDiffuseX
         | DitherModeV2::GlitchDither
@@ -1573,11 +1574,7 @@ mod tests {
         let a = atkinson_filter();
         let b = FilterInstance::new(
             FilterKind::Crt,
-            FilterParams::Crt {
-                period: 2,
-                strength: 0.5,
-                mask_strength: 0.0,
-            },
+            crate::filter::crt_params(2, 0.5, 0.0),
         );
         let c = FilterInstance::new(
             FilterKind::Glow,
@@ -1643,11 +1640,7 @@ mod tests {
         let mut dest_layer = Layer::new(LayerId::new(1), LayerKind::Raster, 8, 8);
         dest_layer.filters.push(FilterInstance::new(
             FilterKind::Crt,
-            FilterParams::Crt {
-                period: 2,
-                strength: 0.4,
-                mask_strength: 0.0,
-            },
+            crate::filter::crt_params(2, 0.4, 0.0),
         ));
         dest.root.push(LayerNode::Leaf(dest_layer));
         import_pattern_into_document(&zip, &mut dest, LayerId::new(1), "0.1.0").unwrap();

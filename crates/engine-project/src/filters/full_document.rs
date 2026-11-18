@@ -673,7 +673,7 @@ fn apply_full_document_algorithm_timed(
     };
 
     match params.mode {
-        DitherModeV2::BlockedFs | DitherModeV2::BlueNoise => {
+        DitherModeV2::BlockedFs | DitherModeV2::BlueNoise | DitherModeV2::DotDiffusion => {
             let t_pal = Instant::now();
             let palette = crate::algorithms::gpu_dither::resolve_gpu_dither_palette(&params, doc)?;
             let palette_ms = t_pal.elapsed().as_secs_f64() * 1000.0;

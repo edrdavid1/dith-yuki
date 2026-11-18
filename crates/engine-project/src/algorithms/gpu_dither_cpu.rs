@@ -788,6 +788,119 @@ pub fn embedded_blue_noise_ranks() -> &'static [u16] {
     blue_noise_ranks()
 }
 
+/// Knuth dot diffusion. Canonical bytes for [`engine_gpu::apply_dot_diffusion_gpu`].
+///
+/// Classes 0..63 run in order. A pixel reads Q8.8 error only from 8-neighbors
+/// whose class is already done, split by `w / W` (orthogonal 2, diagonal 1).
+pub fn dot_diffusion_cpu(
+    input: &[Rgba8],
+    width: u32,
+    height: u32,
+    palette: &[PaletteRgb],
+) -> Result<Vec<Rgba8>, EngineError> {
+    if palette.is_empty() {
+        return Err(EngineError::invalid_filter_params("InvalidPalette: empty"));
+    }
+    let w = width as usize;
+    let h = height as usize;
+    if width == 0 || height == 0 || input.len() != w * h {
+        return Err(EngineError::invalid_filter_params(
+            "dot_diffusion: buffer size",
+        ));
+    }
+    let positions = engine_gpu::dot_diffusion_class_positions();
+    let mut err = vec![0i32; w * h * 3];
+    let mut out = input.to_vec();
+    let iw = width as i32;
+    let ih = height as i32;
+    for cls in 0..64u32 {
+        let (cls_x, cls_y) = positions[cls as usize];
+        let mut y = cls_y as i32;
+        while y < ih {
+            let mut x = cls_x as i32;
+            while x < iw {
+                let mut acc = [0i32; 3];
+                for dy in -1..=1 {
+                    for dx in -1..=1 {
+                        if dx == 0 && dy == 0 {
+                            continue;
+                        }
+                        let nx = x + dx;
+                        let ny = y + dy;
+                        if nx < 0 || ny < 0 || nx >= iw || ny >= ih {
+                            continue;
+                        }
+                        if dot_class_at(nx, ny) >= cls {
+                            continue;
+                        }
+                        let big_w = dot_out_weight(nx, ny, iw, ih);
+                        let weight = dot_wgt(-dx, -dy);
+                        let ni = (ny as usize * w + nx as usize) * 3;
+                        for c in 0..3 {
+                            acc[c] += err[ni + c] * weight / big_w;
+                        }
+                    }
+                }
+                let px = &input[y as usize * w + x as usize];
+                let mut v = [(px.r as i32) << 8, (px.g as i32) << 8, (px.b as i32) << 8];
+                for c in 0..3 {
+                    v[c] = (v[c] + acc[c]).clamp(0, 65280);
+                }
+                let rounded = [
+                    ((v[0] + 128) >> 8) as u8,
+                    ((v[1] + 128) >> 8) as u8,
+                    ((v[2] + 128) >> 8) as u8,
+                ];
+                let (sr, sg, sb) = nearest_palette((rounded[0], rounded[1], rounded[2]), palette)?;
+                let snap = [sr as i32, sg as i32, sb as i32];
+                let ei = (y as usize * w + x as usize) * 3;
+                for c in 0..3 {
+                    err[ei + c] = v[c] - (snap[c] << 8);
+                }
+                out[y as usize * w + x as usize] = Rgba8::new(sr, sg, sb, px.a);
+                x += 8;
+            }
+            y += 8;
+        }
+    }
+    Ok(out)
+}
+
+fn dot_class_at(x: i32, y: i32) -> u32 {
+    let cx = (x & 7) as usize;
+    let cy = (y & 7) as usize;
+    engine_gpu::DOT_DIFFUSION_CLASS[cy * 8 + cx]
+}
+
+fn dot_wgt(dx: i32, dy: i32) -> i32 {
+    if dx == 0 || dy == 0 {
+        2
+    } else {
+        1
+    }
+}
+
+fn dot_out_weight(nx: i32, ny: i32, iw: i32, ih: i32) -> i32 {
+    let cn = dot_class_at(nx, ny);
+    let mut s = 0i32;
+    for dy in -1..=1 {
+        for dx in -1..=1 {
+            if dx == 0 && dy == 0 {
+                continue;
+            }
+            let x = nx + dx;
+            let y = ny + dy;
+            if x < 0 || y < 0 || x >= iw || y >= ih {
+                continue;
+            }
+            if dot_class_at(x, y) > cn {
+                s += dot_wgt(dx, dy);
+            }
+        }
+    }
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1075,5 +1188,113 @@ mod tests {
                 b: 255
             }
         );
+    }
+
+    #[test]
+    fn dot_diffusion_class_matrix_is_permutation_and_matches_shader() {
+        let mut seen = [false; 64];
+        for &c in &engine_gpu::DOT_DIFFUSION_CLASS {
+            assert!(c < 64, "class {c} out of range");
+            assert!(!seen[c as usize], "duplicate class {c}");
+            seen[c as usize] = true;
+        }
+        let src = engine_gpu::DOT_DIFFUSION_SHADER_SRC;
+        let marker = "// @class-matrix";
+        let start = src.find(marker).expect("class marker") + marker.len();
+        let end = src[start..].find(");").expect("matrix end") + start;
+        let nums: Vec<u32> = src[start..end]
+            .split(|c: char| !c.is_ascii_digit())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.parse().unwrap())
+            .collect();
+        assert_eq!(nums.as_slice(), engine_gpu::DOT_DIFFUSION_CLASS.as_slice());
+    }
+
+    #[test]
+    fn dot_diffusion_keeps_palette_and_alpha() {
+        let pal = vec![
+            PaletteRgb { r: 0, g: 0, b: 0 },
+            PaletteRgb {
+                r: 255,
+                g: 255,
+                b: 255,
+            },
+        ];
+        let mut input = Vec::new();
+        for y in 0..9u32 {
+            for x in 0..11u32 {
+                let g = ((x * 24 + y * 10) % 256) as u8;
+                input.push(Rgba8::new(g, g, g, 10 + (x as u8)));
+            }
+        }
+        let a = dot_diffusion_cpu(&input, 11, 9, &pal).unwrap();
+        let b = dot_diffusion_cpu(&input, 11, 9, &pal).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(a.len(), input.len());
+        for (px, src) in a.iter().zip(&input) {
+            assert!(px.r == px.g && px.g == px.b);
+            assert!(px.r == 0 || px.r == 255);
+            assert_eq!(px.a, src.a);
+        }
+    }
+
+    #[test]
+    fn dot_diffusion_gpu_matches_cpu_ragged_color() {
+        let Some((device, queue, label)) = engine_gpu::cached_blocked_fs_device() else {
+            eprintln!("skip: no GPU adapter");
+            return;
+        };
+        let pal = vec![
+            PaletteRgb { r: 0, g: 0, b: 0 },
+            PaletteRgb {
+                r: 220,
+                g: 30,
+                b: 40,
+            },
+            PaletteRgb {
+                r: 20,
+                g: 180,
+                b: 60,
+            },
+            PaletteRgb {
+                r: 40,
+                g: 50,
+                b: 210,
+            },
+        ];
+        let (w, h) = (13u32, 9u32);
+        let mut input = Vec::with_capacity((w * h) as usize);
+        let mut bytes = Vec::with_capacity((w * h * 4) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                let r = ((x * 19 + y * 7) % 256) as u8;
+                let g = ((x * 3 + y * 29) % 256) as u8;
+                let b = ((x * 11 + y * 13) % 256) as u8;
+                let a = (30 + x * 3 + y) as u8;
+                input.push(Rgba8::new(r, g, b, a));
+                bytes.extend_from_slice(&[r, g, b, a]);
+            }
+        }
+        let cpu = dot_diffusion_cpu(&input, w, h, &pal).unwrap();
+        let pal_b: Vec<[u8; 4]> = pal.iter().map(|p| [p.r, p.g, p.b, 255]).collect();
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let gpu = engine_gpu::apply_dot_diffusion_gpu(device, queue, &bytes, w, h, &pal_b, &cancel)
+            .unwrap_or_else(|e| panic!("gpu apply on {label}: {e}"));
+        assert_eq!(gpu.len(), cpu.len() * 4);
+        for (i, px) in cpu.iter().enumerate() {
+            let o = i * 4;
+            assert_eq!(
+                [gpu[o], gpu[o + 1], gpu[o + 2], gpu[o + 3]],
+                [px.r, px.g, px.b, px.a],
+                "pixel {i} on {label}"
+            );
+        }
+    }
+
+    #[test]
+    fn dot_diffusion_rejects_empty_palette() {
+        let err = dot_diffusion_cpu(&[Rgba8::new(1, 2, 3, 4)], 1, 1, &[]).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("InvalidPalette"), "{msg}");
     }
 }

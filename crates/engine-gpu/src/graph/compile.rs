@@ -161,6 +161,7 @@ mod tests {
                 period: 2,
                 strength: 0.5,
                 mask_strength: 0.0,
+                ..CrtPassParams::default()
             }),
         ])
         .unwrap();

@@ -3,6 +3,8 @@ import { useAppSelector } from '../../app/hooks';
 import {
   listPalettes,
   importPalette,
+  importPalettePack,
+  isPalettePackPath,
   generatePalette,
   createPalette,
   deletePalette,
@@ -117,13 +119,17 @@ function PalettePanel({ layerId }: PalettePanelProps) {
       const selected = await open({
         filters: [{
           name: 'Palettes',
-          extensions: ['ase', 'aco', 'gpl', 'pal', 'hex', 'csv', 'json'],
+          extensions: ['ase', 'aco', 'gpl', 'pal', 'hex', 'csv', 'json', 'zip'],
         }],
         multiple: false,
       });
       const path = Array.isArray(selected) ? selected[0] : selected;
       if (typeof path === 'string' && path) {
-        await importPalette(docId, path);
+        if (isPalettePackPath(path)) {
+          await importPalettePack(docId, path);
+        } else {
+          await importPalette(docId, path);
+        }
         refresh();
       }
     } catch (e) {

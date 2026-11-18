@@ -114,7 +114,8 @@ export type DitherModeV2 =
   | 'cmyk_halftone'
   | 'wave'
   | 'blocked_fs'
-  | 'blue_noise';
+  | 'blue_noise'
+  | 'dot_diffusion';
 
 /** Color processing mode for dithering. */
 export type DitherColorMode = 'rgb' | 'grayscale';
@@ -229,9 +230,19 @@ export interface GlowParams {
 
 export interface CrtParams {
   type: 'Crt';
-  period: number;        // 2–8
-  strength: number;      // 0–1
+  scale?: number; // 1–16 document px per CRT cell
+  period: number; // 2–8
+  line_width?: number; // 1–period (CRT cells)
+  strength: number; // 0–1
+  soft_scanlines?: number; // 0–1
+  orientation?: 'horizontal' | 'vertical';
+  mask_type?: 'aperture' | 'shadow';
   mask_strength: number; // 0–1
+  brightness_compensate?: number; // 0–1
+  curvature?: number; // 0–1
+  vignette?: number; // 0–1
+  phosphor_bleed?: number; // 0–1
+  sharpness?: number; // 0–1
 }
 
 export interface AdjustParams {

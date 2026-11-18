@@ -310,6 +310,7 @@ export default function TileGenStressPanel({
             <optgroup label="GPU-capable (use path=cpu/gpu)">
               <option value="blocked_fs">blocked_fs</option>
               <option value="blue_noise">blue_noise</option>
+              <option value="dot_diffusion">dot_diffusion</option>
             </optgroup>
           </select>
         </label>

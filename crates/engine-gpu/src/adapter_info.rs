@@ -4,6 +4,7 @@ use std::sync::OnceLock;
 
 use crate::blocked_fs::BLOCKED_FS_SHADER_SRC;
 use crate::blue_noise_gpu::BLUE_NOISE_SHADER_SRC;
+use crate::dot_diffusion::DOT_DIFFUSION_SHADER_SRC;
 
 /// Stable fields from `wgpu::AdapterInfo` used as a self-test cache key.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -38,7 +39,7 @@ impl AdapterFingerprint {
     }
 }
 
-/// Blake3 of blocked_fs + blue_noise WGSL sources (cache invalidates on shader edit).
+/// Blake3 of the GPU dither-family WGSL sources (cache invalidates on shader edit).
 pub fn gpu_family_shader_hash() -> String {
     static HASH: OnceLock<String> = OnceLock::new();
     HASH.get_or_init(|| {
@@ -46,6 +47,8 @@ pub fn gpu_family_shader_hash() -> String {
         hasher.update(BLOCKED_FS_SHADER_SRC.as_bytes());
         hasher.update(b"\n---\n");
         hasher.update(BLUE_NOISE_SHADER_SRC.as_bytes());
+        hasher.update(b"\n---\n");
+        hasher.update(DOT_DIFFUSION_SHADER_SRC.as_bytes());
         hasher.finalize().to_hex().to_string()
     })
     .clone()

@@ -17,3 +17,45 @@
 .tradeoffDisabled {
   opacity: 0.5;
 }
+
+.prefRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 4px 0 2px;
+}
+
+.prefBtn {
+  appearance: none;
+  margin: 0;
+  padding: 0 6px;
+  height: 20px;
+  border: var(--border);
+  background: var(--bg-input);
+  box-shadow: var(--shadow-inset-light), var(--shadow-inset-dark);
+  font-family: var(--font-family);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-color);
+  cursor: pointer;
+}
+
+.prefBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.prefBtn[aria-pressed='true'] {
+  background: var(--color-gray, var(--bg-window));
+}
+
+.showHidden {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-label);
+  cursor: pointer;
+  user-select: none;
+}

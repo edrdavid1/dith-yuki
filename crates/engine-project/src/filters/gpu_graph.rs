@@ -126,11 +126,38 @@ fn build_gpu_layer_filter(
             period,
             strength,
             mask_strength,
-        } => GraphLayerFilter::Crt(CrtPassParams {
-            period: *period,
-            strength: *strength,
-            mask_strength: *mask_strength,
-        }),
+            soft_scanlines,
+            line_width,
+            scale,
+            orientation,
+            mask_type,
+            brightness_compensate,
+            curvature,
+            vignette,
+            phosphor_bleed,
+            sharpness,
+        } => {
+            let (doc_w, doc_h) = palettes
+                .map(|p| (p.document.width.max(1), p.document.height.max(1)))
+                .unwrap_or((1024, 1024));
+            GraphLayerFilter::Crt(CrtPassParams {
+                period: *period,
+                strength: *strength,
+                mask_strength: *mask_strength,
+                soft_scanlines: *soft_scanlines,
+                line_width: (*line_width).clamp(1, *period),
+                scale: (*scale).clamp(1, 16),
+                orientation: if orientation == "vertical" { 1 } else { 0 },
+                mask_type: if mask_type == "shadow" { 1 } else { 0 },
+                brightness_compensate: *brightness_compensate,
+                curvature: *curvature,
+                vignette: *vignette,
+                phosphor_bleed: *phosphor_bleed,
+                sharpness: *sharpness,
+                doc_w,
+                doc_h,
+            })
+        }
         FilterParams::Glow {
             radius,
             intensity,
@@ -771,11 +798,7 @@ mod tests {
             FilterInstance::new(FilterKind::Invert, FilterParams::Invert {}),
             FilterInstance::new(
                 FilterKind::Crt,
-                FilterParams::Crt {
-                    period: 2,
-                    strength: 0.5,
-                    mask_strength: 0.0,
-                },
+                crate::filter::crt_params(2, 0.5, 0.0),
             ),
             bayer_layer(),
         ];
@@ -943,11 +966,7 @@ mod tests {
     fn crt_compiles_gpu_node() {
         let f = FilterInstance::new(
             FilterKind::Crt,
-            FilterParams::Crt {
-                period: 2,
-                strength: 0.5,
-                mask_strength: 0.25,
-            },
+            crate::filter::crt_params(2, 0.5, 0.25),
         );
         let g = compile_layer_graph(&[f]).unwrap();
         assert!(g.is_gpu_only());

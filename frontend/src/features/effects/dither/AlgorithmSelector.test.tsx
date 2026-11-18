@@ -188,4 +188,16 @@ describe('AlgorithmSelector', () => {
     );
     expect(screen.getByText('fast, pixel-perfect, regular pattern')).toBeInTheDocument();
   });
+
+  it('favorite_and_hide_controls_are_not_on_front_panel', () => {
+    localStorage.clear();
+    render(
+      <AlgorithmSelector
+        value={{ family: 'cpu_ed', variant: 'floyd_steinberg' }}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: '☆ Favorite' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Hide' })).not.toBeInTheDocument();
+  });
 });
