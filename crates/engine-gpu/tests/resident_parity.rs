@@ -1358,6 +1358,7 @@ fn run_resident_crt_parity(period: u8, strength: f32, mask_strength: f32) {
             period,
             strength,
             mask_strength,
+            ..CrtPassParams::default()
         })])
         .expect("graph"),
     );
@@ -1407,6 +1408,7 @@ fn resident_crt_horizontal_seam() {
             period: 2,
             strength: 0.5,
             mask_strength: 0.0,
+            ..CrtPassParams::default()
         })])
         .expect("graph"),
     );

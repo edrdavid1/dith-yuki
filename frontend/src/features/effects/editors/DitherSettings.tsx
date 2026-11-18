@@ -64,7 +64,8 @@ type SimpleDitherMode =
   | 'voronoi_stipple'
   | 'random_dot_stipple'
   | 'cmyk_halftone'
-  | 'wave';
+  | 'wave'
+  | 'dot_diffusion';
 
 /** Ordered / matrix algorithms keep the same noise on static areas across frames. */
 const ANIMATION_STABLE_MODES = new Set<string>([
@@ -115,6 +116,7 @@ const SIMPLE_MODES: SimpleDitherMode[] = [
   'random_dot_stipple',
   'cmyk_halftone',
   'wave',
+  'dot_diffusion',
 ];
 
 interface DitherSettingsProps {
@@ -243,6 +245,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
     'bayer_16x16',
     'clustered_dot_ordered',
     'dispersed_dot_ordered',
+    'void_and_cluster',
     'halftone_screen_angled',
     'custom_png',
     'wave',
@@ -255,10 +258,23 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
     'bayer_16x16',
     'clustered_dot_ordered',
     'dispersed_dot_ordered',
+    'void_and_cluster',
     'halftone_screen_angled',
     'custom_png',
   ].includes(simpleMode);
   const isHalftoneMode = ['cmyk_halftone', 'halftone_screen_angled'].includes(simpleMode);
+  const isCrosshatchMode = simpleMode === 'crosshatch_dither';
+  const isLineScreenMode = simpleMode === 'line_screen';
+  const isVoronoiMode = simpleMode === 'voronoi_stipple';
+  const isRandomDotMode = simpleMode === 'random_dot_stipple';
+  const pixelSizeLabel = isVoronoiMode || isRandomDotMode ? 'Dot Size' : 'Pixel Size';
+  const pixelSizeMax = isVoronoiMode ? 8 : isRandomDotMode ? 16 : 32;
+  const thresholdScaleLabel = isCrosshatchMode
+    ? 'Line Thickness'
+    : isVoronoiMode || isRandomDotMode
+      ? 'Density'
+      : 'Threshold Scale';
+  const crosshatchSpacing = clampParam(waveWavelength, 2, 64);
   const isEdMode = [
     'floyd_steinberg',
     'atkinson',
@@ -499,13 +515,13 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
       </label>
 
       <Slider
-        label="Pixel Size"
-        value={pixelSize}
+        label={pixelSizeLabel}
+        value={clampParam(pixelSize, 1, pixelSizeMax)}
         min={1}
-        max={32}
+        max={pixelSizeMax}
         step={1}
         decimals={0}
-        onChange={(v) => emit({ pixel_size: clampParam(Math.round(v), 1, 32) })}
+        onChange={(v) => emit({ pixel_size: clampParam(Math.round(v), 1, pixelSizeMax) })}
       />
 
       <label className={cn('param-checkbox-row')}>
@@ -518,7 +534,7 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
       </label>
 
       <Slider
-        label="Threshold Scale"
+        label={thresholdScaleLabel}
         value={thresholdScale}
         min={0.1}
         max={4.0}
@@ -641,6 +657,64 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
       {isHalftoneMode && (
         <Slider
           label="Halftone Cell Size"
+          value={cellSize}
+          min={2}
+          max={64}
+          step={1}
+          decimals={0}
+          onChange={(v) => emit({ halftone_cell_size: clampParam(Math.round(v), 2, 64) })}
+        />
+      )}
+
+      {isCrosshatchMode && (
+        <>
+          <Slider
+            label="Spacing"
+            value={crosshatchSpacing}
+            min={2}
+            max={64}
+            step={1}
+            decimals={0}
+            onChange={(v) => emit({ wave_wavelength: clampParam(Math.round(v), 2, 64) })}
+          />
+          <Slider
+            label="Base Angle"
+            value={patternAngle}
+            min={0}
+            max={359}
+            step={1}
+            decimals={0}
+            onChange={(v) => emit({ pattern_angle: v })}
+          />
+        </>
+      )}
+
+      {isLineScreenMode && (
+        <>
+          <Slider
+            label="Pitch"
+            value={cellSize}
+            min={2}
+            max={64}
+            step={1}
+            decimals={0}
+            onChange={(v) => emit({ halftone_cell_size: clampParam(Math.round(v), 2, 64) })}
+          />
+          <Slider
+            label="Angle"
+            value={patternAngle}
+            min={0}
+            max={359}
+            step={1}
+            decimals={0}
+            onChange={(v) => emit({ pattern_angle: v })}
+          />
+        </>
+      )}
+
+      {isVoronoiMode && (
+        <Slider
+          label="Spacing"
           value={cellSize}
           min={2}
           max={64}

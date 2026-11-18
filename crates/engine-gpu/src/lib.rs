@@ -18,6 +18,7 @@ mod composite;
 mod context;
 mod crt;
 mod decision;
+pub mod dot_diffusion;
 mod glow;
 mod pointwise;
 mod dispatch;
@@ -61,6 +62,10 @@ pub use crt::{apply_crt_gpu, CrtGpuParams};
 pub use glow::{apply_glow_gpu, GlowGpuParams};
 pub use pointwise::{apply_pointwise_gpu, PointwiseGpuParams};
 pub use decision::{decide_tile_dispatch, TileDispatch, TileDispatchInput};
+pub use dot_diffusion::{
+    apply_dot_diffusion_gpu, apply_dot_diffusion_gpu_opts, dot_diffusion_class_positions,
+    DotDiffusionGpuOpts, DOT_DIFFUSION_CLASS, DOT_DIFFUSION_SHADER_SRC,
+};
 pub use dispatch::{
     core_pixel_count, dispatch_rgba32, map_read_with_timeout, TileUniforms, CORE_SIZE,
     FLOATS_PER_TILE, MAP_TIMEOUT_DEFAULT, WORKGROUP_SIZE,

@@ -84,6 +84,7 @@ pub fn register_all(registry: &mut AlgorithmRegistry) {
     registry.register(Box::new(line_screen::LineScreen));
     registry.register(Box::new(gpu_dither::BlockedFs));
     registry.register(Box::new(gpu_dither::BlueNoise));
+    registry.register(Box::new(gpu_dither::DotDiffusion));
     registry.register(Box::new(error_diffusion::FloydSteinberg));
     registry.register(Box::new(error_diffusion::Atkinson));
     registry.register(Box::new(error_diffusion::JarvisJudiceNinke));

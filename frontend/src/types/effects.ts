@@ -88,9 +88,19 @@ export const EFFECT_DEFAULTS: Record<EffectType, Record<string, unknown>> = {
     softness: 2,
   },
   CRT: {
+    scale: 1,
     period: 2,
+    line_width: 1,
     strength: 0.5,
+    soft_scanlines: 0.0,
+    orientation: 'horizontal',
+    mask_type: 'aperture',
     mask_strength: 0.0,
+    brightness_compensate: 0.0,
+    curvature: 0.0,
+    vignette: 0.0,
+    phosphor_bleed: 0.0,
+    sharpness: 0.0,
   },
   Adjust: {
     exposure: 0,
@@ -215,6 +225,7 @@ export const DITHERING_ALGORITHM_IDS: readonly string[] = [
   'wave',
   'blocked_fs',
   'blue_noise',
+  'dot_diffusion',
 ];
 
 export function isDitheringAlgorithmId(algorithmId: string): boolean {

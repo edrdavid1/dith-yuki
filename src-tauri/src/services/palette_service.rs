@@ -264,6 +264,20 @@ pub fn palette_to_dto(palette: &engine_color::palette::Palette) -> PaletteDto {
     }
 }
 
+fn palette_format_from_ext(ext: &str) -> Option<engine_color::palette::PaletteFormat> {
+    use engine_color::palette::PaletteFormat;
+    match ext {
+        "ase" => Some(PaletteFormat::Ase),
+        "aco" => Some(PaletteFormat::Aco),
+        "gpl" => Some(PaletteFormat::Gpl),
+        "pal" => Some(PaletteFormat::Pal),
+        "hex" => Some(PaletteFormat::Hex),
+        "csv" => Some(PaletteFormat::Csv),
+        "json" => Some(PaletteFormat::Json),
+        _ => None,
+    }
+}
+
 pub struct PaletteService {
     state: Arc<AppState>,
 }
@@ -353,7 +367,7 @@ impl PaletteService {
         doc_id: u32,
         path: String,
     ) -> Result<PaletteDto, AppError> {
-        use engine_color::palette::{import_palette as do_import, PaletteFormat};
+        use engine_color::palette::import_palette as do_import;
         use std::path::Path;
 
         let file_path = Path::new(&path);
@@ -363,21 +377,16 @@ impl PaletteService {
             .unwrap_or("")
             .to_lowercase();
 
-        let format = match ext.as_str() {
-            "ase" => PaletteFormat::Ase,
-            "aco" => PaletteFormat::Aco,
-            "gpl" => PaletteFormat::Gpl,
-            "pal" => PaletteFormat::Pal, // RIFF or JASC (auto-detected)
-            "hex" => PaletteFormat::Hex,
-            "csv" => PaletteFormat::Csv,
-            "json" => PaletteFormat::Json,
-            _ => {
-                return Err(AppError::Generic(format!(
-                    "Unsupported palette format: .{}",
-                    ext
-                )))
-            }
-        };
+        if ext == "zip" {
+            let imported = self.import_palette_pack(app_handle, doc_id, path)?;
+            return imported.into_iter().next().ok_or_else(|| {
+                AppError::Generic("ZIP contained no supported palette files".to_string())
+            });
+        }
+
+        let format = palette_format_from_ext(&ext).ok_or_else(|| {
+            AppError::Generic(format!("Unsupported palette format: .{}", ext))
+        })?;
 
         let linear_colors =
             do_import(file_path, format).map_err(|e| AppError::Generic(format!("{}", e)))?;
@@ -410,6 +419,134 @@ impl PaletteService {
                 .find(|p| p.id == palette_id_raw)
                 .ok_or_else(|| "Failed to find newly added palette".to_string())?;
             Ok(palette_to_dto(palette))
+        })
+        .map_err(AppError::Generic)
+    }
+
+    /// Import every supported palette file inside a ZIP pack (one undo step).
+    pub fn import_palette_pack(
+        &self,
+        app_handle: &AppHandle,
+        doc_id: u32,
+        path: String,
+    ) -> Result<Vec<PaletteDto>, AppError> {
+        use engine_color::palette::import_palette_bytes;
+        use std::io::Read;
+        use std::path::Path;
+
+        const MAX_ARCHIVE_BYTES: u64 = 32 * 1024 * 1024;
+        const MAX_ENTRIES: usize = 200;
+        const MAX_ENTRY_BYTES: u64 = 1024 * 1024;
+
+        let file_path = engine_io::sandbox::resolve_user_path(&path, &["zip"]).map_err(|e| {
+            AppError::Generic(format!("Palette pack path rejected: {e}"))
+        })?;
+        let meta = std::fs::metadata(&file_path).map_err(|e| {
+            AppError::Generic(format!("Failed to read palette pack: {e}"))
+        })?;
+        if meta.len() > MAX_ARCHIVE_BYTES {
+            return Err(AppError::Generic(format!(
+                "Palette pack exceeds {} MiB limit",
+                MAX_ARCHIVE_BYTES / (1024 * 1024)
+            )));
+        }
+
+        let file = std::fs::File::open(&file_path)
+            .map_err(|e| AppError::Generic(format!("Failed to open palette pack: {e}")))?;
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|e| AppError::Generic(format!("Invalid ZIP palette pack: {e}")))?;
+
+        if archive.len() > MAX_ENTRIES {
+            return Err(AppError::Generic(format!(
+                "Palette pack has too many entries (max {MAX_ENTRIES})"
+            )));
+        }
+
+        let mut pending: Vec<(String, Vec<engine_color::palette::LinearColor>)> = Vec::new();
+        for i in 0..archive.len() {
+            let mut entry = archive
+                .by_index(i)
+                .map_err(|e| AppError::Generic(format!("ZIP read error: {e}")))?;
+            if entry.is_dir() {
+                continue;
+            }
+            let name = entry.name().to_string();
+            if name.contains("..") || name.starts_with('/') || name.starts_with('\\') {
+                continue;
+            }
+            let base = Path::new(&name)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            if base.is_empty() || base.starts_with('.') || name.contains("__MACOSX") {
+                continue;
+            }
+            let ext = Path::new(base)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            let Some(format) = palette_format_from_ext(&ext) else {
+                continue;
+            };
+            if entry.size() > MAX_ENTRY_BYTES {
+                return Err(AppError::Generic(format!(
+                    "Palette entry '{base}' exceeds 1 MiB limit"
+                )));
+            }
+            let mut data = Vec::with_capacity(entry.size() as usize);
+            entry
+                .read_to_end(&mut data)
+                .map_err(|e| AppError::Generic(format!("Failed to read '{base}': {e}")))?;
+            let linear = import_palette_bytes(&data, format).map_err(|e| {
+                AppError::Generic(format!("Failed to parse '{base}': {e}"))
+            })?;
+            if linear.is_empty() {
+                continue;
+            }
+            let stem = Path::new(base)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("Imported")
+                .to_string();
+            pending.push((stem, linear));
+        }
+
+        if pending.is_empty() {
+            return Err(AppError::Generic(
+                "ZIP contained no supported palette files (.ase/.aco/.gpl/.pal/.hex/.csv/.json)"
+                    .to_string(),
+            ));
+        }
+
+        let mut imported_ids: Vec<u32> = Vec::with_capacity(pending.len());
+        crate::undo::with_document_undo(&self.state, Some(app_handle), doc_id, || {
+            self.state
+                .require_session(doc_id)?
+                .document_handle
+                .mutate(|doc| {
+                    for (name, colors) in &pending {
+                        let pid = doc.add_palette(name.clone(), colors.clone());
+                        imported_ids.push(pid.0);
+                    }
+                    doc.increment_generation();
+                });
+
+            let snapshot = self
+                .state
+                .require_session(doc_id)?
+                .document_handle
+                .snapshot();
+            let mut out = Vec::with_capacity(imported_ids.len());
+            for id in &imported_ids {
+                let palette = snapshot
+                    .palettes
+                    .iter()
+                    .find(|p| p.id == *id)
+                    .ok_or_else(|| "Failed to find newly imported pack palette".to_string())?;
+                out.push(palette_to_dto(palette));
+            }
+            Ok(out)
         })
         .map_err(AppError::Generic)
     }

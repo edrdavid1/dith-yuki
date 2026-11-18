@@ -102,6 +102,7 @@ fn algorithm_id_registry_txt_contains_expected_ids() {
         "curves",
         "detail",
         "dispersed_dot_ordered",
+        "dot_diffusion",
         "exposure",
         "fan93",
         "floyd_steinberg",

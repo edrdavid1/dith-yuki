@@ -395,18 +395,7 @@ fn halftone_seam_tile_offset() {
 fn crt_parity_within_eps() {
     let ctx = GpuContext::try_new_blocking().expect("adapter");
     let input = solid_core(0.8);
-    let gpu = apply_crt_gpu(
-        &ctx,
-        &input,
-        CrtGpuParams {
-            period: 2,
-            strength: 0.5,
-            mask_strength: 0.0,
-            tile_x: 0,
-            tile_y: 0,
-        },
-    )
-    .unwrap();
+    let gpu = apply_crt_gpu(&ctx, &input, CrtGpuParams::basic(2, 0.5, 0.0, 0, 0)).unwrap();
     // CPU reference: dark rows at even Y when period=2, strength=0.5 → 0.4
     for y in 0..CORE_SIZE {
         let gain = if (y % 2) == 0 { 0.4 } else { 0.8 };
@@ -422,30 +411,8 @@ fn crt_parity_within_eps() {
 fn crt_horizontal_seam_tile_offset() {
     let ctx = GpuContext::try_new_blocking().expect("adapter");
     let input = solid_core(0.8);
-    let top = apply_crt_gpu(
-        &ctx,
-        &input,
-        CrtGpuParams {
-            period: 2,
-            strength: 0.5,
-            mask_strength: 0.0,
-            tile_x: 0,
-            tile_y: 0,
-        },
-    )
-    .unwrap();
-    let bot = apply_crt_gpu(
-        &ctx,
-        &input,
-        CrtGpuParams {
-            period: 2,
-            strength: 0.5,
-            mask_strength: 0.0,
-            tile_x: 0,
-            tile_y: 1,
-        },
-    )
-    .unwrap();
+    let top = apply_crt_gpu(&ctx, &input, CrtGpuParams::basic(2, 0.5, 0.0, 0, 0)).unwrap();
+    let bot = apply_crt_gpu(&ctx, &input, CrtGpuParams::basic(2, 0.5, 0.0, 0, 1)).unwrap();
     // Global Y=255 (top last row) vs Y=256 (bot first row) must alternate with period=2.
     let last = (((CORE_SIZE - 1) * CORE_SIZE + 0) * 4) as usize;
     let first = 0usize;

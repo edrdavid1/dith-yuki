@@ -169,6 +169,22 @@ fn allowed_extensions(format: PaletteFormat) -> &'static [&'static str] {
     }
 }
 
+/// Parse palette bytes into linear RGB colors (no filesystem access).
+pub fn import_palette_bytes(
+    data: &[u8],
+    format: PaletteFormat,
+) -> Result<Vec<LinearColor>, PaletteError> {
+    let srgb_colors = formats::parse_format(data, format)?;
+    Ok(srgb_colors
+        .into_iter()
+        .map(|(r, g, b)| LinearColor {
+            r: srgb_to_linear(r),
+            g: srgb_to_linear(g),
+            b: srgb_to_linear(b),
+        })
+        .collect())
+}
+
 /// Parse a palette file into linear RGB colors.
 ///
 /// Steps:
@@ -193,20 +209,8 @@ pub fn import_palette(
         reason: format!("I/O error: {}", e),
     })?;
 
-    // 3. Parse via format dispatcher
-    let srgb_colors = formats::parse_format(&data, format)?;
-
-    // 4. Convert sRGB u8 to linear f32
-    let linear_colors = srgb_colors
-        .into_iter()
-        .map(|(r, g, b)| LinearColor {
-            r: srgb_to_linear(r),
-            g: srgb_to_linear(g),
-            b: srgb_to_linear(b),
-        })
-        .collect();
-
-    Ok(linear_colors)
+    // 3–4. Parse + convert
+    import_palette_bytes(&data, format)
 }
 
 /// Export a palette to the given format as bytes.

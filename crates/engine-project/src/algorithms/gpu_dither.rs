@@ -1,4 +1,4 @@
-//! `blocked_fs` and `blue_noise` — approximate GPU dither families (`ED-on-GPU.md`).
+//! `blocked_fs`, `blue_noise`, and `dot_diffusion` — approximate GPU dither families.
 //!
 //! CPU reference is canonical. GPU path is `GpuEligibility::Conditional` and
 //! falls back to this CPU reference when the probe / flag / limits fail.
@@ -25,7 +25,8 @@ use crate::filter::{DitherModeV2, DitherParamsV2};
 use crate::filters::context::FilterContext;
 
 use super::gpu_dither_cpu::{
-    blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, levels_palette, palette_rgba8_blue_noise,
+    blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, dot_diffusion_cpu, levels_palette,
+    palette_rgba8_blue_noise,
     expand_block_lattice, with_pixel_size_blocks, PaletteRgb, Rgba8, CORE, DEFAULT_SPREAD,
     PAD,
 };
@@ -180,6 +181,7 @@ fn algo_name(mode: &DitherModeV2) -> &'static str {
     match mode {
         DitherModeV2::BlockedFs => "blocked_fs",
         DitherModeV2::BlueNoise => "blue_noise",
+        DitherModeV2::DotDiffusion => "dot_diffusion",
         _ => "gpu_dither",
     }
 }
@@ -613,6 +615,7 @@ fn run_cpu(
                 blue_noise_ranks(),
                 spread_from_params(params),
             ),
+            DitherModeV2::DotDiffusion => dot_diffusion_cpu(small, sw, sh, palette),
             _ => Err(crate::error::EngineError::invalid_filter_params(
                 "gpu_dither: unexpected mode",
             )),
@@ -694,6 +697,16 @@ fn try_gpu_timed(
             spread_from_params(params),
             cancel,
             engine_gpu::BlueNoiseGpuOpts::default(),
+        ),
+        DitherModeV2::DotDiffusion => engine_gpu::apply_dot_diffusion_gpu_opts(
+            device,
+            queue,
+            &in_b,
+            tw,
+            th,
+            &pal_b,
+            cancel,
+            engine_gpu::DotDiffusionGpuOpts::default(),
         ),
         _ => return Err("unexpected mode".into()),
     }?;
@@ -812,6 +825,53 @@ impl FilterAlgorithm for BlueNoise {
 
     fn param_schema(&self) -> &'static [ParamField] {
         BLUE_NOISE_SCHEMA
+    }
+
+    fn schema_version(&self) -> u32 {
+        1
+    }
+
+    fn category(&self) -> EffectCategory {
+        EffectCategory::Dithering
+    }
+
+    fn execution_scope(&self) -> ExecutionScope {
+        ExecutionScope::FullDocument
+    }
+
+    fn temporal_stability(&self) -> TemporalStability {
+        TemporalStability::Unstable
+    }
+}
+
+/// Knuth dot diffusion (`dot_diffusion`).
+pub struct DotDiffusion;
+
+impl FilterAlgorithm for DotDiffusion {
+    fn id(&self) -> AlgorithmId {
+        AlgorithmId::new("dot_diffusion")
+    }
+
+    fn display_name(&self) -> &'static str {
+        "Dot diffusion"
+    }
+
+    fn apply(
+        &self,
+        tile: &mut PixelTile,
+        params: &serde_json::Value,
+        ctx: &dyn FilterCtx,
+    ) -> Result<(), FilterError> {
+        let params: DitherParamsV2 = serde_json::from_value(params.clone())?;
+        apply_tile(tile, params, DitherModeV2::DotDiffusion, ctx)
+    }
+
+    fn gpu_eligibility(&self, _params: &serde_json::Value) -> GpuEligibility {
+        GpuEligibility::Conditional
+    }
+
+    fn param_schema(&self) -> &'static [ParamField] {
+        BLOCKED_FS_SCHEMA
     }
 
     fn schema_version(&self) -> u32 {

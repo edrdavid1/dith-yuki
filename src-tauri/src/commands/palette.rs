@@ -47,6 +47,18 @@ pub fn import_palette(
 }
 
 #[tauri::command]
+pub fn import_palette_pack(
+    doc_id: u32,
+    path: String,
+    app_handle: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<PaletteDto>, String> {
+    PaletteService::new(state.inner().clone())
+        .import_palette_pack(&app_handle, doc_id, path)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn add_palette(
     req: AddPaletteRequest,
     app_handle: AppHandle,

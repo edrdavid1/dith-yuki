@@ -1146,7 +1146,10 @@ impl ResidentWavePipelines {
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 struct CrtUniforms {
     tile: TileUniforms,
-    params: [f32; 4],
+    p0: [f32; 4],
+    p1: [f32; 4],
+    p2: [f32; 4],
+    p3: [f32; 4],
 }
 
 pub struct ResidentCrtPipelines {
@@ -1243,12 +1246,25 @@ impl ResidentCrtPipelines {
     ) {
         let uniforms = CrtUniforms {
             tile: TileUniforms::for_tile(tile_x, tile_y),
-            params: [
+            p0: [
                 params.period as f32,
                 params.strength,
                 params.mask_strength,
-                0.0,
+                params.soft_scanlines,
             ],
+            p1: [
+                params.line_width as f32,
+                params.orientation as f32,
+                params.mask_type as f32,
+                params.brightness_compensate,
+            ],
+            p2: [
+                params.curvature,
+                params.vignette,
+                params.phosphor_bleed,
+                params.sharpness,
+            ],
+            p3: [params.doc_w as f32, params.doc_h as f32, params.scale as f32, 0.0],
         };
         let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("resident-crt-uniforms"),

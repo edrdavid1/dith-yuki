@@ -20,6 +20,7 @@ cube_lut
 curves
 detail
 dispersed_dot_ordered
+dot_diffusion
 exposure
 fan93
 floyd_steinberg

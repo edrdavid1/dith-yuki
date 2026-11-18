@@ -1442,11 +1442,7 @@ fn make_crt_halftone_state(gpu: Option<Arc<engine_gpu::GpuContext>>) -> Arc<AppS
     let mut layer = Layer::new(LayerId::new(LAYER), LayerKind::Raster, DOC, DOC);
     layer.filters.push(FilterInstance::new(
         FilterKind::Crt,
-        FilterParams::Crt {
-            period: 3,
-            strength: 0.5,
-            mask_strength: 0.35,
-        },
+        engine_project::filter::crt_params(3, 0.5, 0.35),
     ));
     layer.filters.push(FilterInstance::new(
         FilterKind::Dither,

@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use super::gpu_dither_cpu::{
-    blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, palette_rgba8_blue_noise,
+    blocked_fs_cpu, blue_noise_cpu, blue_noise_ranks, dot_diffusion_cpu, palette_rgba8_blue_noise,
     expand_block_lattice, with_pixel_size_blocks, PaletteRgb, Rgba8, CORE, DEFAULT_SPREAD,
     PAD,
 };
@@ -476,6 +476,7 @@ struct MiniCase {
 enum Algo {
     BlockedFs,
     BlueNoise,
+    DotDiffusion,
 }
 
 fn mini_cases(side: u32) -> Vec<MiniCase> {
@@ -500,6 +501,7 @@ fn mini_cases(side: u32) -> Vec<MiniCase> {
         let aname = match algo {
             Algo::BlockedFs => "blocked_fs",
             Algo::BlueNoise => "blue_noise",
+            Algo::DotDiffusion => "dot_diffusion",
         };
         for (pname, pal) in &palettes {
             for (iname, px) in &inputs {
@@ -517,6 +519,18 @@ fn mini_cases(side: u32) -> Vec<MiniCase> {
             }
         }
     }
+    // One class-matrix case. 64 dispatches, so it stays out of the cartesian
+    // product and off the large self-test side (the 5s suite budget).
+    let dot_side = 32u32;
+    out.push(MiniCase {
+        name: "dot_diffusion/pal2/grad/ps1".into(),
+        width: dot_side,
+        height: dot_side,
+        pixels: gradient(dot_side, dot_side),
+        palette: bilevel(),
+        algo: Algo::DotDiffusion,
+        pixel_size: 1,
+    });
     out
 }
 
@@ -618,6 +632,7 @@ fn run_cpu_case(case: &MiniCase) -> Result<Vec<u8>, Box<MismatchReport>> {
                 blue_noise_ranks(),
                 DEFAULT_SPREAD,
             ),
+            Algo::DotDiffusion => dot_diffusion_cpu(small, sw, sh, &case.palette),
         },
     )
     .map_err(|e| {
@@ -660,6 +675,7 @@ fn run_gpu_case(
     let pal_b: Vec<[u8; 4]> = match case.algo {
         Algo::BlockedFs => case.palette.iter().map(|p| [p.r, p.g, p.b, 255]).collect(),
         Algo::BlueNoise => palette_rgba8_blue_noise(&case.palette),
+        Algo::DotDiffusion => case.palette.iter().map(|p| [p.r, p.g, p.b, 255]).collect(),
     };
 
     let gpu = match case.algo {
@@ -684,6 +700,16 @@ fn run_gpu_case(
             DEFAULT_SPREAD,
             cancel,
             engine_gpu::BlueNoiseGpuOpts::default(),
+        ),
+        Algo::DotDiffusion => engine_gpu::apply_dot_diffusion_gpu_opts(
+            device,
+            queue,
+            &in_b,
+            tw,
+            th,
+            &pal_b,
+            cancel,
+            engine_gpu::DotDiffusionGpuOpts::default(),
         ),
     }
     .map_err(|e| e.to_string())?;

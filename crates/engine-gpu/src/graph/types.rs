@@ -126,6 +126,44 @@ pub struct CrtPassParams {
     pub period: u8,
     pub strength: f32,
     pub mask_strength: f32,
+    pub soft_scanlines: f32,
+    /// Dark scanline width in CRT-cell units (1 ..= period).
+    pub line_width: u8,
+    /// Document pixels per CRT cell (1 ..= 16).
+    pub scale: u8,
+    /// 0 = horizontal, 1 = vertical.
+    pub orientation: u8,
+    /// 0 = aperture, 1 = shadow.
+    pub mask_type: u8,
+    pub brightness_compensate: f32,
+    pub curvature: f32,
+    pub vignette: f32,
+    pub phosphor_bleed: f32,
+    pub sharpness: f32,
+    pub doc_w: u32,
+    pub doc_h: u32,
+}
+
+impl Default for CrtPassParams {
+    fn default() -> Self {
+        Self {
+            period: 2,
+            strength: 0.5,
+            mask_strength: 0.0,
+            soft_scanlines: 0.0,
+            line_width: 1,
+            scale: 1,
+            orientation: 0,
+            mask_type: 0,
+            brightness_compensate: 0.0,
+            curvature: 0.0,
+            vignette: 0.0,
+            phosphor_bleed: 0.0,
+            sharpness: 0.0,
+            doc_w: 1024,
+            doc_h: 1024,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -414,6 +452,18 @@ pub fn hash_graph_nodes(nodes: &[GraphNode]) -> u64 {
                     h ^= (c.period as u64) << 16;
                     h ^= c.strength.to_bits() as u64;
                     h ^= c.mask_strength.to_bits() as u64;
+                    h ^= c.soft_scanlines.to_bits() as u64;
+                    h ^= c.line_width as u64;
+                    h ^= (c.scale as u64) << 24;
+                    h ^= c.orientation as u64;
+                    h ^= (c.mask_type as u64) << 8;
+                    h ^= c.brightness_compensate.to_bits() as u64;
+                    h ^= c.curvature.to_bits() as u64;
+                    h ^= c.vignette.to_bits() as u64;
+                    h ^= c.phosphor_bleed.to_bits() as u64;
+                    h ^= c.sharpness.to_bits() as u64;
+                    h ^= (c.doc_w as u64) << 1;
+                    h ^= (c.doc_h as u64) << 17;
                 }
                 if let Some(g) = &p.glow {
                     h ^= g.radius.to_bits() as u64;

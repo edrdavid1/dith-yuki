@@ -101,6 +101,7 @@ pub fn cost_class_for_params(params: &FilterParams, algorithm_id: Option<&str>) 
                     crate::filter::DitherModeV2::Riemersma
                         | crate::filter::DitherModeV2::BlockedFs
                         | crate::filter::DitherModeV2::BlueNoise
+                        | crate::filter::DitherModeV2::DotDiffusion
                 )
                 || (p.wrap_padding && p.mode.diffusion_kernel().is_some())
             {

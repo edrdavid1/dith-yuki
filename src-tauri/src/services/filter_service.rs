@@ -463,28 +463,7 @@ impl FilterService {
                         softness,
                     }
                 }
-                FilterKind::Crt => {
-                    let period = req
-                        .params
-                        .get("period")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(2) as u8;
-                    let strength = req
-                        .params
-                        .get("strength")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.5) as f32;
-                    let mask_strength = req
-                        .params
-                        .get("mask_strength")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.0) as f32;
-                    FilterParams::Crt {
-                        period,
-                        strength,
-                        mask_strength,
-                    }
-                }
+                FilterKind::Crt => engine_project::crt_params_from_json(&req.params),
                 FilterKind::Adjust => parse_adjust_params(
                     &req.params,
                     0.0,
@@ -1134,6 +1113,7 @@ impl FilterService {
                 dither_params.mode,
                 engine_project::filter::DitherModeV2::BlockedFs
                     | engine_project::filter::DitherModeV2::BlueNoise
+                    | engine_project::filter::DitherModeV2::DotDiffusion
             ) {
                 log::debug!(
                     target: "gpu_dither",
@@ -1338,28 +1318,7 @@ impl FilterService {
                         softness,
                     }
                 }
-                FilterKind::Crt => {
-                    let period = req
-                        .params
-                        .get("period")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(2) as u8;
-                    let strength = req
-                        .params
-                        .get("strength")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.5) as f32;
-                    let mask_strength = req
-                        .params
-                        .get("mask_strength")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.0) as f32;
-                    FilterParams::Crt {
-                        period,
-                        strength,
-                        mask_strength,
-                    }
-                }
+                FilterKind::Crt => engine_project::crt_params_from_json(&req.params),
                 FilterKind::Adjust => {
                     let (
                         ec,

@@ -41,9 +41,9 @@ pub use compositor::{blend_tile, composite_tile};
 pub use document::{Document, DocumentHandle};
 pub use error::EngineError;
 pub use filter::{
-    algorithm_id_for_params, filter_kind_for_algorithm_id, filter_params_to_json,
-    resolve_algorithm_id, DiffusionKernel, DitherMode, FilterInstance, FilterKind, FilterParams,
-    PlaceholderParams,
+    algorithm_id_for_params, crt_params, crt_params_from_json, filter_kind_for_algorithm_id,
+    filter_params_to_json, resolve_algorithm_id, DiffusionKernel, DitherMode, FilterInstance,
+    FilterKind, FilterParams, PlaceholderParams,
 };
 pub use filters::neutral::filter_is_neutral_for_apply;
 pub use filters::FilterContext;

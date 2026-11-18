@@ -402,6 +402,9 @@ pub enum DitherModeV2 {
     /// Threshold-shift blue noise (`ED-on-GPU.md` — `blue_noise`).
     #[serde(rename = "blue_noise")]
     BlueNoise,
+    /// Knuth dot diffusion (8×8 class matrix). Approximate; full-document GPU family.
+    #[serde(rename = "dot_diffusion")]
+    DotDiffusion,
     /// 1D horizontal error diffusion with contrast-weighted carry (`ed1d`).
     /// Uses the full-width strip path; not a 2D [`DiffusionKernel`].
     #[serde(rename = "modulated_diffuse_y")]
@@ -506,7 +509,8 @@ impl DitherModeV2 {
             | Self::HalftoneScreenAngled
             | Self::Wave
             | Self::BlockedFs
-            | Self::BlueNoise => None,
+            | Self::BlueNoise
+            | Self::DotDiffusion => None,
         }
     }
 
@@ -544,6 +548,7 @@ impl DitherModeV2 {
             Self::Wave => Some("wave"),
             Self::BlockedFs => Some("blocked_fs"),
             Self::BlueNoise => Some("blue_noise"),
+            Self::DotDiffusion => Some("dot_diffusion"),
             Self::ModulatedDiffuseY => Some("modulated_diffuse_y"),
             Self::ModulatedDiffuseX => Some("modulated_diffuse_x"),
             Self::GlitchDither => Some("glitch_dither"),
@@ -1088,7 +1093,7 @@ pub enum FilterParams {
         #[serde(default = "default_glow_softness")]
         softness: u8,
     },
-    /// CRT-style scanlines (+ optional RGB triad mask).
+    /// CRT-style scanlines (+ optional RGB triad mask / screen traits).
     Crt {
         /// Scanline period in px (2 .. 8).
         period: u8,
@@ -1097,6 +1102,36 @@ pub enum FilterParams {
         /// RGB subpixel mask strength (0 .. 1, default 0).
         #[serde(default)]
         mask_strength: f32,
+        /// 0 = hard bands (v1), 1 = sine soft scanlines.
+        #[serde(default)]
+        soft_scanlines: f32,
+        /// Dark scanline width in CRT-cell units (1 ..= period). Default 1.
+        #[serde(default = "default_crt_line_width")]
+        line_width: u8,
+        /// Enlarge the whole CRT pattern (1 ..= 16 document px per CRT cell).
+        #[serde(default = "default_crt_scale")]
+        scale: u8,
+        /// `horizontal` | `vertical`.
+        #[serde(default = "default_crt_orientation")]
+        orientation: String,
+        /// `aperture` | `shadow`.
+        #[serde(default = "default_crt_mask_type")]
+        mask_type: String,
+        /// Recover brightness lost to scanlines/mask (0 .. 1).
+        #[serde(default)]
+        brightness_compensate: f32,
+        /// Barrel warp (0 .. 1); sample offset capped to HALO.
+        #[serde(default)]
+        curvature: f32,
+        /// Edge darkening vs document frame (0 .. 1).
+        #[serde(default)]
+        vignette: f32,
+        /// 1px RGB phosphor bleed (0 .. 1).
+        #[serde(default)]
+        phosphor_bleed: f32,
+        /// 1px unsharp on the source sample (0 .. 1).
+        #[serde(default)]
+        sharpness: f32,
     },
     /// Photo grade / detail (P5 knobs live here — one stack layer).
     Adjust {
@@ -1221,6 +1256,133 @@ fn default_cube_lut_amount() -> f32 {
 
 fn default_glow_softness() -> u8 {
     1
+}
+
+fn default_crt_line_width() -> u8 {
+    1
+}
+
+fn default_crt_scale() -> u8 {
+    1
+}
+
+fn default_crt_orientation() -> String {
+    "horizontal".into()
+}
+
+fn default_crt_mask_type() -> String {
+    "aperture".into()
+}
+
+/// CRT params with v1-compatible look (hard scanlines, aperture mask).
+pub fn crt_params(period: u8, strength: f32, mask_strength: f32) -> FilterParams {
+    FilterParams::Crt {
+        period,
+        strength,
+        mask_strength,
+        soft_scanlines: 0.0,
+        line_width: default_crt_line_width_for(period),
+        scale: default_crt_scale(),
+        orientation: default_crt_orientation(),
+        mask_type: default_crt_mask_type(),
+        brightness_compensate: 0.0,
+        curvature: 0.0,
+        vignette: 0.0,
+        phosphor_bleed: 0.0,
+        sharpness: 0.0,
+    }
+}
+
+fn default_crt_line_width_for(period: u8) -> u8 {
+    (period.clamp(2, 8) / 2).max(1)
+}
+
+#[derive(Deserialize)]
+struct CrtParamsDto {
+    #[serde(default = "default_crt_period")]
+    period: u8,
+    #[serde(default = "default_crt_strength")]
+    strength: f32,
+    #[serde(default)]
+    mask_strength: f32,
+    #[serde(default)]
+    soft_scanlines: f32,
+    /// Preferred: dark band width in CRT cells.
+    #[serde(default)]
+    line_width: Option<u8>,
+    /// Legacy fraction (0.05..=0.95) from the first CRT expansion.
+    #[serde(default)]
+    thickness: Option<f32>,
+    #[serde(default = "default_crt_scale")]
+    scale: u8,
+    #[serde(default = "default_crt_orientation")]
+    orientation: String,
+    #[serde(default = "default_crt_mask_type")]
+    mask_type: String,
+    #[serde(default)]
+    brightness_compensate: f32,
+    #[serde(default)]
+    curvature: f32,
+    #[serde(default)]
+    vignette: f32,
+    #[serde(default)]
+    phosphor_bleed: f32,
+    #[serde(default)]
+    sharpness: f32,
+}
+
+fn default_crt_period() -> u8 {
+    2
+}
+fn default_crt_strength() -> f32 {
+    0.5
+}
+
+fn resolve_crt_line_width(period: u8, line_width: Option<u8>, thickness: Option<f32>) -> u8 {
+    let p = period.clamp(2, 8);
+    if let Some(w) = line_width {
+        return w.clamp(1, p);
+    }
+    if let Some(t) = thickness {
+        return ((t.clamp(0.05, 0.95) * p as f32).round() as u8).clamp(1, p);
+    }
+    default_crt_line_width_for(p)
+}
+
+/// Parse flat CRT JSON (UI / IPC) into [`FilterParams::Crt`] with defaults.
+pub fn crt_params_from_json(value: &serde_json::Value) -> FilterParams {
+    let dto: CrtParamsDto = serde_json::from_value(value.clone()).unwrap_or(CrtParamsDto {
+        period: 2,
+        strength: 0.5,
+        mask_strength: 0.0,
+        soft_scanlines: 0.0,
+        line_width: None,
+        thickness: None,
+        scale: 1,
+        orientation: "horizontal".into(),
+        mask_type: "aperture".into(),
+        brightness_compensate: 0.0,
+        curvature: 0.0,
+        vignette: 0.0,
+        phosphor_bleed: 0.0,
+        sharpness: 0.0,
+    });
+    let line_width = resolve_crt_line_width(dto.period, dto.line_width, dto.thickness);
+    FilterParams::Crt {
+        period: dto.period,
+        strength: dto.strength,
+        mask_strength: dto.mask_strength,
+        soft_scanlines: dto.soft_scanlines,
+        line_width,
+        scale: dto.scale.clamp(1, 16),
+        orientation: dto.orientation,
+        mask_type: dto.mask_type,
+        brightness_compensate: dto.brightness_compensate,
+        curvature: dto.curvature,
+        vignette: dto.vignette,
+        phosphor_bleed: dto.phosphor_bleed,
+        sharpness: dto.sharpness,
+    }
 }
 
 /// Parameters for [`FilterParams::Ascii`].
@@ -1702,6 +1864,16 @@ impl FilterInstance {
                 period,
                 strength,
                 mask_strength,
+                soft_scanlines,
+                line_width,
+                scale,
+                orientation,
+                mask_type,
+                brightness_compensate,
+                curvature,
+                vignette,
+                phosphor_bleed,
+                sharpness,
             } => {
                 if !(2..=8).contains(period) {
                     return Err(EngineError::invalid_filter_params(
@@ -1717,6 +1889,44 @@ impl FilterInstance {
                     return Err(EngineError::invalid_filter_params(
                         "CRT mask_strength must be in range [0.0, 1.0]",
                     ));
+                }
+                if !(0.0..=1.0).contains(soft_scanlines) {
+                    return Err(EngineError::invalid_filter_params(
+                        "CRT soft_scanlines must be in range [0.0, 1.0]",
+                    ));
+                }
+                if !(1..=*period).contains(line_width) {
+                    return Err(EngineError::invalid_filter_params(
+                        "CRT line_width must be in range [1, period]",
+                    ));
+                }
+                if !(1..=16).contains(scale) {
+                    return Err(EngineError::invalid_filter_params(
+                        "CRT scale must be in range [1, 16]",
+                    ));
+                }
+                if orientation != "horizontal" && orientation != "vertical" {
+                    return Err(EngineError::invalid_filter_params(
+                        "CRT orientation must be 'horizontal' or 'vertical'",
+                    ));
+                }
+                if mask_type != "aperture" && mask_type != "shadow" {
+                    return Err(EngineError::invalid_filter_params(
+                        "CRT mask_type must be 'aperture' or 'shadow'",
+                    ));
+                }
+                for (name, v) in [
+                    ("brightness_compensate", brightness_compensate),
+                    ("curvature", curvature),
+                    ("vignette", vignette),
+                    ("phosphor_bleed", phosphor_bleed),
+                    ("sharpness", sharpness),
+                ] {
+                    if !(0.0..=1.0).contains(v) {
+                        return Err(EngineError::invalid_filter_params(format!(
+                            "CRT {name} must be in range [0.0, 1.0]"
+                        )));
+                    }
                 }
                 Ok(())
             }
@@ -1992,6 +2202,7 @@ pub fn filter_kind_for_algorithm_id(id: &str) -> Option<FilterKind> {
         | "wave"
         | "blocked_fs"
         | "blue_noise"
+        | "dot_diffusion"
         | "modulated_diffuse_y"
         | "modulated_diffuse_x"
         | "glitch_dither"
@@ -2061,10 +2272,30 @@ pub fn filter_params_to_json(params: &FilterParams) -> Result<serde_json::Value,
             period,
             strength,
             mask_strength,
+            soft_scanlines,
+            line_width,
+            scale,
+            orientation,
+            mask_type,
+            brightness_compensate,
+            curvature,
+            vignette,
+            phosphor_bleed,
+            sharpness,
         } => Ok(serde_json::json!({
             "period": period,
             "strength": strength,
             "mask_strength": mask_strength,
+            "soft_scanlines": soft_scanlines,
+            "line_width": line_width,
+            "scale": scale,
+            "orientation": orientation,
+            "mask_type": mask_type,
+            "brightness_compensate": brightness_compensate,
+            "curvature": curvature,
+            "vignette": vignette,
+            "phosphor_bleed": phosphor_bleed,
+            "sharpness": sharpness,
         })),
         FilterParams::Glow {
             radius,

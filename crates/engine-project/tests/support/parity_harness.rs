@@ -218,19 +218,16 @@ impl Env {
     pub fn assert_crt(&self, period: u8, strength: f32, mask_strength: f32) {
         let src = gradient_tile();
         let mut expected = PixelTile::new();
-        apply_crt_into(
-            &src,
-            self.coord,
+        let apply = engine_project::filters::crt::CrtApplyParams {
             period,
             strength,
             mask_strength,
-            &mut expected,
-        );
-        let params = FilterParams::Crt {
-            period,
-            strength,
-            mask_strength,
+            doc_w: self.doc.width.max(1),
+            doc_h: self.doc.height.max(1),
+            ..engine_project::filters::crt::CrtApplyParams::default()
         };
+        apply_crt_into(&src, self.coord, apply, &mut expected);
+        let params = engine_project::filter::crt_params(period, strength, mask_strength);
         self.assert_registry("crt", FilterKind::Crt, params, &src, &expected);
     }
 

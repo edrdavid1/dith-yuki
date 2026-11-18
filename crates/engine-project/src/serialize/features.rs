@@ -55,7 +55,7 @@ pub struct FeatureDef {
 /// Highest format version this build can open (major+minor).
 ///
 /// Soft-proof settings in `.dyproj` use format `1.1`. GPU dither families
-/// (`blocked-fs`, `blue-noise`) use format `1.2`. Canary drill features share
+/// (`blocked-fs`, `blue-noise`, `dot-diffusion`) use format `1.2`. Canary drill features share
 /// the same minor lane under `--features version-drill`.
 pub const SUPPORTED_FORMAT: FormatVersion = FormatVersion::new(1, 2);
 
@@ -94,6 +94,12 @@ pub fn feature_registry() -> &'static [FeatureDef] {
                 since: FormatVersion::new(1, 2),
                 required: true,
                 description: "Threshold-shift blue-noise dither (params.mode blue_noise)",
+            },
+            FeatureDef {
+                id: "dot-diffusion",
+                since: FormatVersion::new(1, 2),
+                required: true,
+                description: "Knuth dot-diffusion dither (params.mode dot_diffusion)",
             },
             FeatureDef {
                 id: "canary-optional",
@@ -136,6 +142,12 @@ pub fn feature_registry() -> &'static [FeatureDef] {
                 since: FormatVersion::new(1, 2),
                 required: true,
                 description: "Threshold-shift blue-noise dither (params.mode blue_noise)",
+            },
+            FeatureDef {
+                id: "dot-diffusion",
+                since: FormatVersion::new(1, 2),
+                required: true,
+                description: "Knuth dot-diffusion dither (params.mode dot_diffusion)",
             },
         ];
         REG
@@ -253,6 +265,11 @@ fn collect_gpu_dither_features(nodes: &[crate::layer::LayerNode], required: &mut
                             {
                                 required.push("blue-noise".into());
                             }
+                            DitherModeV2::DotDiffusion
+                                if !required.iter().any(|s| s == "dot-diffusion") =>
+                            {
+                                required.push("dot-diffusion".into());
+                            }
                             _ => {}
                         }
                     }
@@ -358,6 +375,7 @@ mod tests {
         assert!(feature_by_id("soft-proof").is_some());
         assert!(feature_by_id("blocked-fs").is_some());
         assert!(feature_by_id("blue-noise").is_some());
+        assert!(feature_by_id("dot-diffusion").is_some());
         assert_eq!(SUPPORTED_FORMAT, FormatVersion::new(1, 2));
     }
 
@@ -369,6 +387,10 @@ mod tests {
         );
         assert_eq!(
             required_version_for_features(["blue-noise"]),
+            FormatVersion::new(1, 2)
+        );
+        assert_eq!(
+            required_version_for_features(["dot-diffusion"]),
             FormatVersion::new(1, 2)
         );
     }

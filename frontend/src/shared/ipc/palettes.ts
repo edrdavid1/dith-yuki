@@ -112,6 +112,15 @@ export async function importPalette(docId: number, path: string): Promise<Palett
   return invoke<PaletteDto>('import_palette', { docId, path });
 }
 
+/** Import every supported palette file inside a ZIP pack. */
+export async function importPalettePack(docId: number, path: string): Promise<PaletteDto[]> {
+  return invoke<PaletteDto[]>('import_palette_pack', { docId, path });
+}
+
+export function isPalettePackPath(path: string): boolean {
+  return path.toLowerCase().endsWith('.zip');
+}
+
 export async function addPalette(
   docId: number,
   name: string,

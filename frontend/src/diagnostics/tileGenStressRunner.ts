@@ -64,6 +64,7 @@ export const STRESS_MODES: readonly string[] = [
   // GPU-capable (also run on CPU when path=cpu)
   'blocked_fs',
   'blue_noise',
+  'dot_diffusion',
 ] as const;
 
 /** Live path override via `tile_gen_trace_set_compute_path`. */
