@@ -30,6 +30,8 @@ pub mod pattern_library;
 pub use pattern_library::*;
 pub mod workspace;
 pub use workspace::*;
+pub mod gamedev;
+pub use gamedev::*;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -114,6 +116,8 @@ pub struct AppState {
     pub batch_export_cancel: Mutex<Option<Arc<AtomicBool>>>,
     /// App-global Workspace / preferences config (`config.json`).
     pub config: Arc<crate::config::ConfigStore>,
+    /// Runtime-only gamedev chip caches keyed by document id (Foundation stub).
+    pub gamedev_chip_caches: Mutex<HashMap<u32, engine_project::ChipCache>>,
 }
 
 pub struct QuitGuard {

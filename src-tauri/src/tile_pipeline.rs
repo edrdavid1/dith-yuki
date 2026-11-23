@@ -491,7 +491,7 @@ pub fn compute_processed_tile(
     // Image preview mode omits Ascii so only non-ASCII full-doc filters force this path;
     // Ascii-only stacks fall through to the tiled apply (Ascii tile apply is identity).
     let include_ascii = state.ascii_preview.load(Ordering::Relaxed);
-    if engine_project::filters::layer_has_full_document_filter_ex(layer, include_ascii) {
+    if engine_project::filters::layer_needs_full_document(layer, &snapshot, include_ascii) {
         let compute_gen = snapshot.generations.document_gen.load(Ordering::Acquire);
         let diag = crate::preview_diag::level();
         crate::commands::begin_full_document_busy(state, key.doc);

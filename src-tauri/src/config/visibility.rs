@@ -18,6 +18,10 @@ pub struct UiVisibility {
     pub show_wrap_padding: bool,
     pub show_tile_size_setting: bool,
     pub show_advanced_toggle: bool,
+    /// Gamedev strip (Tile · Sprites · Animation). Foundation: flag only, no UI yet.
+    pub show_gamedev_strip: bool,
+    /// Preview view-mode selector (normal | repeat_3x3 | cell_grid). Foundation: flag only.
+    pub show_preview_view_modes: bool,
 }
 
 /// Canonical visibility matrix (FR-5).
@@ -30,6 +34,8 @@ pub fn ui_visibility_from_config(cfg: &AppConfig) -> UiVisibility {
             show_wrap_padding: false,
             show_tile_size_setting: false,
             show_advanced_toggle: false,
+            show_gamedev_strip: false,
+            show_preview_view_modes: false,
         },
         Workspace::Gamedev => UiVisibility {
             show_tiling_section: true,
@@ -38,6 +44,8 @@ pub fn ui_visibility_from_config(cfg: &AppConfig) -> UiVisibility {
             show_wrap_padding: cfg.advanced.tiling_advanced,
             show_tile_size_setting: true,
             show_advanced_toggle: true,
+            show_gamedev_strip: true,
+            show_preview_view_modes: true,
         },
     }
 }

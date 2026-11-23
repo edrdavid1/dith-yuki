@@ -135,6 +135,7 @@ impl AppState {
             config: crate::config::ConfigStore::load(
                 &std::env::temp_dir().join("dither-yuki-test-config"),
             ),
+            gamedev_chip_caches: Mutex::new(HashMap::new()),
         }
     }
 
@@ -359,6 +360,9 @@ impl AppState {
             }
             map.remove(&doc)
                 .ok_or_else(|| format!("No document session {doc}"))?;
+        }
+        if let Ok(mut caches) = self.gamedev_chip_caches.lock() {
+            caches.remove(&doc);
         }
         self.tiles.tile_cache.evict_document(doc);
         if let Some(gpu_cache) = &self.gpu_resident {

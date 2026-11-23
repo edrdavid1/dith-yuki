@@ -644,6 +644,14 @@ fn main() {
             commands::evaluate_workspace_hint,
             commands::resolve_workspace_hint,
             commands::note_tile_export,
+            // Gamedev context / seamless chips (F1)
+            commands::get_gamedev_context,
+            commands::set_gamedev_context,
+            commands::get_gamedev_chips,
+            commands::refresh_gamedev_chips,
+            commands::gamedev_chip_action,
+            commands::collect_gamedev_frame_set,
+            commands::apply_gamedev_frame_set,
             // DITHER_PROFILE (time-testing.md) — no-ops when env unset
             dither_profile_host::dither_profile_enabled,
             dither_profile_host::dither_profile_begin,

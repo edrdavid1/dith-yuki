@@ -368,8 +368,7 @@ fn export_sprite_sheet_cells(
     use engine_project::layer::LayerRef;
     use engine_project::serialize::pixels::assemble_layer_rgba8;
     use engine_project::{
-        flatten_bottom_to_top, process_sprite_sheet_rgba_f32, rgba8_to_f32, HeadlessOutputFormat,
-        SpriteSheetError,
+        flatten_bottom_to_top, rgba8_to_f32, HeadlessOutputFormat,
     };
     use std::path::Path;
     use std::sync::atomic::AtomicBool;
@@ -412,26 +411,27 @@ fn export_sprite_sheet_cells(
         _ => HeadlessOutputFormat::Png,
     };
     let cancel = AtomicBool::new(false);
-    let bytes = process_sprite_sheet_rgba_f32(
+    let padding = doc
+        .gamedev
+        .cell
+        .as_ref()
+        .filter(|c| c.w == cell_w && c.h == cell_h)
+        .map(|c| c.padding)
+        .unwrap_or(0);
+    let bytes = engine_project::process_sprite_sheet_rgba_f32_ex(
         &rgba_f32,
         width,
         height,
         cell_w,
         cell_h,
+        padding,
         &layer.filters,
         &doc.palettes,
         out_format,
         palette_id,
         &cancel,
     )
-    .map_err(|e| match e {
-        SpriteSheetError::ErrorDiffusionNotSupported => AppError::Generic(
-            "Sprite-sheet cell export supports ordered dither only \
-             (error diffusion across cell boundaries is not available yet)."
-                .into(),
-        ),
-        other => AppError::Generic(other.to_string()),
-    })?;
+    .map_err(|e| AppError::Generic(e.to_string()))?;
 
     engine_io::atomic_write(Path::new(path), &bytes)
         .map_err(|e| AppError::Generic(format!("IO error: {e}")))?;
@@ -1092,8 +1092,17 @@ impl DocumentService {
         let state_clone = Arc::clone(&self.state);
 
         tauri::async_runtime::spawn_blocking(move || {
-            // Sprite-sheet cell export (Phase 3.2): ordered filters only, per-cell phase.
-            if let (Some(cell_w), Some(cell_h)) = (req_sprite_cell_w, req_sprite_cell_h) {
+            // Independent cells: request dims, else GamedevContext.cell when independent.
+            let cell_dims = match (req_sprite_cell_w, req_sprite_cell_h) {
+                (Some(w), Some(h)) => Some((w, h)),
+                _ => doc_snapshot
+                    .gamedev
+                    .cell
+                    .as_ref()
+                    .filter(|c| c.independent && c.w > 0 && c.h > 0)
+                    .map(|c| (c.w, c.h)),
+            };
+            if let Some((cell_w, cell_h)) = cell_dims {
                 return export_sprite_sheet_cells(
                     &state_clone,
                     &doc_snapshot,
