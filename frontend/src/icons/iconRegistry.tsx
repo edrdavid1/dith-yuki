@@ -81,6 +81,7 @@ export type IconName =
   | 'zoom-1x'
   | 'zoom-integer'
   | 'color-lab'
+  | 'gamedev'
   | 'preferences'
   | 'help'
   | 'save'
@@ -146,6 +147,7 @@ const PIXEL_ICONS: Record<string, PixelIcon> = {
   'zoom-1x': Frame,
   'zoom-integer': Grid3x3,
   'color-lab': ColorsSwatch,
+  gamedev: Grid3x3,
   preferences: SettingsCog,
   help: InfoBox,
   save: Save,

@@ -34,8 +34,9 @@ Working agent specs stay local only (not in this repo on GitHub).
 | [print-export-cmyk.md](./print-export-cmyk.md) | CMYK TIFF print export (lcms2, pure-K, gamut report) |
 | [gamedev-toolkit.md](./gamedev-toolkit.md) | Pattern Manager, ED wrap-padding, hex/jasc fuzz |
 | [help/general/](./help/general/) | End-user General workspace guide |
-| [help/gamedev/](./help/gamedev/) | End-user Gamedev workspace guide (tiling) |
+| [help/gamedev/](./help/gamedev/) | End-user Gamedev guide (Tile · Sprites · Output) |
 | [adr/ed-wrap-padding.md](./adr/ed-wrap-padding.md) | ADR: approximate ED wrap-padding |
+| [adr/gamedev-pipeline-tile-f1.md](./adr/gamedev-pipeline-tile-f1.md) | ADR: Gamedev Pipeline Tile F1 (route, memory gate, seam metric) |
 | [adr/gpu-dither-families.md](./adr/gpu-dither-families.md) | ADR: approximate `blocked_fs` / `blue_noise` |
 
 ## Formats, previews, security

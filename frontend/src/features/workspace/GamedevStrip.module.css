@@ -1,0 +1,180 @@
+/* Gamedev Settings — Color Lab section chrome; Soft-proof-style toggles. */
+
+.gamedevBody {
+  gap: 0;
+}
+
+/* Numbered path so the panel itself teaches order of actions. */
+.workflow {
+  list-style: none;
+  margin: 15px 0 15px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.workflow > li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-family: var(--font-family);
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--text-label);
+}
+
+.workflowStep {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--text-color);
+  background: var(--bg-window);
+  box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+}
+
+.jobSegment {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+}
+
+.jobSegBtn {
+  flex: 1 1 0;
+  min-width: 4.5rem;
+  height: 28px !important;
+  padding: 0 10px;
+  font-size: 13px !important;
+  white-space: nowrap;
+}
+
+.jobSegBtnOn {
+  background: var(--bg-hover-accent);
+  color: var(--color-hover-inverted);
+}
+
+.jobLine {
+  margin: 0;
+  font-family: var(--font-family);
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--text-label);
+}
+
+.jobLine strong {
+  font-weight: 800;
+  color: var(--text-color);
+}
+
+.jobCheckbox {
+  margin-bottom: 0;
+}
+
+.statusList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.statusRow {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 2px 0;
+}
+
+.statusDot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  background: var(--text-label);
+  box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+}
+
+.statusRow[data-chip-state='pending'] .statusDot {
+  opacity: 0.4;
+}
+
+.statusRow[data-chip-state='ok'] .statusDot {
+  background: color-mix(in srgb, #15803d 70%, var(--bg-window));
+}
+
+.statusRow[data-chip-state='warn'] .statusDot {
+  background: color-mix(in srgb, #b45309 75%, var(--bg-window));
+}
+
+.statusRow[data-chip-state='error'] .statusDot {
+  background: color-mix(in srgb, #b91c1c 75%, var(--bg-window));
+}
+
+.statusRow[data-chip-state='pending'] .statusText {
+  opacity: 0.55;
+}
+
+.statusText {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.statusName {
+  font-family: var(--font-family);
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--text-label);
+  line-height: 1.2;
+}
+
+.statusDetail {
+  font-family: var(--font-family);
+  font-size: 13px;
+  color: var(--text-color);
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statusAction {
+  flex-shrink: 0;
+  max-width: 11rem;
+  height: 28px !important;
+  padding: 0 10px;
+  font-size: 12px !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cellRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.fieldLabel {
+  min-width: 2.5rem;
+  font-family: var(--font-family);
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--text-label);
+  align-self: center;
+}
+
+.fieldSep {
+  font-family: var(--font-family);
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--text-label);
+  align-self: center;
+}

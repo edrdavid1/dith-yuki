@@ -16,6 +16,7 @@ import {
 } from '../shared/ipc/batchExport';
 import { usePatternsUi } from '../features/patterns/PatternsUiContext';
 import { useWorkspaceOptional } from '../features/workspace/WorkspaceContext';
+import { useGamedevStoreOptional } from '../features/workspace/GamedevContext';
 
 const cn = bind({ ...overlayStyles, ...styles });
 
@@ -44,15 +45,30 @@ export default function BatchExportDialog({
   const [error, setError] = useState<string | null>(null);
   const { openPatternManager } = usePatternsUi();
   const workspace = useWorkspaceOptional();
+  const gamedev = useGamedevStoreOptional();
+
+  const maskFixed =
+    gamedev?.context.threshold_mask != null && gamedev.context.threshold_mask !== 'free';
 
   useEffect(() => {
     if (!isOpen) return;
     setProgress(null);
     setError(null);
     setRunning(false);
+    // Prefill naming / PNG8 / lock phase from GamedevContext (Tile + Sprites slice).
+    const naming = gamedev?.context.export.naming;
+    if (naming) setNameTemplate(naming);
+    if (gamedev?.context.export.png8) setFormat('png8');
+    if (maskFixed) setLockPhase(true);
     // FR-9: Batch Export in General suggests Gamedev (tile/atlas workflows).
     void workspace?.triggerHint({ trigger: 'batch_tile' });
-  }, [isOpen, workspace]);
+  }, [
+    isOpen,
+    workspace,
+    gamedev?.context.export.naming,
+    gamedev?.context.export.png8,
+    maskFixed,
+  ]);
 
   useEffect(() => {
     if (!isOpen || !running) return;
@@ -254,14 +270,23 @@ export default function BatchExportDialog({
             </div>
           </fieldset>
 
-          <label className={cn('batch-check')}>
+          <label
+            className={cn('batch-check')}
+            title={
+              maskFixed
+                ? 'Pattern phase is locked from Gamedev Settings so every file matches.'
+                : 'Keep the ordered / blue-noise phase identical across every file.'
+            }
+          >
             <input
               type="checkbox"
               checked={lockPhase}
               onChange={(e) => setLockPhase(e.target.checked)}
-              disabled={running}
+              disabled={running || maskFixed}
             />
-            Lock pattern phase (stable dither across frames)
+            {maskFixed
+              ? 'Pattern phase locked (Gamedev)'
+              : 'Lock pattern phase (stable dither across frames)'}
           </label>
 
           {progressLabel && (

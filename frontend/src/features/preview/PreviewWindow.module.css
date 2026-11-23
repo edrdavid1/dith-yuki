@@ -124,22 +124,24 @@
 
 /*
  * GPU/CPU keeps its right rule (dash to the left of time / empty space).
- * Time has no cell rules at all.
+ * Time has no cell rules at all — keep it visible; view-mode controls yield first.
  */
 .pv-gpu-ms {
   border: none;
-  flex-shrink: 1;
-  min-width: 0;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Drop trailing rule only when size (or mode toggles) end the left strip. */
 .pv-footer-left > :last-child.pv-footer-size,
 .pv-footer-left > :last-child.pv-ascii-mode,
+.pv-footer-left > :last-child.pv-view-mode,
 .pv-footer-left > :last-child .pv-ascii-mode-btn {
   border-right: none;
 }
 
-.pv-ascii-mode {
+.pv-ascii-mode,
+.pv-view-mode {
   display: inline-flex;
   align-items: stretch;
   height: 100%;
@@ -147,7 +149,8 @@
   border-right: var(--border);
   box-sizing: border-box;
   background: var(--color-gray);
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 .pv-ascii-mode-btn {
@@ -166,7 +169,9 @@
 }
 
 .pv-ascii-mode > :last-child .pv-ascii-mode-btn,
-.pv-ascii-mode > .pv-ascii-mode-btn:last-child {
+.pv-ascii-mode > .pv-ascii-mode-btn:last-child,
+.pv-view-mode > :last-child .pv-ascii-mode-btn,
+.pv-view-mode > .pv-ascii-mode-btn:last-child {
   border-right: none;
 }
 
@@ -288,9 +293,9 @@
   background: var(--color-gray);
 }
 
-/* Progressive disclosure as the preview pane narrows. */
+/* Progressive disclosure: timing stays; view modes / path yield first. */
 @container preview-footer (max-width: 640px) {
-  .pv-gpu-ms {
+  .pv-view-mode {
     display: none;
   }
 

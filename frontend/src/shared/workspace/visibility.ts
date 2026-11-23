@@ -21,6 +21,10 @@ export interface UiVisibility {
   showWrapPadding: boolean;
   showTileSizeSetting: boolean;
   showAdvancedToggle: boolean;
+  /** Gamedev Settings panel (Tile · Sprites · Output). Workspace-gated. */
+  showGamedevStrip: boolean;
+  /** Preview view modes (normal | repeat_3x3 | cell_grid). Foundation: flag only. */
+  showPreviewViewModes: boolean;
 }
 
 /** Pure; allocates nothing beyond the returned object (NFR-1). */
@@ -33,6 +37,8 @@ export function uiVisibilityFromConfig(cfg: AppConfigLike): UiVisibility {
       showWrapPadding: false,
       showTileSizeSetting: false,
       showAdvancedToggle: false,
+      showGamedevStrip: false,
+      showPreviewViewModes: false,
     };
   }
   return {
@@ -42,5 +48,7 @@ export function uiVisibilityFromConfig(cfg: AppConfigLike): UiVisibility {
     showWrapPadding: Boolean(cfg.advanced?.tiling_advanced),
     showTileSizeSetting: true,
     showAdvancedToggle: true,
+    showGamedevStrip: true,
+    showPreviewViewModes: true,
   };
 }

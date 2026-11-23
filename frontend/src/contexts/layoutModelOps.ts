@@ -284,6 +284,8 @@ export function tabDisplayName(component: string): string {
       return 'Color Lab';
     case 'preview':
       return 'Preview';
+    case 'gamedev':
+      return 'Gamedev Settings';
     default:
       return component;
   }

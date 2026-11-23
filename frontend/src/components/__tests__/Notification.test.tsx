@@ -107,7 +107,7 @@ describe('Notification (shared shell)', () => {
   it('WorkspaceHintBanner uses the shared shell (Gamedev recommend)', () => {
     render(<WorkspaceHintBanner />);
     const toast = screen.getByTestId('workspace-hint-banner');
-    expect(toast).toHaveTextContent(/Enable Gamedev workspace/);
+    expect(toast).toHaveTextContent(/Switch to Gamedev/);
     expect(toast.className).toMatch(/notification/);
     expect(screen.getByText('Switch')).toBeInTheDocument();
     expect(screen.getByLabelText('Dismiss')).toBeInTheDocument();

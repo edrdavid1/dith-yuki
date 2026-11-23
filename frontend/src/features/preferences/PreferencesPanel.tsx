@@ -135,7 +135,7 @@ export default function PreferencesPanel() {
               {
                 id: 'gamedev' as Workspace,
                 label: 'Gamedev',
-                desc: 'Create seamless textures, tiles, and sprites. Enables tiling tools.',
+                desc: 'Seamless tiles and sprite sheets. Opens Gamedev Settings (Tile, Sprites, Output).',
               },
             ] as const
           ).map((opt) => (

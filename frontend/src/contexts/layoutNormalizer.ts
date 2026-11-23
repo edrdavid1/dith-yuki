@@ -4,6 +4,9 @@
  * Each of layers / effect / colorlab / preview appears exactly once.
  * preview always lives in center. Unknown component ids are removed.
  * Missing known panels are inserted on their default side.
+ *
+ * Optional panels (gamedev) are kept if present, never auto-injected —
+ * workspace sync adds/removes them at runtime.
  */
 
 import type { IJsonModel } from 'flexlayout-react';
@@ -11,6 +14,12 @@ import { getDefaultFlexLayoutJson } from '../defaults/DefaultLayouts';
 
 export const KNOWN_PANELS = ['layers', 'effect', 'colorlab', 'preview'] as const;
 export type KnownPanel = (typeof KNOWN_PANELS)[number];
+
+/** Workspace-gated panels — allowed in saved layout, not required. */
+export const OPTIONAL_PANELS = ['gamedev'] as const;
+export type OptionalPanel = (typeof OPTIONAL_PANELS)[number];
+
+export type AllowedPanel = KnownPanel | OptionalPanel;
 
 export type SideJson = IJsonModel;
 
@@ -21,19 +30,33 @@ export interface NormalizedEnvelope {
   changes: string[];
 }
 
-const DEFAULT_SIDE: Record<KnownPanel, 'left' | 'center' | 'right'> = {
+const DEFAULT_SIDE: Record<AllowedPanel, 'left' | 'center' | 'right'> = {
   layers: 'left',
   effect: 'right',
   colorlab: 'right',
   preview: 'center',
+  gamedev: 'left',
 };
 
-const DISPLAY_NAME: Record<KnownPanel, string> = {
+const DISPLAY_NAME: Record<AllowedPanel, string> = {
   layers: 'Layers',
   effect: 'Effect Settings',
   colorlab: 'Color Lab',
   preview: 'Preview',
+  gamedev: 'Gamedev Settings',
 };
+
+function isKnownPanel(id: string): id is KnownPanel {
+  return (KNOWN_PANELS as readonly string[]).includes(id);
+}
+
+function isOptionalPanel(id: string): id is OptionalPanel {
+  return (OPTIONAL_PANELS as readonly string[]).includes(id);
+}
+
+function isAllowedPanel(id: string): id is AllowedPanel {
+  return isKnownPanel(id) || isOptionalPanel(id);
+}
 
 type TabHit = {
   side: 'left' | 'center' | 'right';
@@ -114,7 +137,7 @@ function ensureTabSet(model: SideJson): Record<string, unknown> {
   return ts;
 }
 
-function tabJson(component: KnownPanel, existing?: Record<string, unknown>): Record<string, unknown> {
+function tabJson(component: AllowedPanel, existing?: Record<string, unknown>): Record<string, unknown> {
   const base = existing ? { ...existing } : {};
   delete base.id;
   delete base.floating;
@@ -148,15 +171,15 @@ export function normalizeLayoutEnvelope(input: {
     ...collectTabs('right', input.right),
   ];
 
-  const chosen = new Map<KnownPanel, TabHit>();
+  const chosen = new Map<AllowedPanel, TabHit>();
   for (const hit of allHits) {
-    if (!(KNOWN_PANELS as readonly string[]).includes(hit.component)) {
+    if (!isAllowedPanel(hit.component)) {
       changes.push(`removed unknown:${hit.component}`);
       continue;
     }
-    const known = hit.component as KnownPanel;
+    const panel = hit.component;
     // preview must end in center regardless of where it was found.
-    if (known === 'preview') {
+    if (panel === 'preview') {
       if (!chosen.has('preview')) {
         chosen.set('preview', { ...hit, side: 'center' });
         if (hit.side !== 'center') {
@@ -167,12 +190,22 @@ export function normalizeLayoutEnvelope(input: {
       }
       continue;
     }
-    if (chosen.has(known)) {
-      changes.push(`removed duplicate:${known}`);
+    // Optional / sidebar panels must not live in the center host.
+    if (hit.side === 'center') {
+      changes.push(`moved ${panel}→${DEFAULT_SIDE[panel]}`);
+      if (chosen.has(panel)) {
+        changes.push(`removed duplicate:${panel}`);
+        continue;
+      }
+      chosen.set(panel, { ...hit, side: DEFAULT_SIDE[panel] });
       continue;
     }
-    // Keep on the side it was found (unless empty preference later).
-    chosen.set(known, hit);
+    if (chosen.has(panel)) {
+      changes.push(`removed duplicate:${panel}`);
+      continue;
+    }
+    // Keep on the side it was found.
+    chosen.set(panel, hit);
   }
 
   for (const panel of KNOWN_PANELS) {

@@ -11,6 +11,8 @@ describe('uiVisibilityFromConfig', () => {
     expect(v.showSeamlessPreview).toBe(false);
     expect(v.showWrapPadding).toBe(false);
     expect(v.showAdvancedToggle).toBe(false);
+    expect(v.showGamedevStrip).toBe(false);
+    expect(v.showPreviewViewModes).toBe(false);
   });
 
   it('visibility_gamedev_shows_tiling', () => {
@@ -23,6 +25,8 @@ describe('uiVisibilityFromConfig', () => {
     expect(v.showEdTemporalWarning).toBe(true);
     expect(v.showWrapPadding).toBe(false);
     expect(v.showAdvancedToggle).toBe(true);
+    expect(v.showGamedevStrip).toBe(true);
+    expect(v.showPreviewViewModes).toBe(true);
   });
 
   it('visibility_gamedev_advanced_shows_wrap_padding', () => {

@@ -9,6 +9,8 @@ import { useAppShortcuts } from '../features/shortcuts/useAppShortcuts';
 import { LayoutProvider } from '../contexts/LayoutContext';
 import { PatternsUiProvider } from '../features/patterns/PatternsUiContext';
 import { WorkspaceProvider } from '../features/workspace/WorkspaceContext';
+import { GamedevProvider } from '../features/workspace/GamedevContext';
+import GamedevPanelVisibilitySync from '../features/workspace/GamedevPanelVisibilitySync';
 import FlexPatchMissingOverlay from '../features/panels/FlexPatchMissingOverlay';
 import { isFlexPatchApplied } from '../features/panels/flexlayoutPatchGate';
 import { startFlexPopoutStyleSync } from '../features/panels/flexPopoutStyleSync';
@@ -46,15 +48,18 @@ export function Providers({ children }: { children: ReactNode }) {
     <Provider store={store}>
       <ShellProvider>
         <WorkspaceProvider>
-          <PatternsUiProvider>
-            <ShortcutsProvider>
-              <ShortcutEngine />
-              <LayoutProvider>
-                {children}
-              </LayoutProvider>
-              <FlexPatchMissingOverlay />
-            </ShortcutsProvider>
-          </PatternsUiProvider>
+          <GamedevProvider>
+            <PatternsUiProvider>
+              <ShortcutsProvider>
+                <ShortcutEngine />
+                <LayoutProvider>
+                  <GamedevPanelVisibilitySync />
+                  {children}
+                </LayoutProvider>
+                <FlexPatchMissingOverlay />
+              </ShortcutsProvider>
+            </PatternsUiProvider>
+          </GamedevProvider>
         </WorkspaceProvider>
       </ShellProvider>
     </Provider>
