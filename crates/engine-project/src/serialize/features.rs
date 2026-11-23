@@ -55,9 +55,10 @@ pub struct FeatureDef {
 /// Highest format version this build can open (major+minor).
 ///
 /// Soft-proof settings in `.dyproj` use format `1.1`. GPU dither families
-/// (`blocked-fs`, `blue-noise`, `dot-diffusion`) use format `1.2`. Canary drill features share
-/// the same minor lane under `--features version-drill`.
-pub const SUPPORTED_FORMAT: FormatVersion = FormatVersion::new(1, 2);
+/// (`blocked-fs`, `blue-noise`, `dot-diffusion`) use format `1.2`. Non-default
+/// `GamedevContext` uses format `1.3`. Canary drill features share the same
+/// minor lane under `--features version-drill`.
+pub const SUPPORTED_FORMAT: FormatVersion = FormatVersion::new(1, 3);
 
 /// Highest format major this build can open (per kind still uses migrate ladders).
 pub const SUPPORTED_FORMAT_MAJOR: u32 = SUPPORTED_FORMAT.major;
@@ -100,6 +101,12 @@ pub fn feature_registry() -> &'static [FeatureDef] {
                 since: FormatVersion::new(1, 2),
                 required: true,
                 description: "Knuth dot-diffusion dither (params.mode dot_diffusion)",
+            },
+            FeatureDef {
+                id: "gamedev-context",
+                since: FormatVersion::new(1, 3),
+                required: true,
+                description: "Per-document GamedevContext (tile/cell/export workflow state)",
             },
             FeatureDef {
                 id: "canary-optional",
@@ -148,6 +155,12 @@ pub fn feature_registry() -> &'static [FeatureDef] {
                 since: FormatVersion::new(1, 2),
                 required: true,
                 description: "Knuth dot-diffusion dither (params.mode dot_diffusion)",
+            },
+            FeatureDef {
+                id: "gamedev-context",
+                since: FormatVersion::new(1, 3),
+                required: true,
+                description: "Per-document GamedevContext (tile/cell/export workflow state)",
             },
         ];
         REG
@@ -222,6 +235,9 @@ pub fn collect_used_format_features(doc: &Document) -> (Vec<String>, Vec<String>
     let mut required = Vec::new();
     if doc.soft_proof.requires_format_feature() {
         required.push("soft-proof".into());
+    }
+    if doc.gamedev.requires_format_feature() {
+        required.push("gamedev-context".into());
     }
     collect_gpu_dither_features(&doc.root, &mut required);
     #[cfg(feature = "version-drill")]
@@ -376,7 +392,16 @@ mod tests {
         assert!(feature_by_id("blocked-fs").is_some());
         assert!(feature_by_id("blue-noise").is_some());
         assert!(feature_by_id("dot-diffusion").is_some());
-        assert_eq!(SUPPORTED_FORMAT, FormatVersion::new(1, 2));
+        assert!(feature_by_id("gamedev-context").is_some());
+        assert_eq!(SUPPORTED_FORMAT, FormatVersion::new(1, 3));
+    }
+
+    #[test]
+    fn gamedev_context_feature_bumps_to_v1_3() {
+        assert_eq!(
+            required_version_for_features(["gamedev-context"]),
+            FormatVersion::new(1, 3)
+        );
     }
 
     #[test]

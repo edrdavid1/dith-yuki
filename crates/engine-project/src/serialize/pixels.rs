@@ -254,7 +254,7 @@ fn assemble_layer_processed_rgba8(
     use crate::filters::apply::apply_filter_to_tile_with_caches;
     use crate::filters::dither_residuals::ErrorResidualsStore;
     use crate::filters::full_document::{
-        compute_full_document_rgba, layer_has_full_document_filter,
+        compute_full_document_rgba, layer_needs_full_document,
     };
     use engine_tiles::block_cache::BlockRepresentativeCache;
     use std::sync::atomic::AtomicBool;
@@ -265,7 +265,7 @@ fn assemble_layer_processed_rgba8(
 
     // Full-document algorithms must not be applied per-tile (Hilbert error
     // spans the whole layer). Same path as live preview.
-    if layer_has_full_document_filter(layer) {
+    if layer_needs_full_document(layer, doc, true) {
         let cancel = AtomicBool::new(false);
         let result = compute_full_document_rgba(cache, layer, doc, &cancel)
             .map_err(|e| ProjectError::Codec(format!("full-document filter apply: {e}")))?;

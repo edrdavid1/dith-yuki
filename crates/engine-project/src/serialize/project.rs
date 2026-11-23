@@ -375,6 +375,7 @@ pub fn open_project_from_bytes(
     let doc_value = migrate_dyproj(manifest.format_version, doc_value)?;
     let mut file: DocumentFile = serde_json::from_value(doc_value)
         .map_err(|e| ProjectError::InvalidArchive(e.to_string()))?;
+    file.finalize_gamedev_migration();
     sanitize_document_file_strings(&mut file);
 
     // Materialize threshold maps into the shared content-addressed asset cache.

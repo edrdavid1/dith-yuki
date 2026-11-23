@@ -46,6 +46,10 @@ wgpu = { version = "24.0", default-features = true }
 name = "dyproj-cli"
 path = "src/bin/dyproj-cli.rs"
 
+[[bin]]
+name = "dither-yuki"
+path = "src/bin/dither_yuki.rs"
+
 [[bench]]
 name = "compositor_bench"
 harness = false

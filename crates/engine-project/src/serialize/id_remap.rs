@@ -85,6 +85,7 @@ pub fn remap_document_file(file: &DocumentFile, runtime_doc_id: DocumentId) -> R
         height: file.height,
         color_profile: file.color_profile.clone(),
         soft_proof: file.soft_proof.clone(),
+        gamedev: file.gamedev.clone(),
         root: remapped_root.iter().map(layer_node_from_file).collect(),
         palettes: palettes_from_file(&remapped_palettes),
         revision: 1,
@@ -301,6 +302,7 @@ mod tests {
             height: 64,
             color_profile: crate::types::ColorProfileRef::SRgb,
             soft_proof: Default::default(),
+            gamedev: Default::default(),
             palettes: vec![PaletteFile {
                 id: pal_old,
                 name: "P".into(),
@@ -446,6 +448,7 @@ mod tests {
             height: 64,
             color_profile: crate::types::ColorProfileRef::SRgb,
             soft_proof: Default::default(),
+            gamedev: Default::default(),
             palettes: vec![],
             root: vec![LayerNodeFile::Leaf(LayerFile {
                 id: LayerId::new(1),
