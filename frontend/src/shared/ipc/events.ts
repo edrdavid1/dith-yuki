@@ -28,6 +28,18 @@ export async function onTabsChanged(
   return listen<OpenDocumentsPayload>('tabs-changed', handler);
 }
 
+export interface MemoryWarningPayload {
+  pinned_bytes: number;
+  budget_bytes: number;
+  doc_id: number | null;
+}
+
+export async function onMemoryWarning(
+  handler: (event: Event<MemoryWarningPayload>) => void
+): Promise<UnlistenFn> {
+  return listen<MemoryWarningPayload>('memory-warning', handler);
+}
+
 export async function onSelectionChanged(
   handler: (event: Event<SelectionChangedPayload>) => void
 ): Promise<UnlistenFn> {

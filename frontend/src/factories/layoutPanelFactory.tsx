@@ -11,6 +11,7 @@ import LayersFeature from '../features/layers/LayersFeature';
 import EffectsFeature from '../features/effects/EffectsFeature';
 import ColorLabFeature from '../features/color-lab/ColorLabFeature';
 import PreviewFeature from '../features/preview/PreviewFeature';
+import GamedevSettingsFeature from '../features/workspace/GamedevSettingsFeature';
 import FlexPopoutChrome from '../features/panels/FlexPopoutChrome';
 import type { FlexSide } from '../defaults/DefaultLayouts';
 import type { DockSide } from '../types/panels';
@@ -67,6 +68,8 @@ export function layoutPanelFactory(
             welcome={options?.welcome}
           />
         );
+      case 'gamedev':
+        return <GamedevSettingsFeature {...chrome} />;
       default:
         return <ErrorPanel componentId={componentId} />;
     }
@@ -122,6 +125,7 @@ export function getPanelDisplayName(panelId: string): string {
     case 'effect':   return 'Effect Settings';
     case 'colorlab': return 'Color Lab';
     case 'preview':  return 'Preview';
+    case 'gamedev':  return 'Gamedev Settings';
     default:         return panelId;
   }
 }
@@ -135,6 +139,7 @@ export function isPanelOnFlexLayout(panelId: string): boolean {
     panelId === 'layers' ||
     panelId === 'effect' ||
     panelId === 'colorlab' ||
-    panelId === 'preview'
+    panelId === 'preview' ||
+    panelId === 'gamedev'
   );
 }

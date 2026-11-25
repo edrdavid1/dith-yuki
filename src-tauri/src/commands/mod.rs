@@ -30,6 +30,8 @@ pub mod pattern_library;
 pub use pattern_library::*;
 pub mod workspace;
 pub use workspace::*;
+pub mod gamedev;
+pub use gamedev::*;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -114,6 +116,10 @@ pub struct AppState {
     pub batch_export_cancel: Mutex<Option<Arc<AtomicBool>>>,
     /// App-global Workspace / preferences config (`config.json`).
     pub config: Arc<crate::config::ConfigStore>,
+    /// Runtime-only gamedev chip caches keyed by document id (Foundation stub).
+    pub gamedev_chip_caches: Mutex<HashMap<u32, engine_project::ChipCache>>,
+    /// T3: true after emitting `memory-warning` until pinned drops below 90% budget.
+    pub memory_warn_latched: AtomicBool,
 }
 
 pub struct QuitGuard {
@@ -366,6 +372,7 @@ pub(crate) fn invalidate_after_document_replace(state: &AppState) {
         state.tiles.tile_cache.mark_dirty(key);
     }
     state.tiles.block_representatives.invalidate_all();
+    // active-session-ok: invalidate helper scopes residuals to the visible tab
     if let Ok(session) = state.active_session() {
         state
             .tiles
@@ -384,6 +391,7 @@ pub(crate) fn schedule_dirty_viewport_tiles_with_reason(state: &AppState, reason
     use std::sync::atomic::Ordering;
 
     let viewport = state.ui.viewport.lock().unwrap().clone();
+    // active-session-ok: viewport schedule is chrome for the visible tab only
     let Ok(snapshot) = state.active_session().map(|s| s.document_handle.snapshot()) else {
         return;
     };
@@ -616,6 +624,7 @@ fn run_preview_refresh(
     preserve_dithered: bool,
     reason: &'static str,
 ) {
+    // active-session-ok: preview refresh drives the visible canvas only
     let Ok(session) = state.active_session() else {
         return;
     };
@@ -752,6 +761,7 @@ pub(crate) fn on_preview_task_finished(state: &AppState) {
         return;
     }
     // Wave idle: clear the refresh-held busy before a coalesced refresh restarts it.
+    // active-session-ok: busy flag is for the visible preview pass
     if let Ok(session) = state.active_session() {
         let doc_id = session.document_handle.snapshot().id.0;
         finish_preview_refresh_timer(state);

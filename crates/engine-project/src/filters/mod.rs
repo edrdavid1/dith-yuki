@@ -80,10 +80,11 @@ pub use curves::{CurveChannel, CurvesFilter};
 pub use dither::{DitherAlgorithm, DitherFilter};
 pub use full_document::{
     apply_post_to_fd_result, compute_ascii_job, ensure_full_document, ensure_full_document_ex,
-    ensure_full_document_ex_timed, filter_uses_ed_wrap_padding, last_fd_render_stages,
-    layer_has_full_document_filter, layer_has_full_document_filter_ex, publish_fd_result_tiles,
-    publish_processed_tiles, publish_stage_tiles, slice_processed_tile, EnsureTrace,
-    FdRenderStages, FullDocumentCache, FullDocumentResult,
+    ensure_full_document_ex_timed, filter_uses_ed_wrap_padding, full_document_result_to_rgba8,
+    last_fd_render_stages, layer_has_full_document_filter, layer_has_full_document_filter_ex,
+    layer_needs_full_document, peek_full_document, publish_fd_result_tiles, publish_processed_tiles,
+    publish_stage_tiles, slice_processed_tile, EnsureTrace, FdRenderStages, FullDocumentCache,
+    FullDocumentResult,
 };
 pub use fusion::{
     apply_fused_pointwise_into, fusible_run_len, is_fusible_pointwise, post_fusion_enabled,

@@ -104,4 +104,33 @@ describe('normalizeLayoutEnvelope (W7)', () => {
     expect(componentsIn(result.center)).toEqual(['preview']);
     expect(componentsIn(result.left)).not.toContain('preview');
   });
+
+  it('keeps optional gamedev when present but does not inject it', () => {
+    const withGamedev = normalizeLayoutEnvelope({
+      left: sideWithTabs([{ component: 'layers' }]),
+      center: sideWithTabs([{ component: 'preview' }]),
+      right: sideWithTabs([
+        { component: 'effect' },
+        { component: 'colorlab' },
+        { component: 'gamedev' },
+      ]),
+    });
+    expect(componentsIn(withGamedev.right)).toContain('gamedev');
+    expect(withGamedev.changes.some((c) => c.includes('injected gamedev'))).toBe(
+      false,
+    );
+
+    const without = normalizeLayoutEnvelope({
+      left: sideWithTabs([{ component: 'layers' }]),
+      center: sideWithTabs([{ component: 'preview' }]),
+      right: sideWithTabs([
+        { component: 'effect' },
+        { component: 'colorlab' },
+      ]),
+    });
+    expect(componentsIn(without.right)).not.toContain('gamedev');
+    expect(without.changes.some((c) => c.includes('injected gamedev'))).toBe(
+      false,
+    );
+  });
 });

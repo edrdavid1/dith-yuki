@@ -9,7 +9,7 @@ import { useWorkspace } from './WorkspaceContext';
 const AUTO_MS = 10_000;
 
 const HINT_MESSAGE =
-  "You're working with tiles. Enable Gamedev workspace for seamless preview and tiling tools.";
+  "You're working with tiles. Switch to Gamedev for Tile, seam checks, and sprite tools.";
 
 export default function WorkspaceHintBanner() {
   const { hintVisible, dismissHint, switchFromHint } = useWorkspace();

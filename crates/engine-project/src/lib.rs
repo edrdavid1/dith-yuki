@@ -20,6 +20,7 @@ pub mod dto;
 pub mod error;
 pub mod filter;
 pub mod filters;
+pub mod gamedev;
 pub mod headless;
 pub mod invalidation;
 pub mod layer;
@@ -40,6 +41,36 @@ pub use commands::{add_layer, remove_layer, reorder_layer, set_layer_props, Laye
 pub use compositor::{blend_tile, composite_tile};
 pub use document::{Document, DocumentHandle};
 pub use error::EngineError;
+pub use gamedev::{
+    apply_alpha_policy_rgba8, apply_frame_stable_context, cell_grid_crop_size, chip_action,
+    chip_cache_begin_job, chip_cache_epoch, chip_cache_get, chip_cache_invalidate, chip_cache_put,
+    chip_state_for_seam_report, chip_stub_for_context, chip_stub_pending,
+    chip_stub_validation_failed, clear_transparent_rgb_rgba8,
+    clear_transparent_rgb_rgba_f32, clear_wrap_padding_in_tree, clear_wrap_padding_on_layer,
+    collect_frame_paths, context_chip_hash, context_result_chip_hash, count_semi_transparent_rgba8,
+    dither_frame_rgba8, dither_period_aligned, effective_upscale, evaluate_alpha_chip,
+    evaluate_cells_chip, evaluate_gamedev_chips, evaluate_gamedev_chips_with_result,
+    evaluate_seamless_chip, evaluate_stable_chip, filters_are_frame_stable,
+    gamedev_cache_invalidation, has_semi_transparent_rgba8, identical_frames_bitwise_equal,
+    integer_nearest_upscale_rgba8, integer_nearest_upscale_rgba_f32, layer_needs_independent_cells,
+    nearest_downsample_rgba_f32,
+    layer_needs_pipeline_tile_full_document, layer_wants_pipeline_tile, lift_gamedev_from_extra,
+    mode_is_frame_stable, parse_cell_wh, period_snap_crop_size, pixel_perfect_active,
+    pixels_match_rgba8, pipeline_tile_fits_limits, pipeline_tile_memory_blocked,
+    resolve_pixel_perfect_work_size,
+    process_frame_set_to_folder, process_independent_cells_rgba8, process_independent_cells_rgba_f32,
+    resolve_cli_preset, resolve_frame_palettes, run_cli_apply, seam_mode_for_layer,
+    seamless_chip_from_tile, seamless_chip_memory_gate, should_lock_pattern_phase,
+    should_skip_mosaic, switch_filters_to_frame_stable, threshold_alpha_rgba8,
+    threshold_alpha_rgba_f32, validate_seams, validate_seams_indexed, validate_seams_rgba8,
+    AlphaPolicy, AxisSeamStats, CellPipelineError, CellSettings, ChipCache, ChipState,
+    CliApplyError, CliApplyOptions, FramePipelineError, FramePipelineMetrics, FrameSetReport,
+    GamedevCacheLayer, GamedevChip, GamedevChipId, GamedevContext, GamedevJob, MaskKind,
+    MaskPolicy, PixelPerfect, PipelineTileError, SeamMode, SeamPixelFormat, SeamReport,
+    FRAME_PIPELINE_METRICS, GAMEDEV_EXTRA_KEY, PIPELINE_TILE_MAX_MOSAIC_PIXELS,
+    PIPELINE_TILE_MAX_SOURCE_SIDE, SEAM_EPSILON,
+    SEAM_K,
+};
 pub use filter::{
     algorithm_id_for_params, crt_params, crt_params_from_json, filter_kind_for_algorithm_id,
     filter_params_to_json, resolve_algorithm_id, DiffusionKernel, DitherMode, FilterInstance,
@@ -86,7 +117,9 @@ pub use simd::{
     blend_row_scalar, blend_row_simd, f32_to_rgba8_row_scalar, f32_to_rgba8_row_simd,
     levels_row_scalar, levels_row_simd,
 };
-pub use sprite_sheet::{process_sprite_sheet_rgba_f32, rgba8_to_f32, SpriteSheetError};
+pub use sprite_sheet::{
+    process_sprite_sheet_rgba_f32, process_sprite_sheet_rgba_f32_ex, rgba8_to_f32, SpriteSheetError,
+};
 pub use types::{
     BlendMode, ColorProfileRef, DocumentId, FilterInstanceId, LayerId, LayerKind, PaletteId,
     TileBounds,

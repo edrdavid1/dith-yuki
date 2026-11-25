@@ -55,6 +55,8 @@ struct EvictPolicySnapshot {
     active_doc: Option<u32>,
     open_docs: HashSet<u32>,
     viewport_coords: HashSet<TileCoord>,
+    protect_derived_docs: HashSet<u32>,
+    lru_unprotected_inactive: Vec<u32>,
 }
 
 /// GPU-resident tiles: one resident `Texture2DArray` + frame scratch ping-pong.
@@ -200,6 +202,8 @@ impl GpuTileCache {
                 active_doc: policy.active_doc.or(Some(key.doc)),
                 open_docs: &policy.open_docs,
                 viewport_coords: &policy.viewport_coords,
+                protect_derived_docs: &policy.protect_derived_docs,
+                lru_unprotected_inactive: &policy.lru_unprotected_inactive,
             });
         }
 
@@ -374,6 +378,8 @@ impl GpuTileCache {
         g.active_doc = ctx.active_doc;
         g.open_docs = ctx.open_docs.clone();
         g.viewport_coords = ctx.viewport_coords.clone();
+        g.protect_derived_docs = ctx.protect_derived_docs.clone();
+        g.lru_unprotected_inactive = ctx.lru_unprotected_inactive.to_vec();
     }
 
     /// Unconditional doc teardown (symmetric with CPU `TileCache::evict_document`).
@@ -395,18 +401,56 @@ impl GpuTileCache {
             return;
         }
 
-        let stage_order = [
+        // T6: whole-tab wipe of old inactive docs (non-Raw).
+        for &doc in ctx.lru_unprotected_inactive {
+            if ctx.active_doc == Some(doc) {
+                continue;
+            }
+            self.evict_derived_for_doc(doc);
+            if self.allocator.free_count() > 0 {
+                return;
+            }
+        }
+
+        let inactive_stages = [
+            CacheStage::Composite,
+            CacheStage::Processed,
+            CacheStage::Dithered,
+            CacheStage::Raw,
+        ];
+        let active_stages = [
             CacheStage::Composite,
             CacheStage::Processed,
             CacheStage::Raw,
         ];
 
-        for inactive_first in [true, false] {
-            for stage in stage_order {
-                self.evict_pass(ctx, inactive_first, stage);
-                if self.allocator.free_count() > 0 {
-                    return;
-                }
+        for stage in inactive_stages {
+            self.evict_pass(ctx, true, stage);
+            if self.allocator.free_count() > 0 {
+                return;
+            }
+        }
+        for stage in active_stages {
+            self.evict_pass(ctx, false, stage);
+            if self.allocator.free_count() > 0 {
+                return;
+            }
+        }
+    }
+
+    fn evict_derived_for_doc(&self, doc: u32) {
+        let keys: Vec<TileKey> = self
+            .entries
+            .iter()
+            .filter(|e| e.key().doc == doc && e.stage != CacheStage::Raw)
+            .filter(|e| !self.in_flight.contains(&e.slot.index))
+            .map(|e| *e.key())
+            .collect();
+        for key in keys {
+            self.release_key(&key);
+            self.pressure_evicts.fetch_add(1, Ordering::Relaxed);
+            if self.allocator.free_count() > 0 {
+                return;
             }
         }
     }
@@ -663,11 +707,7 @@ mod tests {
             y: 0,
         });
         let open = open_set(&[1, 2]);
-        cache.evict_for_pressure(&EvictContext {
-            active_doc: Some(2),
-            open_docs: &open,
-            viewport_coords: &viewport,
-        });
+        cache.evict_for_pressure(&EvictContext::basic(Some(2), &open, &viewport));
         assert!(cache.allocator.free_count() > 0);
         let remaining_doc1 = cache.entries.iter().filter(|e| e.key().doc == 1).count();
         assert!(
@@ -692,11 +732,7 @@ mod tests {
         }
         assert_eq!(cache.allocator.free_count(), 0);
         let open = open_set(&[1]);
-        cache.evict_for_pressure(&EvictContext {
-            active_doc: Some(1),
-            open_docs: &open,
-            viewport_coords: &HashSet::new(),
-        });
+        cache.evict_for_pressure(&EvictContext::basic(Some(1), &open, &HashSet::new()));
         assert_eq!(
             cache.allocator.free_count(),
             0,

@@ -2,8 +2,9 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use engine_project::document::DocumentHandle;
 use engine_project::types::DocumentId;
@@ -22,6 +23,8 @@ pub struct DocumentSession {
     pub history: crate::state::HistoryState,
     pub project_path: Mutex<Option<PathBuf>>,
     pub source_path: Mutex<Option<PathBuf>>,
+    /// Last time this tab was activated (T6 LRU).
+    pub last_active: Mutex<Instant>,
     /// In-flight save/export assemble count — close refuses while > 0.
     io_inflight: AtomicUsize,
 }
@@ -135,6 +138,8 @@ impl AppState {
             config: crate::config::ConfigStore::load(
                 &std::env::temp_dir().join("dither-yuki-test-config"),
             ),
+            gamedev_chip_caches: Mutex::new(HashMap::new()),
+            memory_warn_latched: AtomicBool::new(false),
         }
     }
 
@@ -177,6 +182,7 @@ impl AppState {
             history: crate::state::HistoryState::new(),
             project_path: Mutex::new(None),
             source_path: Mutex::new(None),
+            last_active: Mutex::new(Instant::now()),
             io_inflight: AtomicUsize::new(0),
         });
         if let Ok(mut map) = self.sessions.lock() {
@@ -209,6 +215,8 @@ impl AppState {
 
     /// Active-tab helper for viewport / chrome reads. **Do not use for mutations** —
     /// pass explicit `doc_id` and [`Self::require_session`] instead (cross-tab race).
+    ///
+    /// Mutating IPC in `commands/` must not call this (see `lint:no-active-session`).
     pub fn active_session(&self) -> Result<Arc<DocumentSession>, String> {
         let id = self
             .active_id()
@@ -265,11 +273,9 @@ impl AppState {
             return;
         };
         let open_docs = self.open_doc_ids();
-        let ctx = engine_tiles::EvictContext {
-            active_doc: self.active_id(),
-            open_docs: &open_docs,
-            viewport_coords,
-        };
+        let protect = self.protect_derived_docs();
+        let lru = self.lru_unprotected_inactive();
+        let ctx = self.build_evict_context(&open_docs, viewport_coords, &protect, &lru);
         gpu.set_evict_policy(&ctx);
         gpu.evict_for_pressure(&ctx);
     }
@@ -281,6 +287,9 @@ impl AppState {
 
     pub fn activate(&self, doc: u32) -> Result<Arc<DocumentSession>, String> {
         let session = self.session(doc)?;
+        if let Ok(mut ts) = session.last_active.lock() {
+            *ts = Instant::now();
+        }
         if let Ok(mut active) = self.active_id.lock() {
             *active = Some(doc);
         }
@@ -290,16 +299,69 @@ impl AppState {
         Ok(session)
     }
 
+    /// T6: N most-recently-activated tabs (incl. active) keep derived tiles warm.
+    pub fn protect_derived_docs(&self) -> HashSet<u32> {
+        let mut ranked = self.sessions_by_recency();
+        ranked.truncate(engine_tiles::PROTECT_RECENT_TABS);
+        ranked.into_iter().collect()
+    }
+
+    /// Inactive docs not in the protect set, oldest-first (T6 whole-tab wipe order).
+    pub fn lru_unprotected_inactive(&self) -> Vec<u32> {
+        let protect = self.protect_derived_docs();
+        let active = self.active_id();
+        let mut oldest_first = self.sessions_by_recency();
+        oldest_first.reverse();
+        oldest_first
+            .into_iter()
+            .filter(|id| Some(*id) != active && !protect.contains(id))
+            .collect()
+    }
+
+    fn sessions_by_recency(&self) -> Vec<u32> {
+        let map = match self.sessions.lock() {
+            Ok(g) => g,
+            Err(_) => return vec![],
+        };
+        let mut rows: Vec<(Instant, u32)> = map
+            .values()
+            .map(|s| {
+                let ts = s
+                    .last_active
+                    .lock()
+                    .map(|g| *g)
+                    .unwrap_or_else(|_| Instant::now());
+                (ts, s.id.0)
+            })
+            .collect();
+        rows.sort_by(|a, b| b.0.cmp(&a.0));
+        rows.into_iter().map(|(_, id)| id).collect()
+    }
+
+    fn build_evict_context<'a>(
+        &'a self,
+        open_docs: &'a HashSet<u32>,
+        viewport_coords: &'a HashSet<engine_tiles::TileCoord>,
+        protect_derived: &'a HashSet<u32>,
+        lru_unprotected: &'a [u32],
+    ) -> engine_tiles::EvictContext<'a> {
+        engine_tiles::EvictContext {
+            active_doc: self.active_id(),
+            open_docs,
+            viewport_coords,
+            protect_derived_docs: protect_derived,
+            lru_unprotected_inactive: lru_unprotected,
+        }
+    }
+
     /// Pressure with empty viewport protect set (inactive-only when active is set).
     /// Open-session Raw is always pinned via `open_docs`.
     pub fn evict_inactive_for_pressure_if_needed(&self) {
         let empty = HashSet::new();
         let open_docs = self.open_doc_ids();
-        let ctx = engine_tiles::EvictContext {
-            active_doc: self.active_id(),
-            open_docs: &open_docs,
-            viewport_coords: &empty,
-        };
+        let protect = self.protect_derived_docs();
+        let lru = self.lru_unprotected_inactive();
+        let ctx = self.build_evict_context(&open_docs, &empty, &protect, &lru);
         if self.tiles.tile_cache.used_bytes_count() > self.tiles.tile_cache.budget_bytes_count() {
             log_cpu_pressure("inactive", self);
             self.tiles.tile_cache.evict_for_pressure(&ctx);
@@ -314,11 +376,9 @@ impl AppState {
     pub fn evict_for_pressure_if_needed(&self) {
         let viewport_coords = self.visible_viewport_coords();
         let open_docs = self.open_doc_ids();
-        let ctx = engine_tiles::EvictContext {
-            active_doc: self.active_id(),
-            open_docs: &open_docs,
-            viewport_coords: &viewport_coords,
-        };
+        let protect = self.protect_derived_docs();
+        let lru = self.lru_unprotected_inactive();
+        let ctx = self.build_evict_context(&open_docs, &viewport_coords, &protect, &lru);
         if self.tiles.tile_cache.used_bytes_count() > self.tiles.tile_cache.budget_bytes_count() {
             log_cpu_pressure("viewport", self);
             let stats = self.tiles.tile_cache.evict_for_pressure(&ctx);
@@ -344,6 +404,8 @@ impl AppState {
             gpu.set_evict_policy(&ctx);
             gpu.evict_for_pressure(&ctx);
         }
+        let app = self.app_handle.lock().ok().and_then(|g| g.clone());
+        maybe_emit_memory_warning(app.as_ref(), self, self.active_id());
     }
 
     pub fn close_session(&self, doc: u32) -> Result<(), String> {
@@ -360,6 +422,9 @@ impl AppState {
             map.remove(&doc)
                 .ok_or_else(|| format!("No document session {doc}"))?;
         }
+        if let Ok(mut caches) = self.gamedev_chip_caches.lock() {
+            caches.remove(&doc);
+        }
         self.tiles.tile_cache.evict_document(doc);
         if let Some(gpu_cache) = &self.gpu_resident {
             gpu_cache.evict_document(doc);
@@ -371,7 +436,7 @@ impl AppState {
         self.tiles.evict_strip_gates_document(doc);
         self.tiles.palette_cache.evict_document(doc);
         self.tiles.palette_lut_cache.evict_document(doc);
-        self.tiles.full_document.clear(); // per-doc eviction not needed yet (few entries)
+        self.tiles.full_document.evict_document(doc);
         self.delayed_requeue.cancel_doc(doc);
         crate::tile_gen_trace::clear_spin_for_doc(doc);
         crate::pending_tiles::clear_doc(doc);
@@ -459,6 +524,42 @@ pub fn emit_tabs_changed(app: Option<&AppHandle>, state: &AppState) {
     let _ = app.emit("tabs-changed", state.tab_list());
     if let Ok(data) = app.path().app_data_dir() {
         crate::journal::roster::persist_from_state(state, &data);
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MemoryWarningPayload {
+    pub pinned_bytes: u64,
+    pub budget_bytes: u64,
+    pub doc_id: Option<u32>,
+}
+
+/// Emit `memory-warning` once when non-evictable tiles exceed the RAM budget.
+/// Re-arms after pinned drops below 90% of budget (T3 hysteresis).
+pub fn maybe_emit_memory_warning(app: Option<&AppHandle>, state: &AppState, doc_id: Option<u32>) {
+    let open_docs = state.open_doc_ids();
+    let protect = state.protect_derived_docs();
+    let pinned = state.tiles.tile_cache.pinned_bytes(&open_docs, &protect);
+    let budget = state.tiles.tile_cache.budget_bytes_count();
+    if budget == 0 {
+        return;
+    }
+    let clear_at = budget.saturating_mul(90) / 100;
+    if pinned > budget {
+        if !state.memory_warn_latched.swap(true, Ordering::AcqRel) {
+            if let Some(app) = app {
+                let _ = app.emit(
+                    "memory-warning",
+                    MemoryWarningPayload {
+                        pinned_bytes: pinned as u64,
+                        budget_bytes: budget as u64,
+                        doc_id,
+                    },
+                );
+            }
+        }
+    } else if pinned < clear_at {
+        state.memory_warn_latched.store(false, Ordering::Release);
     }
 }
 
@@ -631,6 +732,32 @@ mod pressure_tests {
     }
 
     #[test]
+    fn memory_warning_hysteresis_fires_once_until_below_90() {
+        let state = AppState::empty_process(None, TILE_BYTES, true);
+        state.spawn_session(Document::new(DocumentId::new(1), 64, 64));
+        // Two Raw tiles → pinned 2×TILE_BYTES > budget TILE_BYTES.
+        fill_stage(&state.tiles.tile_cache, 1, CacheStage::Raw, 2);
+        assert!(!state.memory_warn_latched.load(Ordering::Acquire));
+        maybe_emit_memory_warning(None, &state, Some(1));
+        assert!(state.memory_warn_latched.load(Ordering::Acquire));
+        // Still over budget — no re-arm.
+        maybe_emit_memory_warning(None, &state, Some(1));
+        assert!(state.memory_warn_latched.load(Ordering::Acquire));
+        // Drop to one Raw → pinned == budget, not < 90%; latch stays.
+        state.tiles.tile_cache.evict_document(1);
+        fill_stage(&state.tiles.tile_cache, 1, CacheStage::Raw, 1);
+        maybe_emit_memory_warning(None, &state, Some(1));
+        assert!(state.memory_warn_latched.load(Ordering::Acquire));
+        // Empty → below 90%, re-arm.
+        state.tiles.tile_cache.evict_document(1);
+        maybe_emit_memory_warning(None, &state, None);
+        assert!(!state.memory_warn_latched.load(Ordering::Acquire));
+        fill_stage(&state.tiles.tile_cache, 1, CacheStage::Raw, 2);
+        maybe_emit_memory_warning(None, &state, Some(1));
+        assert!(state.memory_warn_latched.load(Ordering::Acquire));
+    }
+
+    #[test]
     fn close_rejected_while_io_inflight() {
         let state = AppState::empty_process(None, 10_000_000, true);
         let session = state.spawn_session(Document::new(DocumentId::new(1), 64, 64));
@@ -639,6 +766,44 @@ mod pressure_tests {
         assert!(err.contains("save or export"), "{err}");
         drop(_guard);
         assert!(state.close_session(1).is_ok());
+    }
+
+    #[test]
+    fn require_session_targets_explicit_doc_after_activate_other() {
+        let state = AppState::empty_process(None, 10_000_000, true);
+        state.spawn_session(Document::new(DocumentId::new(1), 64, 64));
+        state.spawn_session(Document::new(DocumentId::new(2), 64, 64));
+        state.activate(2).unwrap();
+        assert_eq!(state.active_id(), Some(2));
+
+        // Mutate A via require_session while B is active (T4 race acceptance).
+        state
+            .require_session(1)
+            .unwrap()
+            .document_handle
+            .mutate(|doc| {
+                doc.width = 128;
+            });
+
+        let a = state.require_session(1).unwrap().document_handle.snapshot();
+        let b = state.require_session(2).unwrap().document_handle.snapshot();
+        assert_eq!(a.width, 128, "explicit doc_id must change A");
+        assert_eq!(b.width, 64, "active B must stay untouched");
+    }
+
+    #[test]
+    fn require_session_closed_doc_errors_without_touching_others() {
+        let state = AppState::empty_process(None, 10_000_000, true);
+        state.spawn_session(Document::new(DocumentId::new(1), 64, 64));
+        state.spawn_session(Document::new(DocumentId::new(2), 80, 80));
+        state.close_session(1).unwrap();
+        let err = match state.require_session(1) {
+            Err(e) => e,
+            Ok(_) => panic!("expected SessionGone for closed doc 1"),
+        };
+        assert!(err.contains("closed"), "{err}");
+        let b = state.require_session(2).unwrap().document_handle.snapshot();
+        assert_eq!(b.width, 80);
     }
 
     #[test]

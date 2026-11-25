@@ -24,9 +24,10 @@ export type FloatingHostStripProps = {
   affinityArmed?: boolean;
 };
 
-function panelIconName(panelId: PanelId): 'effect.dithering' | 'layers' | 'color-lab' {
+function panelIconName(panelId: PanelId): 'effect.dithering' | 'layers' | 'color-lab' | 'gamedev' {
   if (panelId === 'effect') return 'effect.dithering';
   if (panelId === 'layers') return 'layers';
+  if (panelId === 'gamedev') return 'gamedev';
   return 'color-lab';
 }
 

@@ -197,10 +197,11 @@ pub fn colors_to_oklab(colors: Vec<String>) -> Result<Vec<OklabPointDto>, String
 
 #[tauri::command]
 pub fn get_palette_oklab(
+    doc_id: u32,
     palette_id: u32,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<OklabPointDto>, String> {
-    let snapshot = state.active_session()?.document_handle.snapshot();
+    let snapshot = state.require_session(doc_id)?.document_handle.snapshot();
     let palette = snapshot
         .palettes
         .iter()

@@ -75,8 +75,11 @@ export async function colorsToOklab(colors: string[]): Promise<OklabPointDto[]> 
 }
 
 /** Saved document palette → Oklab (same math as `colorsToOklab`). */
-export async function getPaletteOklab(paletteId: number): Promise<OklabPointDto[]> {
-  return invoke<OklabPointDto[]>('get_palette_oklab', { paletteId });
+export async function getPaletteOklab(
+  docId: number,
+  paletteId: number
+): Promise<OklabPointDto[]> {
+  return invoke<OklabPointDto[]>('get_palette_oklab', { docId, paletteId });
 }
 
 export async function generateHarmonyPalette(

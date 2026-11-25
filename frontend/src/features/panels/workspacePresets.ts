@@ -23,7 +23,7 @@ export type WorkspacePreset = {
 };
 
 const STORAGE_KEY = 'dither.workspacePresets';
-const DOCKABLE: PanelId[] = ['layers', 'effect', 'colorlab'];
+const DOCKABLE: PanelId[] = ['layers', 'effect', 'colorlab', 'gamedev'];
 
 const DEFAULT_SHELL: WorkspaceShellSnapshot = {
   leftSidebar: { width: 332, collapsed: false },

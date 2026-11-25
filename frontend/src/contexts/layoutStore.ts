@@ -572,6 +572,114 @@ export class LayoutStore {
     console.info('[flex-dock] returnAllPanelsToDock');
   };
 
+  /**
+   * Ensure an optional workspace-gated panel exists (e.g. gamedev).
+   * No-op when already present on left or right. Injects on `preferredSide`.
+   */
+  ensureOptionalPanel = (
+    panelComponent: string,
+    preferredSide: 'left' | 'right' = 'right',
+  ): void => {
+    if (!isPanelOnFlexLayout(panelComponent) || panelComponent === 'preview') return;
+    const onLeft = this.left ? findTabByComponent(this.left, panelComponent) : null;
+    const onRight = this.right ? findTabByComponent(this.right, panelComponent) : null;
+    if (onLeft || onRight) return;
+
+    const model = preferredSide === 'left' ? this.left : this.right;
+    if (!model) {
+      console.warn('[flex-dock] ensureOptionalPanel: model missing', preferredSide);
+      return;
+    }
+
+    const json = {
+      type: 'tab',
+      name: tabDisplayName(panelComponent),
+      component: panelComponent,
+      enableFloat: true,
+    };
+
+    let targetTabSetId = findFirstTabSetId(model);
+    if (!targetTabSetId) {
+      const seed = modelFromJson({
+        global: getDefaultFlexLayoutJson(preferredSide).global,
+        borders: [],
+        layout: {
+          type: 'row',
+          weight: 100,
+          children: [
+            {
+              type: 'tabset',
+              weight: 100,
+              children: [json],
+            },
+          ],
+        },
+      } as IJsonModel);
+      void this.replaceSides(
+        preferredSide === 'left' ? { left: seed } : { right: seed },
+      ).then(() => {
+        this.persistNow();
+        this.persistNow();
+      });
+      return;
+    }
+
+    try {
+      model.doAction(Actions.addNode(json, targetTabSetId, DockLocation.BOTTOM, -1, true));
+    } catch (err) {
+      console.error('[flex-dock] ensureOptionalPanel addNode failed', err);
+      return;
+    }
+    normalizeSideToVerticalStack(model);
+    applyAppChromePolicy(model);
+    this.persistNow();
+    this.bump();
+  };
+
+  /**
+   * Remove an optional workspace-gated panel (closes float shell if needed).
+   * No-op when absent.
+   */
+  removeOptionalPanel = (panelComponent: string): void => {
+    if (!isPanelOnFlexLayout(panelComponent) || panelComponent === 'preview') return;
+
+    const sides: Array<'left' | 'right'> = ['left', 'right'];
+    let removed = false;
+    for (const side of sides) {
+      const model = side === 'left' ? this.left : this.right;
+      if (!model) continue;
+      const tab = findTabByComponent(model, panelComponent);
+      if (!tab) continue;
+
+      if (tab.isFloating()) {
+        try {
+          void closeFlexPopoutShell(tab.getWindow?.() ?? null, {
+            panelId: panelComponent,
+          });
+        } catch (err) {
+          console.error('[flex-dock] removeOptionalPanel closeFlexPopoutShell failed', err);
+        }
+        forgetFlexPopoutLabel(panelComponent);
+      }
+
+      model.doAction(Actions.deleteTab(tab.getId()));
+      removed = true;
+
+      if (listFlexComponents(model).length === 0) {
+        const empty = modelFromJson(emptySideJson(side));
+        if (side === 'left') this.left = empty;
+        else this.right = empty;
+      } else {
+        normalizeSideToVerticalStack(model);
+        applyAppChromePolicy(model);
+      }
+    }
+
+    if (!removed) return;
+    this.persistNow();
+    this.bump();
+  };
+
   swapFlexSides = (): void => {
     const left = this.left;
     const right = this.right;

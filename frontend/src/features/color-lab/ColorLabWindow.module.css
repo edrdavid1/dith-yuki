@@ -50,10 +50,6 @@
   box-sizing: border-box;
 }
 
-.color-lab-section:last-child {
-  border-bottom: var(--border);
-}
-
 .color-lab-section-summary {
   display: flex;
   align-items: center;

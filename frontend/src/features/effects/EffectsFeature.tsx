@@ -117,8 +117,11 @@ export default function EffectsFeature({
   // Tone Steps (`lastCreatedId == null`) clears the filter palette after a prior
   // bind — but never on first hydrate (floating Color Lab vs Effects).
   // Skip ids that are not in the current document (stale localStorage binding).
+  // When selection moves to another filter, do not push the previous binding onto
+  // it — Color Lab adopts that filter's palette_id instead.
   const lastSyncedKeyRef = useRef<string>('');
   const prevBoundIdRef = useRef<number | null | undefined>(undefined);
+  const prevFilterIdRef = useRef<string | null | undefined>(undefined);
   useEffect(() => {
     const params = effectLayer.effectParams as unknown as Record<string, unknown> | null;
     const isDitherV2 =
@@ -129,14 +132,25 @@ export default function EffectsFeature({
     if (!isDitherV2) return;
     if (params == null || effectLayer.filterId == null) return;
 
+    const current =
+      typeof params.palette_id === 'number' ? params.palette_id : null;
+
+    const filterId = effectLayer.filterId;
+    const selectionChanged =
+      prevFilterIdRef.current !== undefined && prevFilterIdRef.current !== filterId;
+    prevFilterIdRef.current = filterId;
+
+    if (selectionChanged) {
+      lastSyncedKeyRef.current = `${filterId}:${current ?? 'tone-steps'}`;
+      prevBoundIdRef.current = current;
+      return;
+    }
+
     const prevBound = prevBoundIdRef.current;
     prevBoundIdRef.current = lastCreatedId;
 
-    const syncKey = `${effectLayer.filterId}:${lastCreatedId ?? 'tone-steps'}`;
+    const syncKey = `${filterId}:${lastCreatedId ?? 'tone-steps'}`;
     if (lastSyncedKeyRef.current === syncKey) return;
-
-    const current =
-      typeof params.palette_id === 'number' ? params.palette_id : null;
 
     const pushDitherParams = (paletteId: number | null) => {
       const {

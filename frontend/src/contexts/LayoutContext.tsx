@@ -81,6 +81,10 @@ export interface LayoutContextType {
    * Used by Window → "Return all panels to dock" and recovery paths.
    */
   returnAllPanelsToDock: () => void;
+  /** Inject a workspace-gated optional panel if missing (e.g. gamedev). */
+  ensureOptionalPanel: (panelComponent: string, preferredSide?: 'left' | 'right') => void;
+  /** Remove a workspace-gated optional panel (e.g. leaving Gamedev workspace). */
+  removeOptionalPanel: (panelComponent: string) => void;
 }
 
 const LayoutContext = createContext<LayoutContextType | undefined>(undefined);
@@ -147,6 +151,8 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       dockPanel: layoutStore.dockPanel,
       redockFlexPanelToSide: layoutStore.redockFlexPanelToSide,
       returnAllPanelsToDock: layoutStore.returnAllPanelsToDock,
+      ensureOptionalPanel: layoutStore.ensureOptionalPanel,
+      removeOptionalPanel: layoutStore.removeOptionalPanel,
     }),
     [snapshot],
   );

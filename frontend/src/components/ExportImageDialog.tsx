@@ -1,9 +1,10 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import styles from '../features/document/NewProjectDialog.module.css';
 import { bind } from '../shared/ui/cn';
 import { DialogTitlebar } from '../shared/ui/WindowTitlebar';
 import { useWorkspaceOptional } from '../features/workspace/WorkspaceContext';
+import { useGamedevStoreOptional } from '../features/workspace/GamedevContext';
 
 const cn = bind(styles);
 
@@ -59,6 +60,7 @@ export function extensionForFormat(format: ImageExportFormat): string {
 
 export default function ExportImageDialog({ isOpen, onExport, onClose }: ExportImageDialogProps) {
   const workspace = useWorkspaceOptional();
+  const gamedev = useGamedevStoreOptional();
   const showTileSize = workspace?.visibility.showTileSizeSetting ?? false;
   const [format, setFormat] = useState<ImageExportFormat>('PNG');
   const [quality, setQuality] = useState(90);
@@ -66,6 +68,20 @@ export default function ExportImageDialog({ isOpen, onExport, onClose }: ExportI
   const [spriteCells, setSpriteCells] = useState(false);
   const [cellW, setCellW] = useState(32);
   const [cellH, setCellH] = useState(32);
+
+  // Prefill from GamedevContext (F6: Export reads cell / PNG8; does not own them).
+  useEffect(() => {
+    if (!isOpen) return;
+    const ctx = gamedev?.context;
+    if (ctx?.export.png8) setFormat('PNG8');
+    if (ctx?.cell) {
+      setSpriteCells(true);
+      setCellW(ctx.cell.w);
+      setCellH(ctx.cell.h);
+    } else {
+      setSpriteCells(false);
+    }
+  }, [isOpen, gamedev?.context]);
 
   const handleOverlayClick = useCallback(
     (e: React.MouseEvent) => {
@@ -77,6 +93,7 @@ export default function ExportImageDialog({ isOpen, onExport, onClose }: ExportI
   if (!isOpen) return null;
 
   const spriteOk = !spriteCells || format === 'PNG' || format === 'PNG8';
+  const cellFromContext = Boolean(gamedev?.context.cell);
 
   return createPortal(
     <div
@@ -96,12 +113,22 @@ export default function ExportImageDialog({ isOpen, onExport, onClose }: ExportI
           onSubmit={(e) => {
             e.preventDefault();
             if (!spriteOk) return;
+            const w = Math.max(1, Math.round(cellW));
+            const h = Math.max(1, Math.round(cellH));
+            if (showTileSize && spriteCells && gamedev) {
+              void gamedev.setCellSettings({
+                w,
+                h,
+                padding: gamedev.context.cell?.padding ?? 0,
+                independent: gamedev.context.cell?.independent ?? true,
+              });
+            }
             onExport({
               format,
               quality: format === 'JPEG' ? quality : undefined,
               svg_algorithm: format === 'SVG' ? svgAlgorithm : undefined,
               ...(showTileSize && spriteCells
-                ? { sprite_cell_w: Math.max(1, Math.round(cellW)), sprite_cell_h: Math.max(1, Math.round(cellH)) }
+                ? { sprite_cell_w: w, sprite_cell_h: h }
                 : {}),
             });
           }}
@@ -160,7 +187,7 @@ export default function ExportImageDialog({ isOpen, onExport, onClose }: ExportI
           )}
 
           {showTileSize && (
-          <label className={cn('new-project-radio')}>
+          <label className={cn('new-project-radio')} title="Cell size is owned by Gamedev Settings; values sync from context.">
             <input
               type="checkbox"
               checked={spriteCells}
@@ -173,6 +200,7 @@ export default function ExportImageDialog({ isOpen, onExport, onClose }: ExportI
               }}
             />
             Sprite-sheet cells (ordered dither, same phase per cell)
+            {cellFromContext ? ' — from Gamedev' : ''}
           </label>
           )}
           {showTileSize && spriteCells && (

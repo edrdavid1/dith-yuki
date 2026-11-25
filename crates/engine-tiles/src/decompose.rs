@@ -432,11 +432,7 @@ mod tests {
         });
         let mut open_docs = HashSet::new();
         open_docs.insert(1);
-        cache.evict_for_pressure(&EvictContext {
-            active_doc: Some(1),
-            open_docs: &open_docs,
-            viewport_coords: &viewport,
-        });
+        cache.evict_for_pressure(&EvictContext::basic(Some(1), &open_docs, &viewport));
 
         // Open-session Raw is pinned — pressure cannot shrink below full L0 Raw.
         assert_eq!(cache.entry_count(), 16);

@@ -557,6 +557,8 @@ mod tests {
         assert!(!v.show_wrap_padding);
         assert!(!v.show_tile_size_setting);
         assert!(!v.show_advanced_toggle);
+        assert!(!v.show_gamedev_strip);
+        assert!(!v.show_preview_view_modes);
     }
 
     #[test]
@@ -571,6 +573,8 @@ mod tests {
         assert!(!v.show_wrap_padding);
         assert!(v.show_tile_size_setting);
         assert!(v.show_advanced_toggle);
+        assert!(v.show_gamedev_strip);
+        assert!(v.show_preview_view_modes);
     }
 
     #[test]

@@ -110,6 +110,7 @@ fn panel_default_size(id: &str) -> (u32, u32) {
         "preview" => (800, 600),
         "layers" => (350, 500),
         "effect" => (400, 600),
+        "gamedev" => (400, 520),
         _ => (332, 400),
     }
 }
@@ -119,6 +120,7 @@ fn panel_max_size(id: &str) -> (u32, u32) {
         "colorlab" => (640, 760),
         "layers" => (480, 800),
         "effect" => (520, 800),
+        "gamedev" => (520, 800),
         "preview" => (1600, 1200),
         _ => (900, 900),
     }
@@ -208,7 +210,10 @@ fn emit_dock_affinity(app_handle: &AppHandle, event: &DockAffinityEvent) {
 }
 
 fn is_flex_layout_panel(panel_id: &str) -> bool {
-    matches!(panel_id, "layers" | "effect" | "colorlab" | "preview")
+    matches!(
+        panel_id,
+        "layers" | "effect" | "colorlab" | "preview" | "gamedev"
+    )
 }
 
 /// FlexLayout popouts use `flex-popout-N`. Prefer the session-bound label.

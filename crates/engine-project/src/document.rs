@@ -2,6 +2,7 @@
 
 use crate::error::EngineError;
 use crate::filter::FilterParams;
+use crate::gamedev::{lift_gamedev_from_extra, GamedevContext};
 use crate::layer::LayerNode;
 use crate::types::{ColorProfileRef, DocumentId, FilterInstanceId, LayerId, PaletteId};
 use arc_swap::ArcSwap;
@@ -33,6 +34,9 @@ pub struct Document {
 
     /// Soft-proof view settings (display-only; not applied to export).
     pub soft_proof: SoftProofConfig,
+
+    /// Gamedev workflow context (tiles / cells / export defaults). Engine source of truth.
+    pub gamedev: GamedevContext,
 
     /// Top-level layers/groups, bottom-to-top order
     pub root: Vec<LayerNode>,
@@ -72,12 +76,13 @@ impl Serialize for Document {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("Document", 9)?;
+        let mut state = serializer.serialize_struct("Document", 10)?;
         state.serialize_field("id", &self.id)?;
         state.serialize_field("width", &self.width)?;
         state.serialize_field("height", &self.height)?;
         state.serialize_field("color_profile", &self.color_profile)?;
         state.serialize_field("soft_proof", &self.soft_proof)?;
+        state.serialize_field("gamedev", &self.gamedev)?;
         state.serialize_field("root", &self.root)?;
         state.serialize_field("palettes", &self.palettes)?;
         state.serialize_field("revision", &self.revision)?;
@@ -99,6 +104,8 @@ impl<'de> Deserialize<'de> for Document {
             color_profile: ColorProfileRef,
             #[serde(default)]
             soft_proof: SoftProofConfig,
+            #[serde(default)]
+            gamedev: GamedevContext,
             root: Vec<LayerNode>,
             palettes: Vec<Palette>,
             revision: u64,
@@ -107,17 +114,28 @@ impl<'de> Deserialize<'de> for Document {
         }
 
         let helper = DocumentHelper::deserialize(deserializer)?;
+        let mut extra = helper.extra;
+        let mut gamedev = helper.gamedev;
+        if gamedev.is_default() {
+            if let Some(lifted) = lift_gamedev_from_extra(&mut extra) {
+                gamedev = lifted;
+            }
+        } else {
+            // Typed field wins; drop bootstrap key if both were present.
+            extra.remove(crate::gamedev::GAMEDEV_EXTRA_KEY);
+        }
         Ok(Document {
             id: helper.id,
             width: helper.width,
             height: helper.height,
             color_profile: helper.color_profile,
             soft_proof: helper.soft_proof,
+            gamedev,
             root: helper.root,
             palettes: helper.palettes,
             revision: helper.revision,
             generations: GenerationTracker::new(),
-            extra: helper.extra,
+            extra,
             ext_blobs: Vec::new(),
         })
     }
@@ -132,6 +150,7 @@ impl Document {
             height,
             color_profile: ColorProfileRef::default(),
             soft_proof: SoftProofConfig::default(),
+            gamedev: GamedevContext::default(),
             root: Vec::new(),
             palettes: Vec::new(),
             revision: 0,

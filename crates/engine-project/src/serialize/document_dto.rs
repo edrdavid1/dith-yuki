@@ -8,6 +8,7 @@
 //! [`crate::layer::FORWARD_COMPAT_NODE_KEY`].
 
 use crate::filter::{FilterInstance, FilterKind, FilterParams};
+use crate::gamedev::{lift_gamedev_from_extra, GamedevContext, GAMEDEV_EXTRA_KEY};
 use crate::layer::{Layer, LayerGroup, LayerNode, FORWARD_COMPAT_NODE_KEY};
 use crate::mask::MaskRef;
 use crate::types::{BlendMode, ColorProfileRef, FilterInstanceId, LayerId, LayerKind, TileBounds};
@@ -40,11 +41,18 @@ pub struct DocumentFile {
     pub color_profile: ColorProfileRef,
     #[serde(default, skip_serializing_if = "soft_proof_is_default")]
     pub soft_proof: SoftProofConfig,
+    /// Gamedev workflow context. Missing in old projects → default.
+    #[serde(default, skip_serializing_if = "gamedev_is_default")]
+    pub gamedev: GamedevContext,
     pub root: Vec<LayerNodeFile>,
     pub palettes: Vec<PaletteFile>,
     #[serde(default = "empty_extra", skip_serializing_if = "is_empty_extra")]
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+fn gamedev_is_default(ctx: &GamedevContext) -> bool {
+    ctx.is_default()
 }
 
 fn soft_proof_is_default(cfg: &SoftProofConfig) -> bool {
@@ -247,12 +255,16 @@ impl DocumentFile {
         doc: &crate::document::Document,
         mut raw_asset_for: impl FnMut(LayerId) -> Option<String>,
     ) -> Self {
+        let mut extra = doc.extra.clone();
+        // Typed field is canonical — never also leave a bootstrap copy in extra.
+        extra.remove(GAMEDEV_EXTRA_KEY);
         let mut file = Self {
             id: doc.id.0,
             width: doc.width,
             height: doc.height,
             color_profile: doc.color_profile.clone(),
             soft_proof: doc.soft_proof.clone(),
+            gamedev: doc.gamedev.clone(),
             root: doc
                 .root
                 .iter()
@@ -268,10 +280,21 @@ impl DocumentFile {
                     extra: Map::new(),
                 })
                 .collect(),
-            extra: doc.extra.clone(),
+            extra,
         };
         file.sanitize_dangling_palette_refs();
         file
+    }
+
+    /// After JSON deserialize: lift bootstrap `extra.gamedev` into the typed field.
+    pub fn finalize_gamedev_migration(&mut self) {
+        if self.gamedev.is_default() {
+            if let Some(lifted) = lift_gamedev_from_extra(&mut self.extra) {
+                self.gamedev = lifted;
+            }
+        } else {
+            self.extra.remove(GAMEDEV_EXTRA_KEY);
+        }
     }
 
     /// Drop dither `palette_id`s that are not in `palettes` so Save cannot
@@ -639,6 +662,7 @@ mod tests {
             height: 8,
             color_profile: ColorProfileRef::SRgb,
             soft_proof: Default::default(),
+            gamedev: Default::default(),
             root: vec![],
             palettes: vec![],
             extra: Map::new(),

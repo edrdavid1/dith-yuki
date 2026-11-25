@@ -10,7 +10,8 @@
 //! [`FullDocumentKey`]. Concurrent callers that want the **same** key wait for
 //! that job instead of cancelling it. Cancellation happens only when a request
 //! arrives with a **different** key (params / `document_gen` / preview mode),
-//! or on explicit [`FullDocumentCache::invalidate_layer`] / [`clear`].
+//! or on explicit [`FullDocumentCache::invalidate_layer`] /
+//! [`FullDocumentCache::evict_document`] / [`clear`].
 //!
 //! ## Image | ASCII dual ready
 //!
@@ -220,6 +221,24 @@ impl FullDocumentCache {
         self.cv.notify_all();
     }
 
+    /// Drop every slot for `doc` (cancel inflight + ready). Other docs stay.
+    pub fn evict_document(&self, doc: u32) {
+        let mut guard = self.inner.lock().expect("full_document cache lock");
+        let keys: Vec<(u32, u32)> = guard
+            .keys()
+            .copied()
+            .filter(|(d, _)| *d == doc)
+            .collect();
+        for key in keys {
+            if let Some(mut slot) = guard.remove(&key) {
+                slot.cancel.store(true, Ordering::Relaxed);
+                slot.inflight_key = None;
+                slot.clear_ready();
+            }
+        }
+        self.cv.notify_all();
+    }
+
     pub fn invalidate_layer(&self, doc: u32, layer: u32) {
         let mut guard = self.inner.lock().expect("full_document cache lock");
         if let Some(slot) = guard.get_mut(&(doc, layer)) {
@@ -236,6 +255,61 @@ impl FullDocumentCache {
         let guard = self.inner.lock().expect("full_document cache lock");
         guard.get(&(key.doc, key.layer))?.ready_for(key)
     }
+
+    #[cfg(test)]
+    pub fn test_seed_slot(&self, doc: u32, layer: u32) {
+        let mut guard = self.inner.lock().expect("full_document cache lock");
+        guard.entry((doc, layer)).or_insert_with(CacheSlot::empty);
+    }
+
+    #[cfg(test)]
+    pub fn test_slot_count_for_doc(&self, doc: u32) -> usize {
+        let guard = self.inner.lock().expect("full_document cache lock");
+        guard.keys().filter(|(d, _)| *d == doc).count()
+    }
+}
+
+/// Peek a ready full-document result without starting a compute.
+///
+/// Uses the same key as [`ensure_full_document_ex`] (including prefix-keyed
+/// `document_gen = 0` when Post-cache is active). Callers that only need to
+/// validate chips / seams must use this instead of
+/// [`compute_full_document_rgba`], which bypasses the cache and can race the
+/// live preview into a second full mosaic (Pipeline Tile is 9×).
+pub fn peek_full_document(
+    fd_cache: &FullDocumentCache,
+    layer: &Layer,
+    doc: &Document,
+    document_gen: u64,
+    include_ascii: bool,
+) -> Option<FullDocumentResult> {
+    let params_hash = fd_cache_params_hash(layer, doc, include_ascii);
+    let key_gen = if fd_prefix_keyed(layer) {
+        0
+    } else {
+        document_gen
+    };
+    let key = FullDocumentKey {
+        doc: doc.id.0,
+        layer: layer.id.0,
+        params_hash,
+        document_gen: key_gen,
+        include_ascii,
+    };
+    fd_cache.get_if_fresh(&key)
+}
+
+/// Convert an FD f32 buffer to RGBA8 (same quantization as export assemble).
+pub fn full_document_result_to_rgba8(result: &FullDocumentResult) -> Vec<u8> {
+    let mut canvas = vec![0u8; (result.width as usize) * (result.height as usize) * 4];
+    for (i, chunk) in result.rgba_f32.as_chunks::<4>().0.iter().enumerate() {
+        let dst = i * 4;
+        canvas[dst] = (chunk[0].clamp(0.0, 1.0) * 255.0).round() as u8;
+        canvas[dst + 1] = (chunk[1].clamp(0.0, 1.0) * 255.0).round() as u8;
+        canvas[dst + 2] = (chunk[2].clamp(0.0, 1.0) * 255.0).round() as u8;
+        canvas[dst + 3] = (chunk[3].clamp(0.0, 1.0) * 255.0).round() as u8;
+    }
+    canvas
 }
 
 impl Default for FullDocumentCache {
@@ -341,6 +415,26 @@ pub fn layer_has_full_document_filter_ex(layer: &Layer, include_ascii: bool) -> 
     })
 }
 
+/// Full-document route including Gamedev Pipeline Tile mosaic / independent cells.
+pub fn layer_needs_full_document(
+    layer: &Layer,
+    doc: &Document,
+    include_ascii: bool,
+) -> bool {
+    if crate::gamedev::layer_needs_independent_cells(layer, &doc.gamedev.cell) {
+        return true;
+    }
+    if crate::gamedev::layer_needs_pipeline_tile_full_document(
+        layer,
+        doc.gamedev.tile.enabled,
+        doc.width,
+        doc.height,
+    ) {
+        return true;
+    }
+    layer_has_full_document_filter_ex(layer, include_ascii)
+}
+
 /// Assemble Raw tiles → f32 RGBA (linear 0..1 from 8-bit assemble path).
 pub fn assemble_layer_rgba_f32(
     cache: &TileCache,
@@ -410,10 +504,95 @@ pub fn compute_full_document_rgba_ex(
         }
     }
 
+    // Pipeline Tile size gate before assemble — refuse 9× work on huge canvases
+    // without spending seconds building the source buffer first.
+    if let Some(err) = crate::gamedev::pipeline_tile_memory_gate_error(
+        layer,
+        doc.gamedev.tile.enabled,
+        doc.width,
+        doc.height,
+    ) {
+        return Err(EngineError::invalid_filter_params(err.to_string()));
+    }
+
     let (mut rgba, alloc_zero_ms, assemble_blit_ms, promote_f32_ms) =
         assemble_layer_rgba_f32_timed(cache, layer, doc.width, doc.height, doc.id.0)?;
-    let w = doc.width;
-    let h = doc.height;
+    let mut w = doc.width;
+    let mut h = doc.height;
+
+    // F4 pixel-perfect: dither at working res, nearest-upscale back to canvas.
+    let (work_w, work_h, pp_upscale) = crate::gamedev::resolve_pixel_perfect_work_size(
+        w,
+        h,
+        &doc.gamedev.pixel_perfect,
+    );
+    if pp_upscale > 1 && (work_w != w || work_h != h) {
+        rgba = crate::gamedev::nearest_downsample_rgba_f32(&rgba, w, h, work_w, work_h)
+            .map_err(EngineError::invalid_filter_params)?;
+        w = work_w;
+        h = work_h;
+    }
+
+    // F2: independent cells — same path as export (preview == export).
+    if let Some(cell) = doc.gamedev.cell.as_ref() {
+        if crate::gamedev::layer_needs_independent_cells(layer, &doc.gamedev.cell) {
+            let t = Instant::now();
+            let mut out = crate::gamedev::process_independent_cells_rgba_f32(
+                &rgba,
+                w,
+                h,
+                cell,
+                &layer.filters,
+                &doc.palettes,
+                should_cancel,
+                None,
+            )
+            .map_err(|e| EngineError::invalid_filter_params(e.to_string()))?;
+            // F4: hard-threshold alpha when policy says no dither-alpha.
+            if doc.gamedev.alpha.no_dither_alpha {
+                crate::gamedev::threshold_alpha_rgba_f32(&mut out, &doc.gamedev.alpha);
+            }
+            if pp_upscale > 1 {
+                let (scaled, nw, nh) =
+                    crate::gamedev::integer_nearest_upscale_rgba_f32(&out, w, h, pp_upscale)
+                        .map_err(EngineError::invalid_filter_params)?;
+                out = scaled;
+                w = nw;
+                h = nh;
+            }
+            let apply_ms = t.elapsed().as_secs_f64() * 1000.0;
+            let t_arc = Instant::now();
+            let result = FullDocumentResult {
+                rgba_f32: Arc::new(out),
+                width: w,
+                height: h,
+                needs_post: false,
+            };
+            let arc_ms = t_arc.elapsed().as_secs_f64() * 1000.0;
+            let total_ms = t_all.elapsed().as_secs_f64() * 1000.0;
+            store_fd_stages(FdRenderStages {
+                alloc_zero_ms,
+                assemble_blit_ms,
+                promote_f32_ms,
+                palette_ms: 0.0,
+                apply_ms,
+                arc_ms,
+                misc_ms: (total_ms - (alloc_zero_ms + assemble_blit_ms + promote_f32_ms + apply_ms + arc_ms))
+                    .max(0.0),
+                total_ms,
+            });
+            return Ok(result);
+        }
+    }
+
+    let tile_session = crate::gamedev::begin_pipeline_tile_pass(
+        &mut rgba,
+        &mut w,
+        &mut h,
+        layer,
+        doc.gamedev.tile.enabled,
+    )
+    .map_err(|e| EngineError::invalid_filter_params(e.to_string()))?;
 
     // Bottom-up: last vec entry first (same as tiled apply).
     // P2: when Post sits above an expensive barrier, stop at the barrier so the
@@ -489,7 +668,14 @@ pub fn compute_full_document_rgba_ex(
             ExecutionScope::Tiled => {
                 // Strip ED must stay seam-safe on the assembled buffer. Per-tile
                 // roundtrip would break FS / ed1d when mixed topologies force FD.
-                if filter.requires_full_row || filter.requires_full_column {
+                // Prefer live params over stale topology flags (ED→ordered switches).
+                let ed_strip = match &filter.params {
+                    FilterParams::DitherV2(p) => {
+                        p.mode.is_error_diffusion() || p.mode.is_ed1d()
+                    }
+                    _ => filter.requires_full_row || filter.requires_full_column,
+                };
+                if ed_strip {
                     let t = Instant::now();
                     apply_ed_strip_filter_on_buffer(&mut rgba, w, h, layer, filter, doc)?;
                     apply_ms += t.elapsed().as_secs_f64() * 1000.0;
@@ -498,6 +684,22 @@ pub fn compute_full_document_rgba_ex(
                 }
             }
         }
+    }
+
+    crate::gamedev::finish_pipeline_tile_pass(&mut rgba, &mut w, &mut h, tile_session);
+
+    // F4: hard-threshold alpha when policy says no dither-alpha (preview == export).
+    if doc.gamedev.alpha.no_dither_alpha {
+        crate::gamedev::threshold_alpha_rgba_f32(&mut rgba, &doc.gamedev.alpha);
+    }
+
+    if pp_upscale > 1 {
+        let (scaled, nw, nh) =
+            crate::gamedev::integer_nearest_upscale_rgba_f32(&rgba, w, h, pp_upscale)
+                .map_err(EngineError::invalid_filter_params)?;
+        rgba = scaled;
+        w = nw;
+        h = nh;
     }
 
     let t_arc = Instant::now();
@@ -1170,7 +1372,13 @@ pub fn apply_post_to_fd_result(
                 apply_full_document_algorithm(&mut rgba, w, h, filter, doc, &cancel)?;
             }
             ExecutionScope::Tiled => {
-                if filter.requires_full_row || filter.requires_full_column {
+                let ed_strip = match &filter.params {
+                    FilterParams::DitherV2(p) => {
+                        p.mode.is_error_diffusion() || p.mode.is_ed1d()
+                    }
+                    _ => filter.requires_full_row || filter.requires_full_column,
+                };
+                if ed_strip {
                     apply_ed_strip_filter_on_buffer(&mut rgba, w, h, layer, filter, doc)?;
                 } else {
                     apply_tiled_filters_on_buffer(&mut rgba, w, h, layer, filter, doc, tile_cache)?;
@@ -1285,6 +1493,20 @@ mod tests {
 
     /// Serialize tests that mutate process-wide `FD_TEST_*` atomics.
     static FD_TEST_GATE: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn evict_document_leaves_other_docs() {
+        let fd = FullDocumentCache::new();
+        fd.test_seed_slot(1, 1);
+        fd.test_seed_slot(1, 2);
+        fd.test_seed_slot(2, 1);
+        assert_eq!(fd.test_slot_count_for_doc(1), 2);
+        assert_eq!(fd.test_slot_count_for_doc(2), 1);
+
+        fd.evict_document(1);
+        assert_eq!(fd.test_slot_count_for_doc(1), 0);
+        assert_eq!(fd.test_slot_count_for_doc(2), 1);
+    }
 
     fn solid_white(w: u32, h: u32) -> Vec<f32> {
         vec![1.0f32; (w * h * 4) as usize]

@@ -114,6 +114,7 @@ Legacy `FilterParams::Dither` мигрирует в V2 с `palette_id: None`.
 
 - Новый filter с пустым/`None` `palette_id` получает `palettesSlice.lastCreatedId` при создании (`layersSlice.addLayerWithEffect`).
 - Редактор **Dither** (`features/effects`): локального селектора палитры нет — `palette_id` синхронизируется с `lastCreatedId` (`EffectsFeature` + подсказка в `DitherSettings`).
+- Выбор фильтра с `palette_id` в Layers → Color Lab **подхватывает** эту палитру в драфт/`lastCreatedId` (Tone Steps, если `null`). Смена selection **не** перезаписывает новый фильтр старым binding’ом.
 
 ---
 

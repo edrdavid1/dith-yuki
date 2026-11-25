@@ -174,14 +174,14 @@ pub async fn batch_export_run(
         .collect();
 
     let cancel = Arc::new(AtomicBool::new(false));
-    {
-        let mut slot = state
-            .batch_export_cancel
-            .lock()
-            .map_err(|e| e.to_string())?;
-        *slot = Some(Arc::clone(&cancel));
-    }
+    crate::export_job::try_begin(
+        &state,
+        Some(&app_handle),
+        crate::export_job::ExportJobKind::Batch,
+        Arc::clone(&cancel),
+    )?;
 
+    let app_for_end = app_handle.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let results = run_headless_batch(&jobs, &cancel, |done, total, latest| {
             let _ = app_handle.emit(
@@ -231,14 +231,13 @@ pub async fn batch_export_run(
             results: results.iter().map(HeadlessJobResultDto::from).collect(),
         }
     })
-    .await
-    .map_err(|e| format!("batch export task failed: {e}"))?;
-
-    if let Ok(mut slot) = state_clear.batch_export_cancel.lock() {
-        *slot = None;
-    }
-
-    Ok(result)
+    .await;
+    crate::export_job::end(
+        &state_clear,
+        Some(&app_for_end),
+        crate::export_job::ExportJobKind::Batch,
+    );
+    result.map_err(|e| format!("batch export task failed: {e}"))
 }
 
 #[tauri::command]

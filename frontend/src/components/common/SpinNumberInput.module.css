@@ -1,0 +1,102 @@
+/* Vertical spin number — each arrow is a Color Lab–style raised button. */
+
+.spin {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 52px;
+  flex-shrink: 0;
+  gap: 0;
+  box-sizing: border-box;
+  vertical-align: top;
+}
+
+.spinBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  border: none !important;
+  border-radius: 0;
+  background: var(--bg-window);
+  box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+  cursor: pointer;
+  flex-shrink: 0;
+  color: var(--text-color);
+}
+
+.spinBtn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.spinBtn:active:not(:disabled) {
+  box-shadow: var(--shadow-outset-dark), var(--shadow-outset-light);
+}
+
+.spinBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.spinChevron {
+  display: block;
+  width: 14px;
+  height: 12px;
+  background: url('/icons/dropdown-arrow-icon.svg') center / contain no-repeat;
+  image-rendering: pixelated;
+}
+
+.spinChevronUp {
+  transform: rotate(180deg);
+}
+
+.spinValue {
+  width: 100%;
+  height: 24px;
+  margin: 0;
+  padding: 0 2px;
+  border: var(--border);
+  border-radius: 0;
+  background: var(--bg-input);
+  color: var(--text-color);
+  font-family: var(--font-family);
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+  box-sizing: border-box;
+  -moz-appearance: textfield;
+}
+
+.spinValue::-webkit-outer-spin-button,
+.spinValue::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.spinValue:focus {
+  outline: none;
+}
+
+.spinValue:disabled {
+  opacity: 0.5;
+}
+
+.spinLabel {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.spinWrap {
+  display: inline-flex;
+  position: relative;
+  vertical-align: top;
+}

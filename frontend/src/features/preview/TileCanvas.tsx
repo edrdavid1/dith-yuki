@@ -84,6 +84,8 @@ export interface TileCanvasProps {
   onViewportChange: (vp: ViewportState) => void;
   /** Draw the document repeated in a 3×3 grid to inspect tile seams. */
   tileRepeat3x3?: boolean;
+  /** View-mode cell grid overlay (display only; does not change pixels). */
+  cellGrid?: { w: number; h: number } | null;
   /**
    * Fired once per document when any tile is blitted (including a retained
    * placeholder frame after content_changed). Used for Rendering… vs chip.
@@ -497,6 +499,7 @@ export default function TileCanvas({
   viewport,
   onViewportChange: _onViewportChange,
   tileRepeat3x3 = false,
+  cellGrid = null,
   onFirstFrameDrawn,
 }: TileCanvasProps) {
   const { previewBackground } = useShell();
@@ -746,6 +749,8 @@ export default function TileCanvas({
 
   const tileRepeatRef = useRef(tileRepeat3x3);
   tileRepeatRef.current = tileRepeat3x3;
+  const cellGridRef = useRef(cellGrid);
+  cellGridRef.current = cellGrid;
 
   const drawTiles = useCallback(() => {
     const canvas = canvasRef.current;
@@ -906,6 +911,30 @@ export default function TileCanvas({
       blitOne(vis.x, vis.y, vis.level, bitmap);
     }
 
+    // View-mode cell grid overlay (orthogonal to Pipeline Tile / sprite export).
+    const grid = cellGridRef.current;
+    if (grid && grid.w > 0 && grid.h > 0) {
+      const docDev = vp.zoom * dpr;
+      const ox = -vp.panX * docDev;
+      const oy = -vp.panY * docDev;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+      ctx.lineWidth = Math.max(1, dpr);
+      ctx.beginPath();
+      for (let x = 0; x <= docWidth; x += grid.w) {
+        const sx = ox + x * docDev;
+        ctx.moveTo(sx, oy);
+        ctx.lineTo(sx, oy + docHeight * docDev);
+      }
+      for (let y = 0; y <= docHeight; y += grid.h) {
+        const sy = oy + y * docDev;
+        ctx.moveTo(ox, sy);
+        ctx.lineTo(ox + docWidth * docDev, sy);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
     // Reset CSS transform since canvas is now drawn at correct position
     if (canvas) {
       canvas.style.transform = '';
@@ -977,7 +1006,7 @@ export default function TileCanvas({
 
   useEffect(() => {
     scheduleRedraw();
-  }, [tileRepeat3x3, scheduleRedraw]);
+  }, [tileRepeat3x3, cellGrid, scheduleRedraw]);
 
   const flushPendingCommit = useCallback(() => {
     const displayed = tileMapRef.current;

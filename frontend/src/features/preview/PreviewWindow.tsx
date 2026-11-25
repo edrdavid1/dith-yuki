@@ -9,6 +9,7 @@ import SoftProofControls from '../soft-proof/SoftProofControls';
 import EdProgressIndicator from './EdProgressIndicator';
 import { useShell } from '../../app/shell/ShellContext';
 import { useWorkspaceOptional } from '../workspace/WorkspaceContext';
+import { useGamedevStoreOptional } from '../workspace/GamedevContext';
 import { useAppSelector } from '../../app/hooks';
 import { selectFiltersList } from '../../app/slices/filtersSlice';
 import { getAsciiPreview, setAsciiPreview } from '../../shared/ipc/ascii';
@@ -82,13 +83,23 @@ export default function PreviewWindow({
   const filters = useAppSelector(selectFiltersList);
   const hasAscii = filters.some((f) => f.kind === 'Ascii' && f.enabled);
   const [asciiPreview, setAsciiPreviewState] = useState(true);
-  const [tileRepeat3x3, setTileRepeat3x3] = useState(false);
+  /** View modes — orthogonal to Pipeline Tile (display only). */
+  const [previewViewMode, setPreviewViewMode] = useState<
+    'normal' | 'repeat_3x3' | 'cell_grid'
+  >('normal');
+  const tileRepeat3x3 = previewViewMode === 'repeat_3x3';
   const workspace = useWorkspaceOptional();
+  const gamedev = useGamedevStoreOptional();
+  const cellGrid =
+    previewViewMode === 'cell_grid' && gamedev?.context.cell
+      ? { w: gamedev.context.cell.w, h: gamedev.context.cell.h }
+      : null;
   const showSeamlessPreview = workspace?.visibility.showSeamlessPreview ?? false;
+  const showPreviewViewModes = workspace?.visibility.showPreviewViewModes ?? showSeamlessPreview;
   const showGpuDitherIndicator = workspace?.gpuDitherFamilies ?? false;
   useEffect(() => {
-    if (!showSeamlessPreview) setTileRepeat3x3(false);
-  }, [showSeamlessPreview]);
+    if (!showPreviewViewModes) setPreviewViewMode('normal');
+  }, [showPreviewViewModes]);
   /** Filter / full-document recompute in flight (GPU or CPU path). */
   const [fullDocumentBusy, setFullDocumentBusy] = useState(false);
   /** After the first successful paint, keep the previous frame during recompute. */
@@ -335,6 +346,7 @@ export default function PreviewWindow({
           viewport={viewport}
           onViewportChange={handleViewportChange}
           tileRepeat3x3={tileRepeat3x3}
+          cellGrid={cellGrid}
           onFirstFrameDrawn={handleFirstFrameDrawn}
         />
         {shouldShowRenderingOverlay(fullDocumentBusy, hadPreviewFrame) && (
@@ -433,17 +445,44 @@ export default function PreviewWindow({
               </Tooltip>
             </span>
           )}
-          {showSeamlessPreview && (
-            <Tooltip label="Repeat preview in a 3×3 grid to inspect tile seams">
-              <button
-                type="button"
-                className={cn('pv-ascii-mode-btn', tileRepeat3x3 && 'pv-ascii-mode-btn-active')}
-                aria-pressed={tileRepeat3x3}
-                onClick={() => setTileRepeat3x3((v) => !v)}
-              >
-                3×3
-              </button>
-            </Tooltip>
+          {showPreviewViewModes && (
+            <span className={cn('pv-view-mode')} role="group" aria-label="Preview view mode">
+              <Tooltip label="Display only — repeats the current result in a 3×3 grid so you can spot seams. Does not change pixels. Turn on Tile in Gamedev Settings to make the texture seamless.">
+                <button
+                  type="button"
+                  className={cn('pv-ascii-mode-btn', tileRepeat3x3 && 'pv-ascii-mode-btn-active')}
+                  aria-pressed={tileRepeat3x3}
+                  data-testid="preview-view-repeat-3x3"
+                  onClick={() =>
+                    setPreviewViewMode((m) => (m === 'repeat_3x3' ? 'normal' : 'repeat_3x3'))
+                  }
+                >
+                  Check seams
+                </button>
+              </Tooltip>
+              <Tooltip label="Display only — overlays the sprite cell grid. Enable Sprites in Gamedev Settings first.">
+                <button
+                  type="button"
+                  className={cn(
+                    'pv-ascii-mode-btn',
+                    previewViewMode === 'cell_grid' && 'pv-ascii-mode-btn-active',
+                  )}
+                  aria-pressed={previewViewMode === 'cell_grid'}
+                  data-testid="preview-view-cell-grid"
+                  disabled={!gamedev?.context.cell}
+                  title={
+                    gamedev?.context.cell
+                      ? undefined
+                      : 'Enable Sprites in Gamedev Settings first'
+                  }
+                  onClick={() =>
+                    setPreviewViewMode((m) => (m === 'cell_grid' ? 'normal' : 'cell_grid'))
+                  }
+                >
+                  Cell grid
+                </button>
+              </Tooltip>
+            </span>
           )}
         </div>
         <div className={cn('pv-footer-zoom')}>

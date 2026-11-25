@@ -1749,6 +1749,13 @@ impl FilterInstance {
         }
     }
 
+    /// Recompute strip topology flags after mutating `params` in place
+    /// (e.g. ED → Bayer for frame-stable).
+    pub fn resync_topology_flags(&mut self) {
+        self.requires_full_row = Self::params_require_full_row(&self.params);
+        self.requires_full_column = Self::params_require_full_column(&self.params);
+    }
+
     /// Validate the filter parameters.
     pub fn validate(&self) -> Result<(), EngineError> {
         if !(0.0..=1.0).contains(&self.opacity) {

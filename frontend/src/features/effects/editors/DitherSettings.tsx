@@ -388,27 +388,30 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
         onChange={handleAlgorithmSelectorChange}
       />
 
-      {visibility?.showEdTemporalWarning && (
-        <InterfaceHint>
-          <p className={cn('effect-palette-hint')} title="Temporal stability for animation frames">
-            {ANIMATION_STABLE_MODES.has(simpleMode)
-              ? 'Suitable for animation — pattern stays stable across frames.'
-              : 'May flicker between frames — error diffusion is not temporally stable.'}
-          </p>
-        </InterfaceHint>
-      )}
-
-      {visibility?.showSeamlessPreview &&
-        seamlessLines.map((line) => (
-          <InterfaceHint key={line.slice(0, 48)}>
-            <p
-              className={cn('effect-palette-hint')}
-              title="Seamless / tileable texture check"
-            >
-              {line}
-            </p>
-          </InterfaceHint>
-        ))}
+      {!visibility?.showGamedevStrip ? (
+        <>
+          {visibility?.showEdTemporalWarning && (
+            <InterfaceHint>
+              <p className={cn('effect-palette-hint')} title="Temporal stability for animation frames">
+                {ANIMATION_STABLE_MODES.has(simpleMode)
+                  ? 'Suitable for animation — pattern stays stable across frames.'
+                  : 'May flicker between frames — error diffusion is not temporally stable.'}
+              </p>
+            </InterfaceHint>
+          )}
+          {visibility?.showSeamlessPreview &&
+            seamlessLines.map((line) => (
+              <InterfaceHint key={line.slice(0, 48)}>
+                <p
+                  className={cn('effect-palette-hint')}
+                  title="Seamless / tileable texture check"
+                >
+                  {line}
+                </p>
+              </InterfaceHint>
+            ))}
+        </>
+      ) : null}
 
       {simpleMode === 'custom_png' && (
         <div className={cn('threshold-map-row')}>
@@ -575,19 +578,25 @@ function DitherSettings({ params, onUpdate }: DitherSettingsProps) {
         </label>
       )}
 
-      {visibility?.showTilingSection && (
+      {visibility?.showTilingSection &&
+        (!visibility.showGamedevStrip || visibility.showWrapPadding) && (
         <details
           className={cn('param-group')}
-          open={Boolean(workspace?.tilingAdvanced)}
+          open={Boolean(workspace?.tilingAdvanced) && !visibility.showGamedevStrip}
           data-testid="tiling-section"
         >
-          <summary className={cn('effect-palette-hint')}>Tiling</summary>
-          <InterfaceHint>
-            <p className={cn('effect-palette-hint')}>
-              Use the preview 3×3 toggle to inspect tile seams.
-            </p>
-          </InterfaceHint>
-          {visibility.showAdvancedToggle && (
+          <summary className={cn('effect-palette-hint')}>
+            {visibility.showGamedevStrip ? 'Tiling advanced' : 'Tiling'}
+          </summary>
+          {!visibility?.showGamedevStrip && (
+            <InterfaceHint>
+              <p className={cn('effect-palette-hint')}>
+                Use Check seams in the preview footer to inspect. Switch to Gamedev workspace for
+                Tile (makes edges match) in Gamedev Settings.
+              </p>
+            </InterfaceHint>
+          )}
+          {visibility.showAdvancedToggle && !visibility.showGamedevStrip && (
             <label className={cn('param-checkbox-row')}>
               <input
                 type="checkbox"
