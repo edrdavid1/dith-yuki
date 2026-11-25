@@ -114,16 +114,15 @@ pub async fn print_export_run(
     let state_clear = Arc::clone(&state);
     let svc = proof_service(&state)?;
     let cancel = Arc::new(AtomicBool::new(false));
-    // Store cancel handle for a future cancel command (best-effort).
-    {
-        let mut slot = state
-            .print_export_cancel
-            .lock()
-            .map_err(|e| e.to_string())?;
-        *slot = Some(Arc::clone(&cancel));
-    }
+    crate::export_job::try_begin(
+        &state,
+        Some(&app_handle),
+        crate::export_job::ExportJobKind::Print,
+        Arc::clone(&cancel),
+    )?;
 
     let path_buf = PathBuf::from(&path);
+    let app_for_end = app_handle.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let emit = |stage: &str, fraction: f32| {
             let _ = app_handle.emit(
@@ -180,14 +179,14 @@ pub async fn print_export_run(
             path: path_buf.to_string_lossy().into_owned(),
         })
     })
-    .await
-    .map_err(|e| format!("print export task failed: {e}"))?;
-
-    if let Ok(mut slot) = state_clear.print_export_cancel.lock() {
-        *slot = None;
-    }
-
+    .await;
+    crate::export_job::end(
+        &state_clear,
+        Some(&app_for_end),
+        crate::export_job::ExportJobKind::Print,
+    );
     result
+        .map_err(|e| format!("print export task failed: {e}"))?
 }
 
 #[tauri::command]

@@ -41,8 +41,9 @@ AppState (process-wide)          // src-tauri/src/commands/mod.rs
   gpu, gpu_resident, gpu_executor
   journal                            // файлы журнала — по recovery_id сессии
   proof                              // общий каталог ICC, не настройки вкладки
-  print_export_cancel, batch_export_cancel
+  print_export_cancel, batch_export_cancel  // mutual exclusion via export_job (T2)
   config                             // Workspace / preferences, не документ
+  memory_warn_latched                // T3 hysteresis for memory-warning
 
 DocumentSession                      // src-tauri/src/document_session.rs
   id: DocumentId
@@ -74,7 +75,7 @@ Soft proof **config** лежит на `Document` этой сессии (`proof_g
 | `alloc_doc_id()` | `next_doc_id.fetch_add(1)` → 1, 2, 3… |
 | Open image / New / Open project | Alloc → decompose tiles под этот `doc` → `spawn_session` (**старые сессии остаются**) → activate новый → `emit_tabs_changed` |
 | `activate(doc)` | `active_id = doc`; pressure только inactive; **без** soft-trim Composite |
-| `close_session(doc)` | Отказ, если `io_inflight > 0`. Иначе remove и снос кэшей этого `doc` (все стадии тайлов, включая `Dithered`; GPU atlas; residuals; BRC; ED frontier; strip gates; palette KD/LUT; delayed requeue). `full_document` чистится **целиком**, не только этот doc. Если закрыли active → сосед справа, иначе слева (`neighbor_after_close`), не `max(id)` |
+| `close_session(doc)` | Отказ, если `io_inflight > 0`. Иначе remove и снос кэшей этого `doc` (все стадии тайлов, включая `Dithered`; GPU atlas; residuals; BRC; ED frontier; strip gates; palette KD/LUT; delayed requeue; **`full_document.evict_document(doc)`** — другие вкладки не трогаем). Если закрыли active → сосед справа, иначе слева (`neighbor_after_close`), не `max(id)` |
 | Quit / welcome | Нет live doc → `active_id = None` |
 
 Startup **не** создаёт пустой 800×600 с id=1.
@@ -166,12 +167,14 @@ EvictContext {
 | Правило | Смысл |
 |---------|--------|
 | **Raw hard-pin** | `stage == Raw && open_docs.contains(doc)` **никогда** не вытесняется pressure (любой pyramid level) |
-| Порядок drop | Сначала inactive Composite → Processed → orphan Raw; затем active off-viewport те же стадии. **`Dithered` в этот список не входит** — pressure его не снимает |
+| Порядок drop | **T6** сначала whole-tab wipe старых inactive (все стадии кроме Raw), oldest-first; затем inactive Composite → Processed → **Dithered (T5)** → orphan Raw; затем active off-viewport Composite → Processed → orphan Raw (**без** Dithered) |
 | Close вкладки | `evict_document(doc)` — полный снос **включая** Raw и `Dithered` |
 | Soft trim на deactivate | **Явно не делаем**. Pressure при нескольких вкладках часто сносит inactive Composite/Processed — return то warm, то полный пересчёт (в т.ч. far-corner FS). Это текущее поведение |
-| Activate / open | Только pressure с пустым viewport (inactive non-pinned) |
+| Activate / open | Только pressure с пустым viewport (inactive non-pinned); `last_active` обновляется (T6) |
+| **Protect recent (T6)** | `PROTECT_RECENT_TABS` (default **2**) самых свежих вкладок не входят в whole-tab LRU wipe |
+| **Pinned memory warning (T3)** | Если `pinned_bytes(open, protect)` (Raw открытых + `Dithered` защищённых вкладок) > budget → `memory-warning` один раз; повтор после падения ниже 90% budget |
 
-**Следствие:** Raw открытых вкладок может увести `used` выше потолка: eviction останавливается, когда остались только pinned и viewport-protected тайлы. Слой 4096² — это 256 L0-тайлов, около **264 MiB** одного Raw, до пирамиды. Несколько крупных вкладок держат больше Raw, чем бюджет кэша. `Dithered` при включённом Post-cache добавляет ещё одну копию на слой с барьером и pressure её не отдаёт, пока вкладка открыта.
+**Следствие:** Raw открытых вкладок может увести `used` выше потолка: eviction останавливается, когда остались только pinned и viewport-protected тайлы. Слой 4096² — это 256 L0-тайлов, около **264 MiB** одного Raw, до пирамиды. Несколько крупных вкладок держат больше Raw, чем бюджет кэша. Inactive `Dithered` теперь снимается pressure (T5); у старых вкладок (вне top-N) derived стадии сносятся целиком (T6). Missing `Dithered` → полный recompute через barrier (дыр нет).
 
 Pressure вызывается на write path (worker, tile_pipeline, open/install) и на activate.
 
@@ -225,7 +228,7 @@ Export принимает `ExportImageRequest.doc_id` (может отличат
 | `export_image` | `req.doc_id` |
 | Open / Load / Create responses | Возвращают `doc_id` |
 
-Почти все мутации (слои, фильтры, палитры, undo, save) идут через **`active_session()`** без аргумента `doc_id` — известный риск гонки, если UI отстаёт от backend.
+Мутации (слои, фильтры, палитры, undo, save, gamedev) принимают **`doc_id`** и резолвятся через **`require_session`**. `active_session()` остаётся для chrome/viewport; в `commands/` без маркера `// active-session-ok:` падает `npm run lint:no-active-session`.
 
 ### 8.2 События
 
@@ -236,6 +239,8 @@ Export принимает `ExportImageRequest.doc_id` (может отличат
 | `tile-ready` | `{ doc_id, layer_id, stage, level, x, y }` | Frontend фильтрует по своему `docId` |
 | `dirty-changed` | `{ dirty, doc_id }` | Frontend: `patchTabDirty` для любой вкладки; `documentSlice.dirty` / title — только active |
 | `undo-state-changed` | `{ can_undo, can_redo, doc_id? }` | Frontend зеркалит только для active |
+| `memory-warning` | `{ pinned_bytes, budget_bytes, doc_id? }` | Toast: много крупных документов; hysteresis на backend |
+| `export-job-changed` | `{ kind, active, busy_kind }` | Print/Batch mutual exclusion UI |
 
 ---
 
@@ -280,9 +285,9 @@ Activate A → save_project_as
 close_document(A)
   → if io_inflight: error
   → remove session; evict_document(A)  // Raw A and Dithered A gone
-  → full_document cache cleared for every remaining tab
+  → full_document.evict_document(A) only  // B's FD cache stays (T1)
   → active = neighbor to the right, else left, else None
-  → tabs-changed; frontend refresh
+  → tabs-changed; memory-warning hysteresis may re-arm; frontend refresh
 ```
 
 ---
@@ -291,18 +296,20 @@ close_document(A)
 
 | Путь | Роль |
 |------|------|
-| `src-tauri/src/document_session.rs` | Registry, alloc/activate/close, `neighbor_after_close`, pressure helpers, tabs emit, IO guard |
+| `src-tauri/src/document_session.rs` | Registry, alloc/activate/close, `last_active`, pressure + memory-warning, tabs emit, IO guard |
+| `src-tauri/src/export_job.rs` | Print/Batch mutual exclusion (`job_busy:*`, `export-job-changed`) |
 | `src-tauri/src/state/history_state.rs` | Per-session undo + `saved_snapshot` |
 | `src-tauri/src/commands/mod.rs` | `AppState` (sessions, proof catalog, print/batch cancel, config) |
 | `src-tauri/src/commands/document.rs` | open/save/export, tab IPC |
 | `src-tauri/src/memory_budget.rs` | Adaptive RAM budget |
+| `scripts/check-no-active-session-mutations.sh` | Lint: no unmarked `active_session()` in `commands/` |
 | `src-tauri/src/main.rs` | `handle_tile_request` (`content_gen` freshness) |
 | `src-tauri/src/worker.rs` / `tile_pipeline.rs` | Compute + pressure после insert |
 | `src-tauri/src/viewport.rs` | Schedule с `doc` active snapshot |
 | `src-tauri/src/undo.rs` | Undo per session; dirty active |
 | `src-tauri/src/tile_protocol.rs` | Parse `tile://…/doc/{id}/…` |
 | `crates/engine-tiles/src/types.rs` | `TileKey.doc` |
-| `crates/engine-tiles/src/cache.rs` | `EvictContext`, Raw pin, `evict_for_pressure` |
+| `crates/engine-tiles/src/cache.rs` | `EvictContext`, Raw pin, T5/T6 pressure, `pinned_bytes` |
 | `crates/engine-color/src/palette_cache.rs` | KD `(doc, palette)` |
 | `crates/engine-color/src/palette_lut.rs` | LUT `(doc, palette)` |
 | `crates/engine-project/src/serialize/pixels.rs` | Doc-aware assemble |
@@ -310,8 +317,9 @@ close_document(A)
 | `frontend/src/app/slices/documentSlice.ts` | Active meta + epoch |
 | `frontend/src/features/document/DocumentTabBar.tsx` | Tab UI |
 | `frontend/src/shared/ipc/document.ts` | list / setActive / close |
+| `frontend/src/shared/exportJobGate.ts` | Print/Batch busy mirror + `job_busy` parse |
 | `frontend/src/features/preview/TileCanvas.tsx` | Doc-bound preview |
-| `frontend/src/app/listeners.ts` | Event bridge + epoch |
+| `frontend/src/app/listeners.ts` | Event bridge + epoch + `memory-warning` toast |
 | `frontend/src/hooks/useWelcomeScreen.ts` | Open/new/recent + quit guard |
 
 ---
@@ -323,9 +331,12 @@ M1–M7 закрыты в as-built (явный `doc_id`, per-tab Guard, neighbor
 | Тема | Статус |
 |------|--------|
 | Soft trim Composite на deactivate | Явный trim нет; pressure уже сносит inactive Composite/Processed |
-| RAM budget | Adaptive 25% / 512 MiB–4 GiB (Track C Phase 1); Raw open sessions pinned. `Dithered` не в pressure-порядке |
-| `full_document` на close | `clear()` всего кэша, не одного `doc` |
-| Raw вне TileCache / reload | Follow-up |
+| RAM budget | Adaptive 25% / 512 MiB–4 GiB; Raw open sessions pinned; T3 `memory-warning` при pinned > budget |
+| `full_document` на close | **`evict_document(doc)`** (T1) — другие вкладки сохраняют кэш |
+| Print/Batch concurrency | Один job на процесс; второй → `job_busy:{print\|batch}` (T2) |
+| Explicit `doc_id` mutations | As-built: `require_session` + lint (T4); chrome reads may use active |
+| Raw вне TileCache / reload | Follow-up (T7 spill) |
+| Evict inactive `Dithered` / LRU tabs | **Shipped (T5/T6)** — see §5.3 |
 | Per-doc доли бюджета / memory UI | Follow-up |
 | Split view / два холста | Non-goal |
 
@@ -343,6 +354,9 @@ M1–M7 закрыты в as-built (явный `doc_id`, per-tab Guard, neighbor
 8. Close во время Save/Export → отказ «in progress», документ не пропал.
 9. Закрыть все вкладки → welcome / empty state.
 10. `tile://` запрос с `doc_id` закрытой сессии → 404.
+11. Race: mutation на A + switch на B mid-flight → меняется A, B цела.
+12. Memory warning: несколько крупных вкладок → toast; open не блокируется.
+13. Batch во время print → `job_busy:print`; кнопки disabled + tooltip.
 
 ---
 
@@ -354,5 +368,7 @@ M1–M7 закрыты в as-built (явный `doc_id`, per-tab Guard, neighbor
 4. **Doc-aware assemble + split errors** — SessionGone vs RawIncomplete.
 5. **Palette caches `(doc, palette_id)`** — нет cross-doc LUT collision.
 6. **Tab chrome** — вкладки в title area; registry уже готов до UI.
+7. **Explicit `doc_id` mutations (T4)** — [`adr/explicit-doc-id-mutations.md`](./adr/explicit-doc-id-mutations.md).
+8. **T5/T6 pressure** — inactive `Dithered` evictable; whole-tab LRU wipe outside top-N recent.
 
 Этот файл — as-built обзор.

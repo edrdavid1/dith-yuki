@@ -29,6 +29,7 @@
     "fresh": "npm run clean && npm run tauri:dev",
     "reset": "npm run clean:all && npm run setup",
     "lint:no-magic-doc1": "bash scripts/check-no-magic-doc1.sh",
+    "lint:no-active-session": "bash scripts/check-no-active-session-mutations.sh",
     "lint:installer-assets": "bash scripts/validate-installer-assets.sh",
     "release:verify": "bash scripts/verify-release-chain.sh"
   },

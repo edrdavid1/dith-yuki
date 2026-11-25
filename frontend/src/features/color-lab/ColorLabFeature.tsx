@@ -46,6 +46,7 @@ import { toHex, sortByBrightness } from '../../types/effects';
 import type { PanelChromeProps } from '../panels/PanelChrome';
 import ColorLabBody, { type ColorLabVariant } from './ColorLabBody';
 import { shouldLiveReplacePalette, shouldReplaceSelectedPalette, draftSignature } from './paletteApply';
+import { boundPaletteIdFromFilter } from './boundPaletteId';
 import { createColorEntry, MAX_COLORS } from './types';
 import { useColorLabDraftSync } from './useColorLabDraftSync';
 import styles from './ColorLabWindow.module.css';
@@ -76,6 +77,7 @@ export default function ColorLabFeature({
   const docId = useAppSelector((s) => s.document.docId);
   const hasDocument = useAppSelector((s) => s.document.hasDocument);
   const layerId = useAppSelector((s) => s.selection.layerId);
+  const selectedFilterId = useAppSelector((s) => s.selection.filterId);
   const palettesVersion = useAppSelector((s) => s.palettes.version);
   const {
     name,
@@ -100,6 +102,7 @@ export default function ColorLabFeature({
   const [canAutoInterpolate, setCanAutoInterpolate] = useState(false);
   const [unboundPicker, setUnboundPicker] = useState<'tone-steps' | 'new'>('tone-steps');
   const lastLivePushRef = useRef('');
+  const lastAdoptedSelectionRef = useRef<string>('');
 
   const lastCreatedId = useAppSelector((s) => s.palettes.lastCreatedId);
   const filters = useAppSelector(selectFiltersList);
@@ -143,8 +146,13 @@ export default function ColorLabFeature({
         setPalettes(list);
 
         const filterPaletteId = (() => {
+          if (selectedFilterId != null) {
+            const selected = filters.find((f) => f.id === selectedFilterId);
+            const selectedPid = boundPaletteIdFromFilter(selected);
+            if (typeof selectedPid === 'number') return selectedPid;
+          }
           for (const f of filters) {
-            const pid = (f.params as { palette_id?: unknown } | undefined)?.palette_id;
+            const pid = boundPaletteIdFromFilter(f);
             if (typeof pid === 'number') return pid;
           }
           return null;
@@ -184,7 +192,78 @@ export default function ColorLabFeature({
     return () => {
       cancelled = true;
     };
-  }, [palettesVersion, lastCreatedId, dispatch, docId, filters]);
+  }, [palettesVersion, lastCreatedId, dispatch, docId, filters, selectedFilterId]);
+
+  // Show the selected filter's bound palette in Color Lab (not a stuck global draft).
+  useEffect(() => {
+    if (selectedFilterId == null) return;
+    const filter = filters.find((f) => f.id === selectedFilterId);
+    const boundId = boundPaletteIdFromFilter(filter);
+    if (boundId === undefined) return;
+
+    const adoptKey = `${selectedFilterId}:${boundId ?? 'tone-steps'}`;
+    if (lastAdoptedSelectionRef.current === adoptKey) return;
+
+    if (boundId == null) {
+      if (lastCreatedId == null && selectedPaletteId == null) {
+        lastAdoptedSelectionRef.current = adoptKey;
+        setUnboundPicker('tone-steps');
+        return;
+      }
+      lastAdoptedSelectionRef.current = adoptKey;
+      setUnboundPicker('tone-steps');
+      dispatch(resetDraft());
+      dispatch(clearLastCreatedId());
+      publishPaletteBinding(null);
+      return;
+    }
+
+    if (lastCreatedId === boundId && selectedPaletteId === boundId) {
+      lastAdoptedSelectionRef.current = adoptKey;
+      return;
+    }
+
+    const applyPalette = (palette: PaletteDto) => {
+      lastAdoptedSelectionRef.current = adoptKey;
+      setUnboundPicker('tone-steps');
+      dispatch(setSelectedPaletteId(palette.id));
+      dispatch(bumpVersion({ lastCreatedId: palette.id }));
+      publishPaletteBinding(palette.id);
+      dispatch(setName(palette.name));
+      dispatch(
+        setColors(palette.colors.map(([r, g, b]) => createColorEntry(toHex(r, g, b))))
+      );
+      dispatch(setError(null));
+    };
+
+    const cached = palettes.find((p) => p.id === boundId);
+    if (cached) {
+      applyPalette(cached);
+      return;
+    }
+
+    let cancelled = false;
+    void listPalettes()
+      .then((list) => {
+        if (cancelled) return;
+        setPalettes(list);
+        const palette = list.find((p) => p.id === boundId);
+        if (palette) applyPalette(palette);
+      })
+      .catch((err) => {
+        if (!cancelled) logIpcError('ColorLabFeature.adoptSelection', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    selectedFilterId,
+    filters,
+    palettes,
+    lastCreatedId,
+    selectedPaletteId,
+    dispatch,
+  ]);
 
   useEffect(() => {
     let cancelled = false;

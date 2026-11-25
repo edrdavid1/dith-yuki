@@ -20,12 +20,8 @@ import { maybeAutoExtractPalette } from '../app/autoExtract';
 import { useShell } from '../app/shell/ShellContext';
 import { formatIpcError, openDialog, saveDialog } from '../shared/ipc';
 import { shareProjectCopy as shareProjectCopyIPC } from '../shared/ipc/project';
-import { copyPreviewToClipboard, listOpenDocuments } from '../shared/ipc/document';
+import { copyPreviewToClipboard } from '../shared/ipc/document';
 import type { BlankBackground } from '../shared/ipc/document';
-import {
-  OPEN_DOC_MEMORY_WARNING,
-  shouldWarnOpenDocMemory,
-} from '../shared/memoryWarning';
 import ExportImageDialog, {
   extensionForFormat,
   type ImageExportOptions,
@@ -44,6 +40,12 @@ import { printExportRun, type PrintExportConfig } from '../shared/ipc/printExpor
 import type { BatchExportSummary } from '../shared/ipc/batchExport';
 import { copyTextToClipboard } from '../shared/clipboard';
 import { suggestedSaveDefaultPath } from '../shared/unsavedGuard';
+import {
+  EXPORT_JOB_COPY,
+  getExportJobBusy,
+  jobBusyMessage,
+  parseJobBusyError,
+} from '../shared/exportJobGate';
 
 /**
  * Document open/save flows backed by RTK `document` slice.
@@ -62,17 +64,6 @@ export function useDocument() {
   const asciiResolver = useRef<((format: AsciiExportFormat | null) => void) | null>(null);
   const [batchExportOpen, setBatchExportOpen] = useState(false);
 
-  const maybeWarnMemory = useCallback(async () => {
-    try {
-      const { tabs } = await listOpenDocuments();
-      if (shouldWarnOpenDocMemory(tabs.length)) {
-        dispatch(setDocumentMeta({ notification: OPEN_DOC_MEMORY_WARNING }));
-      }
-    } catch {
-      // non-fatal
-    }
-  }, [dispatch]);
-
   const openImageAtFn = useCallback(
     async (filePath: string) => {
       const result = await dispatch(openImage(filePath));
@@ -81,10 +72,9 @@ export function useDocument() {
         await dispatch(refreshFilters());
         const layerId = result.payload.layerId ?? 1;
         void maybeAutoExtractPalette(dispatch, layerId, autoExtractPalettes);
-        void maybeWarnMemory();
       }
     },
-    [autoExtractPalettes, dispatch, maybeWarnMemory]
+    [autoExtractPalettes, dispatch]
   );
 
   const openImageFn = useCallback(async () => {
@@ -161,6 +151,10 @@ export function useDocument() {
 
   const exportPrintFn = useCallback(async () => {
     if (!state.docId) return;
+    if (getExportJobBusy()) {
+      dispatch(setDocumentMeta({ error: EXPORT_JOB_COPY.busyTooltip }));
+      return;
+    }
     try {
       const config = await new Promise<PrintExportConfig | null>((resolve) => {
         printExportResolver.current = resolve;
@@ -190,9 +184,10 @@ export function useDocument() {
         await printExportRun(state.docId, config, withExt);
         dispatch(setDocumentMeta({ notification: `Print export: ${filename}` }));
       } catch (err) {
+        const busy = parseJobBusyError(err);
         dispatch(
           setDocumentMeta({
-            error: formatIpcError(err),
+            error: busy ? jobBusyMessage(busy) : formatIpcError(err),
           })
         );
       } finally {
@@ -205,8 +200,12 @@ export function useDocument() {
 
   const exportBatchFn = useCallback(() => {
     if (!state.docId) return;
+    if (getExportJobBusy()) {
+      dispatch(setDocumentMeta({ error: EXPORT_JOB_COPY.busyTooltip }));
+      return;
+    }
     setBatchExportOpen(true);
-  }, [state.docId]);
+  }, [dispatch, state.docId]);
 
   const handleBatchDone = useCallback(
     (summary: BatchExportSummary) => {
@@ -322,10 +321,9 @@ export function useDocument() {
       if (openProject.fulfilled.match(result)) {
         await dispatch(refreshLayers(result.payload.docId));
         await dispatch(refreshFilters());
-        void maybeWarnMemory();
       }
     },
-    [dispatch, maybeWarnMemory]
+    [dispatch]
   );
 
   const openProjectFn = useCallback(async () => {
@@ -506,12 +504,11 @@ export function useDocument() {
       if (createDocument.fulfilled.match(result)) {
         await dispatch(refreshLayers(result.payload.docId));
         await dispatch(refreshFilters());
-        void maybeWarnMemory();
         return true;
       }
       return false;
     },
-    [dispatch, maybeWarnMemory]
+    [dispatch]
   );
 
   const importImageLayerFn = useCallback(async () => {

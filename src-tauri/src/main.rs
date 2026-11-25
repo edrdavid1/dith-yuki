@@ -15,6 +15,7 @@ mod dither_profile_host;
 mod dock_affinity;
 mod document_session;
 mod ed_progress;
+mod export_job;
 mod file_bookmarks;
 mod file_log;
 mod flex_popout_lifecycle;

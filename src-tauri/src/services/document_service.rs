@@ -7,7 +7,7 @@ use engine_project::types::LayerKind;
 use serde::{Deserialize, Serialize};
 
 use crate::commands::{emit_document_changed, schedule_dirty_viewport_tiles, AppState};
-use crate::document_session::emit_tabs_changed;
+use crate::document_session::{emit_tabs_changed, maybe_emit_memory_warning};
 use crate::services::{layer_service::LayerIdResponse, AppError};
 
 pub const MAX_DOCUMENT_DIMENSION: u32 = 8192;
@@ -243,6 +243,7 @@ pub fn install_raster_document(
     state.evict_inactive_for_pressure_if_needed();
     crate::undo::clear_history(state, app, doc_id)?;
     emit_tabs_changed(app, state);
+    maybe_emit_memory_warning(app, state, Some(doc_id));
 
     schedule_dirty_viewport_tiles(state);
 
@@ -869,6 +870,7 @@ impl DocumentService {
 
         emit_document_changed(&app_handle, "project_opened", None, Some(doc_id));
         emit_tabs_changed(Some(&app_handle), &self.state);
+        maybe_emit_memory_warning(Some(&app_handle), &self.state, Some(doc_id));
 
         let stored = resolved.to_string_lossy().into_owned();
         crate::recent_files::record_from_app(
@@ -1432,6 +1434,7 @@ impl DocumentService {
         self.state.activate(doc_id)?;
         emit_document_changed(app_handle, "document_activated", None, Some(doc_id));
         emit_tabs_changed(Some(app_handle), &self.state);
+        maybe_emit_memory_warning(Some(app_handle), &self.state, Some(doc_id));
         schedule_dirty_viewport_tiles(&self.state);
         self.get_document_snapshot()
     }

@@ -50,10 +50,41 @@ fn notify_evict(key: TileKey, generation: u64, reason: &'static str) {
 ///   (`None` active → legacy doc-blind coord protect).
 /// - `open_docs`: runtime sessions whose **Raw** tiles are hard-excluded from
 ///   pressure (source of truth until close / `evict_document`).
+/// - `protect_derived_docs` (T6): recent tabs whose Processed/Composite/Dithered
+///   are not pressure-evicted (return-to-tab stays warm).
+/// - `lru_unprotected_inactive` (T6): oldest-first inactive docs to wipe
+///   wholesale (all stages except Raw) before nibbling stage-by-stage.
 pub struct EvictContext<'a> {
     pub active_doc: Option<u32>,
     pub open_docs: &'a HashSet<u32>,
     pub viewport_coords: &'a HashSet<TileCoord>,
+    pub protect_derived_docs: &'a HashSet<u32>,
+    pub lru_unprotected_inactive: &'a [u32],
+}
+
+/// How many most-recently-activated tabs keep derived tiles under pressure (T6).
+pub const PROTECT_RECENT_TABS: usize = 2;
+
+fn empty_doc_set() -> &'static HashSet<u32> {
+    static EMPTY: OnceLock<HashSet<u32>> = OnceLock::new();
+    EMPTY.get_or_init(HashSet::new)
+}
+
+impl<'a> EvictContext<'a> {
+    /// Legacy/test helper: no T6 protect / LRU lists.
+    pub fn basic(
+        active_doc: Option<u32>,
+        open_docs: &'a HashSet<u32>,
+        viewport_coords: &'a HashSet<TileCoord>,
+    ) -> Self {
+        Self {
+            active_doc,
+            open_docs,
+            viewport_coords,
+            protect_derived_docs: empty_doc_set(),
+            lru_unprotected_inactive: &[],
+        }
+    }
 }
 
 impl EvictContext<'_> {
@@ -185,6 +216,25 @@ pub struct TileCache {
 }
 
 impl TileCache {
+    /// Non-evictable footprint under the multi-doc pin policy (T3/T5/T6):
+    /// - Raw of every open session (all pyramid levels)
+    /// - `Dithered` of `protect_derived` docs (active / recent — not pressure-evicted)
+    ///
+    /// Inactive unprotected `Dithered` is omitted: T5 allows pressure to drop it.
+    /// Scans entries (open / create / pressure warning path — not hot tile paint).
+    pub fn pinned_bytes(&self, open_docs: &HashSet<u32>, protect_derived: &HashSet<u32>) -> usize {
+        let mut n = 0usize;
+        for entry in self.entries.iter() {
+            let key = *entry.key();
+            match key.stage {
+                CacheStage::Raw if open_docs.contains(&key.doc) => n += TILE_BYTES,
+                CacheStage::Dithered if protect_derived.contains(&key.doc) => n += TILE_BYTES,
+                _ => {}
+            }
+        }
+        n
+    }
+
     /// Create a new cache with the specified memory budget.
     ///
     /// # Arguments
@@ -378,19 +428,17 @@ impl TileCache {
     pub fn evict_if_over_budget(&self) {
         let empty_vp = HashSet::new();
         let empty_open = HashSet::new();
-        self.evict_for_pressure(&EvictContext {
-            active_doc: None,
-            open_docs: &empty_open,
-            viewport_coords: &empty_vp,
-        });
+        self.evict_for_pressure(&EvictContext::basic(None, &empty_open, &empty_vp));
     }
 
     /// Doc-aware pressure eviction.
     ///
     /// Cheap no-op when `used ≤ budget`. Drop order:
-    /// 1. inactive docs, Composite → Processed → (orphan) Raw
-    /// 2. active off-viewport, same stage order
-    /// 3. stop — allow over-budget if only protected / pinned remain
+    /// 1. **T6** whole-tab wipe of `lru_unprotected_inactive` (all non-Raw), oldest first
+    ///    (`protect_derived_docs` are omitted from that list — recent tabs stay stage-ordered)
+    /// 2. inactive docs, Composite → Processed → **Dithered (T5)** → orphan Raw
+    /// 3. active off-viewport, Composite → Processed → orphan Raw (**no** Dithered)
+    /// 4. stop — allow over-budget if only protected / pinned remain
     ///
     /// **Pinned (never pressure-evicted):** `stage == Raw` and `doc ∈ open_docs`.
     /// Close path uses [`Self::evict_document`], not pressure.
@@ -406,16 +454,34 @@ impl TileCache {
             return EvictStats::default();
         }
 
-        // Raw of open docs is pinned; still scan Raw for orphans (not in open_docs).
-        let stage_order = [
+        let mut stats = EvictStats::default();
+
+        // T6: wipe derived stages of old inactive tabs wholesale (oldest first).
+        for &doc in ctx.lru_unprotected_inactive {
+            if ctx.active_doc == Some(doc) {
+                continue;
+            }
+            stats.add(self.evict_derived_stages_for_doc(doc));
+            if self.used_bytes.load(Ordering::Relaxed) <= budget {
+                return stats;
+            }
+        }
+
+        // T5: inactive includes Dithered; active path does not.
+        let inactive_stages = [
+            Some(CacheStage::Composite),
+            Some(CacheStage::Processed),
+            Some(CacheStage::Dithered),
+            Some(CacheStage::Raw),
+        ];
+        let active_stages = [
             Some(CacheStage::Composite),
             Some(CacheStage::Processed),
             Some(CacheStage::Raw),
         ];
-        let mut stats = EvictStats::default();
 
         if ctx.active_doc.is_some() {
-            for stage in stage_order {
+            for stage in inactive_stages {
                 stats.add(self.evict_pass(ctx, budget, true, stage));
                 if self.used_bytes.load(Ordering::Relaxed) <= budget {
                     return stats;
@@ -427,13 +493,35 @@ impl TileCache {
             return stats;
         }
 
-        for stage in stage_order {
+        for stage in active_stages {
             stats.add(self.evict_pass(ctx, budget, false, stage));
             if self.used_bytes.load(Ordering::Relaxed) <= budget {
                 return stats;
             }
         }
         stats
+    }
+
+    /// Drop Processed / Composite / Dithered for one doc (Raw stays). Used by T6.
+    fn evict_derived_stages_for_doc(&self, doc: u32) -> EvictStats {
+        let mut removed = 0usize;
+        self.entries.retain(|key, entry| {
+            if key.doc == doc && key.stage != CacheStage::Raw {
+                notify_evict(*key, entry.generation, "lru_tab");
+                removed += 1;
+                false
+            } else {
+                true
+            }
+        });
+        if removed > 0 {
+            self.used_bytes
+                .fetch_sub(removed * TILE_BYTES, Ordering::Relaxed);
+        }
+        EvictStats {
+            passes: 1,
+            removed: removed as u32,
+        }
     }
 
     fn is_viewport_protected(key: &TileKey, ctx: &EvictContext<'_>) -> bool {
@@ -521,11 +609,7 @@ impl TileCache {
     /// Legacy doc-blind viewport preserve. Prefer [`Self::evict_for_pressure`].
     pub fn evict_preserving_viewport(&self, viewport_tiles: &HashSet<TileCoord>) {
         let empty_open = HashSet::new();
-        self.evict_for_pressure(&EvictContext {
-            active_doc: None,
-            open_docs: &empty_open,
-            viewport_coords: viewport_tiles,
-        });
+        self.evict_for_pressure(&EvictContext::basic(None, &empty_open, viewport_tiles));
     }
 
     /// Drop selected stages for one document (soft trim on deactivate).
@@ -1229,17 +1313,122 @@ mod tests {
         let mut viewport = HashSet::new();
         viewport.insert(vp);
         let open = open_set(&[2]);
-        cache.evict_for_pressure(&EvictContext {
-            active_doc: Some(2),
-            open_docs: &open,
-            viewport_coords: &viewport,
-        });
+        cache.evict_for_pressure(&EvictContext::basic(Some(2), &open, &viewport));
         assert!(cache
             .entries
             .contains_key(&key_doc(2, 0, 0, CacheStage::Composite)));
         assert!(!cache
             .entries
             .contains_key(&key_doc(2, 5, 5, CacheStage::Composite)));
+    }
+
+    #[test]
+    fn evict_for_pressure_drops_inactive_dithered_before_raw() {
+        let cache = TileCache::new(TILE_BYTES);
+        let coord = TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        };
+        cache.get_or_insert(key_doc(1, 0, 0, CacheStage::Raw), Arc::new(PixelTile::new()));
+        cache.get_or_insert(
+            key_doc(1, 0, 0, CacheStage::Dithered),
+            Arc::new(PixelTile::new()),
+        );
+        cache.get_or_insert(key_doc(2, 0, 0, CacheStage::Raw), Arc::new(PixelTile::new()));
+        let mut viewport = HashSet::new();
+        viewport.insert(coord);
+        let open = open_set(&[1, 2]);
+        cache.evict_for_pressure(&EvictContext::basic(Some(2), &open, &viewport));
+        assert!(
+            !cache
+                .entries
+                .contains_key(&key_doc(1, 0, 0, CacheStage::Dithered)),
+            "T5: inactive Dithered must drop under pressure"
+        );
+        assert!(
+            cache.entries.contains_key(&key_doc(1, 0, 0, CacheStage::Raw)),
+            "open Raw stays pinned"
+        );
+    }
+
+    #[test]
+    fn evict_for_pressure_lru_wipes_unprotected_inactive_whole_tab() {
+        let cache = TileCache::new(TILE_BYTES);
+        // Doc 1 (old): Composite + Processed — should be wiped wholesale.
+        cache.get_or_insert(
+            key_doc(1, 0, 0, CacheStage::Composite),
+            Arc::new(PixelTile::new()),
+        );
+        cache.get_or_insert(
+            key_doc(1, 0, 0, CacheStage::Processed),
+            Arc::new(PixelTile::new()),
+        );
+        cache.get_or_insert(key_doc(1, 0, 0, CacheStage::Raw), Arc::new(PixelTile::new()));
+        // Doc 3 (protected recent inactive): Composite should survive the whole-tab pass.
+        cache.get_or_insert(
+            key_doc(3, 0, 0, CacheStage::Composite),
+            Arc::new(PixelTile::new()),
+        );
+        cache.get_or_insert(key_doc(2, 0, 0, CacheStage::Raw), Arc::new(PixelTile::new()));
+        let mut viewport = HashSet::new();
+        viewport.insert(TileCoord {
+            level: 0,
+            x: 0,
+            y: 0,
+        });
+        let open = open_set(&[1, 2, 3]);
+        let protect = open_set(&[2, 3]);
+        let lru = [1u32];
+        cache.evict_for_pressure(&EvictContext {
+            active_doc: Some(2),
+            open_docs: &open,
+            viewport_coords: &viewport,
+            protect_derived_docs: &protect,
+            lru_unprotected_inactive: &lru,
+        });
+        assert!(
+            !cache
+                .entries
+                .contains_key(&key_doc(1, 0, 0, CacheStage::Composite)),
+            "T6: unprotected inactive Composite wiped"
+        );
+        assert!(
+            !cache
+                .entries
+                .contains_key(&key_doc(1, 0, 0, CacheStage::Processed)),
+            "T6: unprotected inactive Processed wiped"
+        );
+        assert!(
+            cache.entries.contains_key(&key_doc(1, 0, 0, CacheStage::Raw)),
+            "Raw of wiped tab stays"
+        );
+        // Budget was only TILE_BYTES; after wiping doc1 derived we may still be
+        // over if Raw×3 + doc3 Composite remain — stage-order can trim doc3.
+        // Assert only the whole-tab contract above.
+        let _ = protect;
+    }
+
+    #[test]
+    fn pinned_bytes_counts_open_raw_and_all_dithered() {
+        let cache = TileCache::new(TILE_BYTES * 10);
+        cache.get_or_insert(key_doc(1, 0, 0, CacheStage::Raw), Arc::new(PixelTile::new()));
+        cache.get_or_insert(
+            key_doc(1, 0, 0, CacheStage::Dithered),
+            Arc::new(PixelTile::new()),
+        );
+        cache.get_or_insert(
+            key_doc(2, 0, 0, CacheStage::Composite),
+            Arc::new(PixelTile::new()),
+        );
+        cache.get_or_insert(key_doc(3, 0, 0, CacheStage::Raw), Arc::new(PixelTile::new()));
+        let open = open_set(&[1, 2]);
+        let protect = open_set(&[1]);
+        // Raw doc1 + Dithered doc1 (protected); Raw doc3 excluded; Composite ignored;
+        // unprotected Dithered would not count (none here).
+        assert_eq!(cache.pinned_bytes(&open, &protect), TILE_BYTES * 2);
+        // Without protect, only Raw of open docs counts.
+        assert_eq!(cache.pinned_bytes(&open, &HashSet::new()), TILE_BYTES);
     }
 
     #[test]
@@ -1259,11 +1448,7 @@ mod tests {
         let mut viewport = HashSet::new();
         viewport.insert(coord);
         let open = open_set(&[1, 2]);
-        cache.evict_for_pressure(&EvictContext {
-            active_doc: Some(2),
-            open_docs: &open,
-            viewport_coords: &viewport,
-        });
+        cache.evict_for_pressure(&EvictContext::basic(Some(2), &open, &viewport));
         assert!(
             !cache.entries.contains_key(&inactive_comp),
             "inactive Composite must go under pressure"
@@ -1293,11 +1478,7 @@ mod tests {
             y: 0,
         });
         let open = open_set(&[2]);
-        cache.evict_for_pressure(&EvictContext {
-            active_doc: Some(2),
-            open_docs: &open,
-            viewport_coords: &viewport,
-        });
+        cache.evict_for_pressure(&EvictContext::basic(Some(2), &open, &viewport));
         assert_eq!(cache.entry_count(), 2);
         assert!(cache.used_bytes_count() > cache.budget_bytes_count());
     }
@@ -1316,11 +1497,7 @@ mod tests {
             y: 0,
         });
         let open = open_set(&[2]);
-        cache.evict_for_pressure(&EvictContext {
-            active_doc: Some(2),
-            open_docs: &open,
-            viewport_coords: &viewport,
-        });
+        cache.evict_for_pressure(&EvictContext::basic(Some(2), &open, &viewport));
         assert!(cache.entries.contains_key(&protected));
         assert!(
             !cache.entries.contains_key(&victim),
@@ -1351,11 +1528,7 @@ mod tests {
         let mut viewport = HashSet::new();
         viewport.insert(coord);
         let open = open_set(&[1, 2]);
-        cache.evict_for_pressure(&EvictContext {
-            active_doc: Some(2),
-            open_docs: &open,
-            viewport_coords: &viewport,
-        });
+        cache.evict_for_pressure(&EvictContext::basic(Some(2), &open, &viewport));
         assert!(
             !cache
                 .entries
@@ -1466,11 +1639,7 @@ mod tests {
             y: 0,
         }]);
         let open = open_set(&[2]);
-        cache.evict_for_pressure(&EvictContext {
-            active_doc: Some(2),
-            open_docs: &open,
-            viewport_coords: &viewport,
-        });
+        cache.evict_for_pressure(&EvictContext::basic(Some(2), &open, &viewport));
         assert!(cache.entries.contains_key(&child));
         assert!(!cache.entries.contains_key(&victim));
     }

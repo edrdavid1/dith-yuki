@@ -14,6 +14,12 @@ import {
   type BatchExportSummary,
   type BatchOutputFormat,
 } from '../shared/ipc/batchExport';
+import {
+  EXPORT_JOB_COPY,
+  jobBusyMessage,
+  parseJobBusyError,
+  useExportJobBusy,
+} from '../shared/exportJobGate';
 import { usePatternsUi } from '../features/patterns/PatternsUiContext';
 import { useWorkspaceOptional } from '../features/workspace/WorkspaceContext';
 import { useGamedevStoreOptional } from '../features/workspace/GamedevContext';
@@ -46,6 +52,8 @@ export default function BatchExportDialog({
   const { openPatternManager } = usePatternsUi();
   const workspace = useWorkspaceOptional();
   const gamedev = useGamedevStoreOptional();
+  const exportBusy = useExportJobBusy();
+  const blockedByOtherJob = exportBusy === 'print';
 
   const maskFixed =
     gamedev?.context.threshold_mask != null && gamedev.context.threshold_mask !== 'free';
@@ -121,7 +129,8 @@ export default function BatchExportDialog({
       });
       onDone(summary);
     } catch (e) {
-      setError(String(e));
+      const busy = parseJobBusyError(e);
+      setError(busy ? jobBusyMessage(busy) : String(e));
     } finally {
       setRunning(false);
     }
@@ -319,7 +328,10 @@ export default function BatchExportDialog({
               type="button"
               className={cn('batch-btn', 'batch-btn-primary')}
               onClick={() => void handleStart()}
-              disabled={running || !inputDir || !outputDir || docId == null}
+              disabled={
+                running || blockedByOtherJob || !inputDir || !outputDir || docId == null
+              }
+              title={blockedByOtherJob ? EXPORT_JOB_COPY.busyTooltip : undefined}
             >
               {running ? 'Exporting…' : 'Start'}
             </button>

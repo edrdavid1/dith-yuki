@@ -4,6 +4,7 @@ import { bind } from '../shared/ui/cn';
 import type { RecentFileEntry } from '../shared/ipc/recent';
 import { formatChords } from '../features/shortcuts/bindings';
 import { useShortcutBindings } from '../features/shortcuts/ShortcutsContext';
+import { EXPORT_JOB_COPY, useExportJobBusy } from '../shared/exportJobGate';
 const cn = bind(styles);
 
 interface MenuBarProps {
@@ -94,6 +95,8 @@ function MenuBar({
   const [openMenu, setOpenMenu] = useState<MenuId | null>(null);
   const menuBarRef = useRef<HTMLDivElement>(null);
   const shortcuts = useShortcutBindings();
+  const exportBusy = useExportJobBusy();
+  const exportBusyTitle = exportBusy ? EXPORT_JOB_COPY.busyTooltip : undefined;
 
   // Close dropdown on Escape or click-outside
   useEffect(() => {
@@ -126,7 +129,7 @@ function MenuBar({
       return;
     }
     if (id === 'batch') {
-      if (hasDocument && onBatchExport) onBatchExport();
+      if (hasDocument && onBatchExport && !exportBusy) onBatchExport();
       setOpenMenu(null);
       return;
     }
@@ -141,7 +144,7 @@ function MenuBar({
       return;
     }
     setOpenMenu(prev => (prev === id ? null : id));
-  }, [hasDocument, onBatchExport, onOpenPatterns, onOpenPreferences, onOpenHelp]);
+  }, [hasDocument, exportBusy, onBatchExport, onOpenPatterns, onOpenPreferences, onOpenHelp]);
 
   const handleMenuHover = useCallback((id: MenuId) => {
     // Only switch on hover if a dropdown is already open
@@ -261,7 +264,8 @@ function MenuBar({
               className={cn('menubar-dropdown-item')}
               role="menuitem"
               onClick={() => onExportPrint && handleAction(onExportPrint)}
-              disabled={!hasDocument || !onExportPrint}
+              disabled={!hasDocument || !onExportPrint || !!exportBusy}
+              title={exportBusy ? exportBusyTitle : undefined}
             >
               Export for Print…
             </button>
@@ -365,7 +369,7 @@ function MenuBar({
     <div className={cn("menubar")} ref={menuBarRef} role="menubar">
       {MENU_ITEMS.map((item) => {
         const disabled =
-          item.id === 'batch' && (!hasDocument || !onBatchExport);
+          item.id === 'batch' && (!hasDocument || !onBatchExport || !!exportBusy);
         return (
           <div className={cn("menubar-item")} key={item.id}>
             <button
@@ -378,6 +382,7 @@ function MenuBar({
                 DIRECT_OPEN_MENUS.has(item.id) ? undefined : openMenu === item.id
               }
               disabled={disabled}
+              title={item.id === 'batch' && exportBusy ? exportBusyTitle : undefined}
             >
               {item.label}
             </button>

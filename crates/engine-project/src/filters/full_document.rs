@@ -10,7 +10,8 @@
 //! [`FullDocumentKey`]. Concurrent callers that want the **same** key wait for
 //! that job instead of cancelling it. Cancellation happens only when a request
 //! arrives with a **different** key (params / `document_gen` / preview mode),
-//! or on explicit [`FullDocumentCache::invalidate_layer`] / [`clear`].
+//! or on explicit [`FullDocumentCache::invalidate_layer`] /
+//! [`FullDocumentCache::evict_document`] / [`clear`].
 //!
 //! ## Image | ASCII dual ready
 //!
@@ -220,6 +221,24 @@ impl FullDocumentCache {
         self.cv.notify_all();
     }
 
+    /// Drop every slot for `doc` (cancel inflight + ready). Other docs stay.
+    pub fn evict_document(&self, doc: u32) {
+        let mut guard = self.inner.lock().expect("full_document cache lock");
+        let keys: Vec<(u32, u32)> = guard
+            .keys()
+            .copied()
+            .filter(|(d, _)| *d == doc)
+            .collect();
+        for key in keys {
+            if let Some(mut slot) = guard.remove(&key) {
+                slot.cancel.store(true, Ordering::Relaxed);
+                slot.inflight_key = None;
+                slot.clear_ready();
+            }
+        }
+        self.cv.notify_all();
+    }
+
     pub fn invalidate_layer(&self, doc: u32, layer: u32) {
         let mut guard = self.inner.lock().expect("full_document cache lock");
         if let Some(slot) = guard.get_mut(&(doc, layer)) {
@@ -235,6 +254,18 @@ impl FullDocumentCache {
     pub fn get_if_fresh(&self, key: &FullDocumentKey) -> Option<FullDocumentResult> {
         let guard = self.inner.lock().expect("full_document cache lock");
         guard.get(&(key.doc, key.layer))?.ready_for(key)
+    }
+
+    #[cfg(test)]
+    pub fn test_seed_slot(&self, doc: u32, layer: u32) {
+        let mut guard = self.inner.lock().expect("full_document cache lock");
+        guard.entry((doc, layer)).or_insert_with(CacheSlot::empty);
+    }
+
+    #[cfg(test)]
+    pub fn test_slot_count_for_doc(&self, doc: u32) -> usize {
+        let guard = self.inner.lock().expect("full_document cache lock");
+        guard.keys().filter(|(d, _)| *d == doc).count()
     }
 }
 
@@ -1462,6 +1493,20 @@ mod tests {
 
     /// Serialize tests that mutate process-wide `FD_TEST_*` atomics.
     static FD_TEST_GATE: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn evict_document_leaves_other_docs() {
+        let fd = FullDocumentCache::new();
+        fd.test_seed_slot(1, 1);
+        fd.test_seed_slot(1, 2);
+        fd.test_seed_slot(2, 1);
+        assert_eq!(fd.test_slot_count_for_doc(1), 2);
+        assert_eq!(fd.test_slot_count_for_doc(2), 1);
+
+        fd.evict_document(1);
+        assert_eq!(fd.test_slot_count_for_doc(1), 0);
+        assert_eq!(fd.test_slot_count_for_doc(2), 1);
+    }
 
     fn solid_white(w: u32, h: u32) -> Vec<f32> {
         vec![1.0f32; (w * h * 4) as usize]

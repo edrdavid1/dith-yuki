@@ -14,7 +14,7 @@ docs linked from [docs/README.md](./README.md).
 
 | Area | Where to read |
 |---|---|
-| Tabs, shared cache, save/export | [multi-doc-tabs.md](./multi-doc-tabs.md) |
+| Tabs, shared cache, T1–T6 pressure / JobBusy / memory-warning | [multi-doc-tabs.md](./multi-doc-tabs.md) |
 | FlexLayout panels | [FLEXLAYOUT_DOCKING.md](./FLEXLAYOUT_DOCKING.md) |
 | Path B GPU, auto-dispatch | [gpu-as-built.md](./gpu-as-built.md) |
 | Exact error diffusion | CPU wavefront. Far from the origin it stays sequential. |

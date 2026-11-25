@@ -1,5 +1,10 @@
 import type { AppDispatch, AppStore } from './store';
-import { refreshDocument, setDirty, bumpDocumentEpoch } from './slices/documentSlice';
+import {
+  refreshDocument,
+  setDirty,
+  bumpDocumentEpoch,
+  setDocumentMeta,
+} from './slices/documentSlice';
 import { refreshLayers } from './slices/layersSlice';
 import { refreshFilters } from './slices/filtersSlice';
 import { applyRemote, fetchSelection } from './slices/selectionSlice';
@@ -12,10 +17,12 @@ import {
   onPaletteBindingChanged,
   onDirtyChanged,
   onDocumentChanged,
+  onMemoryWarning,
   onSelectionChanged,
   onUndoStateChanged,
   isDocumentDirty,
 } from '../shared/ipc';
+import { OPEN_DOC_MEMORY_WARNING } from '../shared/memoryWarning';
 
 export type EngineBridgeCleanup = () => void;
 
@@ -164,6 +171,14 @@ export function startEngineEventBridge(store: AppStore): EngineBridgeCleanup {
   onPaletteBindingChanged((event) => {
     if (cancelled) return;
     dispatch(applyRemoteBinding(event.payload.lastCreatedId));
+  }).then((fn) => {
+    if (cancelled) fn();
+    else unsubscribers.push(fn);
+  });
+
+  onMemoryWarning(() => {
+    if (cancelled) return;
+    dispatch(setDocumentMeta({ notification: OPEN_DOC_MEMORY_WARNING }));
   }).then((fn) => {
     if (cancelled) fn();
     else unsubscribers.push(fn);

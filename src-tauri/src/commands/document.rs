@@ -5,7 +5,9 @@ use tauri::{AppHandle, State};
 use crate::commands::{
     emit_document_changed, schedule_dirty_viewport_tiles, AppState, DocumentResponse, QuitGuard,
 };
-use crate::document_session::{emit_tabs_changed, OpenDocumentsPayload};
+use crate::document_session::{
+    emit_tabs_changed, maybe_emit_memory_warning, OpenDocumentsPayload,
+};
 pub use crate::services::document_service::{
     AsciiClipboardRequest, BlankBackground, ExportAsciiRequest, ExportImageRequest,
     ExportPatternRequest, ImportPatternRequest, ImportPatternResponse, LoadImageResponse,
@@ -275,5 +277,6 @@ pub fn close_document(
     crate::tile_serve::preview_rgba8_cache().clear_doc(doc_id);
     emit_document_changed(&app_handle, "document_closed", None, Some(doc_id));
     emit_tabs_changed(Some(&app_handle), &state);
+    maybe_emit_memory_warning(Some(&app_handle), &state, None);
     Ok(state.tab_list())
 }

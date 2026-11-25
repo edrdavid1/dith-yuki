@@ -38,6 +38,7 @@ Working agent specs stay local only (not in this repo on GitHub).
 | [adr/ed-wrap-padding.md](./adr/ed-wrap-padding.md) | ADR: approximate ED wrap-padding |
 | [adr/gamedev-pipeline-tile-f1.md](./adr/gamedev-pipeline-tile-f1.md) | ADR: Gamedev Pipeline Tile F1 (route, memory gate, seam metric) |
 | [adr/gpu-dither-families.md](./adr/gpu-dither-families.md) | ADR: approximate `blocked_fs` / `blue_noise` |
+| [adr/explicit-doc-id-mutations.md](./adr/explicit-doc-id-mutations.md) | ADR: mutating IPC takes explicit `doc_id` |
 
 ## Formats, previews, security
 
